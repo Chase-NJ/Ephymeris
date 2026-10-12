@@ -9,6 +9,7 @@ next Rescan read those files as deleted and pruned the records.
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import os
 import shutil
@@ -28,8 +29,9 @@ from ephymeris_sidecar.cohorts.folders import DataFolderError, relative_below
 from ephymeris_sidecar.cohorts.repository import CohortRepository
 from ephymeris_sidecar.sessions.models import SessionAnimalRun
 from ephymeris_sidecar.sessions.repository import SessionRepository
-from tests.conftest import fine_mtime
-from tests.live_sidecar import LiveSidecar, Refused
+from tests.conftest import fine_mtime, statements
+from tests.live_sidecar import LiveSidecar, Refused, animal
+from tests.test_analytics_service import Changes, Lifecycle
 
 SESSION = "2O-Bdisc_1_2026-09-01"
 
@@ -45,7 +47,10 @@ class Archive:
         self.new = root / "elsewhere" / "Batch A"
         self.cohorts = CohortRepository(db)
         self.sessions = SessionRepository(db)
-        self.cohort_archive = CohortArchive(db=db, cohorts=self.cohorts, sessions=self.sessions)
+        self.cohort_archive = CohortArchive(
+            db=db, cohorts=self.cohorts, sessions=self.sessions,
+            rig=Lifecycle(), on_changed=Changes(),
+        )
         self.cohort = self.cohorts.create(
             "Batch A",
             str(self.old),
@@ -66,8 +71,8 @@ class Archive:
                 stop_reason="BF_END_SESSION received",
             )
         )
-        # The id a rescan would give it: a hash of the run identity.
-        self.adopted_id = _orphan_run_id(recovered)
+        # The id a rescan would give it: a hash of the cohort and run identity.
+        self.adopted_id = _orphan_run_id(self.cohort.id, recovered)
         self.analytics = AnalyticsRepository(db)
         self.analytics.store_adopted([
             AdoptedRun(
@@ -96,7 +101,7 @@ class Archive:
         return path
 
     def stored_paths(self) -> list[str]:
-        rows = self.db.conn.execute(
+        rows = statements(self.db).execute(
             "SELECT folder_path FROM sessions UNION ALL SELECT file_path FROM session_animal_runs"
             " UNION ALL SELECT file_path FROM adopted_runs UNION ALL"
             " SELECT file_path FROM run_metrics_cache"
@@ -107,7 +112,7 @@ class Archive:
         return all(Path(p).exists() and str(folder) in p for p in self.stored_paths())
 
     def journal(self) -> str:
-        return self.db.conn.execute("SELECT state FROM folder_moves").fetchone()[0]
+        return statements(self.db).execute("SELECT state FROM folder_moves").fetchone()[0]
 
     def record(self) -> str:
         """Two recorded group runs: one saved in the default place, under the
@@ -198,7 +203,7 @@ def test_a_recording_saved_in_the_session_folder_moves_with_it(
 
 
 def stored_in(archive: Archive, table: str, column: str) -> list[str]:
-    values = [v for (v,) in archive.db.conn.execute(f"SELECT {column} FROM {table}") if v]
+    values = [v for (v,) in statements(archive.db).execute(f"SELECT {column} FROM {table}") if v]
     if column == "recording_json":
         return [run["path"] for v in values for run in json.loads(v)["runs"]]
     return values
@@ -210,12 +215,11 @@ def test_every_path_column_is_rebased(archive: Archive, volume: str) -> None:
     relocate none is left there."""
     archive.record()
     recorded = archive.old / "2O-Bdisc" / SESSION / "behavior.json" / f"remy1_{SESSION}_090001.json"
-    archive.db.conn.execute(
+    statements(archive.db).execute(
         "INSERT INTO strobe_scan_cache (file_path, file_mtime_ns, file_size, codes_json)"
         " VALUES (?, 1, 1, '[101]')",
         (str(recorded),),
     )
-    archive.db.conn.commit()
     for table, column in DATA_PATHS:
         assert any(
             relative_below(p, archive.old) is not None for p in stored_in(archive, table, column)
@@ -235,8 +239,8 @@ def test_every_column_that_could_hold_a_path_is_classified(db: Database) -> None
     or in `OTHER_PATHS` with the reason it doesn't."""
     columns = {
         (table, row[1])
-        for (table,) in db.conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-        for row in db.conn.execute(f"PRAGMA table_info({table})")
+        for (table,) in statements(db).execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        for row in statements(db).execute(f"PRAGMA table_info({table})")
     }
     looks_like_a_path = {
         (t, c)
@@ -272,7 +276,7 @@ def test_a_destination_inside_the_folder_is_refused(archive: Archive) -> None:
 
 def test_a_failed_commit_puts_the_files_back(archive: Archive, volume: str) -> None:
     """The commit's last write is refused, after every path in it was rewritten."""
-    archive.db.conn.execute(
+    statements(archive.db).execute(
         "CREATE TEMP TRIGGER refuse_commit BEFORE UPDATE OF data_folder ON cohorts"
         " BEGIN SELECT RAISE(ABORT, 'disk full'); END"
     )
@@ -392,7 +396,7 @@ def test_an_open_session_refuses_the_move(archive: Archive, volume: str) -> None
 
     assert archive.stored_paths() == before
     assert archive.all_under(archive.old)
-    assert archive.db.conn.execute("SELECT count(*) FROM folder_moves").fetchone()[0] == 0
+    assert statements(archive.db).execute("SELECT count(*) FROM folder_moves").fetchone()[0] == 0
 
 
 def test_a_session_recorded_during_the_copy_abandons_the_move(
@@ -452,7 +456,7 @@ async def test_a_session_cannot_be_set_up_while_the_folder_moves(
     created = await sidecar.call(
         "cohorts.create", name="Batch A", dataFolder=str(old),
         groups=[{"id": "g1", "name": "Morning", "order": 0}],
-        animals=[{"name": "remy1", "groupId": "g1", "boxNumber": 1}],
+        animals=[animal("remy1", "g1", box=1)],
     )
     cohort_id = created["cohort"]["id"]
     prefix_id = (await sidecar.call("prefixes.create", name="2O-Bdisc"))["prefix"]["id"]
@@ -485,12 +489,11 @@ async def test_a_session_cannot_be_set_up_while_the_folder_moves(
 
 
 def journal(archive: Archive, state: str) -> None:
-    archive.db.conn.execute(
+    statements(archive.db).execute(
         "INSERT INTO folder_moves (id, cohort_id, source, target, state, created_at, updated_at)"
         " VALUES ('j', ?, ?, ?, ?, 'now', 'now')",
         (archive.cohort.id, str(archive.old), str(archive.new), state),
     )
-    archive.db.conn.commit()
 
 
 def test_a_crash_after_the_rename_is_finished_at_the_next_start(archive: Archive) -> None:
@@ -557,6 +560,175 @@ def test_a_crash_after_the_commit_finishes_deleting_the_originals(
     relocate.resume(archive.db)
 
     assert not archive.old.exists()
+    assert archive.journal() == "done"
+
+
+def commit_then_cut(archive: Archive, other_volume, power_cut) -> None:
+    """A relocate onto another volume that committed, then lost the power
+    at the first original it deleted."""
+    other_volume(archive.new.parent)
+    power_cut("unlink", archive.old)
+    with pytest.raises(SystemExit):
+        relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
+
+
+def test_a_resume_that_cannot_reach_the_originals_leaves_the_journal_to_retry(
+    archive: Archive, other_volume, power_cut, unreachable_volume,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B18: with the old folder unreachable at start-up, the resume deleted
+    nothing and still marked the journal `done`, so the originals stayed
+    behind with nothing left to finish them. It stays `committed` instead,
+    and the next start with the folder back deletes them."""
+    commit_then_cut(archive, other_volume, power_cut)
+    unreachable_volume(archive.old)
+
+    relocate.resume(archive.db)
+    assert archive.journal() == "committed"
+
+    monkeypatch.undo()  # the share answers again (and every other fake goes)
+    assert any(p.is_file() for p in archive.old.rglob("*")), "nothing was deleted"
+    assert archive.all_under(archive.new)
+
+    relocate.resume(archive.db)
+
+    assert not archive.old.exists()
+    assert archive.journal() == "done"
+
+
+def test_originals_left_to_a_later_start_do_not_hold_up_a_session(
+    archive: Archive, other_volume, power_cut, unreachable_volume
+) -> None:
+    """Once committed, the cohort's folder is the new one, and a session set
+    up there is never in the way of deleting the old one. The old drive may
+    not come back for weeks; the cohort must not wait for it."""
+    commit_then_cut(archive, other_volume, power_cut)
+    unreachable_volume(archive.old)
+    relocate.resume(archive.db)
+    assert archive.journal() == "committed"
+
+    assert not relocate.moving(archive.db, archive.cohort.id)
+
+
+def test_a_relocate_that_loses_the_old_folder_after_its_copy_leaves_the_journal_to_retry(
+    archive: Archive, other_volume, unreachable_volume, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B18 on the live path: the share drops between the verified copy and
+    the deletes. The records follow the copy, but nothing could be deleted,
+    so the journal stays `committed` for the next start rather than `done`."""
+    other_volume(archive.new.parent)
+    copy_tree = relocate._copy_tree
+
+    def copy_then_drop(source: Path, target: Path):  # noqa: ANN202
+        copies = copy_tree(source, target)
+        unreachable_volume(archive.old)  # the share stops answering here
+        return copies
+
+    monkeypatch.setattr(relocate, "_copy_tree", copy_then_drop)
+
+    relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
+
+    assert archive.journal() == "committed"
+    assert archive.cohorts.get(archive.cohort.id).data_folder == str(archive.new)
+    monkeypatch.undo()  # the share answers again (and every other fake goes)
+    assert any(p.is_file() for p in archive.old.rglob("*")), "nothing was deleted"
+
+    relocate.resume(archive.db)
+
+    assert not archive.old.exists()
+    assert archive.journal() == "done"
+
+
+def test_a_relocate_still_deleting_holds_up_a_session(
+    archive: Archive, other_volume, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """While this process deletes the originals, a session set up from the
+    cohort as read just before the commit would make its folder at the old
+    place, under what is being emptied, and `rmdir` could take it."""
+    other_volume(archive.new.parent)
+    delete_sources = relocate._delete_sources
+    seen: list[tuple[str, bool]] = []
+
+    def delete_and_look(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        seen.append((archive.journal(), relocate.moving(archive.db, archive.cohort.id)))
+        return delete_sources(*args, **kwargs)
+
+    monkeypatch.setattr(relocate, "_delete_sources", delete_and_look)
+
+    relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
+
+    assert seen == [("committed", True)]
+    assert not relocate.moving(archive.db, archive.cohort.id)
+
+
+def test_originals_a_previous_run_left_in_reach_do_not_hold_up_a_session(
+    archive: Archive, other_volume, power_cut
+) -> None:
+    """A journal an earlier process left `committed`, with its old folder
+    back, is finished only by the next start's `resume`. Its commit came
+    before this process read anything, so no session here can hold a stale
+    folder; counting it would refuse the cohort until a restart."""
+    commit_then_cut(archive, other_volume, power_cut)
+    assert archive.journal() == "committed"
+
+    assert not relocate.moving(archive.db, archive.cohort.id)
+
+
+def test_a_delete_that_raises_does_not_leave_the_cohort_held_up(
+    archive: Archive, other_volume, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    other_volume(archive.new.parent)
+
+    def fail(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        raise OSError("the delete failed")
+
+    monkeypatch.setattr(relocate, "_delete_sources", fail)
+
+    with pytest.raises(OSError, match="the delete failed"):
+        relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
+
+    assert archive.journal() == "committed"
+    assert not relocate.moving(archive.db, archive.cohort.id)
+
+
+def test_a_missing_path_under_a_folder_that_errors_is_out_of_reach(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Absence is read as deletion only while a folder above it answers. One
+    that errors says nothing either way, as the prune's
+    `_storage_is_reachable` reads it: here the path itself reports not-found,
+    but the share holding it fails, so its absence proves nothing."""
+    share = tmp_path / "share"
+    share.mkdir()
+    gone = share / "Batch A" / "behavior.json"
+    assert not relocate.out_of_reach(gone), "a missing path below a readable folder is gone"
+
+    real = os.stat
+
+    def stat(path, *args, **kwargs):  # noqa: ANN001, ANN202
+        if Path(path) == share:
+            raise OSError(errno.EIO, os.strerror(errno.EIO), str(path))
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "stat", stat)
+
+    assert relocate.out_of_reach(gone)
+
+
+def test_a_resume_after_the_originals_are_all_gone_is_done(
+    archive: Archive, other_volume, power_cut
+) -> None:
+    """The old folder absent with its parent readable is a clean-up that
+    finished before the crash, not an unreachable one: nothing is left to
+    retry."""
+    other_volume(archive.new.parent)
+    power_cut("unlink", archive.old)
+    with pytest.raises(SystemExit):
+        relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
+    shutil.rmtree(archive.old)  # the rest of the clean-up, before the power went
+
+    relocate.resume(archive.db)
+
     assert archive.journal() == "done"
 
 

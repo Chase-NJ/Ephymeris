@@ -2,7 +2,8 @@
 
 One connection guarded by a lock rather than a pool: the write volume here is a
 handful of statements per user action, and a single serialized connection is far
-easier to reason about than concurrent writers. Callers run operations through
+easier to reason about than concurrent writers. It is reached only through units
+of work, `Database.write` and `Database.read` (`DATA.md#transactions`). Callers run operations through
 `asyncio.to_thread` so the event loop — which also owns six serial ports — never
 blocks on disk.
 
@@ -26,8 +27,9 @@ import logging
 import os
 import sqlite3
 import threading
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable, Iterable, Iterator
 
 log = logging.getLogger(__name__)
 
@@ -284,7 +286,7 @@ CREATE TABLE IF NOT EXISTS strobe_scan_cache (
 -- A person's word on one run, overriding the false-start rule
 -- (DATA.md#false-starts): 1 = set it aside, 0 = count it whatever the rule
 -- says. No row means the rule decides. Keyed by run id, which for an adopted
--- run is the identity-keyed synthetic id, so the decision survives a rescan.
+-- run is the id its cohort holds it under, so the decision survives a rescan.
 -- No FK, like run_metrics_cache: an adopted run has no run record.
 CREATE TABLE IF NOT EXISTS run_flags (
     run_id      TEXT PRIMARY KEY,
@@ -296,11 +298,12 @@ CREATE TABLE IF NOT EXISTS run_flags (
 -- session_animal_runs row points at, matched to an animal by the document's
 -- `rat` name. Deliberately NOT a sessions or session_animal_runs row: a
 -- fabricated session row would corrupt session-number suggestion and the
--- same-day reuse warning. The id is deterministic from the file path, so
--- re-running the rescan is idempotent. No foreign key on animal_id, same as
--- session_animal_runs — the roster is deleted and re-inserted wholesale on
--- every edit, and adoption storing the *id* is what makes an adopted run
--- survive the animal being renamed afterward.
+-- same-day reuse warning. The id is minted from the cohort and the run
+-- identity and kept once stored, so re-running the rescan is idempotent.
+-- No foreign key on animal_id, same as session_animal_runs — the roster is
+-- deleted and re-inserted wholesale on every edit, and adoption storing the
+-- *id* is what makes an adopted run survive the animal being renamed
+-- afterward.
 CREATE TABLE IF NOT EXISTS adopted_runs (
     id             TEXT PRIMARY KEY,
     cohort_id      TEXT NOT NULL REFERENCES cohorts(id) ON DELETE CASCADE,
@@ -650,25 +653,6 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
 }
 
 
-class _TrackedConnection(sqlite3.Connection):
-    """A connection that reports every successful commit.
-
-    Backup triggering hangs off this rather than off a call in each repository
-    method (`DATA.md#the-database-copy`). Two reasons: there is no write path that can
-    forget to announce itself, and the trigger is genuinely "the database
-    changed" rather than the narrower "a cohort changed" — `session_animal_runs`
-    is written at finalization during an unattended overnight run, and is not a
-    cohort edit by any reading.
-    """
-
-    on_commit: Callable[[], None] | None = None
-
-    def commit(self) -> None:
-        super().commit()
-        if self.on_commit is not None:
-            self.on_commit()
-
-
 def _existing_version(conn: sqlite3.Connection) -> int | None:
     """The version of the database already in this file, or `None` if fresh.
 
@@ -710,18 +694,188 @@ def _migrate(conn: sqlite3.Connection, found: int) -> None:
             MIGRATIONS[target](conn)
 
 
+class NestedWrite(RuntimeError):
+    """A unit of work was opened inside another on the same thread, or a unit
+    was joined, or used, other than on its thread while it is open
+    (`DATA.md#transactions`). Pass the open unit (`tx=`) to share it."""
+
+
+class WriteInProgress(RuntimeError):
+    """A write is open on the connection where none may be: a snapshot taken
+    inside a unit of work, or a write begun outside any unit. Refused rather
+    than waited on forever or adopted (`DATA.md#the-database-copy`,
+    `DATA.md#transactions`)."""
+
+
+class TransactionAborted(RuntimeError):
+    """SQLite rolled this unit's transaction back itself -- a full disk, an
+    I/O error, an interrupt -- so nothing more runs in it: a statement after
+    that would commit on its own, half a unit. The unit raises this and
+    commits nothing (`DATA.md#transactions`)."""
+
+
+class Query:
+    """Statements under the database lock. No commit and no rollback: the
+    unit of work that opened it decides those."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn: sqlite3.Connection | None = conn
+
+    def execute(self, sql: str, params: Any = ()) -> sqlite3.Cursor:
+        return self._open().execute(sql, params)
+
+    def executemany(self, sql: str, rows: Iterable[Any]) -> sqlite3.Cursor:
+        return self._open().executemany(sql, rows)
+
+    def _open(self) -> sqlite3.Connection:
+        if self._conn is None:
+            raise NestedWrite("this unit of work has already ended")
+        return self._conn
+
+    def _close(self) -> None:
+        self._conn = None
+
+
+class Tx(Query):
+    """One unit of work (`Database.write`)."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        super().__init__(conn)
+        self._thread = threading.get_ident()
+        self._after: list[Callable[[], None]] = []
+
+    def on_commit(self, callback: Callable[[], None]) -> None:
+        """Run `callback` once this unit has committed, after the lock is
+        released, so it may use the database. Dropped if the unit rolls back."""
+        self._open()
+        self._after.append(callback)
+
+    def _open(self) -> sqlite3.Connection:
+        conn = super()._open()
+        if not conn.in_transaction:
+            raise TransactionAborted("SQLite rolled this unit of work back")
+        return conn
+
+
+def _undo(conn: sqlite3.Connection) -> None:
+    """Roll back one unit of work. Never raises over the error that brought
+    it here; SQLite may already have rolled the transaction back itself."""
+    if conn.in_transaction:
+        try:
+            conn.execute("ROLLBACK")
+        except sqlite3.Error:  # pragma: no cover - nothing left to try
+            log.exception("couldn't roll back a unit of work")
+
+
 class Database:
+    """The one connection, its lock, and the units of work on it
+    (`DATA.md#transactions`)."""
+
     def __init__(self, path: Path) -> None:
         self.path = path
         self._lock = threading.Lock()
         self._conn: sqlite3.Connection | None = None
         self._on_commit: Callable[[], None] | None = None
+        #: The open unit of work, and so the thread holding the lock for it.
+        self._tx: Tx | None = None
 
     def on_commit(self, callback: Callable[[], None] | None) -> None:
-        """Register a post-commit hook (the backup manager's dirty mark)."""
+        """Register a post-commit hook (the backup manager's dirty mark).
+        When it fires: `DATA.md#transactions`."""
         self._on_commit = callback
-        if self._conn is not None:
-            self._conn.on_commit = callback  # type: ignore[attr-defined]
+
+    # --- the unit of work (DATA.md#transactions) ---------------------------
+
+    @contextmanager
+    def write(self, tx: Tx | None = None) -> Iterator[Tx]:
+        """A unit of work: the lock, a transaction, `COMMIT` when the block
+        ends and `ROLLBACK` if it raises. Only the opener commits.
+
+        Pass an open unit as `tx` to join it instead: the block runs inside
+        that unit and commits nothing. A unit is joined only on the thread
+        that opened it, and opening a second one there raises `NestedWrite`
+        rather than deadlocking on the lock or committing early.
+        """
+        if tx is not None:
+            if tx is not self._tx or tx._thread != threading.get_ident():
+                raise NestedWrite("only this thread's open unit of work can be joined")
+            yield tx
+            return
+        if self._tx is not None and self._tx._thread == threading.get_ident():
+            raise NestedWrite("a unit of work is already open on this thread; pass it as tx=")
+
+        follow_ups: list[Callable[[], None]] = []
+        with self._lock:
+            conn = self._connected()
+            if conn.in_transaction:
+                # Only a unit begins a transaction, and every unit ends its
+                # own before the lock is free; one open here is a bug, and its
+                # rows are not this unit's to commit or roll back.
+                raise WriteInProgress("a write is open outside any unit of work")
+            conn.execute("BEGIN IMMEDIATE")
+            before = conn.total_changes
+            unit = Tx(conn)
+            self._tx = unit
+            try:
+                try:
+                    yield unit
+                finally:
+                    self._tx = None
+                    unit._close()
+                changed = conn.total_changes != before
+                if not conn.in_transaction:
+                    raise TransactionAborted("SQLite rolled this unit of work back")
+                conn.execute("COMMIT")
+            except BaseException:
+                _undo(conn)
+                raise
+            if changed and self._on_commit is not None:
+                try:
+                    self._on_commit()
+                except Exception:  # noqa: BLE001 - committed regardless
+                    log.exception("the database's commit hook failed")
+            follow_ups = unit._after
+        for callback in follow_ups:
+            try:
+                callback()
+            except Exception:  # noqa: BLE001 - the unit is committed regardless
+                log.exception("a follow-up to a committed unit of work failed")
+
+    @contextmanager
+    def read(self) -> Iterator[Query]:
+        """Statements under the lock, for reading. Inside this thread's own
+        unit of work, that unit -- so a read sees the unit's own rows.
+
+        Outside a unit the connection is `query_only` for the block, so a
+        read cannot write; one that begins a transaction is rolled back and
+        refused, so the lock is never free with a transaction open.
+        """
+        if self._tx is not None and self._tx._thread == threading.get_ident():
+            yield self._tx
+            return
+        with self._lock:
+            conn = self._connected()
+            # Open already is a bug outside this read (the snapshot refuses it);
+            # not this read's to roll back.
+            already_open = conn.in_transaction
+            conn.execute("PRAGMA query_only = ON")
+            query = Query(conn)
+            try:
+                yield query
+            finally:
+                query._close()
+                left_open = conn.in_transaction and not already_open
+                if left_open:
+                    _undo(conn)
+                conn.execute("PRAGMA query_only = OFF")
+            if left_open:
+                raise WriteInProgress("a read began a transaction")
+
+    @property
+    def in_transaction(self) -> bool:
+        """Whether a transaction is open on the connection: only ever inside
+        a unit of work (`DATA.md#transactions`)."""
+        return self._connected().in_transaction
 
     def connect(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -729,9 +883,7 @@ class Database:
             self.path,
             # Safe because every access goes through `self._lock`.
             check_same_thread=False,
-            factory=_TrackedConnection,
         )
-        conn.on_commit = self._on_commit
         conn.row_factory = sqlite3.Row
         # Not on by default in SQLite; without it the ON DELETE CASCADE above
         # is silently inert and deleting a cohort would orphan its animals.
@@ -748,12 +900,17 @@ class Database:
         # `CREATE INDEX` cannot name a column that doesn't exist yet.
         conn.executescript(INDEXES)
 
-        # One commit for the whole of startup. Each `commit()` marks the
-        # database dirty for backup (`DATA.md#the-database-copy`), so a migration
-        # committing per step would trigger repeated whole-file copies to a
-        # possibly-networked target before the app has even finished starting.
+        # One commit for the whole of startup, announced once like a unit of
+        # work's (`DATA.md#the-database-copy`): a migration committing per step
+        # would trigger repeated whole-file copies to a possibly-networked
+        # target before the app has even finished starting.
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         conn.commit()
+        if self._on_commit is not None:
+            self._on_commit()
+        # From here the only transactions are the ones `write` begins
+        # (`DATA.md#transactions`): no statement opens one implicitly.
+        conn.isolation_level = None
         self._conn = conn
         log.info("cohort database ready at %s (schema v%d)", self.path, SCHEMA_VERSION)
 
@@ -774,14 +931,21 @@ class Database:
         so pointing this straight at a network share would let that share's
         latency block every cohort read in the app; the backup manager
         snapshots locally and does the slow copy afterwards with nothing held.
+
+        Waits for any unit of work on another thread to end. Raises
+        `WriteInProgress`, copying nothing, inside this thread's own unit, or
+        if a bug left a write open (`DATA.md#the-database-copy`).
         """
         destination.parent.mkdir(parents=True, exist_ok=True)
-        target = sqlite3.connect(destination)
-        try:
-            with self._lock:
-                self.conn.backup(target)
-        finally:
-            target.close()
+        with self.read():
+            conn = self._connected()
+            if conn.in_transaction:
+                raise WriteInProgress("a write is still open; snapshot later")
+            target = sqlite3.connect(destination)
+            try:
+                conn.backup(target)
+            finally:
+                target.close()
         # Trim the WAL/journal companions a fresh connect may have left behind,
         # so what gets mirrored out is a single self-contained file.
         for suffix in ("-wal", "-shm"):
@@ -791,12 +955,7 @@ class Database:
             except OSError:
                 pass
 
-    @property
-    def lock(self) -> threading.Lock:
-        return self._lock
-
-    @property
-    def conn(self) -> sqlite3.Connection:
+    def _connected(self) -> sqlite3.Connection:
         if self._conn is None:
             raise RuntimeError("database is not connected")
         return self._conn

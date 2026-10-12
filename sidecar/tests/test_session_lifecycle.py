@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from ephymeris_sidecar.analytics.repository import AnalyticsRepository
 from ephymeris_sidecar.cohorts.db import Database
 from ephymeris_sidecar.cohorts.repository import CohortRepository
 from ephymeris_sidecar.intan.service import IntanNotReady
@@ -27,11 +28,14 @@ from ephymeris_sidecar.sessions.lifecycle import (
     SessionLifecycle,
     SessionRefused,
     SketchNotCarried,
+    StopRefused,
 )
-from ephymeris_sidecar.sessions.models import GroupRun
+from ephymeris_sidecar.sessions.models import GroupRun, PrefixNameTaken
 from ephymeris_sidecar.sessions.repository import SessionRepository
 from ephymeris_sidecar.sessions.runner import ActiveRun, BoxConfig
+from ephymeris_sidecar.tasks.profile import parse_profile, profile_hash
 from tests.live_sidecar import LiveSidecar, Refused, create_cohort, hold_the_rig
+from tests.scripted_board import until
 
 TODAY = date.today().isoformat()
 
@@ -45,6 +49,10 @@ class FakeRunner:
         self.session_id = ""
         self.configs: dict[int, BoxConfig] = {}
         self.running: set[int] = set()
+        #: Boxes whose port will not take `STOP` (left the session, write failed).
+        self.stop_refused: set[int] = set()
+        #: The keywords `end_all` was last called with.
+        self.ended_with: dict[str, Any] = {}
 
     def configure(self, _folder, _label, group_id, box_configs, duration_s=None, *, session_id):  # noqa: ANN001
         self.group_id = group_id
@@ -60,17 +68,23 @@ class FakeRunner:
     def running_boxes(self) -> list[int]:
         return sorted(self.running)
 
+    def writing_boxes(self) -> list[int]:
+        """The fake's runs finish the moment they end, so writing is running."""
+        return sorted(self.running)
+
     def start_box(self, box: int) -> None:
         if box not in self.configs:
             raise KeyError(box)
         self.log.append(f"start {box}")
         self.running.add(box)
 
-    def stop_box(self, box: int) -> None:
+    def stop_box(self, box: int) -> bool:
         self.log.append(f"stop {box}")
+        return box in self.running and box not in self.stop_refused
 
-    async def end_all(self, *_args, **_kwargs) -> None:  # noqa: ANN002, ANN003
+    async def end_all(self, *_args, **kwargs) -> None:  # noqa: ANN002, ANN003
         self.log.append("end boxes")
+        self.ended_with = kwargs
         self.running.clear()
 
     def clear(self) -> None:
@@ -103,18 +117,29 @@ class FakeIntan:
 
     def __init__(self, log: list[str]) -> None:
         self.log = log
-        #: The (session, group) the Record step set a recording up for.
-        self.set_up_for: tuple[str, str] | None = None
+        #: The (session, group, mapping confirmation) the Record step set a
+        #: recording up for.
+        self.set_up_for: tuple[str, str, int] | None = None
         self.is_recording = False
         self.force_stop = asyncio.Event()
         self.gate: asyncio.Event | None = None
 
-    def set_up(self, session_id: str, group_id: str) -> None:
+    def set_up(self, session_id: str, group_id: str, confirmation: int) -> None:
         """What the Record step's `intan.configure` leaves behind."""
-        self.set_up_for = (session_id, group_id)
+        self.set_up_for = (session_id, group_id, confirmation)
 
-    def configured_for(self, session_id: str, group_id: str) -> bool:
-        return self.set_up_for == (session_id, group_id)
+    def refuse_unless_ready(self, session_id: str, group_id: str, confirmation: int) -> None:
+        ours = self.set_up_for is not None and self.set_up_for[:2] == (session_id, group_id)
+        if ours and self.is_recording:
+            return
+        if self.set_up_for != (session_id, group_id, confirmation):
+            raise IntanNotReady("Finish the Recording step first.")
+
+    def run_open_for(self, session_id: str) -> bool:
+        return self.is_recording and self.set_up_for is not None and self.set_up_for[0] == session_id
+
+    def may_still_record_for(self, session_id: str) -> bool:
+        return self.run_open_for(session_id)
 
     async def start_recording(self) -> None:
         self.log.append("rhx start")
@@ -122,9 +147,13 @@ class FakeIntan:
             await self.gate.wait()
         self.is_recording = True
 
-    async def stop_recording(self) -> dict[str, Any]:
+    async def stop_recording(self) -> dict[str, Any] | None:
+        if not self.is_recording:
+            self.release()
+            return None
         self.log.append("rhx stop")
         self.is_recording = False
+        self.set_up_for = None
         return {"file": "run1.rhd"}
 
     def release(self) -> None:
@@ -182,14 +211,31 @@ class FakeFlashes:
 class Rig:
     """One lifecycle and everything it was built from."""
 
-    def __init__(self, db: Database, root: Path, *, intan: bool = False) -> None:
+    def __init__(
+        self, db: Database, root: Path, *, intan: Any = False, ports=None, profiles=None  # noqa: ANN001
+    ) -> None:
+        """`ports` puts the real `SessionRunner` on those ports in place of
+        `FakeRunner` (`tests/scripted_board.py`). `intan` is True for
+        `FakeIntan`, or the recording service itself. `profiles` is where a
+        finishing run's task profile is snapshotted."""
         self.log: list[str] = []
         self.events: list[dict] = []
         self.root = root
         self.sessions = SessionRepository(db)
         self.cohorts = CohortRepository(db)
-        self.runner = FakeRunner(self.log)
-        self.intan = FakeIntan(self.log) if intan else None
+        if ports is None:
+            self.runner = FakeRunner(self.log)
+        else:
+            from ephymeris_sidecar.sessions.runner import SessionRunner
+
+            async def runner_broadcast(message: dict) -> None:
+                self.events.append(message)
+
+            self.runner = SessionRunner(
+                loop=asyncio.get_running_loop(), ports=ports, broadcast=runner_broadcast,
+                on_animal_ended=lambda run, reason: self.lifecycle.animal_ended(run, reason),
+            )
+        self.intan = FakeIntan(self.log) if intan is True else (intan or None)
         self.utility = FakeUtility(self.log)
         self.flashes = FakeFlashes()
         #: What each box's board carries -- `PortManager.carried`'s record.
@@ -201,12 +247,13 @@ class Rig:
         #: Whether `confirm` also does the Record step for a recording session.
         self.record_step = True
         self.lifecycle = SessionLifecycle(
+            db=db,
             sessions=self.sessions,
             cohorts=self.cohorts,
             runner=self.runner,
             intan=self.intan,
             utility=self.utility,
-            profiles=None,
+            profiles=profiles,
             logbook=None,
             rig_reading=nullcontext,  # no rig definition write in these tests
             broadcast=broadcast,
@@ -255,7 +302,7 @@ class Rig:
         entries = self.mapping(session)
         await self.lifecycle.confirm_mapping(session.id, group_id, entries)
         if self.intan is not None and session.recording is not None and self.record_step:
-            self.intan.set_up(session.id, group_id)
+            self.intan.set_up(session.id, group_id, self.lifecycle.confirmations)
         if flash:
             for entry in entries:
                 self.flash(entry.box, Path(entry.sketch_path))
@@ -285,6 +332,22 @@ def recording_rig(db: Database, tmp_path: Path) -> Rig:
     return Rig(db, tmp_path, intan=True)
 
 
+@pytest.fixture
+async def bench():  # noqa: ANN201
+    """Boxes 1 and 2 on a real `PortManager`, boards plugged in."""
+    from tests.scripted_board import Bench
+
+    made = await Bench(asyncio.get_running_loop(), (1, 2)).plug_in()
+    yield made
+    made.shutdown()
+
+
+@pytest.fixture
+async def bench_rig(db: Database, tmp_path: Path, bench) -> Rig:  # noqa: ANN001
+    """The lifecycle over the real runner over the real ports."""
+    return Rig(db, tmp_path, ports=bench.ports)
+
+
 # --- confirm, hold, and the three questions ---------------------------------
 
 
@@ -299,6 +362,36 @@ async def test_confirming_a_mapping_holds_the_session_and_the_rig(rig) -> None:
     assert rig.log == ["hold"]
     assert rig.runner.session_id == session.id
     assert rig.events[-1]["evt"] == "session.lifecycle"
+
+
+async def test_confirming_the_same_mapping_again_is_a_new_confirmation_on_the_wire(rig) -> None:
+    """Two identical re-confirms are told apart by the payload itself.
+
+    Everything else in it can repeat byte for byte: the runner's snapshot of
+    a just-confirmed mapping is the same each time, and a per-box start of a
+    later group announces nothing. A client clears its live run on a
+    confirmation it has not seen, so the payload must say there was one.
+    """
+    session = rig.session()
+    await rig.confirm(session)
+    first = rig.events[-1]["data"]
+    await rig.confirm(session)
+    second = rig.events[-1]["data"]
+
+    assert first != second
+    assert second["confirmations"] == first["confirmations"] + 1
+    # The answer a reconnecting or reloaded client asks for carries it too.
+    assert (await rig.lifecycle.active())["confirmations"] == second["confirmations"]
+
+
+async def test_a_refused_mapping_is_not_a_confirmation(rig) -> None:
+    session = rig.session()
+    await rig.confirm(session)
+    before = (await rig.lifecycle.active())["confirmations"]
+    entry = MappingEntry(box=1, animal_id="nobody", sketch_path="/sk", config={})
+    with pytest.raises(SessionRefused):
+        await rig.lifecycle.confirm_mapping(session.id, "g-a", [entry])
+    assert (await rig.lifecycle.active())["confirmations"] == before
 
 
 async def test_status_reports_the_rig_only_for_the_session_holding_it(rig) -> None:
@@ -635,6 +728,112 @@ async def test_a_run_that_lands_after_the_session_let_go_is_still_recorded(rig) 
     assert rig.events[-1]["evt"] == "session.animalEnded"
 
 
+async def test_a_run_never_names_a_profile_another_writers_rollback_threw_away(
+    db: Database, tmp_path: Path
+) -> None:
+    """B14: a finishing run's profile snapshot and its run record land
+    together, whatever another writer does meanwhile
+    (`DATA.md#which-profile-decodes-a-run`).
+
+    The other writer here is the operator adding a prefix whose name is
+    taken, which rolls back. It runs at the moment the profile is being
+    snapshotted: the sqlite trace hook sees the `task_profiles` insert and
+    queues the rival on the loop, ahead of the finalization's next step. On
+    one shared connection, a rollback that lands between the snapshot and the
+    run record throws the snapshot away, and the run is recorded naming a
+    profile hash with no row -- decoded years later by whatever `task.json`
+    is current, which is what the snapshot exists to prevent.
+    """
+    profiles = AnalyticsRepository(db)
+    rig = Rig(db, tmp_path, profiles=profiles)
+    session = rig.session()
+    rig.sessions.create_prefix("Taken")
+    profile = parse_profile({"taskName": "Snapshot me"})
+    loop = asyncio.get_running_loop()
+    refused: list[str] = []
+
+    def rival() -> None:
+        try:
+            rig.sessions.create_prefix("Taken")
+        except PrefixNameTaken:
+            refused.append("Taken")
+
+    fired = False
+
+    def on_statement(sql: str) -> None:
+        nonlocal fired
+        if not fired and "INSERT" in sql.upper() and "task_profiles" in sql:
+            fired = True
+            loop.call_soon_threadsafe(rival)
+
+    config = BoxConfig(
+        box=1,
+        animal_id="C1-1",
+        animal_name="remy1",
+        sketch_path="/sk",
+        sketch_name="sk",
+        start_command="START",
+        config_metadata={},
+        profile=profile,
+    )
+    run = ActiveRun(
+        box=1,
+        config=config,
+        run_id="r-1",
+        started_at="2026-10-10T10:00:00+00:00",
+        address="/dev/fake1",
+        session_id_label="P1_12",
+        session_id=session.id,
+    )
+    db._conn.set_trace_callback(on_statement)
+    try:
+        await rig.lifecycle.animal_ended(run, "end")
+    finally:
+        db._conn.set_trace_callback(None)
+
+    assert refused == ["Taken"], "the rival write ran, and was refused"
+    [recorded] = rig.sessions.runs_for(session.id)
+    assert recorded.profile_hash == profile_hash(profile)
+    assert profiles.load_profile(recorded.profile_hash) is not None, (
+        "the run names a profile snapshot that another writer's rollback discarded"
+    )
+
+
+async def test_a_run_whose_profile_snapshot_aborts_the_unit_is_still_recorded_and_announced(
+    db: Database, tmp_path: Path
+) -> None:
+    """A profile snapshot SQLite answers by rolling the whole unit back (a
+    full disk, an I/O error) must not cost the run: it is recorded without a
+    snapshot, as any snapshot failure is, and the finalization goes on to
+    announce it (`DATA.md#transactions`). A TEMP trigger stands in for the
+    full disk."""
+    rig = Rig(db, tmp_path, profiles=AnalyticsRepository(db))
+    session = rig.session()
+    with db.write() as tx:
+        tx.execute(
+            "CREATE TEMP TRIGGER disk_full BEFORE INSERT ON task_profiles"
+            " BEGIN SELECT RAISE(ROLLBACK, 'disk full'); END"
+        )
+    commits: list[int] = []
+    db.on_commit(lambda: commits.append(1))
+    config = BoxConfig(
+        box=1, animal_id="C1-1", animal_name="remy1", sketch_path="/sk", sketch_name="sk",
+        start_command="START", config_metadata={},
+        profile=parse_profile({"taskName": "Snapshot me"}),
+    )
+    run = ActiveRun(
+        box=1, config=config, run_id="r-1", started_at="2026-10-10T10:00:00+00:00",
+        address="/dev/fake1", session_id_label="P1_12", session_id=session.id,
+    )
+
+    await rig.lifecycle.animal_ended(run, "end")
+
+    [recorded] = rig.sessions.runs_for(session.id)
+    assert recorded.profile_hash is None
+    assert rig.events[-1]["evt"] == "session.animalEnded"
+    assert commits == [1], "the record was announced to the backup"
+
+
 # --- groups on the fly (ARCHITECTURE.md#group-step) ----------------------------
 
 
@@ -687,6 +886,377 @@ async def test_a_per_box_start_records_the_group_run(rig) -> None:
     stored = rig.sessions.get_session(session.id)
     assert stored.status == "running"
     assert [r.group_id for r in stored.group_runs] == ["g-a"]
+
+
+# --- a start that fails part-way, on the real runner and ports ------------------
+
+
+async def test_a_box_start_the_port_refuses_records_nothing_and_ends(bench_rig, bench) -> None:  # noqa: ANN001
+    """B1: box 1's port is in ERROR from an earlier start whose board never
+    reported READY. Its board still carries the sketch, so Start reaches the
+    port, and the port refuses. Nothing is recorded, and End still ends."""
+    rig = bench_rig
+    session = rig.session()
+    await rig.confirm(session)
+    bench.ports.handler(1).force_error("board never reported READY")
+
+    with pytest.raises(BoxRefused):
+        await rig.lifecycle.start_box(1)
+
+    stored = rig.sessions.get_session(session.id)
+    assert (stored.status, stored.group_runs) == ("configuring", [])
+    assert rig.runner.running_boxes() == []
+    assert not rig.lifecycle.writing
+
+    ended = await rig.lifecycle.end(session.id)
+    assert ended.status == "completed" and rig.lifecycle.held is None
+
+
+async def test_switch_group_after_a_refused_box_start(bench_rig, bench) -> None:  # noqa: ANN001
+    """B1, with another box already running: Switch Group ends that one and
+    the group, and the rig is free for the next."""
+    rig = bench_rig
+    session = rig.session()
+    await rig.confirm(session)
+    await rig.lifecycle.start_box(2)
+    await bench.run_handshake(2)
+    bench.ports.handler(1).force_error("board never reported READY")
+    with pytest.raises(BoxRefused):
+        await rig.lifecycle.start_box(1)
+
+    await rig.lifecycle.end_group(session.id)
+
+    stored = rig.sessions.get_session(session.id)
+    assert [r.ended_at is not None for r in stored.group_runs] == [True]
+    assert [r.box_number for r in rig.sessions.runs_for(session.id)] == [2]
+    assert rig.runner.configured_boxes() == [] and rig.runner.running_boxes() == []
+
+
+async def test_start_all_failing_part_way_records_the_boxes_it_started(bench_rig, bench) -> None:  # noqa: ANN001
+    """B2: box 1 starts, box 2 is refused. Box 1 is a run, so the group has
+    run: the group run and `running` are recorded before the refusal is
+    raised, End ends box 1, and Abandon is refused by name rather than
+    failing inside the runner."""
+    rig = bench_rig
+    session = rig.session()
+    await rig.confirm(session)
+    bench.ports.handler(2).force_error("board never reported READY")
+
+    with pytest.raises(BoxRefused) as refused:
+        await rig.lifecycle.start_all(session.id)
+    assert refused.value.box == 2
+
+    stored = rig.sessions.get_session(session.id)
+    assert stored.status == "running"
+    assert [(r.group_id, r.ended_at) for r in stored.group_runs] == [("g-a", None)]
+    assert rig.runner.running_boxes() == [1]
+    assert rig.events[-1]["evt"] == "session.lifecycle"
+
+    with pytest.raises(SessionRefused, match="only a configuring session"):
+        await rig.lifecycle.abandon(session.id)
+
+    await bench.run_handshake(1)
+    ended = await rig.lifecycle.end(session.id)
+    assert ended.status == "completed"
+    assert [r.box_number for r in rig.sessions.runs_for(session.id)] == [1]
+    assert rig.runner.running_boxes() == []
+
+
+async def test_start_all_refused_at_its_first_box_can_be_abandoned(bench_rig, bench) -> None:  # noqa: ANN001
+    """B2 at k = 1: nothing started, so nothing ran, and the configuring
+    session can still be abandoned."""
+    rig = bench_rig
+    session = rig.session()
+    await rig.confirm(session)
+    bench.ports.handler(1).force_error("board never reported READY")
+
+    with pytest.raises(BoxRefused):
+        await rig.lifecycle.start_all(session.id)
+
+    assert rig.sessions.get_session(session.id).group_runs == []
+    abandoned = await rig.lifecycle.abandon(session.id)
+    assert abandoned.status == "aborted" and rig.lifecycle.held is None
+
+
+async def test_a_box_writes_until_its_run_is_recorded(  # noqa: ANN001
+    bench_rig, bench, db: Database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A box ending has left the running boxes while its `.json` lands and
+    its record commits. A rescan then would adopt the file its record is
+    about to claim, and a recover would write that same `.json` beside the
+    finalization: both are refused until the run is recorded."""
+    import threading
+
+    from ephymeris_sidecar.analytics import AnalyticsService, CohortArchive
+    from ephymeris_sidecar.analytics.archive import RigInUse
+    from ephymeris_sidecar.sessions import writer as writer_module
+    from tests.test_analytics_service import Changes
+
+    rig = bench_rig
+    finalizing, may_finalize = threading.Event(), threading.Event()
+    recording, may_record = threading.Event(), threading.Event()
+    real_finalize = writer_module.AnimalWriter.finalize
+    real_record = rig.sessions.record_animal_run
+
+    def slow_finalize(self, reason):  # noqa: ANN001, ANN202
+        finalizing.set()
+        may_finalize.wait(timeout=5)
+        return real_finalize(self, reason)
+
+    def slow_record(run, **unit):  # noqa: ANN001, ANN003, ANN202
+        recording.set()
+        may_record.wait(timeout=5)
+        return real_record(run, **unit)
+
+    monkeypatch.setattr(writer_module.AnimalWriter, "finalize", slow_finalize)
+    monkeypatch.setattr(rig.sessions, "record_animal_run", slow_record)
+
+    async def nothing(_message: dict) -> None:
+        return None
+
+    archive = CohortArchive(
+        db=db, cohorts=rig.cohorts, sessions=rig.sessions, rig=rig.lifecycle, on_changed=Changes()
+    )
+    service = AnalyticsService(
+        db=db, cohorts=rig.cohorts, sessions=rig.sessions, broadcast=nothing, archive=archive
+    )
+
+    async def both_refused(cohort_id: str) -> None:
+        with pytest.raises(RigInUse):
+            await service.rescan(cohort_id)
+        with pytest.raises(RigInUse):
+            await archive.recover(cohort_id)
+
+    session = rig.session()
+    await rig.confirm(session)
+    await rig.lifecycle.start_box(1)
+    await bench.run_handshake(1, seed=7)
+    ending = asyncio.create_task(rig.lifecycle.end(session.id))
+
+    await until(finalizing.is_set)
+    assert rig.runner.running_boxes() == []
+    await both_refused(session.cohort_id)
+
+    may_finalize.set()
+    await until(recording.is_set)
+    await both_refused(session.cohort_id)
+
+    may_record.set()
+    await ending
+    await until(lambda: not rig.lifecycle.writing)
+    assert [r.box_number for r in rig.sessions.runs_for(session.id)] == [1]
+    assert (await archive.recover(session.cohort_id))["scanned"] == 0
+
+
+# --- RHX unreachable while a group records (RECORDING.md#when-rhx-goes-away) ---
+
+
+@pytest.fixture
+async def rhx():  # noqa: ANN201
+    """`(fake RHX, the real recording service on it)`, polling every 50 ms."""
+    from ephymeris_sidecar.intan.service import IntanService
+    from tests.fake_rhx import FakeRhx
+    from tests.test_intan_service import settings_for
+
+    fake = await FakeRhx().start()
+
+    async def nothing(_message: dict) -> None:
+        return None
+
+    service = IntanService(
+        loop=asyncio.get_running_loop(), broadcast=nothing,
+        settings=settings_for(fake, {1: 2, 2: 5}), rig_has_sync=lambda: True,
+        pre_roll_s=0.0, post_roll_s=0.0, poll_s=0.05,
+    )
+    service.start()
+    try:
+        yield fake, service
+    finally:
+        await service.stop()
+        await fake.stop()
+
+
+def _two_box_recording(tmp_path: Path) -> dict:
+    from tests.test_intan_service import config
+
+    return config(
+        tmp_path,
+        boxes=[
+            {"box": 1, "port": "A", "firstChannel": 0, "lastChannel": 15},
+            {"box": 2, "port": "A", "firstChannel": 16, "lastChannel": 31},
+        ],
+    )
+
+
+async def _recording_rig(db: Database, tmp_path: Path, rhx, ports=None):  # noqa: ANN001, ANN202
+    """A recording session confirmed and its Record step done, on the real
+    recording service."""
+    fake, service = rhx
+    rig = Rig(db, tmp_path, intan=service, ports=ports)
+    rig.record_step = False
+    session = rig.session(recording=True)
+    await rig.confirm(session)
+    await service.configure(
+        session.id, "g-a", _two_box_recording(tmp_path), "x",
+        confirmation=rig.lifecycle.confirmations,
+    )
+    return rig, session
+
+
+async def _lose_rhx(rhx) -> None:  # noqa: ANN001
+    fake, service = rhx
+    await fake.stop_listening()
+    await until(lambda: service.status_json()["state"] == "error")
+
+
+async def test_an_end_with_rhx_unreachable_still_waits_stops_and_records_the_run(
+    db, tmp_path, rhx  # noqa: ANN001
+) -> None:
+    """B20: the link drops mid-recording and the operator ends the session.
+    The boxes still get the recording's grace period, the stop is still
+    attempted (and said to have failed), and the run is still the session's."""
+    from ephymeris_sidecar.sessions.lifecycle import RECORDING_GRACE_S
+
+    _fake, service = rhx
+    rig, session = await _recording_rig(db, tmp_path, rhx)
+    await rig.lifecycle.start_all(session.id)
+    await _lose_rhx(rhx)
+
+    ended = await asyncio.wait_for(rig.lifecycle.end(session.id), 10.0)
+
+    assert ended.status == "completed"
+    assert rig.runner.ended_with.get("graceful_timeout_s") == RECORDING_GRACE_S
+    runs = rig.sessions.get_session(session.id).recording["runs"]
+    assert [(r["groupId"], bool(r["startedAt"]), bool(r["endedAt"])) for r in runs] == [
+        ("g-a", True, True)
+    ]
+    assert "Stop it from RHX" in service.status_json()["message"]
+
+
+async def test_a_reconnect_stops_the_recording_an_unreachable_end_left_running(
+    db, tmp_path, rhx  # noqa: ANN001
+) -> None:
+    """B20: RHX went on recording after the End that could not reach it. Once
+    it is reachable again the stop owed is sent, and the next group's
+    Record step is not refused with "RHX is already recording"."""
+    fake, service = rhx
+    rig, session = await _recording_rig(db, tmp_path, rhx)
+    await rig.lifecycle.start_all(session.id)
+    await _lose_rhx(rhx)
+    await rig.lifecycle.end_group(session.id)
+    assert fake.params["runmode"] == "Record"
+
+    await fake.listen_again()
+    await until(lambda: fake.params["runmode"] == "Stop")
+    await until(lambda: service.status_json()["state"] == "idle")
+
+    await service.configure(session.id, "g-b", _two_box_recording(tmp_path), "y")
+    assert service.status_json()["state"] == "configured"
+
+
+async def test_an_end_after_rhx_was_stopped_from_rhx_still_records_the_run(
+    db, tmp_path, rhx  # noqa: ANN001
+) -> None:
+    """B20's sibling: Stop pressed in RHX mid-recording. The run happened, and
+    the session says so. RHX is known to be in Stop, so the grace period would
+    keep nothing inside the recording: the boxes end as behavior-only ones do."""
+    fake, service = rhx
+    rig, session = await _recording_rig(db, tmp_path, rhx)
+    await rig.lifecycle.start_all(session.id)
+    fake.params["runmode"] = "Stop"
+    await until(lambda: service.status_json()["state"] == "error")
+
+    await rig.lifecycle.end(session.id)
+
+    assert "graceful_timeout_s" not in rig.runner.ended_with
+    runs = rig.sessions.get_session(session.id).recording["runs"]
+    assert [r["groupId"] for r in runs] == ["g-a"]
+
+
+async def test_an_end_waits_while_rhx_may_still_be_writing_the_run(
+    db, tmp_path, rhx  # noqa: ANN001
+) -> None:
+    """The link comes back but RHX's file stamp can't be read, so the run is
+    not confirmed. RHX is in Record, maybe on this run: unsure keeps the grace
+    period (End now is the escape). Only RHX seen out of Record skips it."""
+    from ephymeris_sidecar.sessions.lifecycle import RECORDING_GRACE_S
+
+    fake, service = rhx
+    rig, session = await _recording_rig(db, tmp_path, rhx)
+    await rig.lifecycle.start_all(session.id)
+    await _lose_rhx(rhx)
+    del fake.params["filename.activefiletimestamp"]
+    await fake.listen_again()
+    await until(lambda: "Lost contact" not in (service.status_json()["message"] or ""))
+
+    await rig.lifecycle.end(session.id)
+
+    assert rig.runner.ended_with.get("graceful_timeout_s") == RECORDING_GRACE_S
+    assert [r["groupId"] for r in rig.sessions.get_session(session.id).recording["runs"]] == ["g-a"]
+
+
+async def test_a_box_start_after_rhx_drops_names_the_lost_link(db, tmp_path, rhx) -> None:  # noqa: ANN001
+    """B16: one box of a recording group is running and RHX's link drops.
+    Starting another box is refused, but for the reason it is: the link, not a
+    Recording step the operator already finished."""
+    rig, session = await _recording_rig(db, tmp_path, rhx)
+    await rig.lifecycle.start_box(1)
+    await _lose_rhx(rhx)
+
+    with pytest.raises(Exception) as refused:
+        await rig.lifecycle.start_box(2)
+
+    mapped = _mapped(refused.value)
+    assert mapped.code == "INTAN_UNAVAILABLE"
+    assert "Lost contact with RHX" in str(mapped)
+    assert "Recording step" not in str(mapped)
+    assert rig.runner.running_boxes() == [1]
+
+
+async def test_abandoning_after_start_all_refused_at_box_1_stops_the_recording(
+    db, tmp_path, rhx, bench  # noqa: ANN001
+) -> None:
+    """P1's B2 at k = 1, on a recording session: RHX started recording before
+    box 1 was refused. Nothing ran, so the session may be abandoned, and
+    abandoning it stops the recording rather than leaving RHX in Record."""
+    fake, service = rhx
+    rig, session = await _recording_rig(db, tmp_path, rhx, ports=bench.ports)
+    bench.ports.handler(1).force_error("board never reported READY")
+    with pytest.raises(BoxRefused):
+        await rig.lifecycle.start_all(session.id)
+    assert fake.params["runmode"] == "Record"
+
+    abandoned = await rig.lifecycle.abandon(session.id)
+
+    assert abandoned.status == "aborted"
+    await until(lambda: fake.params["runmode"] == "Stop")
+    assert service.recording is None
+    runs = rig.sessions.get_session(session.id).recording["runs"]
+    assert [r["groupId"] for r in runs] == ["g-a"]
+
+
+# --- a per-box stop (port.stopSession) ---------------------------------------
+
+
+async def test_a_stop_the_port_could_not_take_is_refused_by_box(rig) -> None:
+    """The STOP did not go out (the port left the session, or the write
+    failed): the operator is told, not answered as if the box were stopping."""
+    session = rig.session()
+    await rig.run_group(session)
+    rig.runner.stop_refused.add(1)
+
+    with pytest.raises(StopRefused) as refused:
+        rig.lifecycle.stop_box(1)
+
+    mapped = _mapped(refused.value)
+    assert (mapped.code, mapped.detail) == ("ILLEGAL_TRANSITION", {"box": 1})
+
+
+async def test_stopping_a_box_that_is_not_running_is_a_no_op(rig) -> None:
+    """A box that already ended -- the board's end strobe raced the click."""
+    session = rig.session()
+    await rig.confirm(session)
+    rig.lifecycle.stop_box(1)
 
 
 # --- resume (DATA.md#continuing-between-groups) -------------------------------
@@ -768,12 +1338,11 @@ async def test_closing_out_an_orphan_leaves_the_live_session_alone(rig) -> None:
 
 
 def _mapped(exc: BaseException):  # noqa: ANN202
-    from ephymeris_sidecar.app import _lifecycle_errors
+    """The reply the server's error table gives `exc`; None is INTERNAL."""
+    from ephymeris_sidecar.server import resolve_error
+    from ephymeris_sidecar.wire_errors import ERRORS
 
-    with pytest.raises(Exception) as raised:
-        with _lifecycle_errors():
-            raise exc
-    return raised.value
+    return resolve_error(ERRORS, exc, {})
 
 
 def _box_refused(box: int, cause: BaseException) -> BoxRefused:
@@ -802,8 +1371,8 @@ def test_each_refusal_reaches_the_wire_with_its_code() -> None:
             assert mapped.detail == data
 
 
-def test_a_box_failure_nobody_names_surfaces_as_itself() -> None:
-    assert isinstance(_mapped(_box_refused(2, ValueError("odd"))), ValueError)
+def test_a_box_failure_nobody_names_surfaces_as_internal() -> None:
+    assert _mapped(_box_refused(2, ValueError("odd"))) is None
 
 
 # --- refusals over the wire -----------------------------------------------------
@@ -841,15 +1410,14 @@ async def test_flashing_for_a_session_that_does_not_hold_the_rig_is_refused(
 # members the lifecycle calls, run against both.
 
 
-def _real_runner(tmp_path: Path):  # noqa: ANN202
-    from tests.test_session_runner import FakePorts
+def _real_runner(ports):  # noqa: ANN001, ANN202
     from ephymeris_sidecar.sessions.runner import SessionRunner
 
     async def nothing(*_args) -> None:  # noqa: ANN002
         return None
 
     return SessionRunner(
-        loop=asyncio.get_running_loop(), ports=FakePorts(), broadcast=nothing, on_animal_ended=nothing,
+        loop=asyncio.get_running_loop(), ports=ports, broadcast=nothing, on_animal_ended=nothing,
     )
 
 
@@ -861,9 +1429,9 @@ def _box(box: int) -> BoxConfig:
 
 
 @pytest.fixture(params=["FakeRunner", "SessionRunner"])
-async def runner(request: pytest.FixtureRequest, tmp_path: Path):  # noqa: ANN201
-    # Built inside the test's loop: the real runner binds to it.
-    made = FakeRunner([]) if request.param == "FakeRunner" else _real_runner(tmp_path)
+async def runner(request: pytest.FixtureRequest, tmp_path: Path, bench):  # noqa: ANN001, ANN201
+    # Built inside the test's loop: the real runner binds to it, on real ports.
+    made = FakeRunner([]) if request.param == "FakeRunner" else _real_runner(bench.ports)
     made.configure(tmp_path, "2O-Bdisc_12", "g-a", [_box(2), _box(1)], session_id="s1")
     return made
 
@@ -887,6 +1455,14 @@ async def test_a_runner_starts_a_box_once(runner) -> None:  # noqa: ANN001
     assert runner.running_boxes() == [1]
 
 
+async def test_a_running_box_is_writing_until_its_run_is_ended(runner) -> None:  # noqa: ANN001
+    assert runner.writing_boxes() == []
+    runner.start_box(1)
+    assert runner.writing_boxes() == [1]
+    await runner.end_all("operator stop")
+    assert runner.writing_boxes() == []
+
+
 async def test_a_runner_will_not_forget_a_mapping_while_a_box_runs(runner) -> None:  # noqa: ANN001
     runner.start_box(1)
     with pytest.raises(RuntimeError):
@@ -904,6 +1480,14 @@ async def test_a_runner_ends_every_box_then_forgets_on_clear(runner) -> None:  #
     assert (runner.group_id, runner.configured_boxes()) == ("", [])
 
 
+async def test_a_runner_says_whether_a_stop_went_out(runner, bench) -> None:  # noqa: ANN001
+    assert runner.stop_box(1) is False  # not running
+    runner.start_box(1)
+    if not isinstance(runner, FakeRunner):
+        await bench.run_handshake(1)
+    assert runner.stop_box(1) is True
+
+
 async def test_a_runner_reports_a_row_per_mapped_box(runner) -> None:  # noqa: ANN001
     """What the lifecycle broadcasts as the running session's boxes."""
     runner.start_box(2)
@@ -918,13 +1502,13 @@ async def test_a_runner_reports_a_row_per_mapped_box(runner) -> None:  # noqa: A
 
 @pytest.fixture(params=["FakeIntan", "IntanService"])
 async def intan(request: pytest.FixtureRequest, tmp_path: Path):  # noqa: ANN201
-    """`(service, set_up)`: `set_up(session, group)` does what the Record step's
-    `intan.configure` does, for the fake or against a fake RHX."""
+    """`(service, set_up)`: `set_up(session, group, confirmation)` does what the
+    Record step's `intan.configure` does, for the fake or against a fake RHX."""
     if request.param == "FakeIntan":
         fake = FakeIntan([])
 
-        async def set_up(session_id: str, group_id: str) -> None:
-            fake.set_up(session_id, group_id)
+        async def set_up(session_id: str, group_id: str, confirmation: int = 1) -> None:
+            fake.set_up(session_id, group_id, confirmation)
 
         yield fake, set_up
         return
@@ -945,8 +1529,8 @@ async def intan(request: pytest.FixtureRequest, tmp_path: Path):  # noqa: ANN201
     )
     service.start()
 
-    async def set_up(session_id: str, group_id: str) -> None:
-        await service.configure(session_id, group_id, config(tmp_path), "x")
+    async def set_up(session_id: str, group_id: str, confirmation: int = 1) -> None:
+        await service.configure(session_id, group_id, config(tmp_path), "x", confirmation=confirmation)
 
     try:
         yield service, set_up
@@ -955,30 +1539,68 @@ async def intan(request: pytest.FixtureRequest, tmp_path: Path):  # noqa: ANN201
         await rhx.stop()
 
 
+def _ready(service, session_id: str, group_id: str, confirmation: int = 1) -> bool:  # noqa: ANN001
+    from ephymeris_sidecar.intan.client import RhxUnavailable
+
+    try:
+        service.refuse_unless_ready(session_id, group_id, confirmation)
+    except (IntanNotReady, RhxUnavailable):
+        return False
+    return True
+
+
 async def test_a_recording_is_set_up_for_one_session_and_group(intan) -> None:  # noqa: ANN001
     service, set_up = intan
-    assert not service.configured_for("s1", "g1")
+    assert not _ready(service, "s1", "g1")
     await set_up("s1", "g1")
-    assert service.configured_for("s1", "g1")
-    assert not service.configured_for("s1", "g2")
-    assert not service.configured_for("s2", "g1")
+    assert _ready(service, "s1", "g1")
+    assert not _ready(service, "s1", "g2")
+    assert not _ready(service, "s2", "g1")
+
+
+async def test_a_recording_is_set_up_for_one_mapping_confirmation(intan) -> None:  # noqa: ANN001
+    """A mapping confirmed again after the Record step may have moved animals
+    between boxes; RHX still holds the old ones (`RECORDING.md#record-step`)."""
+    service, set_up = intan
+    await set_up("s1", "g1", 4)
+    assert _ready(service, "s1", "g1", 4)
+    assert not _ready(service, "s1", "g1", 5)
+
+
+async def test_a_recording_already_running_is_not_refused_by_a_later_confirmation(intan) -> None:  # noqa: ANN001
+    """Its boxes are recording; the Record step can't be redone mid-run."""
+    service, set_up = intan
+    await set_up("s1", "g1", 4)
+    await service.start_recording()
+    assert _ready(service, "s1", "g1", 5)
+    await service.stop_recording()
 
 
 async def test_a_recording_runs_from_start_to_stop(intan) -> None:  # noqa: ANN001
     service, set_up = intan
     await set_up("s1", "g1")
-    assert not service.is_recording
+    assert not service.is_recording and not service.run_open_for("s1")
     await service.start_recording()
     assert service.is_recording
+    assert service.run_open_for("s1") and not service.run_open_for("s2")
+    assert service.may_still_record_for("s1") and not service.may_still_record_for("s2")
     assert await service.stop_recording() is not None
-    assert not service.is_recording
+    assert not service.is_recording and not service.run_open_for("s1")
+    assert not service.may_still_record_for("s1")
+
+
+async def test_stopping_a_recording_that_never_started_lets_go(intan) -> None:  # noqa: ANN001
+    service, set_up = intan
+    await set_up("s1", "g1")
+    assert await service.stop_recording() is None
+    assert not _ready(service, "s1", "g1")
 
 
 async def test_letting_go_forgets_a_set_up_that_never_recorded(intan) -> None:  # noqa: ANN001
     service, set_up = intan
     await set_up("s1", "g1")
     service.release()
-    assert not service.configured_for("s1", "g1")
+    assert not _ready(service, "s1", "g1")
 
 
 async def test_letting_go_leaves_a_running_recording_alone(intan) -> None:  # noqa: ANN001
@@ -986,5 +1608,5 @@ async def test_letting_go_leaves_a_running_recording_alone(intan) -> None:  # no
     await set_up("s1", "g1")
     await service.start_recording()
     service.release()
-    assert service.is_recording
+    assert service.is_recording and service.run_open_for("s1")
     await service.stop_recording()

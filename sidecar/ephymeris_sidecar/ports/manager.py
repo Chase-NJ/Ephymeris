@@ -28,8 +28,8 @@ import serial
 
 from ..boards.tool import BoardTool, DetectedBoard
 from ..settings import BOX_COUNT, SidecarSettings
-from .handler import DEFAULT_LINE_ENDING, OutputLine, PortHandler
-from .states import PortState
+from .handler import DEFAULT_LINE_ENDING, OpenSerial, OutputLine, PortHandler, SessionClaim
+from .states import IDLE_ONLY, IDLE_OR_CONSOLE, IllegalTransition, PortState
 
 log = logging.getLogger(__name__)
 
@@ -108,14 +108,20 @@ class PortManager:
         on_state_change: StateCallback,
         on_output: OutputCallback,
         on_presence: PresenceCallback,
+        open_serial: OpenSerial | None = None,
     ) -> None:
+        """`open_serial` opens every serial port this manager uses (`serial.Serial`
+        when not given), so a test can put a scripted board behind the real
+        state machine."""
         self._loop = loop
         self._tool = tool
         self._on_output = on_output
         self._on_presence = on_presence
+        self._open_serial = open_serial
 
         self._handlers: dict[int, PortHandler] = {
-            box: PortHandler(box, loop, on_state_change) for box in range(1, BOX_COUNT + 1)
+            box: PortHandler(box, loop, on_state_change, open_serial)
+            for box in range(1, BOX_COUNT + 1)
         }
         self._settings = SidecarSettings()
         self._presence: dict[str, DetectedBoard] = {}
@@ -225,13 +231,18 @@ class PortManager:
         libraries_path: str | None,
         on_progress: PhaseProgress,
         suppress_passthrough_resume: bool = False,
+        *,
+        from_: frozenset[PortState] = IDLE_ONLY,
     ) -> tuple[PortState, bool]:
         """Compile + upload (`ARCHITECTURE.md#flashing`). Called only by the
         flash queue (`ports/flashing.py`), which keeps it to one at a time.
 
-        Entering FLASHING force-releases PASSTHROUGH first, and on success the
-        prior passthrough is auto-resumed at its old baud so the user sees the
-        new sketch's output without an extra click (`ARCHITECTURE.md#exclusivity`). Failures land in
+        `from_` is what this flash may take (`PortHandler.release_for`): a
+        port in any other state raises `TakeRefused` before anything starts.
+        An `IllegalTransition` raised later means the port left `FLASHING`
+        during the upload and could not be landed: a failed flash. Taking `PASSTHROUGH` force-releases it first, and on success
+        the prior passthrough is auto-resumed at its old baud so the user sees
+        the new sketch's output without an extra click (`ARCHITECTURE.md#exclusivity`). Failures land in
         ERROR with the parsed message — never a silent fall back to IDLE.
 
         `suppress_passthrough_resume` forces the port to IDLE afterward instead,
@@ -242,7 +253,7 @@ class PortManager:
         handler = self.handler(box)
         prior_baud = handler.baud or self._settings.default_baud
         was_passthrough = handler.release_for(
-            PortState.FLASHING, f"flashing {sketch_name}"
+            PortState.FLASHING, f"flashing {sketch_name}", from_=from_
         )
         # The session flow wants IDLE regardless of the pre-flash state.
         resume = was_passthrough and not suppress_passthrough_resume
@@ -273,55 +284,58 @@ class PortManager:
             handler.force_error(f"flash failed: {exc}")
             raise
 
+        # Recorded only once the port has landed: a flash whose landing is
+        # refused has failed, and carries nothing anyone can name.
+        landed = self._conclude(handler, address, prior_baud, resume,
+                                f"flashed {sketch_name}")
         self._carried[box] = CarriedSketch(sketch_dir, fingerprint)
-        return self._conclude(handler, address, prior_baud, resume,
-                              f"flashed {sketch_name}")
+        return landed
 
     async def reset(self, box: int) -> tuple[PortState, bool]:
         """DTR-toggle reset (`ARCHITECTURE.md#reset`).
 
         A serial-layer operation, deliberately not routed through arduino-cli.
-        Auto-resumes passthrough afterward if that was the prior state (`ARCHITECTURE.md#exclusivity`).
+        Only ever asked for by a person, so it may take a console, and resumes
+        it afterward (`ARCHITECTURE.md#exclusivity`).
         """
         address = self.resolve_address(box)
         handler = self.handler(box)
         prior_baud = handler.baud or self._settings.default_baud
-        was_passthrough = handler.release_for(PortState.RESETTING, "reset (DTR toggle)")
+        was_passthrough = handler.release_for(
+            PortState.RESETTING, "reset (DTR toggle)", from_=IDLE_OR_CONSOLE
+        )
 
         try:
             # Blocking serial work stays off the event loop.
-            await asyncio.to_thread(_dtr_pulse, address)
+            await asyncio.to_thread(_dtr_pulse, address, self._open_serial or serial.Serial)
         except Exception as exc:
             handler.force_error(f"reset failed: {exc}")
             raise
 
         return self._conclude(handler, address, prior_baud, was_passthrough, "reset complete")
 
-    def start_session(
+    def claim_session(
         self,
         box: int,
         start_command: str,
-        on_ready: "Callable[[int | None], None]",
-        on_strobe: "Callable[[int, int], None]",
-    ) -> PortState:
-        """Enter `IN_SESSION` on one box (`ARCHITECTURE.md#entering-in_session`).
+        *,
+        on_ready: Callable[[int | None], None],
+        on_strobe: Callable[[int, int], None],
+        on_lost: Callable[[str], None],
+    ) -> SessionClaim:
+        """Enter `IN_SESSION` on one box and hand back the run's hold on it
+        (`ARCHITECTURE.md#entering-in_session`).
 
-        The box must be `IDLE` (a session flash leaves it there via
-        `suppress_passthrough_resume`). Baud is the session default.
+        Raises `PortNotBound`, `BoardNotDetected` or `IllegalTransition` before
+        anything starts: the box must be bound, present and `IDLE` (a session
+        flash leaves it there via `suppress_passthrough_resume`). Baud is the
+        session default. `on_ready` and `on_strobe` run on the session thread,
+        `on_lost` on the loop; `SessionClaim` says what each promises.
         """
         address = self.resolve_address(box)
-        handler = self.handler(box)
-        return handler.start_session(
-            address, self._settings.default_baud, start_command, on_ready, on_strobe
+        return self.handler(box).claim_session(
+            address, self._settings.default_baud, start_command, on_ready, on_strobe, on_lost
         )
-
-    def stop_session(self, box: int) -> None:
-        """Send `STOP` to a running box; the board's end strobe ends the run."""
-        self.handler(box).send_session_line("STOP")
-
-    def end_session(self, box: int, reason: str) -> PortState:
-        """Conclude a run cleanly: `IN_SESSION → IDLE`."""
-        return self.handler(box).end_session(reason)
 
     def _conclude(
         self,
@@ -331,12 +345,15 @@ class PortManager:
         was_passthrough: bool,
         reason: str,
     ) -> tuple[PortState, bool]:
-        """Land the port after a flash/reset: auto-resume or return to IDLE."""
+        """Land the port after a flash/reset: auto-resume or return to IDLE.
+        Raises `IllegalTransition` if the port has left `FLASHING`/`RESETTING`."""
         if was_passthrough:
             try:
-                handler.open_passthrough(address, baud)
+                handler.resume_passthrough(address, baud)
                 return handler.state, True
-            except Exception as exc:  # noqa: BLE001 - handler is already in ERROR
+            except IllegalTransition:
+                raise
+            except Exception as exc:  # noqa: BLE001 - the open failed; handler is in ERROR
                 log.warning(
                     "box %d: auto-resume failed after %s: %s", handler.box, reason, exc
                 )
@@ -356,8 +373,13 @@ class PortManager:
             self._note_poll_failure(exc)
         else:
             self._poll_failures = 0
-            if self._update_presence(boards):
-                await self._on_presence(self.presence_json())
+            await self.note_boards(boards)
+
+    async def note_boards(self, boards: list[DetectedBoard]) -> None:
+        """Take `boards` as everything now plugged in, as one poll would: a
+        vanished board's box is forgotten, and `on_presence` hears of a change."""
+        if self._update_presence(boards):
+            await self._on_presence(self.presence_json())
 
     async def _poll_loop(self) -> None:
         while True:
@@ -398,14 +420,14 @@ class PortManager:
                     await self._on_output(box, batch)
 
 
-def _dtr_pulse(address: str) -> None:
+def _dtr_pulse(address: str, open_serial: OpenSerial) -> None:
     """The reset sequence (`ARCHITECTURE.md#reset`): dtr low → ~100ms → dtr high.
 
     The Mega2560 R3's auto-reset circuit fires on the DTR edge. Runs in a
     worker thread; the port is opened fresh and closed again, the state
     machine having already released any prior owner.
     """
-    port = serial.Serial()
+    port = open_serial()
     port.port = address
     port.dtr = True
     port.open()

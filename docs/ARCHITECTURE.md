@@ -18,6 +18,7 @@ are [DATA.md](DATA.md); Intan recording is [RECORDING.md](RECORDING.md).
   - [Source of truth and generated files](#source-of-truth-and-generated-files)
   - [Changing the wire](#changing-the-wire)
   - [Connection and authentication](#connection-and-authentication)
+  - [Dispatch](#dispatch)
   - [Replay on connect](#replay-on-connect)
   - [Reconnection](#reconnection)
   - [Envelope](#envelope)
@@ -37,6 +38,7 @@ are [DATA.md](DATA.md); Intan recording is [RECORDING.md](RECORDING.md).
 - [Port state machine](#port-state-machine)
   - [States](#states)
   - [Transitions](#transitions)
+  - [Port verbs](#port-verbs)
   - [Exclusivity](#exclusivity)
 - [Flashing reset and passthrough](#flashing-reset-and-passthrough)
   - [Flashing](#flashing)
@@ -254,7 +256,7 @@ the `CommandArgsMap`/`CommandResultMap`/`EventDataMap` that type `client.call` a
 `docs/PROTOCOL.md` (the reference). Frontend domain type files re-export the generated shapes; don't
 re-declare a wire shape by hand, and don't cast a reply or an event's `data`: a cast compiles past the
 drift this typing exists to catch. Every command except `auth` is registered in `app.py`; `server.py`
-handles `auth` before dispatch.
+handles `auth` before dispatch ([Dispatch](#dispatch)).
 
 ### Changing the wire
 
@@ -267,8 +269,9 @@ handles `auth` before dispatch.
 Shapes are guarded on both sides. A stale TypeScript shape fails `npm run typecheck`. In the sidecar,
 `EPHYMERIS_WIRE_VALIDATE=1` checks every event payload and dispatched reply against the schema; the test
 suite sets it globally (`tests/conftest.py`), production leaves it off. `tests/test_wire_shapes.py` pins
-the real `to_json` emitters to the schema — extend it when adding an emitter. Nothing verifies that a
-command *has* a handler.
+the real `to_json` emitters to the schema — extend it when adding an emitter. `Application.register`
+refuses to start with a declared command that has no handler, and `server.register` refuses a command
+the schema doesn't declare.
 
 ### Connection and authentication
 
@@ -276,14 +279,53 @@ The server sends `server.hello` on connect. The client's **first** message must 
 anything else, a bad token, or `AUTH_TIMEOUT_S` (`server.py`) of silence closes the connection with code
 `1008`. The token travels in a message body so it never lands where a URL would be logged.
 
+### Dispatch
+
+`SidecarServer` (`server.py`) is the one place a command meets the wire, in this order:
+
+1. **Arguments are checked against the schema** (`validate_command_args`) before any handler runs: a
+   missing or unknown field, a wrong type, a `null` where none is allowed or a fraction where an int is
+   declared is `BAD_MESSAGE`, with `detail.problems`. Always on, unlike the reply check. A handler reads
+   its arguments as declared and checks only what the schema can't say: a box number within 1–6, a
+   non-blank id, a non-empty list.
+2. **The handler runs**: `handler(args) -> result`. It never sees the connection or the envelope.
+3. **An exception becomes its code through one table**, `ERRORS` in `wire_errors.py`. Domain modules raise
+   their own exceptions and never import `CommandError`; a mapper reads the box from the exception or the
+   command's `box` argument. An exception the table doesn't answer is `INTERNAL`, logged. A handler
+   raises `CommandError` itself only for a value the schema can't describe.
+4. **The reply is checked** against the schema when `EPHYMERIS_WIRE_VALIDATE=1`.
+
+**One exception type, one code, everywhere.** Don't catch a domain exception in a handler to pick a
+different code for it: the frontend branches on codes (`SESSION_INVALID` with `detail.boxes`,
+`PORT_OPEN_FAILED`, `ILLEGAL_TRANSITION`, `COHORT_INVALID` and others), and the same failure under two
+codes is handled in one place and shown raw in the other. A new refusal gets a new exception and a row in
+`ERRORS`.
+
+A generic type in the table would answer for every bug that raises one, so only two are read, each
+narrowed: `OSError` answers only on a command naming a box, and never for a socket's `ConnectionError`
+or `TimeoutError`; `KeyError` only as the cause a `BoxRefused` carries from `SessionRunner.start_box`
+(a box outside the confirmed mapping). Three handlers turn a generic exception into a code
+themselves, because only they know it is about their own arguments: `analytics.setFalseStart`
+(`KeyError`, a run not in the cohort) and `analytics.series` (`ValueError`) answer `BAD_MESSAGE`, and
+`sessions.create` answers `SESSION_INVALID` for a session folder that can't be made.
+
+Tests drive a command through this path with `tests/wire.py`'s `dispatch(app, cmd, **args)`, which hands a
+frame to the server's own message handler; `tests/live_sidecar.py` is the same path over a real WebSocket.
+
 ### Replay on connect
 
-After `auth`, `Application._replay_state` (`app.py`) sends current state **to that client alone**: one
-`port.state` per box (with `prev` equal to `state`, reason `"initial state"`), then `boards.presence`,
-`sketches.updated`, `tasks.updated`, `cohorts.updated`, `prefixes.updated`, and `flash.queue`,
-`utility.updated`, `backup.status` and `intan.status` once those services exist. Events are otherwise sent only on change, so
-without it a client connecting in a quiet period would have to guess. A replay callback that raises is
-logged and swallowed rather than dropping the connection.
+After `auth`, the server sends every registered **snapshot** to that client alone, in registration order
+(`Application.register`): one `port.state` per box (with `prev` equal to `state`, reason
+`"initial state"`), one `port.telemetry` per hand-started Debug run (`debug_run.py`), then
+`boards.presence`, `sketches.updated`, `tasks.updated`, `cohorts.updated`, `prefixes.updated`,
+`flash.queue`, `utility.updated`, `backup.status` and `intan.status`. Events are otherwise sent only on
+change, so without it a client connecting in a quiet period, or a webview that reloaded, would have to
+guess. A snapshot that raises is logged and skipped rather than dropping the connection.
+
+A snapshot is registered once with `server.register_snapshot(evt, provider)`, and `server.publish(evt)`
+broadcasts the same provider's payload, so what a client that reconnects is told can't drift from what
+one that stayed was told. State an event carries belongs in a snapshot; an event that reports a change
+(`port.output`, a `port.state` transition) is broadcast as it happens.
 
 **Live session state is not replayed.** A reconnecting client asks: `sessions.active` to discover what is
 running with no prior ids, or `sessions.status` for a session it knows. The runner is the authority on the
@@ -316,7 +358,7 @@ and reports through replayed events instead (`flash.queue`, `utility.updated`).
 ### Reply timeouts
 
 `client.ts` applies `DEFAULT_CALL_TIMEOUT_MS`, with longer values in `CALL_TIMEOUT_OVERRIDES` for work that
-runs long (waiting out a rig definition write, library refresh, backup sync, analytics indexing, recovery, ending a session or group,
+runs long (waiting out a rig definition write, library refresh, backup sync, analytics indexing, recovery, ending or abandoning a session, ending a group,
 starting a recording, configuring RHX). **A client timeout does not cancel sidecar work**; the resulting
 `port.state` is what the UI shows.
 
@@ -385,7 +427,7 @@ sidecar's receiving end: `sidecar/ephymeris_sidecar/settings.py`.
 | `defaultBaud` | Rig | yes | Starting baud per console ([Baud](#baud)) |
 | `boxes` | Rig (board, label), Recording (`intanDigitalIn`) | yes | The box list ([Box bindings](#box-bindings)) |
 | `intan` | Recording | yes | RHX's command, waveform and spike ports. No host: RHX is always local |
-| `recordingDefaults` | Recording, and the Record step | no | What a recording saves, thresholds, save root, per-box memory (`src/lib/intan/defaults.ts`) |
+| `recordingDefaults` | Recording, and the Record step | no | What a recording saves, thresholds, save root, per-box wiring and per-animal probe maps (`src/lib/intan/defaults.ts`) |
 | `reducedMotion` | Settings | no | Forces reduced motion on; the system preference applies on top |
 | `constellation` | Rig | no | Zodiac layout of the status constellation, validated against the catalogue on load |
 | `constellationSlots` | Rig (drag, and box add/remove) | no | Which star each box sits on. `reconcileSlots` is the single authority and runs in the same write as a box add or remove |
@@ -463,7 +505,8 @@ produces the observable reset.
 ## Port state machine
 
 Each of the six ports runs its own state machine. `ports/states.py` (`TRANSITIONS`, `assert_transition`)
-is the authority, and every state change goes through it.
+is the authority, and every state change goes through it, after the asking verb's own check
+([Port verbs](#port-verbs)).
 
 > [!IMPORTANT]
 > **The invariant everything here protects: a serial port has exactly one owner at a time.** Transitions
@@ -522,12 +565,48 @@ A failed *utility baseline* restore is the one `ERROR` the app acknowledges itse
 The absences carry the meaning. **Only `IDLE` reaches `IN_SESSION`** — which is why the session flash
 sequence suppresses passthrough resume. **`IN_SESSION` leads only to `IDLE` or `ERROR`**, so a running
 animal's box can't be flashed, reset or monitored out from under it. **`ERROR` is a dead end until
-acknowledged** — no timeout, no retry — so a failed flash must be acknowledged before it can be retried. A
-transition to the current state is a silent no-op.
+acknowledged** — no timeout, no retry — so a failed flash must be acknowledged before it can be retried.
+
+### Port verbs
+
+The table says which moves are ever legal; it cannot say who is asking. `FLASHING → IDLE` is how a flash
+ends, not something a console close may do, and `ERROR → IDLE` belongs to the acknowledgement alone. So
+each `PortHandler` verb names the states it leaves (the `*_FROM` sets in `ports/states.py`), and
+`assert_leaves` checks that set before the table. A verb asked for from any other state raises
+`IllegalTransition`, `ILLEGAL_TRANSITION` on the wire, and the port stays as it was.
+
+| Verb (`ports/handler.py`) | Leaves | To | Asked by |
+|---|---|---|---|
+| `open_passthrough` | `IDLE` | `PASSTHROUGH` | `port.passthrough.open`, identify, a Debug flash's console |
+| `close_passthrough` | `PASSTHROUGH` | `IDLE` | `port.passthrough.close`, identify |
+| `release_for(target, from_=…)` | `from_` | `FLASHING` or `RESETTING` | the flash queue, `port.reset` |
+| `finish_to_idle` | `FLASHING`, `RESETTING` | `IDLE` | a flash or reset landing |
+| `resume_passthrough` | `FLASHING`, `RESETTING` | `PASSTHROUGH` | a flash or reset giving back the console it took |
+| `claim_session` | `IDLE` | `IN_SESSION` | the session runner |
+| `SessionClaim.release` | `IN_SESSION` (its own claim) | `IDLE` | the session runner |
+| `acknowledge_error` | `ERROR` | `IDLE` | `port.error.ack`, a [failed restore](#failed-restores) |
+| `force_error` | any | `ERROR` | a failure |
+
+`release_for`'s `from_` is what the caller may take: `IDLE_ONLY` for the utility baseline, `IDLE_OR_CONSOLE`
+for a flash or reset a person asked for (`TAKES` in `ports/flashing.py`, `PortManager.reset`). Its
+refusal is `TakeRefused`, an `IllegalTransition` that means the port was not taken and nothing ran; the
+flash queue reports a refused restore as `busy`. A refusal once the port is held, landing a flash whose
+port left `FLASHING` during the upload, is a failed flash: the row fails and the board carries nothing
+anyone can name.
+
+Acknowledging a port that is already `IDLE` changes nothing, so a second window's acknowledgement is not an
+error. A console close that reaches a port a flash has taken, or one in `ERROR`, is refused:
+
+- The frontend closes consoles on unmount by the last state it saw, or none (`useHandshakeTest.ts`,
+  `NodeDetail.tsx`, `AllBoxesPanel.tsx`), and those closes ignore the refusal.
+- The handshake test closes a console before re-opening it; a refusal there ends the test as `failed`,
+  reading the box as busy.
+- A close the operator clicks reports it.
 
 ### Exclusivity
 
-- Entering `FLASHING` or `RESETTING` **force-releases `PASSTHROUGH`** first, closing the port cleanly.
+- Entering `FLASHING` or `RESETTING` **force-releases `PASSTHROUGH`** first, closing the port cleanly,
+  when the caller may take a console ([Port verbs](#port-verbs)).
 - **Auto-resume:** a port in `PASSTHROUGH` immediately before a flash or reset returns to it afterwards,
   so the user sees the new sketch's output without another click.
 - **A session or baseline flash suppresses the resume**, so every box lands in `IDLE` for the runner or
@@ -585,7 +664,7 @@ carries is recorded ([TASKS.md](TASKS.md#the-rig-definition)).
 |---|---|---|---|---|---|
 | `session` | `sessions.flash`, the placement walk | read from the held mapping **when the job runs** | waits for `IDLE` or `PASSTHROUGH` | `IDLE` | no |
 | `debug` | `flash.enqueue`, Debug Mode | the one asked for | waits for `IDLE` or `PASSTHROUGH` | a console, at the baud sent | yes |
-| `baseline` | the utility baseline's `ensure` | the box utility | never waits: decides at its turn | `IDLE` | — |
+| `baseline` | the utility baseline's `ensure` | the box utility | never waits: decides at its turn, takes `IDLE` only | `IDLE` | — |
 
 A waiting job gives up after `PORT_WAIT_S` (three minutes, `ports/flashing.py`); a port in `ERROR` or a box
 with no board fails it at once. One job failing never stops the rest. `flash.cancel` drops queued session
@@ -599,10 +678,9 @@ Debug Mode's flash dialogs only ask and render.
 
 > [!CAUTION]
 > **Nothing else may call `PortManager.flash`.** A second caller is a second queue: two compiles at once,
-> and a baseline restore that checked `IDLE` before waiting behind another flash. A queued restore decides
-> whether to flash in its `prepare`, synchronously, with **no `await` between that decision and the flash
-> taking the port**, so "only an `IDLE` port" holds at the moment it matters
-> ([Three rules it never breaks](#three-rules-it-never-breaks)).
+> and two flashes racing for one box. What a flash may take is the queue's to say, by origin (`TAKES` in
+> `ports/flashing.py`, passed as `from_`); a new caller must pass `IDLE_ONLY` unless a person asked for
+> this flash, or it takes their console ([Port verbs](#port-verbs)).
 
 > [!CAUTION]
 > **A session job reads its sketch from the mapping when it runs, never when it was queued.** A mapping
@@ -728,9 +806,12 @@ its console open, because the Debug flash that pinned it ends in that console.
 ### Three rules it never breaks
 
 > [!CAUTION]
-> **Only an `IDLE` port is ever touched.** Entering `FLASHING` would force-release a `PASSTHROUGH`
-> console — right when a user asks to flash, wrong for a background restore. The check is on the port
-> already being idle, not on the transition being legal.
+> **Only an `IDLE` port is ever touched.** Entering `FLASHING` may force-release a `PASSTHROUGH`
+> console — right when a user asks to flash, wrong for a background restore. A restore's flash takes
+> `IDLE_ONLY` (`TAKES` in `ports/flashing.py`), so `release_for` refuses any other port at the take and the
+> box reads `busy`, not `failed` ([Port verbs](#port-verbs)). `_decide` checks `IDLE` too, only to avoid
+> queuing a flash that would be refused. Identify opens a console only on an `IDLE` port
+> (`_open_if_idle`) and closes only one it opened.
 
 > [!CAUTION]
 > **A confirmed session mapping holds the whole rig** — `hold()` at `sessions.confirmMapping`, `release()`
@@ -786,6 +867,8 @@ asked to light a box.
   strobes to **the same `MetricSet` a session uses** and pushes `port.telemetry` into the per-box slot
   `session.telemetry` fills. Debug Mode therefore mounts Mission Control's `MetricStrip` and `LivePanels`
   unchanged. Don't write a second scorer; `test_debug_flash.py` pins the two to identical output.
+  The button waits for the sketch's Task Profile (`startConfig`): without it the rig's `taskDefaults`
+  cannot be merged, and the sidecar would fill every field from the profile's own defaults.
 - **End sends `STOP`** via `port.send`. **The board ends the task**: it takes `STOP` at the next trial
   boundary and emits `BF_END_SESSION`, and the panel reads *running* until the sidecar sees it. The host
   cannot send a strobe. Leaving `PASSTHROUGH` also ends the run.
@@ -822,7 +905,10 @@ session is in progress asks it, and it answers three different questions:
 |---|---|---|
 | `held` | A session holds the rig, from its mapping's confirmation or a resume until it ends or is abandoned | `sessions.tidy`, which never touches it |
 | `in_use` | A session is held, or any box is running | every rig definition write, the data-folder relocate, moving animals |
-| `writing` | Any box is running, so a live `.tsv` has no `.json` yet | `sessions.recover` |
+| `writing` | Any box is running, or finishing until its run is recorded: a `.tsv` has no `.json` yet, or a `.json` has no record claiming it yet | `sessions.recover`, `analytics.rescan` |
+
+Every archive write asks through `CohortArchive.write`, once it holds the archive lock, never before
+([DATA.md](DATA.md#the-cohort-archive)).
 
 A finished run records against the session it was started under (`ActiveRun.session_id`), not against
 whichever session is held when it lands.
@@ -929,6 +1015,13 @@ was. `lib/sessions/setupResume.ts` remembers two things:
   mid-placement picks up again at the first box no flash was asked for, read from the
   [flash queue](#the-flash-queue), whose flashes carried on meanwhile. A Boxes draft holds each box's sketch and the operator's own overrides, never the merged
   config, so a default changed during the visit is followed on return ([TASKS.md](TASKS.md#three-layer-merge)).
+  A Record draft follows the mapping (`reconcileRows`, `lib/intan/recordingSetup.ts`). The same animal on
+  the same box keeps its row as typed, and a box no longer mapped is dropped. A newly mapped box, or one
+  whose animal changed, gets a fresh row: the box's remembered wiring and the **animal's** probe map
+  ([RECORDING.md](RECORDING.md#record-step)), the one chosen for it earlier in this visit if any, else the
+  remembered one. With no remembered port RHX still reports, it is guessed onto a free one (`assignPorts`).
+  So a return to Boxes that moved or swapped animals cannot leave `intan.configure` naming the box an animal
+  left, or carrying another animal's probe map.
 
 The memory is dropped on reaching Mission Control and by a deliberate Cancel or End session, and the offer is
 withheld whenever `sessions.active` no longer reports the session, because the sidecar is the authority on
@@ -986,14 +1079,20 @@ happened to see, because live session events are [not replayed](#replay-on-conne
 from the runner's per-box `startedAt`, never a client stopwatch, so a reload resumes mid-count. Whether a box has finished this group is the runner's
 per-box `ended`, re-asked with `sessions.status` on each `session.animalEnded`, so a reload over a finished
 group still opens the wrap-up. Whether the session has run at all is its status: any box's start, by Start
-All or one at a time, moves it to `running`. A per-box write failure is pushed as `sidecar.error`.
+All or one at a time, moves it to `running`. **A box that has started is a run**: a Start All refused at
+box *k* records the group run and `running` for the boxes it did start before the refusal goes out, so End
+and Switch Group end them and Resume finds a group that ran. A per-box write failure is pushed as
+`sidecar.error`.
 
 ### Entering IN_SESSION
 
 Per box (`ports/handler.py`, `sessions/runner.py`):
 
 1. `IDLE → IN_SESSION`, refused from any other state. Before it, `SessionLifecycle` refuses a box whose
-   board does not [carry](#what-a-board-carries) the mapped sketch's current build.
+   board does not [carry](#what-a-board-carries) the mapped sketch's current build. The transition hands
+   the runner a `SessionClaim` (`PortManager.claim_session`), and the runner records the run and arms its
+   time limit only once it holds one: a port that refuses (`ERROR` from an earlier start, say) raises
+   before anything is recorded, and leaves nothing for End to stop.
 2. Open the port, which pulls DTR and resets the Mega.
 3. Wait `SESSION_READY_TIMEOUT_S` for `READY`, else `ERROR`.
 4. Send the built `START … SEED=<n>`. **The seed is drawn at the click**, not at mapping, or every box in a
@@ -1007,6 +1106,14 @@ Per box (`ports/handler.py`, `sessions/runner.py`):
 Writer I/O stays on the port's session thread; anything touching the socket or state machine is scheduled
 back onto the event loop.
 
+The claim is the run's only handle on its port (`SessionClaim`, `ports/handler.py`):
+
+| Member | Promise |
+|---|---|
+| `request_stop()` | Writes `STOP`; `False` when the port has left the session, isn't open yet, or the write failed. Never raises, so End reaches every box whatever one port is doing |
+| `release(reason)` | `IN_SESSION → IDLE`, only while this claim is current. Idempotent; never clears an `ERROR`, never ends a later claim's run |
+| `on_lost(reason)` | Given at claim time; runs on the loop when the port leaves `IN_SESSION` for `ERROR`, at most once, never after `release` ([Board drop](#board-drop)) |
+
 The same sequence for one box. The file is opened only once the handshake resolves — on a `SEED` line,
 the first strobe, or the end of the seed window — so its header can carry the seed:
 
@@ -1018,9 +1125,11 @@ sequenceDiagram
     participant Board as Mega2560
     participant File as Animal .tsv
     UI->>Runner: sessions.startAll or port.startSession
-    Runner->>Runner: draw the host seed, arm the time limit
-    Runner->>Port: start_session with START … SEED=n
-    Port->>Port: IDLE → IN_SESSION
+    Runner->>Runner: draw the host seed
+    Runner->>Port: claim_session with START … SEED=n
+    Port->>Port: IDLE → IN_SESSION, or raise
+    Port-->>Runner: SessionClaim
+    Runner->>Runner: record the run, arm the time limit
     Port->>Board: open the port, DTR resets the Mega
     Board-->>Port: READY
     Note over Port,Board: no READY within SESSION_READY_TIMEOUT_S → ERROR
@@ -1041,7 +1150,7 @@ sequenceDiagram
 ### Clean exit
 
 `STOP` → the board finishes its trial and emits its end strobe → the sidecar finalizes →
-`IN_SESSION → IDLE`. `STOP` is a nudge, written to the port and nothing else; only the end strobe forces
+`IN_SESSION → IDLE` (`SessionClaim.release`). `STOP` is a nudge, written to the port and nothing else; only the end strobe forces
 the transition, or a forced finalization for boxes that didn't answer when the session ends.
 
 > [!IMPORTANT]
@@ -1053,7 +1162,9 @@ the transition, or a forced finalization for boxes that didn't answer when the s
 
 A board dropping during `IN_SESSION` is **always a hard stop into `ERROR`**, cleared by a manual
 `port.error.ack`, with no auto-recovery. The run is finalized at once from what the `.tsv` already holds,
-so the hard stop costs no data.
+so the hard stop costs no data. The runner hears of the drop from its own claim (`on_lost`); a board lost
+at any point before the run's release, the writer's finalize included, leaves the port in `ERROR`, because
+`release` only ever moves `IN_SESSION → IDLE`.
 
 ![Mission Control with box 2's tile reading ERROR and "Finished — board disconnected" while boxes 1, 3 and 4 stay IN_SESSION; box 2's star in the sidebar figure is red](images/mission-control-error.webp)
 
@@ -1064,7 +1175,7 @@ so the hard stop costs no data.
 *The box's own panel names the fault. **Acknowledge** sends `port.error.ack`, the only way out of `ERROR`.
 The operator's procedure is [USER-GUIDE.md](USER-GUIDE.md#when-a-box-shows-error-or-a-board-disconnects).*
 
-Every way a run ends, side by side (`SessionRunner.finalize_box`, `end_all`, `board_dropped`):
+Every way a run ends, side by side (`SessionRunner.finalize_box`, `end_all`, and the claim's `on_lost`):
 
 ```mermaid
 flowchart TD
@@ -1305,6 +1416,23 @@ Mission Control's star panel and Debug Mode's live tile share `MetricStrip` and 
 > which is capped and trimmed oldest-first. A real session emits thousands of strobes; deriving from the
 > ring would silently drop the early trials — the part of a learning curve you most want.
 
+**The session store forgets a run when the sidecar reports the next one began**, never on a click, so a
+refused start leaves the last run on screen. A port entering `IN_SESSION` (a real transition, not the
+connect replay) clears that box. Debug Mode's `port.telemetry` going from not running to running, which
+the sidecar sends only once a `START` is on the wire (and replays on connect while that run lasts),
+clears that box. A confirmed mapping clears every
+box: the `ActiveSessions` payload carries `confirmations`, which `sessions.confirmMapping` increments, and
+the store clears on a value it has not seen. `session.lifecycle` broadcasts and `sessions.active` answers
+both count, so a mapping confirmed while a window was disconnected clears it on reconnect. The first answer
+a new store sees only records the value: nothing shown before it is a run it could be wrong about.
+
+> [!CAUTION]
+> **A new group run is the counter, never the rest of the payload.** Confirming the same group again can
+> broadcast every other field byte for byte (the runner's snapshot of a just-confirmed mapping is always
+> the same, and a later group's per-box start announces nothing), so a client that compares payloads keeps
+> the last run's trials on screen under the new one. The count is per sidecar process: the sidecar dies
+> with the shell and is never respawned, so no window outlives the count it was reading.
+
 Mission Control's elapsed time and the session log's T+ offsets read one clock, the **session clock**
 (`clockStartedAt`, [DATA.md](DATA.md#the-session-clock)) — the first group's start, not the record's
 creation in Step 1. The quick note (**n**, or a box panel's **Note about box N**) writes to the log
@@ -1460,7 +1588,7 @@ own chunk, costs nothing until the first export, and a failure to load it loses 
 | `rig/` | The rig definition: `registry.py` (channel and strobe registries, context-local hypotheticals), `definition.py` (impact check, writes, the read/write lock), `schema/` (including the default vocabulary seed), `hardware/` pinouts, `paths.py` | [TASKS.md](TASKS.md#the-rig-definition) |
 | `strobes/` | The machine's strobe vocabulary: `store.py` (`<data_dir>/strobes/vocabulary.json`, seeding, every edit, import merge), `usage.py` (firmware references, the cached archive scan) | [TASKS.md](TASKS.md#strobe-vocabulary) |
 | `hardware/` | The operator's `rig.json`: `store.py` (load, validate, save), `service.py` (located problems) | [TASKS.md](TASKS.md#rig-wiring) |
-| `analytics/` | `archive.py` (the cohort archive: recorded and recovered sessions in one read, and the archive lock), `derive.py` (pure metric definitions), `infer.py` (profile inferred from a stream), `false_starts.py` (which runs are set aside), `reader.py`, `repository.py`, `service.py` | [DATA.md](DATA.md#the-cohort-archive), [DATA.md](DATA.md#derived-metrics), [DATA.md](DATA.md#false-starts) |
+| `analytics/` | `archive.py` (the cohort archive: recorded and recovered sessions in one read, and the one way to write it: the archive lock, the rig asked under it, `on_changed`), `scoring.py` (`RunScorer`: the profile ladder, scoring, the cache and its version), `derive.py` (pure metric definitions), `infer.py` (profile inferred from a stream), `false_starts.py` (which runs are set aside), `reader.py`, `repository.py`, `service.py` | [DATA.md](DATA.md#the-cohort-archive), [DATA.md](DATA.md#caching), [DATA.md](DATA.md#derived-metrics), [DATA.md](DATA.md#false-starts) |
 | `backup/` | `manager.py` (the mirror), `paths.py` (cohort-anchored paths) | [DATA.md](DATA.md#backup-mirroring) |
 | `logbook/` | The session log: `models.py`, `repository.py`, `service.py`, `diff.py` (what changed), `mirror.py` (`notes.md`) | [DATA.md](DATA.md#the-session-log) |
 | `intan/` | `client.py`, `streams.py`, `analysis.py`, `probemap.py`, `service.py` | [RECORDING.md](RECORDING.md) |
@@ -1476,7 +1604,7 @@ own chunk, costs nothing until the first export, and a failure to load it loses 
 |---|---|---|
 | `main.tsx`, `App.tsx` | Provider trees (main, scope) and the router | [Routes](#routes) |
 | `lib/ws/`, `lib/settings/`, `lib/hardware/` | Port, its client and fake, and protocol; settings `schema.ts`; hardware store, `useHandshakeTest.ts`, `useRig.ts` | [Wire protocol](#wire-protocol), [Settings](#settings) |
-| `lib/sessions/`, `lib/cohorts/`, `lib/analytics/`, `lib/intan/` | Domain stores; `defaultConfig`, `flow.ts` and `useSessionFlow`, `liveTrials.ts`, `stars.ts`; `appearance.ts`; `view.ts`; recording defaults and scope maths | [Session lifecycle](#session-lifecycle) |
+| `lib/sessions/`, `lib/cohorts/`, `lib/analytics/`, `lib/intan/` | Domain stores; `defaultConfig`, `flow.ts` and `useSessionFlow`, `placementWalk.ts` (the Boxes step's rules and walk), `liveTrials.ts`, `stars.ts`; `appearance.ts`; `view.ts`; recording defaults, `recordingSetup.ts` (the Record step's rows, readiness and `intan.configure`) and scope maths | [Session lifecycle](#session-lifecycle) |
 | `lib/tasks/`, `lib/taskdef/`, `lib/strobes/` | `topology.ts`, `graphLayout.ts`, `editorLayout.ts`, `orrery.ts`, `useGlidingWidth.ts`, `useLiveNode.ts`; task commands, `lines.ts` (odor lines and onsets), `selection.ts` (mode scope); vocabulary commands and `useStrobeVocabulary` | [TASKS.md](TASKS.md#derived-state-machine), [TASKS.md](TASKS.md#editor) |
 | `lib/exports/` | `jobs.ts`, the export progress store | [Export progress](#export-progress) |
 | `lib/updates/`, `components/settings/UpdatesTile.tsx` | The update store and checks, `installBlocker`, the Settings tile | [Updates](#updates) |

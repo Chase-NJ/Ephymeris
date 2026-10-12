@@ -15,12 +15,14 @@ import io
 import json
 import os
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
 from ephymeris_sidecar.analytics import AnalyticsService, CohortArchive
-from ephymeris_sidecar.analytics import derive
+from ephymeris_sidecar.analytics import derive, scoring
+from ephymeris_sidecar.analytics.archive import ArchiveChange
 from ephymeris_sidecar.analytics.repository import AnalyticsRepository
 from ephymeris_sidecar.cohorts.db import Database
 from ephymeris_sidecar.cohorts.repository import CohortRepository
@@ -51,6 +53,23 @@ def db(tmp_path: Path):
         yield database
     finally:
         database.close()
+
+
+@dataclass
+class Lifecycle:
+    """The session lifecycle's answers to the archive (`RigQuestions`), as a
+    test sets them. Idle until told otherwise."""
+
+    held: str | None = None
+    in_use: bool = False
+    writing: bool = False
+
+
+class Changes(list):
+    """An archive's `on_changed`, keeping what it heard."""
+
+    async def __call__(self, change: ArchiveChange) -> None:
+        self.append(change)
 
 
 class Rig:
@@ -87,7 +106,15 @@ class Rig:
         async def broadcast(message: dict) -> None:
             self.events.append(message)
 
-        self.archive = CohortArchive(db=db, cohorts=self.cohorts, sessions=self.sessions)
+        self.lifecycle = Lifecycle()
+        self.changes = Changes()
+        self.archive = CohortArchive(
+            db=db,
+            cohorts=self.cohorts,
+            sessions=self.sessions,
+            rig=self.lifecycle,
+            on_changed=self.changes,
+        )
         self.service = AnalyticsService(
             db=db,
             cohorts=self.cohorts,
@@ -503,21 +530,23 @@ async def test_a_second_summary_reuses_the_cache(rig: Rig) -> None:
     assert payload["runs"][0]["metrics"][0]["pSession"] is None
 
 
-async def test_the_cache_key_includes_the_codec_version(
+async def test_the_cache_key_includes_the_score_version(
     rig: Rig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Without this, a fixed bug keeps serving the old definition forever."""
+    """Without this, a fixed bug keeps serving the old definition forever. The
+    hand-set half of the version (`scoring.SCORE_VERSION`) is the lever for a
+    change the canary cannot see (`DATA.md#caching`)."""
     session = rig.add_session("1", "2026-07-22")
     run_id = rig.add_run(session, "a1", HIT_1 * 5)
     await rig.service.summary(rig.cohort.id)
 
     cached = rig.profiles.load_cached([run_id])[run_id]
-    assert cached.key.codec_version == derive.CODEC_VERSION
+    assert cached.key.codec_version >> 32 == scoring.SCORE_VERSION
 
-    monkeypatch.setattr(derive, "CODEC_VERSION", derive.CODEC_VERSION + 1)
+    monkeypatch.setattr(scoring, "SCORE_VERSION", scoring.SCORE_VERSION + 1)
     await rig.service.summary(rig.cohort.id)
     recomputed = rig.profiles.load_cached([run_id])[run_id]
-    assert recomputed.key.codec_version == derive.CODEC_VERSION
+    assert recomputed.key.codec_version >> 32 == scoring.SCORE_VERSION
 
 
 async def test_a_cache_hit_never_reopens_the_file(rig: Rig) -> None:

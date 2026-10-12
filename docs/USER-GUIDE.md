@@ -806,7 +806,8 @@ close it. You can switch tabs while an export runs.
 These buttons are at the top of Analytics. Use them when the lab manager asks, or as described here.
 
 - **Rescan** looks for session files that Ephymeris has no record of, such as sessions from the other lab
-  machine. Use it when a session you expect is missing or marked *not indexed*.
+  machine. Use it when a session you expect is missing or marked *not indexed*. It is refused while any
+  box is running.
 - **Recover** rebuilds the `.json` and `.mat` files from a `.tsv` that a crash left behind. Use it after
   the app or computer crashed during a session. It is refused while any box is running.
 - **Tidy records** merges one session that ended up as two records (for example after starting the same

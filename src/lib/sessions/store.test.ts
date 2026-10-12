@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { FakeSidecar } from "@/lib/ws/fakeSidecar";
-import { CMD, ERR, EVT } from "@/lib/ws/protocol";
+import { CMD, ERR, EVT, type PortStateName, type SessionBox } from "@/lib/ws/protocol";
 
 import { SessionStore } from "./store";
 import type { ActiveSessions, Session } from "./types";
@@ -28,7 +28,7 @@ function session(id: string): Session {
 
 /** Nothing running, these sessions set up. */
 function configuring(...ids: string[]): ActiveSessions {
-  return { running: null, configuring: ids.map(session), stale: [] };
+  return { running: null, configuring: ids.map(session), stale: [], confirmations: 0 };
 }
 
 function attached(status: "connecting" | "connected" = "connecting") {
@@ -41,6 +41,76 @@ function attached(status: "connecting" | "connected" = "connecting") {
 function output(box: number, ...lines: Array<["rx" | "tx", string]>) {
   return { box, lines: lines.map(([dir, text]) => ({ dir, text, ts: 0 })) };
 }
+
+function portState(box: number, state: PortStateName, prev: PortStateName) {
+  return { box, state, prev, reason: "test" };
+}
+
+/** One mapped box as `runner.snapshot()` reports it. */
+function mapped(
+  box: number,
+  run: Partial<Pick<SessionBox, "running" | "startedAt" | "ended">> = {},
+): SessionBox {
+  return {
+    box,
+    animalId: `a${box}`,
+    animalName: `Rat${box}`,
+    sketchName: "Task",
+    sketchPath: "/sketches/Task",
+    running: false,
+    startedAt: null,
+    ended: false,
+    ...run,
+  };
+}
+
+/**
+ * Session `s` holds the rig with `group` mapped onto these boxes, after the
+ * sidecar has confirmed `confirmations` mappings.
+ */
+function holding(
+  confirmations: number,
+  group: string | null,
+  ...boxes: SessionBox[]
+): ActiveSessions {
+  return {
+    running: { session: session("s"), groupId: group, boxes },
+    configuring: [],
+    stale: [],
+    confirmations,
+  };
+}
+
+/** Give a box a finished run's worth of live data: strobes, metrics, its end. */
+function finishedRun(sidecar: FakeSidecar, box: number) {
+  sidecar.emit(EVT.PORT_OUTPUT, output(box, ["rx", "11\t5"]));
+  sidecar.emit(EVT.SESSION_TELEMETRY, {
+    box,
+    animalId: `a${box}`,
+    metrics: [{ id: "accuracy", value: 0.5, n: 1 }],
+  });
+  sidecar.emit(EVT.SIDECAR_ERROR, { code: "WRITE_FAILED", message: "disk full", detail: { box } });
+  sidecar.emit(EVT.SESSION_ANIMAL_ENDED, {
+    box,
+    animalId: `a${box}`,
+    stopReason: "completed",
+    filePath: null,
+  });
+}
+
+/** Whether the store still shows any of a box's last run. */
+function shows(store: SessionStore, box: number) {
+  return {
+    strobes: store.getStrobes(box).length,
+    metrics: store.getTelemetry(box).length,
+    history: store.getHistory(box, "accuracy").length,
+    ended: store.getEnded(box) !== null,
+    writeError: store.getWriteError(box) !== null,
+  };
+}
+
+const ALL_OF_IT = { strobes: 1, metrics: 1, history: 1, ended: true, writeError: true };
+const NOTHING = { strobes: 0, metrics: 0, history: 0, ended: false, writeError: false };
 
 describe("the active-session answer", () => {
   it("is asked for on connect and held once it arrives", async () => {
@@ -130,7 +200,7 @@ describe("live strobes", () => {
     const { sidecar, store } = attached();
     sidecar.emit(EVT.PORT_OUTPUT, output(1, ["rx", "11\t5"]));
     sidecar.emit(EVT.PORT_OUTPUT, output(2, ["rx", "11\t5"]));
-    store.resetBox(1);
+    sidecar.emit(EVT.PORT_STATE, portState(1, "IN_SESSION", "IDLE"));
     expect(store.getStrobes(1)).toEqual([]);
     expect(store.getStrobes(2)).toHaveLength(1);
   });
@@ -154,6 +224,183 @@ describe("telemetry", () => {
     expect(store.isDebugRunning(3)).toBe(true);
     sidecar.emit(EVT.PORT_TELEMETRY, { box: 3, running: false, metrics: [] });
     expect(store.isDebugRunning(3)).toBe(false);
+  });
+});
+
+// The store notices a new run on the events it already receives; no caller
+// tells it (`ARCHITECTURE.md#overview`: the frontend renders what the sidecar
+// reports and never predicts a transition).
+describe("a new run clears the last one", () => {
+  it("clears a box when its port enters IN_SESSION, and only that box", () => {
+    const { sidecar, store } = attached();
+    finishedRun(sidecar, 1);
+    finishedRun(sidecar, 2);
+
+    sidecar.emit(EVT.PORT_STATE, portState(1, "IN_SESSION", "IDLE"));
+
+    expect(shows(store, 1)).toEqual(NOTHING);
+    expect(shows(store, 2)).toEqual(ALL_OF_IT);
+  });
+
+  it("keeps a running box's data through the connect replay of its state", () => {
+    const { sidecar, store } = attached();
+    finishedRun(sidecar, 1);
+    // Replayed on every connect with `prev` equal to `state`: not a transition.
+    sidecar.emit(EVT.PORT_STATE, portState(1, "IN_SESSION", "IN_SESSION"));
+    expect(shows(store, 1)).toEqual(ALL_OF_IT);
+  });
+
+  it("keeps the last Debug run through a refused START, and clears it on the sidecar's arm (B13)", async () => {
+    const { sidecar, store } = attached("connected");
+    sidecar.emit(EVT.PORT_OUTPUT, output(3, ["rx", "11\t5"]));
+    sidecar.emit(EVT.PORT_TELEMETRY, {
+      box: 3,
+      running: false,
+      metrics: [{ id: "accuracy", value: 0.5, n: 1 }],
+    });
+
+    // The Debug console's Send START, refused: the board never heard it.
+    const sent = sidecar
+      .call(CMD.PORT_SEND_START, { box: 3, sketchPath: "/s/T", config: {} })
+      .then(
+        () => "sent",
+        () => "refused",
+      );
+    await sidecar.refuse(CMD.PORT_SEND_START, ERR.SKETCH_UNKNOWN);
+    expect(await sent).toBe("refused");
+    expect(store.getStrobes(3)).toHaveLength(1);
+    expect(store.getTelemetry(3)).toHaveLength(1);
+    expect(store.getHistory(3, "accuracy")).toEqual([0.5]);
+
+    // Accepted: the sidecar arms the run, and that is what clears the box.
+    sidecar.emit(EVT.PORT_TELEMETRY, { box: 3, running: true, metrics: [] });
+    expect(store.getStrobes(3)).toEqual([]);
+    expect(store.getHistory(3, "accuracy")).toEqual([]);
+    expect(store.isDebugRunning(3)).toBe(true);
+
+    // Every later payload of the same run keeps what it has gathered.
+    sidecar.emit(EVT.PORT_OUTPUT, output(3, ["rx", "12\t9"]));
+    sidecar.emit(EVT.PORT_TELEMETRY, {
+      box: 3,
+      running: true,
+      metrics: [{ id: "accuracy", value: 1, n: 1 }],
+    });
+    expect(store.getStrobes(3)).toEqual([{ code: "12", at: 9 }]);
+    expect(store.getHistory(3, "accuracy")).toEqual([1]);
+  });
+
+  it("clears every box when a newly confirmed mapping is broadcast", () => {
+    const { sidecar, store } = attached();
+    sidecar.emit(EVT.SESSION_LIFECYCLE, holding(1, null));
+    finishedRun(sidecar, 1);
+    finishedRun(sidecar, 5);
+
+    sidecar.emit(EVT.SESSION_LIFECYCLE, holding(2, "g2", mapped(1), mapped(2)));
+
+    // Box 5 is not in the new mapping and must not linger either.
+    expect(shows(store, 1)).toEqual(NOTHING);
+    expect(shows(store, 5)).toEqual(NOTHING);
+  });
+
+  it("keeps the run through broadcasts that only move it on", () => {
+    const { sidecar, store } = attached();
+    sidecar.emit(EVT.SESSION_LIFECYCLE, holding(1, "g", mapped(1), mapped(2)));
+    sidecar.emit(EVT.PORT_STATE, portState(1, "IN_SESSION", "IDLE"));
+    finishedRun(sidecar, 1);
+
+    // Start All, then box 1 finishing, then the group ending.
+    sidecar.emit(
+      EVT.SESSION_LIFECYCLE,
+      holding(1, "g", mapped(1, { running: true, startedAt: "t" }), mapped(2, { running: true, startedAt: "t" })),
+    );
+    sidecar.emit(EVT.PORT_STATE, portState(1, "IDLE", "IN_SESSION"));
+    sidecar.emit(
+      EVT.SESSION_LIFECYCLE,
+      holding(1, "g", mapped(1, { ended: true }), mapped(2, { running: true, startedAt: "t" })),
+    );
+    sidecar.emit(EVT.SESSION_LIFECYCLE, holding(1, null));
+
+    expect(shows(store, 1)).toEqual(ALL_OF_IT);
+  });
+
+  it("keeps a Debug run through an announce that confirmed nothing", () => {
+    const { sidecar, store } = attached();
+    sidecar.emit(EVT.SESSION_LIFECYCLE, holding(1, "g", mapped(1)));
+    sidecar.emit(EVT.PORT_TELEMETRY, { box: 6, running: true, metrics: [] });
+    sidecar.emit(EVT.PORT_OUTPUT, output(6, ["rx", "11\t5"]));
+
+    // An unrelated announce (a session created, a tidy) while the mapping waits.
+    sidecar.emit(EVT.SESSION_LIFECYCLE, holding(1, "g", mapped(1)));
+
+    expect(store.getStrobes(6)).toHaveLength(1);
+  });
+
+  it("clears a re-confirm of the same mapping after a box ran, though the broadcast repeats", () => {
+    // Confirming the same group again with nothing announced in between (a
+    // per-box start of a later group does not announce, nor does a run
+    // ending) repeats the last broadcast exactly, all but its count.
+    const { sidecar, store } = attached();
+    sidecar.emit(EVT.SESSION_LIFECYCLE, holding(1, "g2", mapped(1), mapped(2)));
+    sidecar.emit(EVT.PORT_STATE, portState(1, "IN_SESSION", "IDLE"));
+    finishedRun(sidecar, 1);
+    sidecar.emit(EVT.PORT_STATE, portState(1, "IDLE", "IN_SESSION"));
+
+    // Back to Boxes after box 2's start was refused, and confirm again.
+    sidecar.emit(EVT.SESSION_LIFECYCLE, holding(2, "g2", mapped(1), mapped(2)));
+
+    expect(shows(store, 1)).toEqual(NOTHING);
+  });
+
+  it("clears a mapped box's Debug run when the same mapping is confirmed again", () => {
+    const { sidecar, store } = attached();
+    sidecar.emit(EVT.SESSION_LIFECYCLE, holding(1, "g", mapped(1)));
+    // Bench-tested from Debug Mode between the two confirmations.
+    sidecar.emit(EVT.PORT_TELEMETRY, {
+      box: 1,
+      running: true,
+      metrics: [{ id: "accuracy", value: 0.5, n: 1 }],
+    });
+    sidecar.emit(EVT.PORT_OUTPUT, output(1, ["rx", "11\t5"]));
+
+    sidecar.emit(EVT.SESSION_LIFECYCLE, holding(2, "g", mapped(1)));
+
+    expect(store.getStrobes(1)).toEqual([]);
+    expect(store.getTelemetry(1)).toEqual([]);
+    expect(store.getHistory(1, "accuracy")).toEqual([]);
+  });
+
+  it("keeps what arrived before the first answer, which has nothing shown before it to forget", async () => {
+    const { sidecar, store } = attached("connected");
+    sidecar.emit(EVT.PORT_TELEMETRY, { box: 6, running: true, metrics: [] });
+    sidecar.emit(EVT.PORT_OUTPUT, output(6, ["rx", "11\t5"]));
+
+    await sidecar.reply(CMD.SESSIONS_ACTIVE, holding(3, "g", mapped(1)));
+
+    expect(store.getStrobes(6)).toHaveLength(1);
+  });
+
+  it("keeps the run when a reconnect's answer shows no new confirmation", async () => {
+    const { sidecar, store } = attached("connected");
+    await sidecar.reply(CMD.SESSIONS_ACTIVE, holding(1, "g", mapped(1)));
+    finishedRun(sidecar, 1);
+
+    sidecar.setStatus("reconnecting");
+    sidecar.setStatus("connected");
+    await sidecar.reply(CMD.SESSIONS_ACTIVE, holding(1, "g", mapped(1)));
+
+    expect(shows(store, 1)).toEqual(ALL_OF_IT);
+  });
+
+  it("clears the run when a reconnect's answer shows a confirmation made while away", async () => {
+    const { sidecar, store } = attached("connected");
+    await sidecar.reply(CMD.SESSIONS_ACTIVE, holding(1, "g", mapped(1)));
+    finishedRun(sidecar, 1);
+
+    sidecar.setStatus("reconnecting");
+    sidecar.setStatus("connected");
+    await sidecar.reply(CMD.SESSIONS_ACTIVE, holding(2, "g", mapped(1)));
+
+    expect(shows(store, 1)).toEqual(NOTHING);
   });
 });
 

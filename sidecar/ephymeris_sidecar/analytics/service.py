@@ -1,8 +1,8 @@
 """Analytics orchestration — `DATA.md#reading-the-archive`,
 `DATA.md#analytics-views`.
 
-What the four commands actually call. Owns the indexing lock, the profile
-resolution ladder, the cache, and the explicit archive walk.
+What the four commands actually call. Owns the explicit archive walk; asks
+`scoring.RunScorer` for every score, decoded run and cache row.
 
 > **No analytics operation may slow, stall, or fail a session**
 > (`DATA.md#never-at-the-expense-of-a-session`). Six
@@ -16,7 +16,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
@@ -25,49 +24,19 @@ from ..logbook.repository import LogbookRepository
 from ..sessions import tidy as session_tidy
 from ..sessions.models import SessionAnimalRun
 from ..sessions.paths import parse_name_date, parse_name_time, parse_session_folder
-from ..tasks import profile as task_profile
-from ..tasks.profile import TaskProfile
-from . import derive, false_starts, infer, reader
-from .archive import CohortArchive
-from .repository import AdoptedRun, AnalyticsRepository, CachedRun, CacheKey
+from . import derive, false_starts, reader
+from .archive import RESCAN_WHILE_WRITING, CohortArchive
+from .repository import AdoptedRun, AnalyticsRepository, CachedRun
+from .scoring import RunScorer
 
 log = logging.getLogger(__name__)
-
-#: Emit progress every N files rather than per file — same publishing
-#: discipline as `backup.status`.
-PROGRESS_EVERY = 10
 
 #: Cap on one `analytics.series` request, so a "select all" click can't ask for
 #: a multi-megabyte frame.
 MAX_SERIES_RUNS = 24
 
-#: Runs handed to the worker thread per hop. Also the granularity at which the
-#: event loop gets to breathe between batches, so it is kept small enough that
-#: a chunk of cache misses can't stall a live `port.output` batch.
-INDEX_CHUNK = 32
-
 #: `analytics.recentSessions` default when the caller names no limit.
 DEFAULT_RECENT_LIMIT = 6
-
-
-@dataclass
-class _Resolved:
-    """A profile plus how much it can be trusted
-    (`DATA.md#which-profile-decodes-a-run`)."""
-
-    profile: TaskProfile | None
-    source: str  # 'snapshot' | 'sketch-current' | 'unavailable'
-    digest: str | None
-    #: Why there is no profile, when there isn't one. Without this an
-    #: unresolvable sketch name is indistinguishable from a genuinely
-    #: profile-less sketch, and the operator has nothing to act on.
-    reason: str | None = None
-
-
-#: One indexing pass's resolved profiles, keyed on what a run asks for
-#: (snapshot hash, recorded sketch path, sketch name) and holding what that
-#: question resolved to, plus the sketch path it landed on.
-_ProfileMemo = dict[tuple[str, str, str], tuple[_Resolved, str]]
 
 
 class AnalyticsService:
@@ -92,12 +61,11 @@ class AnalyticsService:
         self._logbook = LogbookRepository(db)
         self._min_counted = min_counted
         #: Resolve a document's `sketch` *name* to a sketch in this install's
-        #: library, for adopted orphans whose run record never existed
-        #: (`DATA.md#orphan-adoption`). The honest analog of the
-        #: `sketch-current` fallback (`DATA.md#which-profile-decodes-a-run`) —
-        #: and exactly as
-        #: trustworthy, which is to say: marked as such, never as a snapshot.
+        #: library: once when a rescan adopts an orphan, and again by the
+        #: scorer each time it reads one (`DATA.md#orphan-adoption`).
         self._sketch_lookup = sketch_lookup
+        #: Every score, decoded run and cache row (`DATA.md#caching`).
+        self._scorer = RunScorer(db, sketch_lookup)
         #: What every pass reads, and whose lock it runs under: one job at a
         #: time (`DATA.md#the-cohort-archive`).
         self._archive = archive
@@ -133,7 +101,13 @@ class AnalyticsService:
                 wanted_animals = set(animal_ids)
                 runs = [r for r in runs if r.animal_id in wanted_animals]
 
-            summaries = await self._index(runs, threshold, cohort_id)
+            summaries = await self._scorer.score(
+                runs,
+                min_counted=threshold,
+                progress=lambda done, total: self._progress(
+                    cohort_id, "reading", done, total
+                ),
+            )
 
         scored = {run.id: entry.summary for run, entry in zip(runs, summaries)}
         # A recovered session's clock closes from its files — each run's start
@@ -277,44 +251,55 @@ class AnalyticsService:
         out: list[dict[str, Any]] = []
         warnings: list[dict[str, Any]] = []
         for run_id in run_ids:
-            run = await asyncio.to_thread(self._archive.run, run_id)
-            if run is None or not run.file_path:
-                warnings.append({"code": "missing", "runId": run_id, "message": "no file"})
-                continue
-            result = await asyncio.to_thread(reader.read_run, run.file_path)
-            if not result.ok or result.document is None:
-                warnings.append(
-                    {"code": result.status, "runId": run_id, "message": result.detail or ""}
-                )
-                continue
-            resolved = await asyncio.to_thread(self._resolve_profile, run)
-            # The same ladder `_index_one` scores with, ending on the same
-            # inference rung — a run charted from an inferred profile must draw
-            # the same trials the summary counted, or the two panels disagree.
-            profile, _, _ = self._scoring_profile(resolved, result.document, persist=False)
-            metrics = derive.series(
-                result.document, profile, mode=mode, metric_ids=metric_ids
+            # One hop per run, and all of the run's work inside it: decoding
+            # and scoring up to `MAX_SERIES_RUNS` files is not work for the
+            # loop that flushes six boxes' output
+            # (`DATA.md#never-at-the-expense-of-a-session`). Sequential, like
+            # the summary's reads.
+            charted, warning = await asyncio.to_thread(
+                self._chart, run_id, mode, metric_ids
             )
-            # The joint walk rides along with the per-metric series rather than
-            # taking a command of its own: the file is already open and already
-            # decoded here, and the one panel that wants it is on the same
-            # screen as the ones that want the series. It is empty for any
-            # profile that doesn't declare exactly two conditions.
-            trail = derive.strategy_trail(result.document, profile)
-            # The per-trial tape rides along for the same reason the trail
-            # does: the file is already open and decoded, and the panel that
-            # wants it is on the same screen as the ones that want the series.
-            trials = derive.trials_of(result.document, profile)
-            out.append(
-                {
-                    "runId": run_id,
-                    "mode": mode,
-                    "metrics": [m.to_json() for m in metrics],
-                    "trail": [p.to_json() for p in trail],
-                    "trials": [t.to_json() for t in trials],
-                }
-            )
+            if warning is not None:
+                warnings.append(warning)
+            else:
+                out.append(charted)
         return {"series": out, "warnings": warnings}
+
+    def _chart(
+        self, run_id: str, mode: str, metric_ids: list[str] | None
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        """One run's series, trail and trial tape, or the warning instead.
+        Blocking; `series` runs it in a worker thread."""
+        run = self._archive.run(run_id)
+        if run is None or not run.file_path:
+            return None, {"code": "missing", "runId": run_id, "message": "no file"}
+        # The same ladder `score` scores with, ending on the same inference
+        # rung — a run charted from an inferred profile must draw the same
+        # trials the summary counted, or the two panels disagree.
+        decoded = self._scorer.decode(run)
+        if decoded.document is None:
+            return None, {
+                "code": decoded.status, "runId": run_id, "message": decoded.detail or "",
+            }
+        document, profile = decoded.document, decoded.profile
+        metrics = derive.series(document, profile, mode=mode, metric_ids=metric_ids)
+        # The joint walk rides along with the per-metric series rather than
+        # taking a command of its own: the file is already open and already
+        # decoded here, and the one panel that wants it is on the same
+        # screen as the ones that want the series. It is empty for any
+        # profile that doesn't declare exactly two conditions.
+        trail = derive.strategy_trail(document, profile)
+        # The per-trial tape rides along for the same reason the trail
+        # does: the file is already open and decoded, and the panel that
+        # wants it is on the same screen as the ones that want the series.
+        trials = derive.trials_of(document, profile)
+        return {
+            "runId": run_id,
+            "mode": mode,
+            "metrics": [m.to_json() for m in metrics],
+            "trail": [p.to_json() for p in trail],
+            "trials": [t.to_json() for t in trials],
+        }, None
 
     # --- recent sessions ----------------------------------------------------
 
@@ -387,8 +372,14 @@ class AnalyticsService:
         correct for an unplugged drive, wrong for a session the operator threw
         away. Rescan is where that gets resolved because it is the one moment
         the operator has explicitly said *the disk is the truth now*.
+
+        Refused (`RigInUse`) while a box runs: a run finalizing mid-walk has
+        its file adopted as well as its record committed
+        (`DATA.md#the-cohort-archive`).
         """
-        async with self._archive.exclusive():
+        async with self._archive.write(
+            refuse_while="writing", because=RESCAN_WHILE_WRITING
+        ) as write:
             cohort = await asyncio.to_thread(self._cohorts.get, cohort_id)
             folder_exists = await asyncio.to_thread(
                 lambda: Path(cohort.data_folder).expanduser().is_dir()
@@ -404,10 +395,10 @@ class AnalyticsService:
             # Prune before the walk, so `known` is built from surviving records
             # and a run whose file *moved* is re-adopted in the same pass
             # rather than pruned on one scan and re-found on the next.
-            pruned = (
+            pruned, dropped = (
                 await asyncio.to_thread(self._prune, cohort_id)
                 if adopt_orphans and folder_exists
-                else {"runs": 0, "sessions": 0, "adopted": 0}
+                else ({"runs": 0, "sessions": 0, "adopted": 0}, {})
             )
             runs = await asyncio.to_thread(self._sessions.runs_for_cohort, cohort_id)
             known = {
@@ -420,10 +411,10 @@ class AnalyticsService:
             # since (`DATA.md#carrying-adoptions-forward`). One thread hop and
             # one stat per file, against a walk that would otherwise open and
             # parse every one of them again.
-            carried = (
+            carried, held = (
                 await asyncio.to_thread(self._carry_over, found, known, cohort_id)
                 if adopt_orphans
-                else {}
+                else ({}, {})
             )
 
             orphans: list[dict[str, Any]] = []
@@ -451,7 +442,7 @@ class AnalyticsService:
                     best[identity] = settled
                     continue
                 entry, adoption = await asyncio.to_thread(
-                    self._describe_orphan, path, cohort, cohort_id
+                    self._describe_orphan, path, cohort, cohort_id, held.get(identity)
                 )
                 if adoption is None:
                     orphans.append(entry)
@@ -480,11 +471,15 @@ class AnalyticsService:
             ]
             adopted = 0
             if adopt_orphans and adoptable:
-                # INSERT OR REPLACE on the deterministic id, so a file whose
-                # content changed since adoption refreshes its row in place
-                # rather than duplicating it.
-                await asyncio.to_thread(self._repo.store_adopted, adoptable)
-                adopted = len(adoptable)
+                # INSERT OR REPLACE on the row's id, so a file whose content
+                # changed since adoption refreshes its row in place rather than
+                # duplicating it. Counted as written: a row another cohort
+                # holds is never taken.
+                adopted = await asyncio.to_thread(
+                    lambda: self._repo.store_adopted(
+                        adoptable, earlier_ids=_earlier_ids(adoptable, held, dropped)
+                    )
+                )
             if carried:
                 log.info(
                     "analytics: rescan of cohort %s reused %d already-adopted"
@@ -495,6 +490,8 @@ class AnalyticsService:
                 )
 
             await self._progress(cohort_id, "walking", len(found), len(found))
+            if adopted or rehomed or any(pruned.values()):
+                write.changed(cohort_ids=[cohort_id])
 
         return {
             "scanned": len(found),
@@ -510,8 +507,12 @@ class AnalyticsService:
 
     # --- pruning (DATA.md#pruning) -----------------------------------------
 
-    def _prune(self, cohort_id: str) -> dict[str, int]:
+    def _prune(self, cohort_id: str) -> tuple[dict[str, int], dict[str, str]]:
         """Drop records for files the disk demonstrably no longer has.
+
+        Returns the counts, and the id of each adoption it dropped by run
+        identity: a run whose file only moved is adopted again by the same
+        rescan, and a ruling on the dropped id follows it (`_earlier_ids`).
 
         One worker-thread hop for the whole pass, like the rest of this module:
         it is a stat per record and a handful of batched `DELETE`s, and the
@@ -542,11 +543,13 @@ class AnalyticsService:
             for run in self._sessions.runs_for_cohort(cohort_id)
             if run.file_path
         }
-        removed_adopted = [
-            entry.id
+        removed = [
+            entry
             for entry in self._repo.adopted_for_cohort(cohort_id)
             if _is_gone(entry.file_path) or _normalize(entry.file_path) in claimed
         ]
+        removed_adopted = [entry.id for entry in removed]
+        dropped = {reader.run_identity(Path(entry.file_path)): entry.id for entry in removed}
 
         adopted_count = self._repo.delete_adopted(removed_adopted)
         # The cache is the thing that was actually still serving numbers, so it
@@ -588,25 +591,28 @@ class AnalyticsService:
             "runs": run_count,
             "sessions": session_count,
             "adopted": adopted_count,
-        }
+        }, dropped
 
     # --- tidying records (DATA.md#tidy-records) ----------------------------
 
-    async def tidy(
-        self, cohort_id: str, *, apply: bool, protect: set[str], today: str
-    ) -> dict[str, Any]:
+    async def tidy(self, cohort_id: str, *, apply: bool, today: str) -> dict[str, Any]:
         """Merge a day's split records and drop empty ones — or say what would.
 
         `apply=False` is the preview the operator confirms; `apply=True`
         re-plans from scratch rather than trusting a plan the client holds,
         because the whole point of the lock is that nothing moved in between.
         Refused while anything holds the archive, like a second rescan: both
-        move run records between the rows a summary reads.
+        move run records between the rows a summary reads. The session holding
+        the rig, asked once the archive is held, is never touched.
         """
-        async with self._archive.exclusive():
-            return await asyncio.to_thread(
-                self._tidy, cohort_id, apply, protect, today
+        async with self._archive.write() as write:
+            held = write.held
+            result = await asyncio.to_thread(
+                self._tidy, cohort_id, apply, {held} if held else set(), today
             )
+            if result["applied"]:
+                write.changed(cohort_ids=[cohort_id])
+        return result
 
     def _tidy(
         self, cohort_id: str, apply: bool, protect: set[str], today: str
@@ -631,15 +637,18 @@ class AnalyticsService:
 
         # A merged record's count is its whole day, for the reply.
         merged_counts = dict(counts)
-        for merge in planned.merges:
-            fields = session_tidy.merged_fields(merge)
-            self._sessions.absorb_sessions(
-                merge.keep.id, [s.id for s in merge.absorb], **fields
-            )
-            merged_counts[merge.keep.id] = sum(
-                counts.get(s.id, 0) for s in (merge.keep, *merge.absorb)
-            )
-        self._sessions.discard_sessions([e.session.id for e in planned.empty])
+        # One unit of work (`DATA.md#transactions`): a merge the database
+        # refuses undoes the ones before it, so a cohort is never half-tidied.
+        with self._db.write() as tx:
+            for merge in planned.merges:
+                fields = session_tidy.merged_fields(merge)
+                self._sessions.absorb_sessions(
+                    merge.keep.id, [s.id for s in merge.absorb], **fields, tx=tx
+                )
+                merged_counts[merge.keep.id] = sum(
+                    counts.get(s.id, 0) for s in (merge.keep, *merge.absorb)
+                )
+            self._sessions.discard_sessions([e.session.id for e in planned.empty], tx=tx)
 
         # Folders last, and only a folder no surviving record points at and
         # that still holds no file — re-checked now, not trusted from the plan.
@@ -667,8 +676,10 @@ class AnalyticsService:
 
     def _carry_over(
         self, found: list[Path], known: set[str], cohort_id: str
-    ) -> dict[str, AdoptedRun]:
-        """The adoptions this walk does not need to redo, by run identity.
+    ) -> tuple[dict[str, AdoptedRun], dict[str, str]]:
+        """The adoptions this walk does not need to redo, by run identity —
+        and the id of every adoption this cohort holds, by run identity, which
+        a file the walk does read is stored under again (`_orphan_run_id`).
 
         Adoption used to be repeated in full on every rescan: each of an
         archive's files was opened, parsed and written back, so a cohort with a
@@ -715,10 +726,10 @@ class AnalyticsService:
                 and stat.size == entry.file_size
             ):
                 out[identity] = entry
-        return out
+        return out, {identity: entry.id for identity, entry in index.items()}
 
     def _describe_orphan(
-        self, path: Path, cohort: Any, cohort_id: str
+        self, path: Path, cohort: Any, cohort_id: str, held_id: str | None = None
     ) -> tuple[dict[str, Any], AdoptedRun | None]:
         """Match a stray file to an animal by name, and never guess
         (`DATA.md#orphan-adoption`).
@@ -781,7 +792,9 @@ class AnalyticsService:
             sketch_path = self._sketch_lookup(sketch_name)
 
         return entry, AdoptedRun(
-            id=_orphan_run_id(path),
+            # The id this cohort already holds the run under, if any, so a
+            # re-read never re-keys a row (`DATA.md#orphan-adoption`).
+            id=held_id or _orphan_run_id(cohort_id, path),
             cohort_id=cohort_id,
             animal_id=match,
             file_path=str(path),
@@ -798,360 +811,6 @@ class AnalyticsService:
             file_mtime_ns=result.mtime_ns,
             file_size=result.size,
         )
-
-    # --- indexing ----------------------------------------------------------
-
-    async def _index(
-        self, runs: list[SessionAnimalRun], threshold: int, cohort_id: str
-    ) -> list[CachedRun]:
-        """Resolve, read, and score every run — cache hits skipped.
-
-        Reads are sequential in a worker thread, not a pool: the live `.tsv`
-        write path is the priority and a pool would multiply disk contention
-        against it (`DATA.md#never-at-the-expense-of-a-session`).
-        """
-        cached = await asyncio.to_thread(self._repo.load_cached, [r.id for r in runs])
-        out: list[CachedRun] = []
-        fresh: list[CachedRun] = []
-        total = len(runs)
-        memo: _ProfileMemo = {}
-
-        await self._progress(cohort_id, "reading", 0, total)
-        emitted = 0
-        for start in range(0, total, INDEX_CHUNK):
-            chunk = runs[start : start + INDEX_CHUNK]
-            entries = await asyncio.to_thread(
-                self._index_chunk, chunk, cached, threshold, memo
-            )
-            for run, entry in zip(chunk, entries):
-                out.append(entry)
-                if cached.get(run.id) is not entry:
-                    fresh.append(entry)
-            done = start + len(chunk)
-            if done - emitted >= PROGRESS_EVERY:
-                emitted = done
-                await self._progress(cohort_id, "reading", done, total)
-
-        if fresh:
-            await asyncio.to_thread(self._repo.store, fresh)
-        else:
-            # An all-cache-hit pass still resolved profiles, which may have
-            # remembered blobs that nothing else is going to commit.
-            await asyncio.to_thread(self._repo.flush)
-        await self._progress(cohort_id, "reading", total, total)
-        log.info(
-            "analytics: indexed %d runs for cohort %s (%d recomputed)",
-            total,
-            cohort_id,
-            len(fresh),
-        )
-        return out
-
-    def _index_chunk(
-        self,
-        runs: list[SessionAnimalRun],
-        cached: dict[str, CachedRun],
-        threshold: int,
-        memo: _ProfileMemo,
-    ) -> list[CachedRun]:
-        """One worker-thread hop's worth of runs.
-
-        Chunking does not add concurrency — the runs inside a chunk are still
-        read one after another on one thread, and the whole pass is still
-        behind the service lock (`DATA.md#never-at-the-expense-of-a-session`).
-        It only stops the loop paying a thread
-        hop per run, which at archive scale costs more than the reads do once
-        the cache is warm.
-        """
-        return [self._index_one(r, cached.get(r.id), threshold, memo) for r in runs]
-
-    def _index_one(
-        self,
-        run: SessionAnimalRun,
-        cached: CachedRun | None,
-        threshold: int,
-        memo: _ProfileMemo | None = None,
-    ) -> CachedRun:
-        resolved = self._resolve_profile(run, memo)
-
-        if not run.file_path:
-            return CachedRun(
-                run_id=run.id,
-                status="missing",
-                detail="no file was recorded for this run",
-                profile_hash=resolved.digest,
-                profile_source=resolved.source,
-                params_hash=None,
-                config=None,
-                summary=derive.RunSummary(status="missing").to_json(),
-                key=CacheKey("", None, None, resolved.digest, derive.CODEC_VERSION),
-            )
-
-        # Stat, not read. The cache key is answerable from the stat alone, so a
-        # hit costs one syscall and opens nothing — which is the difference
-        # between a warm dashboard open reading a whole archive off a network
-        # share and reading none of it (`DATA.md#caching`).
-        stat = reader.stat_run(run.file_path)
-
-        if stat.status == "missing":
-            # Keep the last good summary rather than dropping it — a briefly
-            # unreachable share must not erase history from the charts
-            # (`DATA.md#caching`).
-            # This stays *before* the key comparison: a vanished file has no
-            # stat to build a key from.
-            if cached is not None and cached.status == "ok":
-                return CachedRun(**{**cached.__dict__, "stale": True})
-            return CachedRun(
-                run_id=run.id,
-                status="missing",
-                detail=stat.detail,
-                profile_hash=resolved.digest,
-                profile_source=resolved.source,
-                params_hash=None,
-                config=None,
-                summary=derive.RunSummary(status="missing", detail=stat.detail).to_json(),
-                key=CacheKey(run.file_path, None, None, resolved.digest, derive.CODEC_VERSION),
-            )
-
-        key = CacheKey(
-            file_path=run.file_path,
-            mtime_ns=stat.mtime_ns,
-            size=stat.size,
-            profile_hash=resolved.digest,
-            codec_version=derive.CODEC_VERSION,
-        )
-        if cached is not None and cached.key == key:
-            return cached
-
-        result = (
-            reader.parse_run(run.file_path, stat)
-            if stat.ok
-            else reader.ReadResult(status=stat.status, detail=stat.detail)
-        )
-
-        if result.status == "unreadable" or result.document is None:
-            # Cache the negative result too, so a corrupt file isn't re-parsed
-            # on every dashboard open.
-            return CachedRun(
-                run_id=run.id,
-                status="unreadable",
-                detail=result.detail,
-                profile_hash=resolved.digest,
-                profile_source=resolved.source,
-                params_hash=None,
-                config=None,
-                summary=derive.RunSummary(
-                    status="unreadable", detail=result.detail
-                ).to_json(),
-                key=key,
-            )
-
-        profile, source, digest = self._scoring_profile(resolved, result.document)
-        summary = derive.summarize(result.document, profile, min_counted=threshold)
-        payload = summary.to_json()
-        detail = summary.detail
-        if summary.status == "no-metrics" and not detail and resolved.reason:
-            # A run that scored nothing is the one case where the operator most
-            # needs to know *why* — "no metrics" alone is indistinguishable
-            # from a genuinely profile-less sketch and offers nothing to fix.
-            detail = resolved.reason
-            payload["detail"] = detail
-        # What the FILE says it ran on. Only ever read for a run this database
-        # has no row for (`DATA.md#the-embedded-task-profile`) — the row's own
-        # `params_hash` and `config` win where there is one — so this costs a
-        # dictionary comprehension on the runs that would otherwise report no
-        # parameters at all. The values ride along for the session log's
-        # what-changed (`DATA.md#what-changed`).
-        recorded = task_profile.recorded_config(result.document, profile)
-        return CachedRun(
-            run_id=run.id,
-            status=summary.status,
-            detail=detail,
-            profile_hash=digest,
-            profile_source=source,
-            params_hash=task_profile.params_hash(recorded),
-            config=recorded,
-            summary=payload,
-            key=key,
-        )
-
-    def _scoring_profile(
-        self,
-        resolved: _Resolved,
-        document: dict[str, Any],
-        *,
-        persist: bool = True,
-    ) -> tuple[TaskProfile | None, str, str | None]:
-        """The profile a run is actually scored with — the ladder's last rungs.
-
-        Two of the four rungs need the document and therefore live here rather
-        than in `_resolve_profile`, which deliberately runs before any file is
-        opened:
-
-        1. the database snapshot, resolved already — the profile this rig
-           recorded the run with;
-        2. **the file's own snapshot** (`DATA.md#the-embedded-task-profile`),
-           which is the same claim made by
-           the file instead of by this machine's database, and is what lets a
-           session recorded on another rig decode exactly as it does at home;
-        3. today's `task.json` at the recorded sketch path — resolved already,
-           and only as trustworthy as that sounds;
-        4. the profile **inferred from the stream itself** (`infer.py`), which
-           every run of this firmware lineage supports because the strobe
-           registry is append-only.
-
-        **The file's snapshot outranks the live `task.json`, and that ordering
-        is the point.** Both are "a declaration for this sketch"; only one of
-        them is the declaration this run actually used. Ranking them the other
-        way would mean a rig that happens to have a same-named task scores a
-        visiting file against its own edit of it — silently, and with a
-        `profileHash` that says the two runs are comparable.
-
-        Both the embedded and the inferred profile are remembered
-        content-addressed like any other, so profile *groups* work unchanged.
-        `persist=False` for the read-only `series` path, which must not leave
-        an uncommitted insert behind the summary pass's batching.
-
-        The cache key deliberately keeps the *resolution* digest (None when
-        nothing resolved), not the digest reached here: both of these rungs are
-        functions of the file's content, which the key already covers via
-        mtime/size, and of `CODEC_VERSION`, which gates the definition of
-        scoring itself.
-        """
-        if (
-            resolved.source == "snapshot"
-            and resolved.profile is not None
-            and resolved.profile.live_metrics
-        ):
-            return resolved.profile, resolved.source, resolved.digest
-
-        embedded = task_profile.embedded_profile(document)
-        if embedded is not None and embedded.live_metrics:
-            # Reported as a snapshot because that is what it is — the profile
-            # the run was configured from, recorded at the time of the run. It
-            # arrived by a different road than the database's copy; when both
-            # exist they are the same bytes and the cheaper road is taken above.
-            digest = self._repo.remember_profile(embedded) if persist else None
-            return embedded, "snapshot", digest
-
-        if resolved.profile is not None and resolved.profile.live_metrics:
-            return resolved.profile, resolved.source, resolved.digest
-        sketch = document.get("sketch")
-        inferred = infer.infer_profile(
-            derive.codes_of(document),
-            sketch_name=sketch if isinstance(sketch, str) and sketch else None,
-        )
-        if inferred is None:
-            return resolved.profile, resolved.source, resolved.digest
-        digest = self._repo.remember_profile(inferred) if persist else None
-        return inferred, "inferred", digest
-
-    def _resolve_profile(
-        self,
-        run: SessionAnimalRun,
-        memo: _ProfileMemo | None = None,
-    ) -> _Resolved:
-        """Snapshot, then today's `task.json`, then nothing
-        (`DATA.md#which-profile-decodes-a-run`).
-
-        Three states, not two: the fallback itself can fail, because the
-        recorded `sketch_path` may have been renamed, moved, or dropped from
-        the sketch library since the run.
-
-        `memo` collapses the repeated work of one indexing pass — a whole
-        archive is usually one or two sketches, and without it every run pays
-        its own `task.json` read, sha256, and `INSERT OR IGNORE`.
-
-        **It is scoped to the pass and must stay that way.** Resolution happens
-        at read time on purpose (`DATA.md#which-profile-decodes-a-run`): a
-        newly saved task,
-        or an edited `task.json`, takes effect on the very next summary. A memo that
-        outlived the pass would freeze exactly what that rule exists to keep
-        thawed. Promoting this to a field would look like an obvious win and
-        would be a regression.
-        """
-        key = (
-            run.profile_hash or "",
-            run.sketch_path or "",
-            getattr(run, "sketch_name", None) or "",
-        )
-        if memo is not None and key in memo:
-            resolved, sketch_path = memo[key]
-            # Replay the path the first run of this key resolved to. It is not
-            # bookkeeping: `summary` reports `sketchPath` per run
-            # (`DATA.md#which-profile-decodes-a-run`), so
-            # skipping this would leave one run of a group naming its sketch
-            # and the rest naming nothing.
-            run.sketch_path = sketch_path
-            return resolved
-
-        resolved = self._resolve_profile_uncached(run)
-        if memo is not None:
-            memo[key] = (resolved, run.sketch_path)
-        return resolved
-
-    # NOTE: this resolves the *declared* rungs only. The inference rung lives
-    # in `_scoring_profile`, after the file is read — it needs the codes, and
-    # resolution deliberately runs before any file is opened.
-    def _resolve_profile_uncached(self, run: SessionAnimalRun) -> _Resolved:
-        if run.profile_hash:
-            stored = self._repo.load_profile(run.profile_hash)
-            if stored is not None:
-                return _Resolved(stored, "snapshot", run.profile_hash)
-
-        named = getattr(run, "sketch_name", None)
-        if not run.sketch_path and named and self._sketch_lookup is not None:
-            # Resolve against the sketch library *now* rather than trusting
-            # what adoption recorded. A run adopted while its sketch was
-            # missing would otherwise stay permanently
-            # undecodable, needing a second rescan to un-stick — and the
-            # recorded path is only ever a cache of this same lookup.
-            run.sketch_path = self._sketch_lookup(named) or ""
-
-        if not run.sketch_path:
-            # An adopted orphan whose sketch name matched nothing in the
-            # current sketch library has no task.json to fall back to. Name the
-            # sketch it wanted: that is the one thing the operator can act on,
-            # by declaring it as a saved task's `legacyNames`.
-            # Only surfaced when inference ALSO found nothing in the stream —
-            # a run this reason reaches carries no recognisable condition at
-            # all, so the sketch name is still the one actionable fact.
-            reason = (
-                f"this run names the sketch “{named}”, which doesn't match any "
-                "sketch in the bundled library, and its stream presents no "
-                "recognisable condition to infer from"
-                if named
-                else "no sketch was recorded for this run, and its stream "
-                "presents no recognisable condition to infer from"
-            )
-            return _Resolved(None, "unavailable", None, reason)
-
-        try:
-            current = task_profile.load_profile(run.sketch_path)
-        except task_profile.TaskProfileError as exc:
-            log.debug("run %s: task.json is malformed: %s", run.id, exc)
-            return _Resolved(
-                None, "unavailable", None, f"the sketch's task.json is malformed: {exc}"
-            )
-
-        if current is None:
-            # No task.json at all: either a genuinely profile-less sketch or a
-            # path that no longer resolves. Both decode to "no metrics", and
-            # the distinction isn't recoverable from here.
-            return _Resolved(
-                None,
-                "unavailable",
-                None,
-                "no task.json was found beside this run's sketch",
-            )
-        # Store the blob even though this is only a fallback decode. Content-
-        # addressed and commit-free, so it costs nothing after the first run —
-        # and without it a profile group has no `taskName` to label itself
-        # with, which is every group in an archive that predates snapshots.
-        # This does **not** promote the run to `snapshot`: how much the
-        # decoding can be trusted is `source`, and it stays `sketch-current`.
-        digest = self._repo.remember_profile(current)
-        return _Resolved(current, "sketch-current", digest)
 
     # --- progress ----------------------------------------------------------
 
@@ -1511,17 +1170,55 @@ def _animal_from_filename(
     return next((a.id for a in animals if a.name.casefold() == folded), None)
 
 
-def _orphan_run_id(path: Path) -> str:
-    """Deterministic synthetic run id, so re-running the rescan is idempotent.
+def _orphan_run_id(cohort_id: str, path: Path) -> str:
+    """The id a new adoption is stored under (`DATA.md#orphan-adoption`).
 
-    Keyed on the **run identity** (the file stem), not the path. A duplicated
-    run has two paths, and which copy `_prefer` picks can legitimately change
-    between scans — when a sketch reappears in the library, say, and one copy
-    suddenly resolves a profile. A path-keyed id would then mint a *second*
-    row for a run that already had one, leaving both in place: precisely the
-    double-counting the deduplication exists to prevent. Keyed on identity,
-    the same run always lands on the same row and `INSERT OR REPLACE` updates
-    it in place.
+    Keyed on the **cohort and the run identity** (the file stem), never the
+    path. A duplicated run has two paths, and which copy `_prefer` picks can
+    legitimately change between scans — when a sketch reappears in the
+    library, say, and one copy suddenly resolves a profile. A path-keyed id
+    would then mint a *second* row for a run that already had one, leaving
+    both in place: precisely the double-counting the deduplication exists to
+    prevent. And two cohorts whose folders overlap find the *same* path, so
+    only the cohort in the key keeps their rows apart.
+
+    Only for a run the cohort does not hold yet. A held row keeps the id it
+    was stored under, whatever this returns for it now: a person's ruling
+    (`run_flags`) and the cached scores are keyed by that id.
+    """
+    key = f"{cohort_id}\0{reader.run_identity(path)}"
+    return f"adopted:{hashlib.sha1(key.encode('utf-8')).hexdigest()[:16]}"
+
+
+def _stem_only_run_id(path: Path) -> str:
+    """The stem-only id: the run identity alone, with no cohort.
+
+    A row held under its stem-only id keeps it (`_orphan_run_id`), so it is
+    the key of any ruling a person made on that run. When such a row is pruned
+    and its run adopted afresh, the ruling moves to the new id (`_earlier_ids`,
+    `DATA.md#false-starts`).
     """
     digest = hashlib.sha1(reader.run_identity(path).encode("utf-8")).hexdigest()
     return f"adopted:{digest[:16]}"
+
+
+def _earlier_ids(
+    adoptable: list[AdoptedRun], held: dict[str, str], dropped: dict[str, str]
+) -> dict[str, list[str]]:
+    """The ids a ruling on each freshly adopted run may still sit on
+    (`DATA.md#false-starts`), for `store_adopted` to move it from.
+
+    Only for a run the cohort did not hold: a row read again keeps its own id
+    and its own ruling, and never takes one another cohort's pruned row left.
+    First the id of a row this rescan's prune just dropped for the same run,
+    which a move kept from the cohort that first adopted it; then the
+    stem-only id.
+    """
+    out: dict[str, list[str]] = {}
+    for entry in adoptable:
+        identity = reader.run_identity(Path(entry.file_path))
+        if held.get(identity) is not None:
+            continue
+        candidates = [dropped[identity]] if identity in dropped else []
+        out[entry.id] = [*candidates, _stem_only_run_id(Path(entry.file_path))]
+    return out

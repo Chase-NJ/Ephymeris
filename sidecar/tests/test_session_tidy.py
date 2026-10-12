@@ -65,15 +65,11 @@ def group_run(group_id: str, at: str) -> GroupRun:
 
 
 async def preview(rig: Rig, **kw) -> dict:
-    return await rig.service.tidy(
-        rig.cohort.id, apply=False, protect=kw.get("protect", set()), today=kw.get("today", TODAY)
-    )
+    return await rig.service.tidy(rig.cohort.id, apply=False, today=kw.get("today", TODAY))
 
 
 async def apply(rig: Rig, **kw) -> dict:
-    return await rig.service.tidy(
-        rig.cohort.id, apply=True, protect=kw.get("protect", set()), today=kw.get("today", TODAY)
-    )
+    return await rig.service.tidy(rig.cohort.id, apply=True, today=kw.get("today", TODAY))
 
 
 # --- merging a split day -----------------------------------------------------
@@ -105,6 +101,41 @@ async def test_two_records_of_one_session_merge_into_the_earliest(rig: Rig) -> N
     summary = await rig.service.summary(rig.cohort.id)
     assert [s["id"] for s in summary["sessions"]] == [first]
     assert {r["sessionId"] for r in summary["runs"]} == {first}
+
+
+async def test_a_tidy_refused_part_way_changes_nothing(rig: Rig, db: Database) -> None:
+    """Tidy is one unit of work (`DATA.md#tidy-records`, `DATA.md#transactions`):
+    a merge the database refuses undoes the merges before it, rather than
+    leaving the cohort half-tidied. The refusal is SQLite's own -- a trigger
+    on deleting the last merge's absorbed record."""
+    days = {}
+    for number in ("12", "13"):
+        rig.clock.at = f"2026-07-22T08:5{number[-1]}:00"
+        first = rig.add_session(number, DAY)
+        rig.clock.at = f"2026-07-22T12:5{number[-1]}:00"
+        second = rig.add_session(number, DAY)
+        rig.add_run(first, "a1", HIT_1 * 5)
+        rig.add_run(second, "a2", HIT_3 * 5)
+        days[number] = (first, second)
+    plan = await preview(rig)
+    assert len(plan["merges"]) == 2
+    refused = plan["merges"][-1]["absorb"][0]["sessionId"]
+    before = sorted(s.id for s in rig.sessions.list_sessions(rig.cohort.id))
+    runs_before = sorted((r.id, r.session_id) for r in rig.sessions.runs_for_cohort(rig.cohort.id))
+
+    with db.write() as tx:
+        tx.execute(
+            "CREATE TEMP TRIGGER refuse_absorb BEFORE DELETE ON sessions"
+            f" WHEN OLD.id = '{refused}' BEGIN SELECT RAISE(ABORT, 'refused'); END"
+        )
+    with pytest.raises(Exception, match="refused"):
+        await apply(rig)
+
+    assert sorted(s.id for s in rig.sessions.list_sessions(rig.cohort.id)) == before
+    assert (
+        sorted((r.id, r.session_id) for r in rig.sessions.runs_for_cohort(rig.cohort.id))
+        == runs_before
+    ), "the first merge's runs went back under their own records"
 
 
 async def test_a_preview_changes_nothing(rig: Rig) -> None:
@@ -204,7 +235,8 @@ async def test_the_held_session_and_its_folder_mates_are_left_whole(rig: Rig) ->
     earlier = started(rig, "2026-07-22T08:55:00")
     held = started(rig, "2026-07-22T12:55:00")
     rig.add_run(earlier, "a1", HIT_1)
-    plan = await preview(rig, protect={held})
+    rig.lifecycle.held = held
+    plan = await preview(rig)
     assert plan["merges"] == [] and plan["empty"] == []
     assert {s["session"]["sessionId"] for s in plan["skipped"]} == {held, earlier}
 

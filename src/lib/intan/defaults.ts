@@ -21,7 +21,11 @@ import { FILE_FORMATS, defaultRecordingConfig } from "./types";
 
 export type RecordingConfigDefaults = Omit<RecordingConfig, "saveDirectory" | "boxes">;
 
-/** One box's memory from the last Record step: which port, which range, which probe. */
+/**
+ * One box's memory from the last Record step: whether it recorded, and its
+ * wiring (which port, which range). Never a probe map, which follows the
+ * animal (`RecordingDefaults.probeMaps`).
+ */
 export type RecordingBoxMemory = {
   record: boolean;
   /** "" = unassigned; otherwise a single upper-case port letter. */
@@ -29,7 +33,6 @@ export type RecordingBoxMemory = {
   firstChannel: number;
   /** -1 = the whole port, resolved once RHX reports the port's channel count. */
   lastChannel: number;
-  probeMapPath: string | null;
 };
 
 export type RecordingDefaults = {
@@ -38,6 +41,12 @@ export type RecordingDefaults = {
   config: RecordingConfigDefaults;
   /** Keyed by box number, "1"…"6". */
   boxes: Record<string, RecordingBoxMemory>;
+  /**
+   * The probe map last used for each animal, keyed by animal id. A probe map
+   * describes the animal's implant, so it follows the animal from box to box;
+   * the box keeps only its wiring (port and range).
+   */
+  probeMaps: Record<string, string>;
 };
 
 const DOWNSAMPLE = [1, 2, 4, 8, 16, 32, 64, 128];
@@ -53,6 +62,7 @@ export const DEFAULT_RECORDING_DEFAULTS: RecordingDefaults = {
   saveRoot: null,
   config: baseConfig(),
   boxes: {},
+  probeMaps: {},
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -132,7 +142,8 @@ function normalizeBoxMemory(raw: unknown): RecordingBoxMemory | null {
     port: /^[A-H]$/.test(port) ? port : "",
     firstChannel: int(raw["firstChannel"], 0, 127, 0),
     lastChannel: int(raw["lastChannel"], -1, 127, -1),
-    probeMapPath: optString(raw["probeMapPath"]),
+    // An older build's per-box `probeMapPath` is ignored, not migrated: it was
+    // whichever animal last recorded on the box, and nothing says which.
   };
 }
 
@@ -145,10 +156,19 @@ export function normalizeRecordingDefaults(raw: unknown): RecordingDefaults {
       if (memory) boxes[key] = memory;
     }
   }
+  // Absent from a file written before probe maps followed the animal: none remembered.
+  const probeMaps: Record<string, string> = {};
+  if (isRecord(raw["probeMaps"])) {
+    for (const [animalId, path] of Object.entries(raw["probeMaps"])) {
+      const kept = optString(path);
+      if (animalId !== "" && kept) probeMaps[animalId] = kept;
+    }
+  }
   return {
     saveRoot: optString(raw["saveRoot"]),
     config: normalizeConfig(raw["config"]),
     boxes,
+    probeMaps,
   };
 }
 

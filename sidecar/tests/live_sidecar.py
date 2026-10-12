@@ -113,12 +113,37 @@ class LiveSidecar:
             pass
 
 
+def settings(*, bound: dict[int, str] | None = None, **overrides: Any) -> dict[str, Any]:
+    """`EphymerisSettings` as the shell pushes them: every field. `bound` maps
+    box number to the hardware id bound to it."""
+    return {
+        "dataDirectory": None, "backupDirectory": None, "arduinoCliPath": None,
+        "defaultBaud": 9600,
+        "boxes": [
+            {"box": box, "hardwareId": hwid, "label": f"Box {box}"}
+            for box, hwid in (bound or {}).items()
+        ],
+        "reducedMotion": False, "constellation": None, "constellationSlots": {},
+        "taskDefaults": {},
+        **overrides,
+    }
+
+
+def animal(name: str, group_id: str, *, box: int | None = None) -> dict[str, Any]:
+    """An `Animal` as the cohort editor sends one: every field, most of them
+    null. The sidecar checks the shape before any handler runs."""
+    return {
+        "id": f"a-{name}", "name": name, "groupId": group_id, "boxNumber": box,
+        "cage": None, "sex": None, "idNumber": None, "notes": None,
+    }
+
+
 async def create_cohort(sidecar: LiveSidecar, folder: Path) -> dict[str, Any]:
     """A cohort at `folder` with one animal on box 1, so a session can run."""
     created = await sidecar.call(
         "cohorts.create", name=folder.name, dataFolder=str(folder),
         groups=[{"id": "g1", "name": "Morning", "order": 0}],
-        animals=[{"name": "rat1", "groupId": "g1", "boxNumber": 1}],
+        animals=[animal("rat1", "g1", box=1)],
     )
     return created["cohort"]
 

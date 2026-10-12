@@ -153,6 +153,31 @@ export function defaultConfig(
   );
 }
 
+/** A sketch's Task Profile as read; `profile` null means the sketch has none. */
+export interface ReadProfile {
+  sketchPath: string;
+  profile: TaskProfile | null;
+}
+
+/**
+ * What a START sent by hand from Debug Mode carries for `sketchPath`, or null
+ * while there is nothing right to send: its profile not read yet, or the one
+ * read belongs to the sketch the board carried before.
+ *
+ * `defaultConfig` without a profile is `{}`, which is right for a sketch that
+ * declares none and wrong for one whose profile is still on its way: the
+ * sidecar fills each field from the profile's own default, and this rig's
+ * `taskDefaults` never reach the board.
+ */
+export function startConfig(
+  sketchPath: string,
+  read: ReadProfile | null,
+  rigDefaults: Record<string, unknown>,
+): Record<string, unknown> | null {
+  if (read === null || read.sketchPath !== sketchPath) return null;
+  return defaultConfig(read.profile, rigDefaults);
+}
+
 /**
  * The overrides after one edit of a form that reports whole configs: every key
  * whose value moved between what was `shown` and the `next` it reported is now

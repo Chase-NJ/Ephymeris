@@ -22,13 +22,13 @@ import {
 } from "@/lib/hardware/context";
 import { springSnappy } from "@/lib/motion";
 import { getTaskProfile } from "@/lib/sessions/commands";
-import { useDebugRunning, useSessionStore } from "@/lib/sessions/context";
+import { useDebugRunning } from "@/lib/sessions/context";
 import { useSettings } from "@/lib/settings/context";
 import { BAUD_RATES } from "@/lib/settings/schema";
 import { useSidecar } from "@/lib/ws/context";
 import { CMD } from "@/lib/ws/protocol";
 import type { UtilityBaselineState } from "@/lib/ws/protocol";
-import { defaultConfig, sketchName, type TaskProfile } from "@/lib/sessions/types";
+import { sketchName, startConfig, type ReadProfile, type TaskProfile } from "@/lib/sessions/types";
 
 /**
  * One box, up close (`USER-GUIDE.md#checking-a-box`).
@@ -114,7 +114,6 @@ export function NodeDetail({
   const flashed = useFlashedSketch(box);
   const utility = useUtilityStatus();
   const health = useBoxHealth()[box] ?? "absent";
-  const sessionStore = useSessionStore();
   // The sidecar's word, not this panel's guess: it goes false when the board's
   // own END_SESSION strobe arrives, or the console stops being a console.
   const running = useDebugRunning(box);
@@ -149,7 +148,13 @@ export function NodeDetail({
   const [copied, setCopied] = useState(false);
   const [saved, setSaved] = useState(false);
   const [logError, setLogError] = useState<string | null>(null);
-  const [profile, setProfile] = useState<TaskProfile | null>(null);
+  // The carried sketch's Task Profile, kept with the sketch it was read for:
+  // until the read for the sketch on the board lands, there is none, rather
+  // than the last sketch's.
+  const effectivePath = effectiveSketch?.path ?? null;
+  const [read, setRead] = useState<ReadProfile | null>(null);
+  const profile: TaskProfile | null =
+    read !== null && read.sketchPath === effectivePath ? read.profile : null;
   const [tab, setTab] = useState<"console" | "status">("console");
 
   // The sketch declares its own telemetry prefix; a profile-less sketch may
@@ -180,20 +185,17 @@ export function NodeDetail({
 
   // Load the carried sketch's Task Profile so a *utility* sketch gets its
   // controls/telemetry strip — from the first open, when the baseline already
-  // put it there. A behavior or profile-less sketch clears it.
-  const effectivePath = effectiveSketch?.path ?? null;
+  // put it there. A behavior or profile-less sketch clears it. A failed read
+  // counts as profile-less, as the sidecar's own read for `port.sendStart` does.
   useEffect(() => {
-    if (!effectivePath) {
-      setProfile(null);
-      return;
-    }
+    if (!effectivePath) return;
     let cancelled = false;
     getTaskProfile(client, effectivePath)
       .then((p) => {
-        if (!cancelled) setProfile(p);
+        if (!cancelled) setRead({ sketchPath: effectivePath, profile: p });
       })
       .catch(() => {
-        if (!cancelled) setProfile(null);
+        if (!cancelled) setRead({ sketchPath: effectivePath, profile: null });
       });
     return () => {
       cancelled = true;
@@ -268,22 +270,30 @@ export function NodeDetail({
    * `START` grammar and type it.
    *
    * The values are the ones a session would send — the profile's defaults under
-   * this rig's `taskDefaults`, merged by the same `defaultConfig` — and the
+   * this rig's `taskDefaults`, merged by the same `defaultConfig` — so it
+   * waits for this sketch's profile, without which the rig's are dropped. The
    * line is built by the sidecar, which owns the wire keys and the firmware's
    * length cap. Sending it twice is harmless: a sketch already running reads
    * `START` as an unknown command.
+   *
+   * The last run's trials are forgotten by the session store when the sidecar
+   * arms this one, not here: a refused START leaves them on screen.
    */
+  const startWith = effectiveSketch
+    ? startConfig(
+        effectiveSketch.path,
+        read,
+        settings.taskDefaults[sketchName(effectiveSketch.path)] ?? {},
+      )
+    : null;
   const sendStart = () => {
-    if (!effectiveSketch) return;
-    // A fresh count: the trial panels fold this box's strobe log, and the last
-    // run's trials are not this run's.
-    sessionStore.resetBox(box);
-    const config = defaultConfig(
-      profile,
-      settings.taskDefaults[sketchName(effectiveSketch.path)] ?? {},
-    );
+    if (!effectiveSketch || !startWith) return;
     void run(() =>
-      client.call(CMD.PORT_SEND_START, { box, sketchPath: effectiveSketch.path, config }),
+      client.call(CMD.PORT_SEND_START, {
+        box,
+        sketchPath: effectiveSketch.path,
+        config: startWith,
+      }),
     ).then((sent) => {
       // Only a START that really went out can leave a spent sketch behind.
       if (sent) setRanOnce(true);
@@ -693,7 +703,7 @@ export function NodeDetail({
                     <Button
                       variant="primary"
                       onClick={sendStart}
-                      disabled={!canSend || running || spent}
+                      disabled={!canSend || running || spent || !startWith}
                       title={
                         !canSend
                           ? "Open the console first — START goes through it"
@@ -701,7 +711,9 @@ export function NodeDetail({
                             ? "The task is running"
                             : spent
                               ? "The task has ended — Reset the board to run it again"
-                              : "Send START with this rig's defaults for the sketch"
+                              : !startWith
+                                ? "Reading the sketch's task profile…"
+                                : "Send START with this rig's defaults for the sketch"
                       }
                     >
                       <Play size={13} strokeWidth={1.75} />

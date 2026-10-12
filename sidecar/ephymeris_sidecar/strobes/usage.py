@@ -267,8 +267,8 @@ class ArchiveScanner:
         return codes
 
     def _recorded_paths(self) -> list[Path]:
-        with self._db.lock:
-            rows = self._db.conn.execute(
+        with self._db.read() as q:
+            rows = q.execute(
                 "SELECT file_path FROM session_animal_runs WHERE file_path IS NOT NULL"
                 " UNION SELECT file_path FROM adopted_runs"
             ).fetchall()
@@ -283,8 +283,8 @@ class ArchiveScanner:
         return [p for p in out if p.suffix == ".json" or not reader.sibling_json(p).is_file()]
 
     def _cached(self) -> dict[str, tuple[int, int, str]]:
-        with self._db.lock:
-            rows = self._db.conn.execute(
+        with self._db.read() as q:
+            rows = q.execute(
                 "SELECT file_path, file_mtime_ns, file_size, codes_json FROM strobe_scan_cache"
             ).fetchall()
         return {
@@ -294,13 +294,12 @@ class ArchiveScanner:
     def _store(self, fresh: list[tuple[str, int, int, str]]) -> None:
         if not fresh:
             return
-        with self._db.lock:
-            self._db.conn.executemany(
+        with self._db.write() as unit:
+            unit.executemany(
                 "INSERT OR REPLACE INTO strobe_scan_cache"
                 " (file_path, file_mtime_ns, file_size, codes_json) VALUES (?, ?, ?, ?)",
                 fresh,
             )
-            self._db.conn.commit()
 
 
 def _tsv_codes(path: Path) -> list[int]:

@@ -8,7 +8,9 @@ unlabelled, and a stale header strobes numbers the app decodes differently.
 
 from __future__ import annotations
 
+import builtins
 import copy
+import io
 import json
 import os
 import sqlite3
@@ -23,7 +25,7 @@ from ephymeris_sidecar.strobes.store import StrobeRefused
 from ephymeris_sidecar.strobes.usage import ArchiveScanner, firmware_refs
 from ephymeris_sidecar.taskdef import generate
 from ephymeris_sidecar.tasks import profile as task_profile
-from tests.conftest import rewrite_keeping_stat
+from tests.conftest import rewrite_keeping_stat, statements
 from tests.fixtures import task_definitions as presets
 from tests.live_sidecar import LiveSidecar, Refused, create_cohort, hold_the_rig, sketch_path
 
@@ -61,6 +63,36 @@ def test_the_seed_is_written_once_and_never_over_an_existing_document(tmp_path):
     # would forget LASER_ON and free 300 for something else.
     assert not vocab_store.ensure_seeded()
     assert "LASER_ON" in vocab_store.load_strict()["codes"]
+
+
+def test_every_write_is_flushed_to_disk_before_it_replaces_the_document(tmp_path, monkeypatch):
+    """B19, asserted on structure: a power cut cannot be staged in a test. A
+    rename can reach the disk before the bytes it names, so the new file is
+    fsync'd first; otherwise a crash could leave the one document that defines
+    every code empty or torn under its real name."""
+    vocab_store = strobe_store.VocabularyStore(tmp_path)
+    events: list[tuple[str, int]] = []
+    real_fsync, real_replace = os.fsync, os.replace
+
+    def fsync(fd: int) -> None:
+        events.append(("fsync", os.fstat(fd).st_ino))
+        real_fsync(fd)
+
+    def replace(src, dst) -> None:  # noqa: ANN001
+        events.append(("replace", os.stat(src).st_ino))
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "fsync", fsync)
+    monkeypatch.setattr(os, "replace", replace)
+
+    vocab_store.ensure_seeded()
+    vocab_store.save(vocab_store.load_strict())
+
+    replaced = [ino for op, ino in events if op == "replace"]
+    assert len(replaced) == 2
+    for ino in replaced:
+        before = events[: events.index(("replace", ino))]
+        assert ("fsync", ino) in before, f"replaced without an fsync first: {events}"
 
 
 def test_a_damaged_document_refuses_edits_but_still_decodes(tmp_path):
@@ -336,8 +368,8 @@ def test_v13_rekeys_stored_profiles_and_every_run_follows(tmp_path):
 
     db = Database(path)
     db.connect()
-    rows = db.conn.execute("SELECT hash, first_seen_at FROM task_profiles").fetchall()
-    cached = db.conn.execute("SELECT DISTINCT profile_hash, scored_profile_hash FROM run_metrics_cache").fetchall()
+    rows = statements(db).execute("SELECT hash, first_seen_at FROM task_profiles").fetchall()
+    cached = statements(db).execute("SELECT DISTINCT profile_hash, scored_profile_hash FROM run_metrics_cache").fetchall()
     db.close()
 
     expected = task_profile.profile_hash(task_profile.parse_profile(json.loads(old_a)))
@@ -411,6 +443,32 @@ def test_a_second_scan_is_answered_from_the_cache(tmp_path, db):
     rewrite_keeping_stat(run, run.read_bytes().replace(b"116", b"117"))
     index = ArchiveScanner(db).scan([str(cohort)])
     assert (index.count(116), index.count(117)) == (1, 0)
+
+
+def test_a_second_scan_opens_no_file_it_has_cached(tmp_path, db, monkeypatch):
+    """A finalized run, `.json` beside its `.tsv`: once scanned, neither is
+    opened again while its stat holds. On a network share every open is a
+    round trip, and the scan runs whenever the vocabulary editor asks."""
+    session = tmp_path / "cohort" / "P" / "S1"
+    _write_run(session / "behavior.json", "rat1", [116])
+    (session / "behavior.tsv").mkdir(parents=True)
+    (session / "behavior.tsv" / "rat1.tsv").write_text("# rat: rat1\n116\t0\n", encoding="utf-8")
+    ArchiveScanner(db).scan([str(tmp_path / "cohort")])
+
+    opened: list[str] = []
+    real_open = builtins.open
+
+    def open_(file, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        if isinstance(file, (str, os.PathLike)) and Path(file).is_relative_to(session):
+            opened.append(Path(file).name)
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", open_)
+    monkeypatch.setattr(io, "open", open_)
+    index = ArchiveScanner(db).scan([str(tmp_path / "cohort")])
+
+    assert index.count(116) == 1
+    assert opened == []
 
 
 def test_a_second_scan_answers_an_orphaned_tsv_from_the_cache(tmp_path, db):
@@ -583,7 +641,7 @@ def test_a_row_cached_by_an_older_reader_is_read_again(tmp_path, db):
     cohort = tmp_path / "cohort"
     path = _write_run(cohort / "P" / "S1" / "behavior.json", "rat1", [233])
     stat = path.stat()
-    db.conn.execute(
+    statements(db).execute(
         "INSERT INTO strobe_scan_cache VALUES (?, ?, ?, '[]')",
         (str(path), stat.st_mtime_ns, stat.st_size),
     )

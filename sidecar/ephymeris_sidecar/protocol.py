@@ -216,6 +216,7 @@ class ErrCode:
     INTAN_UNAVAILABLE: Final = "INTAN_UNAVAILABLE"
     INTAN_NOT_READY: Final = "INTAN_NOT_READY"
     INTAN_COMMAND_FAILED: Final = "INTAN_COMMAND_FAILED"
+    ARCHIVE_BUSY: Final = "ARCHIVE_BUSY"
     INTERNAL: Final = "INTERNAL"
 
 
@@ -288,7 +289,7 @@ SHAPES: Final[dict[str, Any]] = {
     "PortTelemetry": ('obj', (('box', 'int', False), ('running', 'bool', False), ('metrics', ('list', ('ref', 'TelemetryMetric')), False))),
     "AnimalEnded": ('obj', (('box', 'int', False), ('animalId', 'str', False), ('stopReason', 'str', False), ('filePath', ('union', ('str', 'null')), False))),
     "RunnerSession": ('obj', (('session', ('ref', 'Session'), False), ('groupId', ('union', ('str', 'null')), False), ('boxes', ('list', ('ref', 'SessionBox')), False))),
-    "ActiveSessions": ('obj', (('running', ('union', (('ref', 'RunnerSession'), 'null')), False), ('configuring', ('list', ('ref', 'Session')), False), ('stale', ('list', ('ref', 'Session')), False))),
+    "ActiveSessions": ('obj', (('running', ('union', (('ref', 'RunnerSession'), 'null')), False), ('configuring', ('list', ('ref', 'Session')), False), ('stale', ('list', ('ref', 'Session')), False), ('confirmations', 'int', False))),
     "SessionListItem": ('obj', (('id', 'str', False), ('cohortId', 'str', False), ('prefixName', 'str', False), ('sessionNumber', 'str', False), ('date', 'str', False), ('startedAt', 'str', False), ('endedAt', ('union', ('str', 'null')), False), ('clockStartedAt', 'str', False), ('clockEndedAt', ('union', ('str', 'null')), False), ('status', ('ref', 'SessionStatus'), False), ('folderPath', 'str', False), ('ordinal', 'int', False), ('runCount', 'int', True), ('groupRuns', ('list', ('ref', 'GroupRun')), False))),
     "DiskSession": ('obj', (('cohortId', 'str', False), ('cohortName', 'str', False), ('prefixName', 'str', False), ('sessionNumber', 'str', False), ('date', 'str', False), ('folderPath', 'str', False), ('recorded', 'bool', False))),
     "MetricSummary": ('obj', (('id', 'str', False), ('label', 'str', False), ('pSession', ('union', ('float', 'null')), False), ('pWindow', ('union', ('float', 'null')), False), ('hits', 'int', False), ('counted', 'int', False), ('triggered', 'int', False), ('excluded', 'int', False), ('windowSize', 'int', False), ('wilsonLow', ('union', ('float', 'null')), False), ('wilsonHigh', ('union', ('float', 'null')), False), ('lowConfidence', 'bool', False), ('answerSide', ('union', (('ref', 'AnswerSide'), 'null')), False))),

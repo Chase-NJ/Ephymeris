@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from ephymeris_sidecar.sessions.writer import AnimalWriter, WriteError
+from ephymeris_sidecar.sessions.writer import AnimalWriter, WriteError, write_atomic
 
 CORE = {
     "rat": "remy1",
@@ -290,3 +290,40 @@ def test_tsv_survives_a_mid_session_hard_kill(tmp_path: Path) -> None:
     assert not any("stop_reason" in line for line in header)
     assert not json_path.exists()
     assert not mat.exists()
+
+
+def test_two_writes_of_one_file_at_once_each_land_whole(tmp_path: Path) -> None:
+    """A finalization and anything else writing the same `.json` at the same
+    moment: each writes a whole file of its own, and the name ends up holding
+    one of them, never a mix and never a failure."""
+    import threading
+
+    target = tmp_path / "remy1.json"
+    halfway = threading.Barrier(2, timeout=5)
+    failures: list[BaseException] = []
+
+    def writer(fill: bytes) -> threading.Thread:
+        def write(part: Path) -> None:
+            with open(part, "wb") as fh:
+                fh.write(fill * 512)
+                fh.flush()
+                halfway.wait()
+                fh.write(fill * 512)
+
+        def run() -> None:
+            try:
+                write_atomic(target, write)
+            except BaseException as exc:  # noqa: BLE001 - reported below
+                failures.append(exc)
+
+        return threading.Thread(target=run)
+
+    threads = [writer(b"a"), writer(b"b")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert failures == []
+    assert target.read_bytes() in (b"a" * 1024, b"b" * 1024)
+    assert [p.name for p in tmp_path.iterdir()] == ["remy1.json"]

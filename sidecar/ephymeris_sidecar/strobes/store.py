@@ -54,7 +54,7 @@ OPERATOR_ORIGIN = "operator"
 class StrobeRefused(Exception):
     """An edit the rules do not allow, or allow only with `confirm`.
 
-    `reason` is one of the `ErrCode`s `app.py` maps it to, lower-cased:
+    `reason` is one of the `ErrCode`s `wire_errors.py` maps it to, lower-cased:
     `invalid`, `required`, `in_recorded_session`, `would_break_tasks`,
     `import_conflict`, `unreadable`.
     """
@@ -150,11 +150,18 @@ class VocabularyStore:
         return stored
 
     def _write(self, doc: dict) -> None:
-        """Write-then-rename, so a crash mid-save leaves the old document whole."""
+        """Through `<name>.part`, fsync'd, renamed into place — the verified
+        transfer's order (`cohorts/transfer.py`), so a crash mid-save leaves the
+        old document whole. Without the fsync the rename can reach the disk
+        before the bytes, and a power cut leaves an empty or torn file under
+        the real name."""
         self.root.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        os.replace(tmp, self.path)
+        part = self.path.with_name(self.path.name + ".part")
+        with part.open("w", encoding="utf-8") as handle:
+            handle.write(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(part, self.path)
 
 
 # --------------------------------------------------------------------------- #

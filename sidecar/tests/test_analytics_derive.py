@@ -1019,25 +1019,28 @@ def test_values_are_rounded_on_the_wire() -> None:
     assert value == round(2 / 3, 6)
 
 
-# --- the codec's own contract ----------------------------------------------
+# --- the payload's own contract --------------------------------------------
 
 
-def test_the_payload_shape_is_pinned_to_the_codec_version() -> None:
-    """A cached row is served VERBATIM, so the payload's shape is part of the
-    codec whether or not the arithmetic moved.
+def test_the_payload_shape_is_spelled_out() -> None:
+    """A cached row is served VERBATIM, so the payload's shape is part of what
+    the cache must answer to, whether or not the arithmetic moved.
 
     This is the check that would have caught the `answerSide` regression. Adding
     two fields to every metric summary changed nothing about the numbers, so
-    `CODEC_VERSION` was left alone — and every run already in a warm cache went
-    on answering with a payload that had no `answerSide` in it at all. The
-    strategy plane read that as "no condition says which well it rewards" and
-    refused to draw, on an archive whose profiles say exactly that. Nothing
-    threw; the cache was simply older than the question being asked of it.
+    the old `CODEC_VERSION` was left alone — and every run already in a warm
+    cache went on answering with a payload that had no `answerSide` in it at
+    all. The strategy plane read that as "no condition says which well it
+    rewards" and refused to draw, on an archive whose profiles say exactly
+    that. Nothing threw; the cache was simply older than the question.
 
-    So: if this list changes, the payload changed, and `CODEC_VERSION` must
-    change with it. Spelled out as a literal rather than derived from today's
-    dataclasses, for `test_migrations.py`'s reason — a shape derived from the
-    code under test agrees with it by construction and proves nothing.
+    The cache version now moves by itself when the shape does (the score
+    canary hashes the whole payload, keys included —
+    `test_analytics_scoring.py`'s pin), so this list is the readable spec: a
+    change to it is a change every machine's cache re-reads for. Spelled out as
+    a literal rather than derived from today's dataclasses, for
+    `test_migrations.py`'s reason — a shape derived from the code under test
+    agrees with it by construction and proves nothing.
     """
     payload = derive.summarize(document((HIT_1 + HIT_3) * 12), FULL_PROFILE).to_json()
 
@@ -1063,10 +1066,6 @@ def test_the_payload_shape_is_pinned_to_the_codec_version() -> None:
         "engagedHigh", "engagedLow", "noPoke", "odorDelivered", "pDelivered",
         "pEngaged", "pokeAborted", "poked", "presented",
     ]
-
-    # The version this shape belongs to. Bump BOTH together or a warm cache
-    # keeps answering the old shape to the new question.
-    assert derive.CODEC_VERSION == 8
 
 
 def test_an_unevidenced_condition_gets_a_stable_arbitrary_side() -> None:

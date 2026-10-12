@@ -13,22 +13,28 @@ corrupt session-number suggestion and the same-day reuse warning.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import shutil
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
+from typing import Callable
 
 import pytest
 
 from ephymeris_sidecar.analytics import AnalyticsService, CohortArchive, reader
-from ephymeris_sidecar.analytics.repository import AnalyticsRepository
+from ephymeris_sidecar.analytics.repository import AdoptedRun, AnalyticsRepository
+from ephymeris_sidecar.cohorts import move_apply
 from ephymeris_sidecar.cohorts.db import Database
+from ephymeris_sidecar.cohorts.move import MoveRequest
 from ephymeris_sidecar.cohorts.repository import CohortRepository
 from ephymeris_sidecar.protocol import validate_command_result
 from ephymeris_sidecar.sessions.paths import parse_name_time, parse_session_folder
 from ephymeris_sidecar.sessions.repository import SessionRepository
 from tests.conftest import rewrite_keeping_stat
+from tests.test_analytics_service import Changes, Lifecycle
 
 GRGL = {
     "taskName": "GRGL 2-Odor Discrimination",
@@ -63,9 +69,20 @@ def db(tmp_path: Path):
 
 
 class LegacyRig:
-    """A cohort pointed at a hand-managed archive, with no run records at all."""
+    """A cohort pointed at a hand-managed archive, with no run records at all.
 
-    def __init__(self, db: Database, tmp_path: Path) -> None:
+    The sketch library the service resolves names against is `library`, a
+    plain name -> path map that a test empties or refills; a test that needs a
+    lookup of another shape passes `sketch_lookup` instead.
+    """
+
+    def __init__(
+        self,
+        db: Database,
+        tmp_path: Path,
+        *,
+        sketch_lookup: Callable[[str], str | None] | None = None,
+    ) -> None:
         self.db = db
         self.root = tmp_path / "data" / "The Remy's"
         self.cohorts = CohortRepository(db)
@@ -74,6 +91,7 @@ class LegacyRig:
         self.sketch = tmp_path / "sketches" / "GRGL_2-Odor"
         self.sketch.mkdir(parents=True, exist_ok=True)
         (self.sketch / "task.json").write_text(json.dumps(GRGL), encoding="utf-8")
+        self.library: dict[str, str] = {"GRGL_2-Odor": str(self.sketch)}
 
         self.root.mkdir(parents=True, exist_ok=True)
         self.cohort = self.cohorts.create("The Remy's", str(self.root))
@@ -92,16 +110,16 @@ class LegacyRig:
         async def broadcast(message: dict) -> None:
             pass
 
-        self.archive = CohortArchive(db=db, cohorts=self.cohorts, sessions=self.sessions)
+        self.archive = CohortArchive(
+            db=db, cohorts=self.cohorts, sessions=self.sessions, rig=Lifecycle(), on_changed=Changes()
+        )
         self.service = AnalyticsService(
             db=db,
             cohorts=self.cohorts,
             sessions=self.sessions,
             broadcast=broadcast,
             archive=self.archive,
-            sketch_lookup=lambda name: (
-                str(self.sketch) if name == "GRGL_2-Odor" else None
-            ),
+            sketch_lookup=sketch_lookup or self.library.get,
         )
 
     def add_legacy_run(
@@ -373,7 +391,7 @@ async def test_a_run_from_another_rig_still_names_its_program(
     Program column has to be able to say: read off the path alone every such
     run displays as "unknown", which claims the record is silent when it is
     not."""
-    rig.service._sketch_lookup = lambda name: None  # this rig has no such task
+    rig.library.clear()  # this rig has no such task
     rig.add_legacy_run("remy1", HIT_1 * 15 + MISS_1 * 5, sketch="GRGL 4-Odor")
     await rig.service.rescan(rig.cohort.id)
 
@@ -402,7 +420,7 @@ async def test_a_file_that_carries_its_profile_decodes_as_a_snapshot(
     """
     from ephymeris_sidecar.tasks.profile import parse_profile, profile_hash
 
-    rig.service._sketch_lookup = lambda name: None
+    rig.library.clear()
     rig.add_legacy_run(
         "remy1", HIT_1 * 15 + MISS_1 * 5, sketch="GRGL 4-Odor", profile=GRGL
     )
@@ -481,7 +499,7 @@ async def test_a_scored_profile_hash_survives_the_cache(rig: LegacyRig) -> None:
     profile group the moment the cache warmed. Both rungs are checked: they
     reach a scoring profile by the same road and would break together.
     """
-    rig.service._sketch_lookup = lambda name: None
+    rig.library.clear()
     rig.add_legacy_run("remy1", HIT_1 * 15 + MISS_1 * 5)                  # inferred
     rig.add_legacy_run("remy2", HIT_1 * 15 + MISS_1 * 5, profile=GRGL)    # embedded
     await rig.service.rescan(rig.cohort.id)
@@ -514,7 +532,7 @@ async def test_a_four_odor_run_from_another_rig_can_be_put_on_the_plane(
     from ephymeris_sidecar.analytics import derive
     from ephymeris_sidecar.tasks.profile import parse_profile
 
-    rig.service._sketch_lookup = lambda name: None
+    rig.library.clear()
     # Odors 1 and 2 answered right, 3 and 4 answered left — with the codes
     # `checkResponse()` actually emits. The poke codes alone are NOT evidence:
     # inference votes on FLUID_x / WATER_POKE_ERROR_x, because those are the
@@ -564,25 +582,23 @@ async def test_a_warm_cache_cannot_answer_with_an_older_payload_shape(
 
     A cached row is served verbatim, so a payload written before a field existed
     goes on being returned after it does — silently, because nothing about a
-    cache hit looks wrong. `CODEC_VERSION` is the only thing standing between
-    that and a panel drawing the wrong conclusion, which is why adding a FIELD
-    counts as a codec change even when the arithmetic never moved.
+    cache hit looks wrong. The key's version is the only thing standing between
+    that and a panel drawing the wrong conclusion (`scoring.score_version`), and
+    v8 is the version this exact row was left at: the one before `answerSide`.
     """
-    from ephymeris_sidecar.analytics import derive
-
-    rig.service._sketch_lookup = lambda name: None
+    rig.library.clear()
     rig.add_legacy_run("remy1", ([101, 249] + [103, 248]) * 12)
     await rig.service.rescan(rig.cohort.id)
     first = await rig.service.summary(rig.cohort.id)
 
-    # Forge exactly the stale row: the cache as an older codec left it, its
-    # payload shaped before `answerSide` existed.
+    # Forge exactly the stale row: the cache as v8 left it, its payload shaped
+    # before `answerSide` existed.
     cached = rig.repo.load_cached([r["runId"] for r in first["runs"]])
     assert cached, "the summary cached the run"
     rig.repo.store([
         replace(
             entry,
-            key=replace(entry.key, codec_version=derive.CODEC_VERSION - 1),
+            key=replace(entry.key, codec_version=8),
             summary={
                 **entry.summary,
                 "metrics": [
@@ -596,7 +612,7 @@ async def test_a_warm_cache_cannot_answer_with_an_older_payload_shape(
 
     run = (await rig.service.summary(rig.cohort.id))["runs"][0]
     assert all(m["answerSide"] for m in run["metrics"]), (
-        "a row from an older codec must be recomputed, not served"
+        "a row from an older version must be recomputed, not served"
     )
 
 
@@ -604,7 +620,7 @@ async def test_a_damaged_snapshot_falls_through_rather_than_failing(
     rig: LegacyRig,
 ) -> None:
     """A file with a broken snapshot is still a file full of real strobes."""
-    rig.service._sketch_lookup = lambda name: None
+    rig.library.clear()
     path = rig.add_legacy_run("remy1", HIT_1 * 15 + MISS_1 * 5)
     document = json.loads(path.read_text(encoding="utf-8"))
     document["task_profile"] = {"taskName": "GRGL", "liveMetrics": "not a list"}
@@ -712,7 +728,7 @@ async def test_a_sketch_is_resolved_at_read_time_not_frozen_at_adoption(
     second-hand — the recorded path is a cache of a lookup, not a fact about
     the run. With the inference rung the run *scores* meanwhile (same stream,
     same maths), so what upgrades on the next summary is the SOURCE."""
-    rig.service._sketch_lookup = lambda name: None  # directory unavailable
+    rig.library.clear()  # directory unavailable
     rig.add_legacy_run("remy1", HIT_1 * 15 + MISS_1 * 5)
     await rig.service.rescan(rig.cohort.id)
 
@@ -723,9 +739,7 @@ async def test_a_sketch_is_resolved_at_read_time_not_frozen_at_adoption(
 
     # The directory comes back. No re-adoption, just another summary — and the
     # declared profile takes over from the inference.
-    rig.service._sketch_lookup = lambda name: (
-        str(rig.sketch) if name == "GRGL_2-Odor" else None
-    )
+    rig.library["GRGL_2-Odor"] = str(rig.sketch)
     payload = await rig.service.summary(rig.cohort.id)
     assert payload["runs"][0]["status"] == "ok"
     assert payload["runs"][0]["profileSource"] == "sketch-current"
@@ -733,7 +747,7 @@ async def test_a_sketch_is_resolved_at_read_time_not_frozen_at_adoption(
 
 
 async def test_rescan_is_idempotent(rig: LegacyRig) -> None:
-    """The synthetic id is derived from the path, so a second walk refreshes
+    """The synthetic id is kept per cohort and run, so a second walk refreshes
     rather than duplicating — a user may click Rescan twice."""
     rig.add_legacy_run("remy1", HIT_1 * 5)
     await rig.service.rescan(rig.cohort.id)
@@ -742,6 +756,216 @@ async def test_rescan_is_idempotent(rig: LegacyRig) -> None:
     payload = await rig.service.summary(rig.cohort.id)
     assert len(payload["runs"]) == 1
     assert len(rig.repo.adopted_for_cohort(rig.cohort.id)) == 1
+
+
+def _second_cohort(rig: LegacyRig, folder: Path) -> str:
+    """Another cohort in the same database, attached to `folder`, whose
+    roster also holds a `remy1`, under its own animal id."""
+    cohort = rig.cohorts.create("The Remy's, again", str(folder))
+    group = cohort.groups[0].id
+    rig.cohorts.update(
+        cohort.id,
+        {"animals": [{"id": "b1", "name": "remy1", "groupId": group, "boxNumber": 1}]},
+    )
+    return cohort.id
+
+
+@pytest.mark.parametrize("nested", [False, True], ids=["same-folder", "nested-folder"])
+async def test_two_cohorts_over_one_archive_keep_their_own_adoptions(
+    rig: LegacyRig, nested: bool
+) -> None:
+    """B15. Two cohorts whose folders hold the same file each keep their own
+    adoption of it, under their own animal, however their rescans interleave:
+    the id names the cohort (`DATA.md#orphan-adoption`)."""
+    path = rig.add_legacy_run("remy1", HIT_1 * 15 + MISS_1 * 5)
+    # Nested: the second cohort is attached to the prefix folder inside the first's.
+    other = _second_cohort(rig, path.parents[2] if nested else rig.root)
+
+    for round_ in (1, 2):
+        mine = await rig.service.rescan(rig.cohort.id)
+        theirs = await rig.service.rescan(other)
+        if round_ == 2:
+            assert (mine["adopted"], theirs["adopted"]) == (0, 0), (
+                "a second round decides nothing: each cohort's row is still its own"
+            )
+
+        assert [e.animal_id for e in rig.repo.adopted_for_cohort(rig.cohort.id)] == ["a1"]
+        assert [e.animal_id for e in rig.repo.adopted_for_cohort(other)] == ["b1"]
+        first = await rig.service.summary(rig.cohort.id)
+        second = await rig.service.summary(other)
+        assert [r["animalId"] for r in first["runs"]] == ["a1"], f"round {round_}"
+        assert [r["animalId"] for r in second["runs"]] == ["b1"], f"round {round_}"
+
+
+def test_storing_an_adoption_never_takes_another_cohorts_row(rig: LegacyRig) -> None:
+    """B15. Storing an adoption never takes a row another cohort holds. Taking
+    a run from one cohort to another is a move's job
+    (`DATA.md#moving-animals-between-cohorts`), never a rescan's: the write
+    that would do it is left out, and the rest of its batch lands."""
+    path = rig.add_legacy_run("remy1", HIT_1 * 5)
+    spare = rig.add_legacy_run("remy2", HIT_1 * 5)
+    other = _second_cohort(rig, rig.root)
+    theirs = AdoptedRun(
+        id="adopted:held-by-the-other", cohort_id=other, animal_id="b1",
+        file_path=str(path), prefix_name="2O-Bdisc", session_number="01",
+        date="2026-06-16", started_at="2026-06-16T12:00:22", sketch_name=None,
+        sketch_path=None,
+    )
+    rig.repo.store_adopted([theirs])
+
+    rig.repo.store_adopted([
+        replace(theirs, cohort_id=rig.cohort.id, animal_id="a1"),
+        replace(
+            theirs, id="adopted:new", cohort_id=rig.cohort.id,
+            animal_id="a2", file_path=str(spare),
+        ),
+    ])
+
+    assert [(e.id, e.animal_id) for e in rig.repo.adopted_for_cohort(other)] == [
+        ("adopted:held-by-the-other", "b1")
+    ], "the other cohort's row stands"
+    assert [e.id for e in rig.repo.adopted_for_cohort(rig.cohort.id)] == ["adopted:new"]
+
+
+def _stem_only_id(path: Path) -> str:
+    """The id an adoption stored before ids named their cohort: the run
+    identity alone. Spelled out here, not imported, so a change to the minting
+    cannot quietly change what these tests treat as an existing row."""
+    digest = hashlib.sha1(path.stem.casefold().encode("utf-8")).hexdigest()
+    return f"adopted:{digest[:16]}"
+
+
+def _stored_adoption(rig: LegacyRig, path: Path, *, with_stat: bool) -> AdoptedRun:
+    """A row for `path` as an earlier build stored it, under its stem-only id."""
+    stat = path.stat()
+    entry = AdoptedRun(
+        id=_stem_only_id(path), cohort_id=rig.cohort.id, animal_id="a1",
+        file_path=str(path), prefix_name="2O-Bdisc", session_number="01",
+        date="2026-06-16", started_at="2026-06-16T12:00:22", sketch_name=None,
+        sketch_path=None,
+        file_mtime_ns=stat.st_mtime_ns if with_stat else None,
+        file_size=stat.st_size if with_stat else None,
+    )
+    rig.repo.store_adopted([entry])
+    return entry
+
+
+async def test_a_rescan_keeps_the_id_a_held_adoption_was_stored_under(
+    rig: LegacyRig,
+) -> None:
+    """A rescan never re-keys a row its cohort holds: a person's ruling and the
+    cached scores are keyed by that id (`DATA.md#false-starts`). The row has no
+    stat, so the rescan reads the file again and rewrites the row."""
+    path = rig.add_legacy_run("remy1", HIT_1 * 5)
+    held = _stored_adoption(rig, path, with_stat=False)
+
+    result = await rig.service.rescan(rig.cohort.id)
+
+    assert result["adopted"] == 1, "read again and rewritten"
+    assert [e.id for e in rig.repo.adopted_for_cohort(rig.cohort.id)] == [held.id]
+
+
+async def test_a_ruling_follows_a_stem_keyed_run_re_adopted_from_a_new_place(
+    rig: LegacyRig,
+) -> None:
+    """A person's false-start ruling on a run stored under its stem-only id
+    (`DATA.md#false-starts`) survives the run's file moving within the archive.
+    The prune drops the row, since its file is gone; the walk finds the file at
+    its new place and adopts it under a new id; and the ruling goes with it
+    rather than staying behind on an id no row holds."""
+    old = rig.add_legacy_run("remy1", HIT_1 * 5, group="01_2O-Bdisc")
+    held = _stored_adoption(rig, old, with_stat=True)
+    rig.repo.set_false_start(held.id, True)
+
+    # The operator refiles the session folder under another grouping by hand.
+    session = old.parents[1]
+    (rig.root / "ALL").mkdir()
+    shutil.move(session, rig.root / "ALL" / session.name)
+    await rig.service.rescan(rig.cohort.id)
+
+    [row] = rig.repo.adopted_for_cohort(rig.cohort.id)
+    assert row.file_path != str(old), "re-adopted from its new place"
+    assert rig.repo.false_start_overrides() == {row.id: True}
+    payload = await rig.service.summary(rig.cohort.id)
+    assert [r["runId"] for r in payload["falseStarts"]] == [row.id]
+    assert payload["runs"] == []
+
+
+async def test_a_ruling_stays_with_the_cohort_whose_row_holds_it(rig: LegacyRig) -> None:
+    """A ruling moves only off an id no row holds. While one cohort still holds
+    the run under its stem-only id, another cohort adopting the same file does
+    not take that cohort's ruling (`DATA.md#false-starts`)."""
+    path = rig.add_legacy_run("remy1", HIT_1 * 5)
+    held = _stored_adoption(rig, path, with_stat=True)
+    rig.repo.set_false_start(held.id, True)
+    other = _second_cohort(rig, rig.root)
+
+    await rig.service.rescan(other)
+    await rig.service.rescan(rig.cohort.id)
+
+    [theirs] = rig.repo.adopted_for_cohort(other)
+    assert [e.id for e in rig.repo.adopted_for_cohort(rig.cohort.id)] == [held.id]
+    assert rig.repo.false_start_overrides() == {held.id: True}
+    assert theirs.id != held.id
+
+
+async def test_a_ruling_follows_a_moved_run_re_adopted_in_its_new_cohort(
+    rig: LegacyRig, tmp_path: Path
+) -> None:
+    """A moved run keeps the id its first cohort stored it under
+    (`DATA.md#moving-animals-between-cohorts`). When the destination's operator
+    refiles its session folder, the prune drops that row and the walk adopts the
+    run again under the destination's own id; a person's ruling goes with it
+    (`DATA.md#false-starts`)."""
+    rig.add_legacy_run("remy1", HIT_1 * 5)
+    await rig.service.rescan(rig.cohort.id)
+    [adopted] = rig.repo.adopted_for_cohort(rig.cohort.id)
+    rig.repo.set_false_start(adopted.id, True)
+
+    dest_folder = tmp_path / "data" / "Slow learners"
+    dest_folder.mkdir(parents=True)
+    dest = rig.cohorts.create("Slow learners", str(dest_folder))
+    move_apply.apply(rig.db, MoveRequest(rig.cohort.id, ["a1"], dest.id))
+    [moved] = rig.repo.adopted_for_cohort(dest.id)
+    assert moved.id == adopted.id, "a move keeps the row's id"
+
+    session = Path(moved.file_path).parents[1]
+    (dest_folder / "ALL").mkdir()
+    shutil.move(session, dest_folder / "ALL" / session.name)
+    await rig.service.rescan(dest.id)
+
+    [row] = rig.repo.adopted_for_cohort(dest.id)
+    assert row.id != adopted.id, "adopted again under the destination's id"
+    assert rig.repo.false_start_overrides() == {row.id: True}
+
+
+async def test_a_re_read_takes_no_ruling_off_another_cohorts_pruned_row(
+    rig: LegacyRig, tmp_path: Path
+) -> None:
+    """A ruling follows a run only into a row adopted afresh. A cohort reading
+    a run it already holds keeps that row's own standing, and never takes the
+    ruling another cohort's pruned row left (`DATA.md#false-starts`)."""
+    ours = rig.add_legacy_run("remy1", HIT_1 * 5)
+    held = _stored_adoption(rig, ours, with_stat=True)
+    rig.repo.set_false_start(held.id, True)
+    elsewhere = tmp_path / "elsewhere"
+    copy = elsewhere / ours.relative_to(rig.root)
+    copy.parent.mkdir(parents=True)
+    shutil.copy2(ours, copy)
+    other = _second_cohort(rig, elsewhere)
+    await rig.service.rescan(other)
+    [theirs] = rig.repo.adopted_for_cohort(other)
+
+    ours.unlink()
+    await rig.service.rescan(rig.cohort.id)
+    assert rig.repo.adopted_for_cohort(rig.cohort.id) == [], "pruned"
+
+    later = theirs.file_mtime_ns + 10**9
+    os.utime(copy, ns=(later, later))
+    result = await rig.service.rescan(other)
+
+    assert result["adopted"] == 1, "read again under the id it holds"
+    assert rig.repo.false_start_overrides() == {held.id: True}
 
 
 async def test_a_second_rescan_does_not_read_the_files_again(rig: LegacyRig) -> None:
@@ -773,9 +997,9 @@ async def test_a_carried_row_is_not_rewritten(rig: LegacyRig) -> None:
     [before] = rig.repo.adopted_for_cohort(rig.cohort.id)
 
     commits: list[int] = []
-    rig.db.conn.on_commit = lambda: commits.append(1)
+    rig.db.on_commit(lambda: commits.append(1))
     await rig.service.rescan(rig.cohort.id)
-    rig.db.conn.on_commit = None
+    rig.db.on_commit(None)
 
     assert commits == [], "no write at all when nothing changed"
     [after] = rig.repo.adopted_for_cohort(rig.cohort.id)
@@ -1077,7 +1301,7 @@ async def test_an_unresolvable_sketch_with_nothing_to_infer_says_why(
 
 
 async def test_a_declared_legacy_name_makes_an_old_run_scorable(
-    rig: LegacyRig, tmp_path: Path
+    db: Database, tmp_path: Path
 ) -> None:
     """`legacyNames` is the declared bridge from an old human label to the
     sketch that can decode it (`TASKS.md#legacy-names`) — the lab's shaping
@@ -1093,7 +1317,7 @@ async def test_a_declared_legacy_name_makes_an_old_run_scorable(
     def lookup(name: str) -> str | None:
         from ephymeris_sidecar.tasks.profile import load_profile
 
-        for candidate in (rig.sketch, shaping):
+        for candidate in (tmp_path / "sketches" / "GRGL_2-Odor", shaping):
             if candidate.name == name:
                 return str(candidate)
             profile = load_profile(candidate)
@@ -1101,7 +1325,7 @@ async def test_a_declared_legacy_name_makes_an_old_run_scorable(
                 return str(candidate)
         return None
 
-    rig.service._sketch_lookup = lookup
+    rig = LegacyRig(db, tmp_path, sketch_lookup=lookup)
     rig.add_legacy_run("remy1", HIT_1 * 15 + MISS_1 * 5, sketch="Shape - L")
 
     await rig.service.rescan(rig.cohort.id)
@@ -1151,7 +1375,7 @@ async def test_a_cache_hit_pass_leaves_no_open_transaction(rig: LegacyRig) -> No
     await rig.service.summary(rig.cohort.id)
     await rig.service.summary(rig.cohort.id)
 
-    assert not rig.db.conn.in_transaction
+    assert not rig.db.in_transaction
 
 
 # --- a real archive's shape (see DATA.md#orphan-adoption) -------------------

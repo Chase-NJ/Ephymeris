@@ -194,7 +194,8 @@ The guards that matter most:
 - `test_migrations.py`: pins old schemas as literal fixtures and upgrades them.
 - `test_analytics_infer.py`: inference from the strobe stream scores identically to the declared GRGL
   profile. Extend it before touching either side.
-- `test_analytics_derive.py`: the metric definitions, and the payload's field names against `CODEC_VERSION`.
+- `test_analytics_derive.py`: the metric definitions, and the payload's field names.
+- `test_analytics_scoring.py`: the cache version moves with every input a cached row depends on; its canary is pinned as a literal.
 - `test_taskdef.py`: the default strobe vocabulary against the names the firmware emits, in both directions; `test_strobes.py`: vocabulary edits, the archive scan, and the v13 hash re-key.
 - `test_debug_flash.py`: a Debug Mode flash survives the utility baseline, and Debug scoring matches a session's.
 - `test_flash_queue.py`: one flash at a time rig-wide, whoever asked; a queued restore never takes a port

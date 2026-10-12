@@ -34,9 +34,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ..sessions.models import GroupRun
+from ..sessions.repository import SessionRepository
 from ..sessions.tidy import Merge, merged_fields
-from . import freshness, transfer
-from .db import Database
+from . import freshness, relocate, transfer
+from .db import Database, Tx
 from .move import (
     MovePlan,
     MoveRequest,
@@ -63,8 +64,8 @@ def _now() -> str:
 
 
 def preview(db: Database, request: MoveRequest, *, busy: str | None = None) -> MovePlan:
-    with db.lock:
-        return plan_move(db.conn, request, busy=busy)
+    with db.read() as q:
+        return plan_move(q, request, busy=busy)
 
 
 def apply(
@@ -78,12 +79,12 @@ def apply(
 
     Returns the plan as applied, whose `files` the caller queues for backup.
     """
-    with db.lock:
-        plan = plan_move(db.conn, request, busy=busy)
+    with db.write() as unit:
+        plan = plan_move(unit, request, busy=busy)
         if plan.refused:
             raise MoveRefused(plan)
         journal = str(uuid.uuid4())
-        db.conn.execute(
+        unit.execute(
             "INSERT INTO animal_moves (id, source_cohort_id, dest_cohort_id, state, plan_json,"
             " created_at, updated_at) VALUES (?, ?, ?, 'copying', ?, ?, ?)",
             (
@@ -95,7 +96,6 @@ def apply(
                 _now(),
             ),
         )
-        db.conn.commit()
 
     try:
         _copy_files(plan, on_copied)
@@ -104,27 +104,25 @@ def apply(
         raise
 
     failure: BaseException | None = None
-    with db.lock:
-        conn = db.conn
-        try:
-            again = plan_move(conn, request, busy=busy)
+    try:
+        # The records and the journal's `committed`, in one unit of work.
+        with db.write() as tx:
+            again = plan_move(tx, request, busy=busy)
             if again.refused or again.identity() != plan.identity():
                 raise MoveRefused(
                     again,
                     "Something changed while the files were being copied. Nothing was moved; "
                     "try again.",
                 )
-            _apply_records(conn, again)
-            conn.execute(
+            _apply_records(tx, again, SessionRepository(db))
+            tx.execute(
                 "UPDATE animal_moves SET state = 'committed', updated_at = ? WHERE id = ?",
                 (_now(), journal),
             )
-            conn.commit()
-        except Exception as exc:
-            conn.rollback()
-            failure = exc
+    except Exception as exc:
+        failure = exc
     if failure is not None:
-        # Outside the lock: undoing takes it, and it is not re-entrant.
+        # After the unit ended: undoing is a unit of its own.
         _roll_back(db, journal, plan_files(plan), str(failure))
         raise failure
     plan = again
@@ -164,7 +162,7 @@ def _copies(files: list[dict[str, Any]], *actions: str) -> list[transfer.FileCop
 # --- step 3: the records ------------------------------------------------------
 
 
-def _apply_records(conn: Any, plan: MovePlan) -> None:
+def _apply_records(conn: Tx, plan: MovePlan, sessions: SessionRepository) -> None:
     source, dest = plan.source, plan.dest
     now = _now()
     mapped = {a.source_id: a.dest_id for a in plan.animals}
@@ -226,7 +224,7 @@ def _apply_records(conn: Any, plan: MovePlan) -> None:
             )
 
     for entry in plan.sessions:
-        _apply_session(conn, plan, entry, mapped, now)
+        _apply_session(conn, plan, entry, mapped, now, sessions)
 
     for run_id, new_path in plan.run_paths.items():
         conn.execute(
@@ -245,6 +243,10 @@ def _apply_records(conn: Any, plan: MovePlan) -> None:
             "DELETE FROM adopted_runs WHERE cohort_id = ? AND file_path = ? AND id != ?",
             (dest.id, new_path, adopted_id),
         )
+        held = _held_adoption_of(conn, dest.id, adopted_id, new_path)
+        if held is not None:
+            _join_held_adoption(conn, adopted_id, held)
+            continue
         conn.execute(
             "UPDATE adopted_runs SET cohort_id = ?, file_path = ?, animal_id = ? WHERE id = ?",
             (dest.id, new_path, animal_id, adopted_id),
@@ -274,8 +276,42 @@ def _apply_records(conn: Any, plan: MovePlan) -> None:
     conn.execute("UPDATE cohorts SET updated_at = ? WHERE id IN (?, ?)", (now, source.id, dest.id))
 
 
+def _held_adoption_of(conn: Tx, dest_id: str, adopted_id: str, new_path: str) -> str | None:
+    """The destination's own adoption of the same run as `adopted_id`, at
+    another place -- one run copied into both cohorts -- or None."""
+    from ..analytics import reader  # analytics imports cohorts
+
+    identity = reader.run_identity(Path(new_path))
+    for held_id, path in conn.execute(
+        "SELECT id, file_path FROM adopted_runs WHERE cohort_id = ? AND id != ? ORDER BY id",
+        (dest_id, adopted_id),
+    ).fetchall():
+        if path and reader.run_identity(Path(path)) == identity:
+            return held_id
+    return None
+
+
+def _join_held_adoption(conn: Tx, adopted_id: str, held_id: str) -> None:
+    """Fold a moved adoption into the destination's row for the same run
+    (`DATA.md#moving-animals-between-cohorts`): the held row stands, since
+    its scores are keyed by its id, and the moved row's ruling comes with it
+    unless the held row has one of its own. The moved file is still copied;
+    the next rescan sees two copies of one run, as it would in any cohort."""
+    conn.execute(
+        "UPDATE OR IGNORE run_flags SET run_id = ? WHERE run_id = ?", (held_id, adopted_id)
+    )
+    conn.execute("DELETE FROM run_flags WHERE run_id = ?", (adopted_id,))
+    conn.execute("DELETE FROM run_metrics_cache WHERE run_id = ?", (adopted_id,))
+    conn.execute("DELETE FROM adopted_runs WHERE id = ?", (adopted_id,))
+
+
 def _apply_session(
-    conn: Any, plan: MovePlan, entry: SessionMove, mapped: dict[str, str], now: str
+    conn: Tx,
+    plan: MovePlan,
+    entry: SessionMove,
+    mapped: dict[str, str],
+    now: str,
+    sessions: SessionRepository,
 ) -> None:
     source, dest = plan.source, plan.dest
     session = entry.source
@@ -320,7 +356,7 @@ def _apply_session(
         )
     else:
         target = entry.dest_session_id
-        _fold_into(conn, target, entry)
+        _fold_into(conn, target, entry, sessions)
 
     if entry.run_ids:
         marks = ",".join("?" * len(entry.run_ids))
@@ -368,19 +404,15 @@ def _apply_session(
         )
         conn.execute("DELETE FROM sessions WHERE id = ?", (session.id,))
     else:
-        conn.execute(
-            "UPDATE sessions SET group_runs = ? WHERE id = ?",
-            (_group_runs_json(entry.source_group_runs), session.id),
-        )
+        sessions.set_group_runs(session.id, list(entry.source_group_runs), tx=conn)
 
 
-def _fold_into(conn: Any, target_id: str, entry: SessionMove) -> None:
+def _fold_into(
+    conn: Tx, target_id: str, entry: SessionMove, sessions: SessionRepository
+) -> None:
     """Merge the moved half's group runs (and, for a whole record, its
     recording) into the destination's record of the same day — tidy's rule."""
-    from ..sessions.repository import SessionRepository
-
-    row = conn.execute("SELECT * FROM sessions WHERE id = ?", (target_id,)).fetchone()
-    keep = SessionRepository._hydrate(row)
+    keep = sessions.get_session(target_id)
     moved = entry.source
     moved.group_runs = list(entry.dest_group_runs)
     if entry.kind == "split":
@@ -412,14 +444,23 @@ def _clean_up(
 ) -> None:
     """Delete the originals the commit made redundant, and the folders that
     leaves empty. A file whose content changed since it was planned is left
-    where it is — it is not the file that was copied."""
-    touched = transfer.delete_originals(_copies(files, "copy", "present"))
+    where it is — it is not the file that was copied. While any original
+    can't be reached, nothing is deleted and the journal stays `committed`
+    for the next start: an unreadable original is not a deleted one."""
+    copies = _copies(files, "copy", "present")
+    unreached = next((f.src for f in copies if relocate.out_of_reach(f.src)), None)
+    if unreached is not None:
+        log.warning(
+            "move %s: %s can't be reached; its originals are left for the next start",
+            journal, unreached,
+        )
+        return
+    touched = transfer.delete_originals(copies)
     _remove_emptied(db, touched, source_folder, source_id)
-    with db.lock:
-        db.conn.execute(
+    with db.write() as unit:
+        unit.execute(
             "UPDATE animal_moves SET state = 'done', updated_at = ? WHERE id = ?", (_now(), journal)
         )
-        db.conn.commit()
 
 
 def _remove_emptied(db: Database, format_dirs: set[Path], source_folder: str, source_id: str) -> None:
@@ -428,10 +469,10 @@ def _remove_emptied(db: Database, format_dirs: set[Path], source_folder: str, so
     log moved with the records and is re-rendered at the destination."""
     from ..analytics import reader  # analytics imports cohorts
 
-    with db.lock:
+    with db.read() as q:
         still_used = {
             _norm(row[0])
-            for row in db.conn.execute(
+            for row in q.execute(
                 "SELECT folder_path FROM sessions WHERE cohort_id = ?", (source_id,)
             )
             if row[0]
@@ -472,25 +513,24 @@ def _roll_back(db: Database, journal: str, files: list[dict[str, Any]], reason: 
     this move made — a copy that was already there before it (`present`) is
     never touched — and any `.part` left half-written."""
     transfer.undo(_copies(files, "copy"))
-    with db.lock:
-        db.conn.execute(
+    with db.write() as unit:
+        unit.execute(
             "UPDATE animal_moves SET state = 'rolled-back', error = ?, updated_at = ? WHERE id = ?",
             (reason[:500], _now(), journal),
         )
-        db.conn.commit()
 
 
 def resume(db: Database) -> int:
     """Finish or undo every move a crash interrupted. Run once at start-up,
     before anything else may read or rescan the archive."""
-    with db.lock:
-        rows = db.conn.execute(
+    with db.read() as q:
+        rows = q.execute(
             "SELECT id, source_cohort_id, state, plan_json FROM animal_moves"
             " WHERE state IN ('copying', 'committed')"
         ).fetchall()
         folders = {
             row[0]: row[1]
-            for row in db.conn.execute("SELECT id, data_folder FROM cohorts")
+            for row in q.execute("SELECT id, data_folder FROM cohorts")
         }
     for row in rows:
         files = json.loads(row["plan_json"]).get("files", [])

@@ -118,7 +118,7 @@ Write one line to the open console. The sent text is echoed into `port.output` a
 <a id="cmd-port.sendstart"></a>
 #### `port.sendStart`
 
-Debug Mode's **Send START**: builds the `START` line from the named sketch's Task Profile exactly as `sessions.confirmMapping` does (a sketch with no profile gets a bare `START`) and writes it to the open console, then arms live scoring, reported as `port.telemetry`. No `SEED` token and nothing recorded: this is not a run. `SKETCH_UNKNOWN` for an undiscovered path; `TASK_PROFILE_INVALID` when the line would exceed the firmware's `START_LINE_MAX` (`TASKS.md#the-start-line`); `SEND_NOT_PASSTHROUGH` unless the port is in `PASSTHROUGH`. To end the run, send `STOP` with `port.send` and wait for `port.telemetry.running` to go false — the board ends it. Waits for a rig definition write in progress (`TASKS.md#the-rig-definition`).
+Debug Mode's **Send START**: builds the `START` line from the named sketch's Task Profile exactly as `sessions.confirmMapping` does (a sketch with no profile gets a bare `START`) and writes it to the open console, then arms live scoring, reported as `port.telemetry`. No `SEED` token and nothing recorded: this is not a run. `SKETCH_UNKNOWN` for an undiscovered path; `TASK_PROFILE_INVALID` when the line would reach the firmware's `START_LINE_MAX` (`TASKS.md#the-start-line`); `SEND_NOT_PASSTHROUGH` unless the port is in `PASSTHROUGH`. To end the run, send `STOP` with `port.send` and wait for `port.telemetry.running` to go false — the board ends it. Waits for a rig definition write in progress (`TASKS.md#the-rig-definition`).
 
 **Args**
 
@@ -225,7 +225,7 @@ Start one box of the confirmed mapping: open the port (the Mega DTR-resets), awa
 <a id="cmd-port.stopsession"></a>
 #### `port.stopSession`
 
-Sends the literal `STOP` line and does **not** force the transition: the firmware ends the run at its next trial boundary with its own end-of-session strobe, and the port leaves `IN_SESSION` when the sidecar sees it.
+Sends the literal `STOP` line and does **not** force the transition: the firmware ends the run at its next trial boundary with its own end-of-session strobe, and the port leaves `IN_SESSION` when the sidecar sees it. A box that isn't running is a no-op (its run already ended, or never began). `ILLEGAL_TRANSITION` with `detail.box` when a running box's port did not take `STOP` -- it left the session, or the write failed -- so the box is not stopping.
 
 **Args**
 
@@ -566,7 +566,7 @@ Permanent delete of the bookkeeping only. `COHORT_NOT_ARCHIVED` unless archived 
 <a id="cmd-cohorts.setdatafolder"></a>
 #### `cohorts.setDataFolder`
 
-The explicit relocate, distinct from renaming (`DATA.md#data-folder`). Moving the contents moves the records' stored paths with the files, journalled so a crash is finished or undone at the next start; refused (`DATA_FOLDER_INVALID`) while a session is set up or running, and `INTERNAL` while an analytics walk runs. Long-running; the client raises its reply timeout.
+The explicit relocate, distinct from renaming (`DATA.md#data-folder`). Moving the contents moves the records' stored paths with the files, journalled so a crash is finished or undone at the next start; refused (`RIG_IN_USE`) while a session is set up or running, and `ARCHIVE_BUSY` while another archive write runs. Broadcasts `cohorts.updated` and `session.lifecycle`, and `logbook.updated` for the cohort. Long-running; the client raises its reply timeout.
 
 **Args**
 
@@ -585,7 +585,7 @@ The explicit relocate, distinct from renaming (`DATA.md#data-folder`). Moving th
 <a id="cmd-cohorts.moveanimals"></a>
 #### `cohorts.moveAnimals`
 
-Move animals, their files and their history to another cohort (`DATA.md#moving-animals-between-cohorts`). The files move into the destination's data folder; run records, recovered runs and notes about the animals follow, and notes about a session both cohorts ran are copied. An apply re-plans rather than replaying the preview, and is crash-safe: interrupted, it is finished or undone at the next start. `ANIMAL_MOVE_REFUSED` (with the plan in `detail`) when the apply's plan has refusals; `INTERNAL` while an analytics walk runs. Broadcasts `cohorts.updated` and `logbook.updated` after an apply. Long-running; the client raises its reply timeout.
+Move animals, their files and their history to another cohort (`DATA.md#moving-animals-between-cohorts`). The files move into the destination's data folder; run records, recovered runs and notes about the animals follow, and notes about a session both cohorts ran are copied. An apply re-plans rather than replaying the preview, and is crash-safe: interrupted, it is finished or undone at the next start. `ANIMAL_MOVE_REFUSED` (with the plan in `detail`) when the apply's plan has refusals, a session set up or running anywhere among them; `ARCHIVE_BUSY` while another archive write runs. Broadcasts `cohorts.updated`, `session.lifecycle` and `logbook.updated` after an apply. Long-running; the client raises its reply timeout.
 
 **Args**
 
@@ -704,7 +704,7 @@ Create a session in status `configuring` and make its folder. `SESSION_NOT_READY
 <a id="cmd-sessions.abandon"></a>
 #### `sessions.abandon`
 
-Discard a session still in `configuring` (the mapping step's Back): marks it `aborted`, clears any confirmed-but-unstarted mapping from the runner, drops an unstarted recording setup, and hands the rig back to the utility baseline. Nothing on disk is touched. `SESSION_INVALID` once a group has run.
+Discard a session still in `configuring` (the mapping step's Back): marks it `aborted`, clears any confirmed-but-unstarted mapping from the runner, drops an unstarted recording setup, and hands the rig back to the utility baseline. Nothing on disk is touched. A recording Start All began before any box started is stopped, and its run is kept on the aborted session, since RHX's files exist (`RECORDING.md`): the reply can then take RHX's stop, about 16 s at worst. `SESSION_INVALID` once a group has run.
 
 **Args**
 
@@ -721,7 +721,7 @@ Discard a session still in `configuring` (the mapping step's Back): marks it `ab
 <a id="cmd-sessions.confirmmapping"></a>
 #### `sessions.confirmMapping`
 
-Load one group's box → animal → sketch mapping into the runner and build each box's `START` line from its sketch's Task Profile and `config`. `TASK_PROFILE_INVALID` when a line would exceed `START_LINE_MAX` — refused because the board cannot report a truncated `START` and would run on whichever values fit (`TASKS.md#the-start-line`). `SESSION_INVALID` for a mapping missing its box, sketch, or an animal of this cohort. From here until the session lets go the rig is **held**: no baseline restore runs. Broadcasts `session.lifecycle`. Waits for a rig definition write in progress (`TASKS.md#the-rig-definition`).
+Load one group's box → animal → sketch mapping into the runner and build each box's `START` line from its sketch's Task Profile and `config`. `TASK_PROFILE_INVALID` when a line would reach `START_LINE_MAX` — refused because the board cannot report a truncated `START` and would run on whichever values fit (`TASKS.md#the-start-line`). `SESSION_INVALID` for a mapping missing its box, sketch, or an animal of this cohort. From here until the session lets go the rig is **held**: no baseline restore runs. Broadcasts `session.lifecycle`. Waits for a rig definition write in progress (`TASKS.md#the-rig-definition`).
 
 **Args**
 
@@ -1014,7 +1014,7 @@ Per-run learning-curve data (`DATA.md#derived-metrics`), plus each run's strateg
 <a id="cmd-analytics.rescan"></a>
 #### `analytics.rescan`
 
-The explicit archive walk (`DATA.md#reading-the-archive`) — expensive reconciliation is a deliberate user action, never a side effect of opening a view. Reconciles **both ways**: files no record points at are adopted, and records pointing at files the disk no longer has are pruned — after records an earlier relocate left at the old folder are re-pointed (`rehomed`). Publishes `analytics.progress`. `INTERNAL` when another analytics walk is already running. Long-running; the client raises its reply timeout.
+The explicit archive walk (`DATA.md#reading-the-archive`) — expensive reconciliation is a deliberate user action, never a side effect of opening a view. Reconciles **both ways**: files no record points at are adopted, and records pointing at files the disk no longer has are pruned — after records an earlier relocate left at the old folder are re-pointed (`rehomed`). Publishes `analytics.progress`. `ARCHIVE_BUSY` while another archive write runs; `RIG_IN_USE` while any box is running, since a run finishing during the walk would be found twice. Broadcasts `cohorts.updated`, `session.lifecycle` and `logbook.updated` when it adopted, pruned or re-pointed anything. Long-running; the client raises its reply timeout.
 
 **Args**
 
@@ -1045,7 +1045,7 @@ The N most recent session folders across every active cohort's archive, by folde
 <a id="cmd-sessions.recover"></a>
 #### `sessions.recover`
 
-The crash-recovery backfill (`DATA.md#crash-recovery`): rebuilds `.json`/`.mat` from orphaned write-ahead `.tsv` files, using the same traversal as `analytics.rescan` and the same explicit-action discipline. A `.tsv` with a footer keeps its recorded stop reason; a footer-less (crashed) one gets 'recovered after crash'; a pre-Ephymeris log, which never had a footer, gets 'recovered from a legacy log'. `SESSION_INVALID` while any box is running — a live run's `.tsv` has no `.json` yet and is not an orphan. Long-running; the client raises its reply timeout.
+The crash-recovery backfill (`DATA.md#crash-recovery`): rebuilds `.json`/`.mat` from orphaned write-ahead `.tsv` files, using the same traversal as `analytics.rescan` and the same explicit-action discipline. A `.tsv` with a footer keeps its recorded stop reason; a footer-less (crashed) one gets 'recovered after crash'; a pre-Ephymeris log, which never had a footer, gets 'recovered from a legacy log'. A `.json` that does not parse counts as missing. `RIG_IN_USE` while any box is running — a live run's `.tsv` has no `.json` yet and is not an orphan; `ARCHIVE_BUSY` while another archive write runs. Queues what it wrote for backup. Long-running; the client raises its reply timeout.
 
 **Args**
 
@@ -1058,7 +1058,7 @@ The crash-recovery backfill (`DATA.md#crash-recovery`): rebuilds `.json`/`.mat` 
 <a id="cmd-sessions.tidy"></a>
 #### `sessions.tidy`
 
-Merge session records that share prefix, number and date — one folder, split by a day that went wrong — into the earliest record holding data, and delete records with no run, recording or file behind them (`DATA.md#reading-the-archive`). An apply re-plans rather than replaying the preview. **Database only**, except the empty folder of a deleted record. Never touches the held session (or its folder-mates) nor a set-up from today; those are listed in `skipped`. Broadcasts `session.lifecycle` after an apply. `INTERNAL` when another analytics walk is already running.
+Merge session records that share prefix, number and date — one folder, split by a day that went wrong — into the earliest record holding data, and delete records with no run, recording or file behind them (`DATA.md#reading-the-archive`). An apply re-plans rather than replaying the preview. **Database only**, except the empty folder of a deleted record. Never touches the held session (or its folder-mates) nor a set-up from today; those are listed in `skipped`. Broadcasts `cohorts.updated`, `session.lifecycle` and `logbook.updated` after an apply. `ARCHIVE_BUSY` while another archive write runs.
 
 **Args**
 
@@ -1095,7 +1095,7 @@ Close the sockets. `INTAN_NOT_READY` while recording: closing them would not sto
 <a id="cmd-intan.configure"></a>
 #### `intan.configure`
 
-Apply a recording setup to RHX **for one group run** — animals, and so ports and probes, change between groups (`RECORDING.md#recording-walkthrough`). Connects first if needed. The three values a recording cannot be wrong about — file format, save path, base filename — are read back and refused on a mismatch (`INTAN_COMMAND_FAILED`), which is the only thing that catches RHX accepting a path and storing it cut at its first space. An RHX left in Run is stopped (saving parameters are ignored while it runs); one already recording is refused and not touched. `INTAN_NOT_READY` names the first problem: the rig's wiring declares no `sync` channel, a box with no digital input, a port with no headstage, two boxes claiming one channel, or nothing selected to save. `SESSION_INVALID` for a session that is not a recording. Long-running; the client raises its reply timeout.
+Apply a recording setup to RHX **for one group run** — animals, and so ports and probes, change between groups (`RECORDING.md#recording-walkthrough`). Connects first if needed. The three values a recording cannot be wrong about — file format, save path, base filename — are read back and refused on a mismatch (`INTAN_COMMAND_FAILED`), which is the only thing that catches RHX accepting a path and storing it cut at its first space. An RHX left in Run is stopped (saving parameters are ignored while it runs); one already recording is refused and not touched. `INTAN_NOT_READY` names the first problem: the rig's wiring declares no `sync` channel, a box with no digital input, a port with no headstage, two boxes claiming one channel, or nothing selected to save. `SESSION_INVALID` for a session that is not a recording, and, with `detail.boxes`, for boxes this group's confirmed mapping doesn't have (all of them unless the held session is this one with this group's mapping), before RHX is touched. The setup is for the mapping as confirmed now: confirming it again makes Start refuse until this runs again. Long-running; the client raises its reply timeout.
 
 **Args**
 
@@ -1530,7 +1530,7 @@ One live view's payload, only while that scope is open (`RECORDING.md#live-windo
 
 | Code | Meaning |
 |---|---|
-| `BAD_MESSAGE` | Malformed JSON, a non-object frame, or invalid args. |
+| `BAD_MESSAGE` | Malformed JSON, a non-object frame, or args that don't match the command's declaration here: checked before any handler runs, with `detail.problems` listing each mismatch. Also a value the schema can't describe, such as a box number outside 1–6 or a blank id. |
 | `UNKNOWN_COMMAND` | Unrecognized `cmd`. |
 | `UNAUTHORIZED` | Missing or invalid token, or a first message that isn't `auth`. |
 | `PROTOCOL_VERSION_MISMATCH` | `v` does not match the sidecar's protocol version; rejected rather than parsed best-effort. |
@@ -1548,11 +1548,11 @@ One live view's payload, only while that scope is open (`RECORDING.md#live-windo
 | `PREFIX_NAME_TAKEN` | A prefix with that name already exists. |
 | `SESSION_INVALID` | A session command that can't apply: unknown session, cohort, prefix or group; a mapping naming a box or animal outside the session; a box with no confirmed mapping; or a lifecycle step from the wrong state (abandoning a session that ran, resuming another day's, recovering while a box runs). |
 | `SESSION_NOT_READY` | `sessions.create` against a cohort with no group holding a box-assigned animal. |
-| `TASK_PROFILE_INVALID` | A sketch's `task.json` exists but is malformed (`detail` carries the parse error), or a profile's `START` line would exceed `START_LINE_MAX`. |
+| `TASK_PROFILE_INVALID` | A sketch's `task.json` exists but is malformed (`detail` carries the parse error), or a profile's `START` line would reach `START_LINE_MAX`. |
 | `BACKUP_UNAVAILABLE` | `backup.syncNow` with no `backupDirectory` set, or with a sync already running. An ordinary mirroring failure is never a command error; it appears on `backup.status`. |
 | `UTILITY_UNAVAILABLE` | A `utility.*` command when the box utility can't be used at all — the install's sketch library has none, or its profile is unreadable or not a utility profile; for `utility.identify`, also a profile with no `identify` pair. A box-level problem never raises this: it is that box's `state` in the snapshot, because 'box 4 has no board' is a fact about the rig, not a failure of the command. |
 | `RIG_INVALID` | The wiring document is not a wiring document — wrong shape, or too large. NOT a wiring MISTAKE: a document that is well-formed and describes an impossible box is a successful `hardware.preview` reply carrying located problems. |
-| `RIG_IN_USE` | `hardware.save`, `hardware.reset`, `tasks.save` or `tasks.delete` while a session is set up or a box is running. Each regenerates sketch folders a box was or will be flashed from, under a session whose profiles were read from the old ones (`TASKS.md#the-rig-definition`). |
+| `RIG_IN_USE` | `hardware.save`, `hardware.reset`, `tasks.save` or `tasks.delete` while a session is set up or a box is running. Each regenerates sketch folders a box was or will be flashed from, under a session whose profiles were read from the old ones (`TASKS.md#the-rig-definition`). Also an archive write the rig refuses (`DATA.md#the-cohort-archive`): `cohorts.setDataFolder` moving the contents while a session is set up or a box is running, and `analytics.rescan` or `sessions.recover` while a box is running. |
 | `RIG_WOULD_BREAK_TASKS` | `hardware.save` without `confirm` on a change that would stop a saved task profile generating. `detail.breaks` lists them. Retry with `confirm: true` to proceed — the app does not veto a rewiring, it refuses to let one happen unnoticed. |
 | `STROBE_INVALID` | A strobe edit the vocabulary cannot take: a malformed or duplicate name, a code that is not free, a blank meaning, an unknown name, or an import file that is not a vocabulary. |
 | `STROBE_REQUIRED` | Retiring or removing a code a response-port slot reports with, or one the shared firmware library names. Never passable with `confirm`. |
@@ -1564,9 +1564,10 @@ One live view's payload, only while that scope is open (`RECORDING.md#live-windo
 | `TASK_NOT_FOUND` | No task profile with that id on this rig. |
 | `TASK_INVALID` | The definition is not a definition — wrong shape, too large, an unusable id or name, or a name that collides with a bundled sketch or another saved task. NOT the same as a task that will not run: a well-formed definition describing an impossible task is a successful reply carrying located diagnostics, exactly as a wiring document is. |
 | `INTAN_UNAVAILABLE` | RHX is not reachable: not running, its Remote TCP Control command server not opened, or the socket died. The message says what to click. |
-| `INTAN_NOT_READY` | RHX is reachable but this cannot be done now — RHX is already recording, no recording is configured for this group, a box has no digital input, the rig's wiring has no sync channel, or a scope asked for a channel the box does not own. The message is the operator's next step. |
+| `INTAN_NOT_READY` | RHX is reachable but this cannot be done now — RHX is already recording, no recording is configured for this group as its mapping was last confirmed, a box has no digital input, the rig's wiring has no sync channel, or a scope asked for a channel the box does not own. The message is the operator's next step. |
 | `INTAN_COMMAND_FAILED` | RHX refused a command, or **accepted it and stored something else** (a read-back mismatch — the save-location-with-a-space case). `detail.command` carries what was sent. |
-| `INTERNAL` | Unhandled sidecar exception, a subsystem that isn't running, or an analytics walk already in progress. Also the code `sidecar.error` carries for a mid-session write failure. |
+| `ARCHIVE_BUSY` | A scan, tidy, recover, data-folder move or move of animals already holds the archive (`analytics.rescan`, `sessions.tidy`, `sessions.recover`, `cohorts.setDataFolder`, `cohorts.moveAnimals`). Nothing was done; try again when it finishes. |
+| `INTERNAL` | Unhandled sidecar exception, or a subsystem that isn't running. Also the code `sidecar.error` carries for a mid-session write failure. Every other refusal has its own code (`ARCHITECTURE.md#dispatch`). |
 
 ## Payload shapes
 
@@ -1580,6 +1581,7 @@ Everything unfinished, discoverable with no prior knowledge of ids. Also the ses
 | `running` | [RunnerSession](#shape-runnersession) \| null | Keyed off the live runner, never a bare DB status query — a 'running' row with no live runner is a crash orphan. A held session with `groupId: null` and no boxes is BETWEEN GROUPS, awaiting a choice. |
 | `configuring` | [Session](#shape-session)[] | Setup never finished; legitimately resumable into the mapping flow. |
 | `stale` | [Session](#shape-session)[] | DB says 'running' but no runner holds them — a crash or a closed app. The .tsv on disk is the record; a same-day one can be continued with another group (`sessions.resume`), never mid-group. |
+| `confirmations` | number | How many mappings `sessions.confirmMapping` has confirmed since the sidecar started. Nothing else in this payload is guaranteed to change when the same mapping is confirmed again, so this is how a client learns a new group run is set up: a value it has not seen means clear every box's live run (`ARCHITECTURE.md#live-session-views`). Per process, not persisted. |
 
 <a id="shape-analyticsanimal"></a>
 #### AnalyticsAnimal
@@ -3005,7 +3007,7 @@ A pure compile of an unsaved definition. Writes nothing.
 |---|---|---|
 | `diagnostics` | [TaskDiagnostic](#shape-taskdiagnostic)[] |  |
 | `startLineLength` | number | Bytes the built START line would occupy, seed included. |
-| `startLineMax` | number | The firmware's cap, so the editor can show headroom without hardcoding it. Over it is TSK107 and a refused generation — `readLineInto()` truncates in silence, so this is checked rather than trusted. |
+| `startLineMax` | number | The firmware's cap, so the editor can show headroom without hardcoding it. At or over it is TSK107 and a refused generation — `readLineInto()` truncates in silence, so this is checked rather than trusted. |
 | `profile` | [TaskProfile](#shape-taskprofile) | What this definition compiles to. |
 | `catalogueDefaults` | map&lt;string, unknown&gt; | `metadataKey` → the value this field has with NO override, keyed the same way `profile.config[].default` is. The editor needs both to know which values this profile actually pins: a definition stores only divergences, so a value merely EQUAL to the catalogue's must not be written into it — that would freeze it against a later correction to the range or the default. |
 

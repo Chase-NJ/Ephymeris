@@ -16,7 +16,7 @@ from ephymeris_sidecar.ports.manager import (
     PortNotBound,
     sketch_fingerprint,
 )
-from ephymeris_sidecar.ports.states import IllegalTransition, PortState
+from ephymeris_sidecar.ports.states import IDLE_OR_CONSOLE, IllegalTransition, PortState
 from ephymeris_sidecar.settings import SidecarSettings
 
 HWID = "TESTBOARD01"
@@ -163,7 +163,7 @@ async def test_flash_from_passthrough_auto_resumes_at_prior_baud(fake_serial) ->
     manager.open_passthrough(1, baud=9600)
 
     state, resumed = await manager.flash(1, "/sk/clean", "clean", None,
-                                         lambda *a: progress.append(a))
+                                         lambda *a: progress.append(a), from_=IDLE_OR_CONSOLE)
 
     assert state is PortState.PASSTHROUGH
     assert resumed is True
@@ -185,7 +185,7 @@ async def test_suppress_passthrough_resume_forces_idle(fake_serial) -> None:
 
     state, resumed = await manager.flash(
         1, "/sk/clean", "clean", None, lambda *a: progress.append(a),
-        suppress_passthrough_resume=True,
+        suppress_passthrough_resume=True, from_=IDLE_OR_CONSOLE,
     )
 
     assert state is PortState.IDLE
@@ -357,7 +357,7 @@ async def test_a_console_is_closed_by_the_time_the_flash_is_heard(fake_serial) -
 
     manager, _tool, _, _ = await make_manager(on_state_change)
     manager.open_passthrough(1, baud=9600)
-    await manager.flash(1, "/sk/clean", "clean", None, lambda *a: None)
+    await manager.flash(1, "/sk/clean", "clean", None, lambda *a: None, from_=IDLE_OR_CONSOLE)
     await asyncio.sleep(0)  # the announcements reach the loop as callbacks
 
     assert console_closed[PortState.FLASHING] is True

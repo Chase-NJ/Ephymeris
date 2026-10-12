@@ -97,6 +97,13 @@ class DebugRuns:
                 return _payload(box, False, run)
         return _payload(box, True, run) if changed and not run.metrics.empty else None
 
+    def snapshot(self) -> list[dict[str, Any]]:
+        """One `running` payload per armed run, with its metrics so far: what a
+        client that connects now is owed. `offer` sends nothing for a batch
+        that changed no metric -- every batch, for a profile-less sketch -- so
+        a client that missed `arm` hears of the run only from here."""
+        return [_payload(box, True, run) for box, run in sorted(self._runs.items())]
+
     def drop(self, box: int) -> dict[str, Any] | None:
         """The port stopped being a console. Returns the closing payload, if any."""
         run = self._runs.pop(box, None)

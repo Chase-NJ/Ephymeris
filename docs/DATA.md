@@ -51,6 +51,7 @@ Read with [TASKS.md](TASKS.md) (the profile that decodes a run) and [ARCHITECTUR
 - [SQLite database](#sqlite-database)
   - [Tables](#tables)
   - [Indexes](#indexes)
+  - [Transactions](#transactions)
   - [Changing the schema](#changing-the-schema)
 - [Backup mirroring](#backup-mirroring)
   - [Mirror layout](#mirror-layout)
@@ -238,14 +239,14 @@ Relocating is a separate action, `cohorts.setDataFolder` (`relocate`), with two 
 | Destination | How | A crash in between |
 |---|---|---|
 | Same volume | One atomic `rename` of the folder, then the records in one transaction | The folder is demonstrably at the target, so the records are rolled forward at the next start |
-| Another volume | A [verified copy](#verified-transfer) of every file, then the records, then each original whose copy is in place | Undone while copying; finished after the commit |
+| Another volume | A [verified copy](#verified-transfer) of every file, then the records, then each original whose copy is in place | Undone while copying; finished after the commit, by the first start that can reach the old folder |
 
 The cache and adoption rows [carry their freshness keys](#caching) to the moved files, so nothing that was fresh is re-read. Where each recorded group run told RHX to save (`recording_json`) moves too when it lies inside the folder, as the default `<session folder>/ephys` does, whichever cohort the session now belongs to: [a move of animals](#moving-animals-between-cohorts) leaves a recording in the source's folder. A save location elsewhere is left alone. Every column that stores such a path is listed once, in `cohorts/db.py`'s `DATA_PATHS`; a test fails when a column that could hold a path is in neither it nor `OTHER_PATHS`, or when a relocate leaves one behind.
 
 It runs under the [archive lock](#the-cohort-archive), so no rescan or summary reads the records mid-move. It is refused while a session is set up or running anywhere, or while any session of the cohort is still open (`configuring` or `running`): a session writing into the folder would be writing into one that moves. Pointing without moving rewrites nothing.
 
 > [!CAUTION]
-> **A session recorded during a copy keeps its files at the old place.** Its runner was given a folder below the old one, and the copy has already passed it. Moving its records anyway points them at files that are not there, and the next Rescan [prunes](#pruning) them. So `sessions.create` is refused while the cohort's relocate is journalled, and the copy checks again inside its commit: an open session, or any session or run recorded since it started, abandons the move with nothing moved. A rename is over before anyone could set a session up.
+> **A session recorded during a copy keeps its files at the old place.** Its runner was given a folder below the old one, and the copy has already passed it. Moving its records anyway points them at files that are not there, and the next Rescan [prunes](#pruning) them. So `sessions.create` is refused while the cohort's relocate runs, through the delete of the originals (a session set up from the cohort as read just before the commit would make its folder under the old one), though not for a relocate an earlier run of the app left `committed`, which the next start finishes; and the copy checks again inside its commit: an open session, or any session or run recorded since it started, abandons the move with nothing moved. A rename is over before anyone could set a session up.
 
 **Rescan repairs a relocate from before this.** Before it prunes, it re-points (`rehomed`) records left at a folder the cohort was moved out of: a stale path is one outside the cohort's folder with nothing there; the old folder is the root most stale paths agree on, found by which tail of each exists under the cohort's folder; and only paths whose files (or, for a run, its write-ahead `.tsv`) are actually there are rewritten, a recording's save location among them. Anything else is left to the prune's own rules.
 
@@ -280,7 +281,9 @@ Like [Tidy records](#tidy-records), it previews first (`apply: false`), and an a
 
 The session's operator and summary are copied too. A copied carry-forward flag is open in both cohorts, and resolving one does not resolve the other.
 
-**Caches follow.** `run_metrics_cache`, adoption and strobe-scan rows take the new path and [carry their freshness keys](#caching): the content is hash-verified identical, so a summary that was right for the original is right for the copy. Copied files are queued for [backup](#backup-mirroring); the mirror is additive, so the old copies stay in the source's mirror folder.
+**Caches follow.** `run_metrics_cache`, adoption and strobe-scan rows take the new path (all but an adoption that joins a run the destination already holds, below) and [carry their freshness keys](#caching): the content is hash-verified identical, so a summary that was right for the original is right for the copy. Copied files are queued for [backup](#backup-mirroring); the mirror is additive, so the old copies stay in the source's mirror folder.
+
+**A run the destination already holds.** One run copied into both cohorts, at different places, is [adopted](#orphan-adoption) by each. A moved adoption whose run identity the destination already holds **joins that row** rather than becoming a second: the held row keeps its id, which its cached scores and any [ruling](#false-starts) are keyed by; the moved row's ruling is carried onto it unless the held row has one of its own; and the moved row goes, with its cached scores. Its file is still copied, so the destination's folder holds two copies of the run, which a [rescan](#orphan-adoption) reads as one.
 
 **Refused**, with nothing touched, when: a session is held or a box runs anywhere in the app (copying competes with the write-ahead log's fsync); either cohort has an open (`configuring`/`running`) session; either data folder is unreachable; the folders are the same or one is inside the other; a destination file exists **with different content**; a run file lies outside the source's folder (left by a data-folder move from before records followed one; a rescan [re-points it](#data-folder)); two moved animals share a name; or the destination is archived. An identical file already at the destination is not a refusal.
 
@@ -291,7 +294,7 @@ The session's operator and summary are copied too. A copied carry-forward flag i
 3. **Commit**, in one transaction: re-plan the record half, abandon the move if it no longer matches what was copied, move every record, mark the journal `committed`.
 4. **Clean up**: delete each original whose copy is in place, `rmdir` emptied folders bottom-up (never `rmtree`), and a session folder no source record points at once all it holds is its derived `notes.md`. Mark the journal `done`.
 
-At start-up, before anything reads the archive, `move_apply.resume` undoes a `copying` move and finishes a `committed` one. So a crash leaves each run in exactly one cohort, and no record pointing at a file that isn't there — the two states a [rescan](#pruning) would otherwise act on.
+At start-up, before anything reads the archive, `move_apply.resume` undoes a `copying` move and finishes a `committed` one once it can [reach the originals](#verified-transfer). So a crash leaves each run in exactly one cohort, and no record pointing at a file that isn't there — the two states a [rescan](#pruning) would otherwise act on.
 
 > [!CAUTION]
 > **The other lab machine has its own records.** After a move, its database still points the moved runs at the source folder, where the files no longer are — and a rescan of the source there would [prune](#pruning) those records, losing the box, stop reason and parameters only a recorded run carries. **Run the same move on the other machine before rescanning there.** Its planner finds the files already at the destination (`already`, no copy) and simply re-points its records.
@@ -305,6 +308,8 @@ Both transfers that copy a cohort's files to another place, a [relocate](#data-f
 | Copy | Each file through `<name>.part`: `copy2`, fsync, renamed into place, then re-read and SHA-256-checked against the original. A destination already holding the same content is left as it is; one holding anything else stops the transfer |
 | Undo, before the records commit | Removes any `.part`, and each copy whose original is still there **with the same content** |
 | Delete originals, after the commit | Removes each original whose copy is there **with the same content**; one changed since it was copied is left in place |
+
+An original that can't be seen at all, a share that stopped answering or a drive not plugged in, is never read as deleted. Its transfer deletes nothing and leaves its journal `committed`, and the next start that can reach it finishes. `relocate.out_of_reach` decides: a `stat` that fails other than not-found is out of reach, and a missing original counts as gone only when, walking up its folders, one answers before any errors. That is how the [prune](#pruning) reads absence too.
 
 > [!CAUTION]
 > **Neither step that deletes trusts a remembered hash alone.** Both read the file they keep as well as the one they remove, so a file whose content exists nowhere else is never deleted: not a copy of an original edited since, and not an original whose copy has gone. A crash can leave only a `.part`, never a partial file under its real name, so a retry is never blocked by debris the undo kept.
@@ -341,7 +346,7 @@ One row in `sessions` per session-flow invocation (`sessions/models.py`'s `Sessi
 | `folderPath` | The session folder |
 | `groupRuns` | JSON list of `{groupId, order, startedAt, endedAt}` — one per group run, `order` its position in this session's sequence. A group may appear more than once |
 | `durationMinutes` | Optional per-box time limit; null = none |
-| `recording` | Null for behavior only; otherwise one entry per group run ([RECORDING.md](RECORDING.md#what-is-written)) |
+| `recording` | Null for behavior only; otherwise one entry per group run, or on an `aborted` session the run its abandon stopped ([RECORDING.md](RECORDING.md#what-is-written)) |
 
 Every session listing is ordered by `(date, startedAt)` and carries an `ordinal` from that order — never from `sessionNumber`, which would sort `10` before `9`.
 
@@ -545,6 +550,8 @@ Every parsed strobe is appended to the `.tsv` **the instant it arrives**, with `
 
 `.json` and `.mat` are not append-friendly and don't need to be; they are built once in `AnimalWriter.finalize`. Finalization is **idempotent** (the first `stop_reason` wins, so a board-drop racing an operator stop cannot rewrite history), and the two structured writes are **best-effort**: an `OSError` is logged, not raised. The `.tsv` is already closed and durable by then, so failing to produce a convenience format must never look like failing to save data.
 
+Each is written **whole or not at all** (`write_atomic`): into a `.part` beside it named for the writing process and thread, fsync'd, then renamed over the real name, as a [verified transfer](#verified-transfer) copies. Two writers of one file each land whole, and the last rename wins. A power cut while finalizing leaves at most a `.part`, which no walk reads, so the run is a `.tsv` with no `.json` that [Recover](#crash-recovery) rebuilds, never a torn document under the name every reader opens. Recovery writes the same way.
+
 ### What is guaranteed
 
 - **Guaranteed:** if the PC loses power mid-session, every strobe through the last completed line is on disk in the `.tsv`, human-readable, with at most the in-flight line at risk.
@@ -553,7 +560,7 @@ Every parsed strobe is appended to the `.tsv` **the instant it arrives**, with `
 
 ## Crash recovery
 
-`sessions/recovery.py` (`sessions.recover`, the **Recover** button in Analytics) finds a cohort's orphaned `.tsv` files — logs with no `.json` sibling — and rebuilds `.json` and `.mat` from them. It is a pure file transformation, the inverse of `AnimalWriter`: **not** session resumption, and it never talks to a board.
+`sessions/recovery.py` (`sessions.recover`, the **Recover** button in Analytics) finds a cohort's orphaned `.tsv` files — logs with no `.json` sibling, or one that does not parse — and rebuilds `.json` and `.mat` from them. A `.json` that does not parse, torn by a power cut or by a copy someone made by hand, counts as missing, so the run is offered until a whole document replaces it. A sibling that can't be read at all counts as present: recovery fails toward writing nothing. It is a pure file transformation, the inverse of `AnimalWriter`: **not** session resumption, and it never talks to a board.
 
 - **It shares the archive walker** (`analytics/reader.py`'s `walk_orphaned_tsvs`, over `_walk_format_dirs`), so every legacy layout [adoption](#orphan-adoption) reads, recovery reads too, and it backfills in the same layout (a `recovery_tsv/` orphan gets `behavior_json/` and `behavior_mat/`).
 - **A footer wins.** A `.tsv` with a footer finalized cleanly and only its best-effort `.json` write failed (the disk-full case); it keeps its recorded `stop_reason`. Only a footer-less log gets `stop_reason: "recovered after crash"` (`RECOVERED_STOP_REASON`).
@@ -562,13 +569,13 @@ Every parsed strobe is appended to the `.tsv` **the instant it arrives**, with `
 - Strobe lines must match the live parser's strict `^\d{1,3}\t\d+$`, so a torn final line costs only itself.
 - **The lab's pre-Ephymeris logs are a second dialect**, recognised by their first line, `event_code\tevent_ms\tevent_name` (`LEGACY_HEADER`). After it come `# key\tvalue` comments (the run's parameters, read in flat and coerced as above), strobe lines with a third column naming the code (`code\tms\tBF_NAME` — the name is dropped; the [strobe vocabulary](TASKS.md#strobe-vocabulary) decodes the number) and CRLF line endings. The third column is admitted **only** in such a file; this app's own logs keep the strict rule.
 - **A legacy log never had a footer**, so its absence says nothing about how the run ended: a recovered legacy run records `stop_reason: "recovered from a legacy log"` (`RECOVERED_LEGACY_STOP_REASON`), never "after crash". It names no animal or sketch either, and recovery adds neither — adoption reads the animal from the filename ([below](#orphan-adoption)) and Analytics infers the conditions from the strobes. A legacy log that is only its header line — the old software opened one for every run, started or not — is refused rather than recovered as an empty run.
-- **Rejected while any box is running:** a live run's `.tsv` legitimately has no `.json` yet.
+- **Rejected while any box is running:** a live run's `.tsv` legitimately has no `.json` yet. It is an [archive write](#the-cohort-archive), so it also waits for no other, and the files it writes are queued for backup.
 
 The Recover button chains an `analytics.rescan`, so recovered files are adopted in the same click. It is a `sessions.*` command because it **writes** session files; analytics never writes the archive.
 
 ## SQLite database
 
-`ephymeris.db` lives in the **app data directory**, not in `dataDirectory`: that folder is where lab members browse session output, and an opaque database file does not belong among session files. Owned by `cohorts/db.py`: one connection behind a lock, called through `asyncio.to_thread` so the event loop never blocks on disk. The current version is `SCHEMA_VERSION` in that file.
+`ephymeris.db` lives in the **app data directory**, not in `dataDirectory`: that folder is where lab members browse session output, and an opaque database file does not belong among session files. Owned by `cohorts/db.py`: one connection behind a lock, reached only through [units of work](#transactions), called through `asyncio.to_thread` so the event loop never blocks on disk. The current version is `SCHEMA_VERSION` in that file.
 
 ### Tables
 
@@ -670,7 +677,7 @@ erDiagram
 | `sessions` | `id`, `cohort_id`, `prefix_id`, `prefix_name`, `session_number`, `date`, `started_at`, `ended_at`, `status`, `folder_path`, `group_runs` (JSON), `duration_minutes`, `recording_json` | No FK on `prefix_id` |
 | `session_animal_runs` | `id`, `session_id`, `animal_id`, `box_number`, `sketch_path`, `file_path`, `started_at`, `ended_at`, `stop_reason`, `profile_hash`, `config_json`, `params_hash` | Cascades from `sessions`; **no FK on `animal_id`** |
 | `task_profiles` | `hash`, `task_name`, `kind`, `profile_json`, `first_seen_at` | **Content-addressed** snapshots: identical profiles store once, and comparability is an indexed equality test |
-| `run_metrics_cache` | `run_id`, `file_path`, `file_mtime_ns`, `file_size`, `profile_hash`, `profile_source`, `scored_profile_hash`, `params_hash`, `config_json`, `codec_version`, `computed_at`, `status`, `detail`, `summary_json` | A pure cache. **No FK on `run_id`** — adopted runs have no run record. `profile_hash` is what *resolution* reached; `scored_profile_hash` what the run was *scored* with ([why both](#which-profile-decodes-a-run)) |
+| `run_metrics_cache` | `run_id`, `file_path`, `file_mtime_ns`, `file_size`, `profile_hash`, `profile_source`, `scored_profile_hash`, `params_hash`, `config_json`, `codec_version`, `computed_at`, `status`, `detail`, `summary_json` | A pure cache. **No FK on `run_id`** — adopted runs have no run record. `profile_hash` is what *resolution* reached; `scored_profile_hash` what the run was *scored* with ([why both](#which-profile-decodes-a-run)). `codec_version` holds the [cache version](#caching) |
 | `adopted_runs` | `id`, `cohort_id`, `animal_id`, `file_path`, `prefix_name`, `session_number`, `date`, `started_at`, `sketch_name`, `sketch_path`, `adopted_at`, `file_mtime_ns`, `file_size` | Files the archive walk matched to an animal. Deliberately separate from `sessions`/`session_animal_runs` |
 | `session_notes` | `id`, `session_id`, `cohort_id`, `at`, `created_at`, `edited_at`, `deleted_at`, `tag`, `scope_kind`, `animal_id`, `box_number`, `body`, `carry_forward`, `resolved_at`, `resolved_in_session` | [The session log](#notes). Cascades from `sessions` and `cohorts`; **no FK on `animal_id`** (the caution below) or `resolved_in_session` |
 | `session_logs` | `session_id`, `operator`, `summary`, `updated_at` | One per session that has one. Cascades from `sessions` |
@@ -693,6 +700,26 @@ Plus plain lookup indexes on each table's parent id.
 
 > [!CAUTION]
 > **An index on `animal_id`, never a foreign key.** `cohorts.update` deletes and re-inserts the cohort's entire animal set on every roster edit. With `ON DELETE CASCADE`, a single rename would destroy every historical run in the cohort. **The missing foreign key is load-bearing.** The same holds for `adopted_runs.animal_id` and `session_notes.animal_id`; storing the *id* is what lets an adopted run survive a rename — and what lets history outlive the animal's place on the roster as a [former member](#former-members).
+
+### Transactions
+
+Every caller shares the one connection, so an uncommitted write is everyone's: another writer's `rollback()` discards it, and another writer's `commit()` makes it durable. Writes that must land together therefore go in **one unit of work**, `Database.write()`:
+
+```python
+with db.write() as tx:                 # the lock, then BEGIN IMMEDIATE
+    digest = profiles.remember_profile(profile, tx=tx)
+    sessions.record_animal_run(run, tx=tx)
+# COMMIT here; ROLLBACK instead if the block raised
+```
+
+- **Join or own.** A repository method given `tx=` runs inside that unit and commits nothing; given none, it is its own unit. Only the unit's opener commits.
+- **No nesting.** Opening a second unit on the thread that holds one raises `NestedWrite`, as does joining a unit from another thread or after it ended. Pass the open unit instead.
+- **No transaction is ever open while the lock is free.** Only a unit begins one: the connection begins none implicitly, and nothing outside `cohorts/db.py` can reach it. So a rollback undoes only its own unit's work, and no commit makes another writer's half-done work durable. A unit that finds a transaction already open, which only a bug could leave, refuses with `WriteInProgress` rather than adopt it.
+- **A unit SQLite rolled back writes nothing more.** A statement SQLite answers by rolling the whole transaction back (a full disk, an I/O error, an interrupt) ends the unit: any later statement in it, the error once caught, raises `TransactionAborted` instead of committing on its own, and the unit commits and announces nothing. A finalization whose profile snapshot does this records the run again on its own, without the snapshot.
+- **`db.read()`** holds the lock for reading, with the connection `query_only`, so a read cannot write; one that begins a transaction is rolled back and refused. Inside the thread's own unit it is that unit, so a read sees the unit's own rows.
+- **What a commit announces.** The database hook ([backup](#the-database-copy)) fires once per committed unit that changed a row, under the lock right after `COMMIT`. A unit that rolled back, or changed nothing, announces nothing. `tx.on_commit(fn)` runs `fn` once after the commit, with the lock free.
+
+A finalization snapshots the run's [profile](#which-profile-decodes-a-run) and records the run in one unit. Apart, a rollback by any other writer between the two would leave the run naming a profile hash with no `task_profiles` row. The analytics indexing pass writes nothing until its end: it collects the profiles it scored with and writes them with its cache rows in one unit ([one transaction per job](#never-at-the-expense-of-a-session)), so no cached row names a scored profile hash without its `task_profiles` row, and a pass that changed nothing announces nothing. A [tidy](#tidy-records) is one unit, so a merge the database refuses undoes the ones before it; a [relocate](#data-folder) and a [move](#moving-animals-between-cohorts) write each journal step, and their records with their `committed` step, as units of their own.
 
 ### Changing the schema
 
@@ -766,10 +793,12 @@ Two relocated cohort folders sharing a basename both get a short path-derived su
 
 ### The database copy
 
-`ephymeris.db` is mirrored on **every commit**, debounced by `DB_DEBOUNCE_S` (5 s) because a roster edit commits many times in quick succession.
+`ephymeris.db` is mirrored on **every committed unit of work that changed a row** ([Transactions](#transactions)), debounced by `DB_DEBOUNCE_S` (5 s) because a roster edit commits many times in quick succession.
 
 > [!NOTE]
-> **The trigger hangs off SQLite `commit` itself** (`_TrackedConnection`), not a call in each repository method: no write path can forget to announce itself, and the trigger is truly "the database changed" — `session_animal_runs` is written during unattended overnight runs.
+> **The trigger hangs off the commit itself**, each [unit of work](#transactions)'s `COMMIT` and startup's one, not a call in each repository method: no write path can forget to announce itself, and the trigger is truly "the database changed" — `session_animal_runs` is written during unattended overnight runs.
+
+**The snapshot never runs with a write open.** SQLite's online backup answers busy to an open write on its source, and Python retries busy forever — here holding the lock that every way out of the write needs, which would stall every database call in the app. The snapshot takes the lock, so it waits for any unit of work to end, and [no transaction is open while the lock is free](#transactions). Were one open anyway — a bug — `snapshot_to` raises `WriteInProgress` instead of waiting: the pass leaves the database marked dirty and a later pass copies it, a copy still deferred after `DB_DEFER_WARN_S` (60 s) is logged as a warning once per stretch, and a "Sync now" that meets one reports the database copy as not done.
 
 **The copy is two-step.** `Database.snapshot_to` uses SQLite's online backup API (a plain copy of a live database can capture a torn page), but that holds the lock, so it writes to a **local** temp file first and the slow copy to the mirror happens with nothing locked. Pointing it straight at a network share would let the share's latency block every database read.
 
@@ -785,25 +814,40 @@ Mirroring failures surface as `state: "failed"` on `backup.status` with the unde
 
 ## Reading the archive
 
-`analytics/` reads runs back: `reader.py` (walking and reading files), `archive.py` ([the cohort archive](#the-cohort-archive)), `service.py` (indexing, adoption, pruning, tidy), `repository.py` (the cache and adoptions), `derive.py` (the [metrics](#derived-metrics)) and `infer.py` (inference).
+`analytics/` reads runs back: `reader.py` (walking and reading files), `archive.py` ([the cohort archive](#the-cohort-archive)), `scoring.py` (`RunScorer`: [which profile decodes a run](#which-profile-decodes-a-run), scoring, and the [cache](#caching) and its version), `service.py` (the commands, adoption, pruning, tidy), `repository.py` (the cache and adoptions tables), `derive.py` (the [metrics](#derived-metrics)) and `infer.py` (inference).
 
 ### Database first
 
 Run records carry a file path, and that is the primary path: the record also carries `animal_id` (immune to renames), the box, timings and stop reason, none of which a filename gives. But it is not complete — files exist that no record points at: crashes between the file write and the commit, files restored from the mirror, sessions copied from the other lab machine, and every pre-Ephymeris archive.
 
-So a **walk exists, but only on an explicit user action** — `analytics.rescan` (the Rescan button). Adopted runs get a deterministic synthetic id so rescanning is idempotent, and they **never** get fabricated `sessions` rows, which would corrupt session-number suggestion and the same-day warning. In summaries they are grouped under synthetic `adopted:<prefix>_<number>_<date>` sessions.
+So a **walk exists, but only on an explicit user action** — `analytics.rescan` (the Rescan button). An adopted run keeps one id per cohort across rescans ([Orphan adoption](#orphan-adoption)) so rescanning is idempotent, and they **never** get fabricated `sessions` rows, which would corrupt session-number suggestion and the same-day warning. In summaries they are grouped under synthetic `adopted:<prefix>_<number>_<date>` sessions.
 
 ### The cohort archive
 
 `analytics/archive.py`'s `CohortArchive` is the one read of a cohort's sessions and runs: the ones this database recorded and the ones a rescan recovered from files. Every reader takes its `view`: `analytics.summary`, `sessions.list`, the session log's [what changed](#what-changed), [tidy](#tidy-records) and the Dashboard's recent sessions. So no two of them can file a recovered run under different sessions, close its session's clock differently, or disagree about which runs are false starts.
 
 - A recovered run counts under the recorded session that owns its folder ([Tidy records](#tidy-records)), else under its synthetic session, and a session's run count includes the recovered runs filed under it.
+- A recovered run whose file a run record also names is left out: [the record wins](#database-first). A box finalizing while a rescan walks leaves exactly that pair, and the next rescan's [prune](#pruning) deletes the adoption. The comparison is of the stored path strings, so the view still opens nothing.
 - A recovered session's clock closes from the metrics cache ([The session clock](#the-session-clock)), and a summary closes it again from what it has just read. A run the summary did not select keeps its cached end, so a summary narrowed to some animals never moves a session's end.
 - [False starts](#false-starts) are judged from the summaries a pass has just scored, or from the cache for a reader that opens no file.
 
 The view reads the database only, so `sessions.list` and the log never wait on a file or on the lock.
 
-**The archive lock.** A rescan, a tidy, a [data-folder relocate](#data-folder) and a [move of animals](#moving-animals-between-cohorts) each hold it end to end, and each is refused (`ArchiveBusy`) while anything else holds it. A summary waits for it, then reads its records and indexes them under it. Records read before the wait could be ones that a relocate, a move or a tidy had just rewritten.
+**Every write goes through the archive** (`CohortArchive.write`): a rescan, a tidy, a [recover](#crash-recovery), a [data-folder relocate](#data-folder) and a [move of animals](#moving-animals-between-cohorts). Each holds the archive lock end to end and is refused (`ArchiveBusy`) while anything else holds it. A summary waits for the lock, then reads its records and indexes them under it. Records read before the wait could be ones that a relocate, a move or a tidy had just rewritten.
+
+**The rig is asked once the lock is held**, never before, so a session set up or a box started while a caller decided cannot slip past:
+
+| Write | While a session is set up or a box runs | While a box runs |
+|---|---|---|
+| Relocate, moving the contents | Refused, `RIG_IN_USE` | Refused, `RIG_IN_USE` |
+| Move of animals | A refusal in its plan (`busy`) | A refusal in its plan (`busy`) |
+| Tidy | Leaves the held session alone | Leaves the held session alone |
+| Rescan | Runs | Refused, `RIG_IN_USE`: a run finishing during the walk would be adopted as well as recorded |
+| Recover | Runs | Refused, `RIG_IN_USE`: a live run's `.tsv` has no `.json` yet |
+
+A box counts as running until its run is recorded: its `.json` written and its run record committed (`SessionLifecycle.writing`).
+
+**One place hears a write.** Once a write is done and the lock released, `on_changed` is told what it changed (`ArchiveChange`), and that is the only follow-up: the app queues the files it wrote for [backup](#backup-mirroring), publishes `cohorts.updated` and `session.lifecycle`, and refreshes the [session log](#the-session-log) of each cohort it touched. A preview, or a rescan that found nothing new, changed nothing and tells no one.
 
 > [!CAUTION]
 > **The walk finds format folders by name, at any depth — don't reintroduce an assumption about a prefix level.** One real archive nests session folders under a prefix, another puts them straight under the cohort, and nothing stops a per-year level appearing next. A fixed two-level glob found **zero** of the second archive's 444 files. `session_folder_of` stays correct because it is defined relative to the *format* folder, not the cohort root.
@@ -836,7 +880,9 @@ This is the **only** path by which a pre-Ephymeris archive reaches Analytics, an
 **Duplicate copies are one run.** Identity is the case-folded **file stem** (`reader.run_identity`): animal + session + start time. In one real archive 290 of 296 runs exist twice; adopting both would double every animal. The surviving copy is chosen **by content, not walk order** (`_prefer`): a copy whose document names its `sketch` can be decoded and one that doesn't cannot, with the path breaking ties. In that archive 30 runs carry `sketch` only in the consolidated copy.
 
 > [!WARNING]
-> **The synthetic run id is keyed on run identity, not on the path** (`_orphan_run_id`). Which copy wins can change between scans, so a path-keyed id would mint a second row for the same run and reintroduce the double-counting deduplication prevents.
+> **The synthetic run id is keyed on the cohort and the run identity, never on the path** (`_orphan_run_id`). Which copy wins can change between scans, so a path-keyed id would mint a second row for the same run and reintroduce the double-counting deduplication prevents. Two cohorts whose folders overlap find the same file at the same path, so without the cohort in the key one cohort's rescan would take the other's row, and the run would leave one cohort's history at every rescan of the other.
+
+**An adopted run keeps the id it was stored under.** A rescan that reads a run its cohort already holds stores it under that row's id, whatever `_orphan_run_id` now gives, because a person's [false-start](#false-starts) ruling and the [cache](#caching) are keyed by it. `store_adopted` never writes over a row another cohort holds: moving a run between cohorts is a [move](#moving-animals-between-cohorts)'s job.
 
 **A missing data folder is reported, not treated as empty.** `analytics.rescan` returns `folderMissing`, and `analytics.summary` emits a `data-folder-missing` warning — otherwise an unplugged drive reads as "this cohort has no data". **An unreadable directory** costs a warning and its own contents, never the cohort.
 
@@ -858,7 +904,7 @@ The ladder has four rungs:
 3. **today's `task.json`** for the recorded sketch name — including a saved task whose `legacyNames` claim a historical name;
 4. **inference** from the stream.
 
-Rungs 1 and 3 are *resolution* and run before any file is opened (`_resolve_profile`); rungs 2 and 4 need the file open and live in `_scoring_profile`. A malformed `task.json` or a damaged embedded snapshot degrades to the next rung rather than raising: a file with a broken declaration is still a file full of real strobes. So does a declaration with no `liveMetrics`: a rung is taken only if its profile declares something to score.
+Rungs 1 and 3 are *resolution* and run before any file is opened (`RunScorer._resolve_profile`); rungs 2 and 4 need the file open and live in `scoring._settle`. `analytics.summary` (`RunScorer.score`) and `analytics.series` (`RunScorer.decode`) climb the same ladder, so a chart draws the trials the summary counted. A malformed `task.json` or a damaged embedded snapshot degrades to the next rung rather than raising: a file with a broken declaration is still a file full of real strobes. So does a declaration with no `liveMetrics`: a rung is taken only if its profile declares something to score.
 
 ```mermaid
 flowchart TD
@@ -894,10 +940,18 @@ Each "no" also covers a rung whose profile exists but declares no `liveMetrics`,
 
 **Persist summaries; never persist series.** Summaries go in `run_metrics_cache` and survive a sidecar restart (every app launch). Series (`analytics.series`) are computed from the file on each request: persisted, a cohort's floats would bloat a database the backup copies wholesale on a 5 s debounce.
 
-The cache key (`repository.CacheKey`) is file path, mtime, size, profile hash and `CODEC_VERSION`. **Every part is answerable from a `stat`, so a cache hit opens nothing**: `stat_run` settles the key and `parse_run` runs only on a miss. On a networked 444-run archive that is the difference between reading 30 MB per dashboard open and reading nothing.
+The cache key (`repository.CacheKey`) is file path, mtime, size, profile hash and the **cache version**. **Every part is answerable without opening the file, so a cache hit opens nothing**: `stat_run` settles the key and `parse_run` runs only on a miss. On a networked 444-run archive that is the difference between reading 30 MB per dashboard open and reading nothing.
+
+The version (`scoring.current_version`) covers everything else a row depends on, and moves by itself when any of it changes:
+
+- **`SCORE_VERSION`** (`analytics/scoring.py`), set by hand, in the high bits (`version >> 32`).
+- **The canary**: a hash of what the scoring code answers for a fixed set of runs, one per rung of the [ladder](#which-profile-decodes-a-run) and a few more (`canary_fingerprint`). Each goes through the function a real pass scores with, and every field a row keeps is hashed, keys included. So a change to the maths, the payload's shape, inference, the recorded parameters or the parsing of an embedded profile moves it.
+- **This machine's [strobe vocabulary](TASKS.md#strobe-vocabulary)**, read once per pass and handed to inference, so the key and the decode agree.
+
+The canary is scored once per process (about 2 ms); the vocabulary half is hashed on every pass. A version moves for every row at once: the first summary after an upgrade or a vocabulary edit (adding, retiring or reinstating a code) re-reads the cohort.
 
 > [!CAUTION]
-> **Bump `CODEC_VERSION` in `analytics/derive.py` whenever the payload changes — the maths *or its shape*.** A cache hit is served verbatim, so without a bump every already-indexed run keeps the old answer forever, with no symptom. "The numbers didn't move" is not an exemption: adding a field without a bump means every warm-cache run answers without it. (When `answerSide` was added that way, the strategy plane concluded "no condition says which well it rewards" on an archive whose profiles say exactly that.) `tests/test_analytics_derive.py` pins the payload's field names as a literal list against the version.
+> **A cache hit is served verbatim, so the version must move whenever what a row would hold does.** It does by itself for any change the canary can see. `tests/test_analytics_scoring.py` pins the canary's answer as a literal: when it fails, every machine re-reads its archive once, so update it deliberately. If you change scoring and the pin does **not** fail, the canary is blind to your change: add a case to `scoring._canary_runs` that shows it, or bump `SCORE_VERSION`. It is blind by construction to what happens before a document is in memory or after resolution gives up — reading a file (`reader.stat_run`, `reader.parse_run`: what reads as `missing` or `unreadable`, and its detail), the `missing` and `unreadable` rows `RunScorer._score_one` builds, and resolution's reason texts. **A change to any of those needs a `SCORE_VERSION` bump.** "The numbers didn't move" is not an exemption: when `answerSide` was added to the payload without a version change, every warm-cache run answered without it, and the strategy plane concluded "no condition says which well it rewards" on an archive whose profiles say exactly that.
 
 - **A relocate or a move carries a key only if it was fresh for the original** (`cohorts/freshness.py`). The copy's stat need not be the original's: a volume that keeps mtimes coarser than NTFS rounds them (exFAT to 10 ms, FAT32 to 1 s). So each row in `run_metrics_cache`, `adopted_runs` and `strobe_scan_cache` whose key matched the original's stat takes the copy's, and any other row keeps its key and is re-read.
 
@@ -905,7 +959,10 @@ The cache key (`repository.CacheKey`) is file path, mtime, size, profile hash an
 > **A key left at the original's is not only a re-read.** An adopted run that misses is [matched to an animal by name](#orphan-adoption) again. If the animal was renamed since adoption, the run turns into an unattributed orphan on every rescan; if its old name now belongs to another animal, the run silently changes animal. Carrying a key that was already stale is wrong the other way: the copy would vouch for a summary of content the file no longer has.
 
 - **Profile resolution is memoized per indexing pass, never across passes**, so an edited `task.json` takes effect on the next summary.
-- **Never delete a cache entry because a file vanished** on the read path — mark it stale and keep serving it. The read path cannot tell a deletion from an unplugged drive; only [pruning](#pruning) can.
+- **Nothing in the cache depends on `minCountedTrials`.** `lowConfidence` is judged against each request's threshold on every row served (`derive.with_threshold`), hit or miss.
+- **A pass writes once.** The profiles it decoded with and the rows it recomputed go in one [unit of work](#transactions) at its end; `analytics.series` writes nothing.
+- **A reader that opens no file reads only rows of the current version** (`load_cached(…, version=…)`): the [archive](#the-cohort-archive)'s session clocks, its false-start verdicts and the session log's [what changed](#what-changed). Another version's row is one the next summary recomputes; until then the run counts as unread.
+- **Never delete a cache entry because a file vanished** on the read path — mark it stale and keep serving it. The read path cannot tell a deletion from an unplugged drive; only [pruning](#pruning) can. The kept row is re-keyed at the **current** version with no stat: readers that open no file keep seeing it, and the file's return is always a miss.
 - **A corrupt file caches its negative result** (`unreadable`) under the same key and surfaces as a warning. One bad `.json` must never blank a year of history.
 
 ### Never at the expense of a session
@@ -916,6 +973,7 @@ The cache key (`repository.CacheKey`) is file path, mtime, size, profile hash an
 - **One indexing job at a time** behind the [archive lock](#the-cohort-archive); a second rescan is refused (`ArchiveBusy`), so a double-click cannot launch two walks.
 - **Reads are sequential in one worker thread, not a pool** — six boxes are fsyncing per strobe, and a pool would multiply disk contention against the write-ahead log.
 - **Runs go to that worker in chunks** (`INDEX_CHUNK`), still read one after another, small enough that a batch of misses cannot hold the event loop off a live `port.output` flush.
+- **`analytics.series` takes one worker hop per run**, sequentially, and does everything in it: the read, the ladder, the series, the trail and the trial tape.
 - **Cache writes go in one transaction per job**; per-run commits would trigger a whole-file backup copy each time.
 
 ### Pruning
@@ -1028,7 +1086,7 @@ Every probability carries `counted` and a **95% Wilson score interval** (`wilson
 | **Zero counted trials** | `null`, **never `0.0`**. Zero percent and "no trials" are opposite claims. No strategy point is placed |
 | **Profile-less sketch** | `no-metrics`, no metrics invented. **The run is still listed** — it has a real duration, event count and stop reason |
 | **Utility-kind profile** | Scored if it declares metrics, but `excludedByDefault` from cohort aggregates |
-| **Board disconnected mid-run** | Finalized with `stop_reason: "board disconnected"`. **Include it**, show the reason; a drop at trial 180 of 200 is good data. Distinct from an `aborted` session, which wrote nothing |
+| **Board disconnected mid-run** | Finalized with `stop_reason: "board disconnected"`. **Include it**, show the reason; a drop at trial 180 of 200 is good data. Distinct from an `aborted` session, which ran no box and wrote no behavior data |
 | **No file path recorded** | The writer never opened (handshake failed, or the exclusive open collided): `missing` |
 | **Path recorded, file absent** | `missing` — and if the sibling `.tsv` exists, say so: that is the disk-full case [recovery](#crash-recovery) fixes |
 | **Two runs for one (animal, session)** | Real (a restart after a board drop, a same-day prefix+number reuse). Both are runs and both are listed; no view may silently keep whichever came last. A short first run is a [false start](#false-starts): still listed, but counted nowhere |
@@ -1044,7 +1102,7 @@ A box is started, something is wrong, it is stopped within a minute and started 
 
 A run nobody restarted is never a false start, however short; an animal that quit after four trials is data. A run whose trials are unknown, because no profile could score it or the index has not read it yet, is never set aside by the rule: "couldn't tell" fails toward counting.
 
-**A person can overrule it either way.** `analytics.setFalseStart` writes `run_flags`: `true` sets a run aside, `false` counts it whatever the rule says ("restored"), `null` hands it back to the rule. Overrides are keyed by run id, which for an adopted run is the identity-keyed synthetic id, so a decision survives a rescan.
+**A person can overrule it either way.** `analytics.setFalseStart` writes `run_flags`: `true` sets a run aside, `false` counts it whatever the rule says ("restored"), `null` hands it back to the rule. Overrides are keyed by run id, which for an adopted run is the id its cohort holds it under ([Orphan adoption](#orphan-adoption)), so a decision survives a rescan. When a rescan prunes a run's row and adopts the run afresh under a new id — its file refiled, and the row held under its stem-only id or under the id of the cohort a [move](#moving-animals-between-cohorts) brought it from — the ruling moves to the new row (`_earlier_ids`, `store_adopted`). It never moves off an id a row still holds, and a cohort reading a run it already holds never takes another cohort's ruling.
 
 | Where | What a false start does there |
 |---|---|

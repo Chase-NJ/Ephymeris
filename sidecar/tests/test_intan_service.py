@@ -13,7 +13,7 @@ import asyncio
 import pytest
 
 from ephymeris_sidecar.intan.client import RhxCommandFailed
-from ephymeris_sidecar.intan.service import IntanNotReady, IntanService
+from ephymeris_sidecar.intan.service import SILENT_POLLS, IntanNotReady, IntanService
 from ephymeris_sidecar.intan.streams import (
     FRAMES_PER_BLOCK,
     FrameLayout,
@@ -83,7 +83,9 @@ async def rig():
     """A service wired to a fake RHX, with boxes 1 and 3 bound to DIN 2 and 5."""
     made: list[Harness] = []
 
-    async def make(*, sync: bool = True, dins=None, poll_s: float = 0.05, **fake_kwargs) -> Harness:
+    async def make(
+        *, sync: bool = True, dins=None, poll_s: float = 0.05, stop_timeout_s: float = 1.0, **fake_kwargs
+    ) -> Harness:
         fake = await FakeRhx(**fake_kwargs).start()
         events: list[dict] = []
 
@@ -98,6 +100,7 @@ async def rig():
             pre_roll_s=0.0,
             post_roll_s=0.0,
             poll_s=poll_s,
+            stop_timeout_s=stop_timeout_s,
         )
         service.start()
         harness = Harness(fake, service, events)
@@ -248,6 +251,193 @@ async def test_stop_returns_the_run_and_never_raises_even_with_rhx_dead(rig, tmp
     assert run is not None and run["groupId"] == "g1" and run["endedAt"]
     status = h.service.status_json()
     assert status["state"] == "error" and "Stop it from RHX" in status["message"]
+
+
+async def test_a_stop_rhx_never_answers_is_bounded_and_sent_once_it_does(rig, tmp_path):
+    """THE RULE at End: a wedged RHX costs the stop `stop_timeout_s`, not the
+    session. The stop is owed, and the first poll RHX answers sends it."""
+    h = await rig(poll_s=30.0, stop_timeout_s=0.5)
+    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.start_recording()
+    h.fake.silent = True
+
+    started = asyncio.get_running_loop().time()
+    run = await h.service.stop_recording()
+
+    assert asyncio.get_running_loop().time() - started < 2.0
+    assert run is not None and run["endedAt"]
+    assert h.fake.params["runmode"] == "Record"
+    assert "did not answer in time" in h.service.status_json()["message"]
+
+    h.fake.silent = False
+    await h.service._poll_once()
+    await h.until(lambda: h.fake.params["runmode"] == "Stop")
+    status = h.service.status_json()
+    assert status["state"] == "idle"
+    assert "Stopped the RHX recording" in status["message"]  # said, not silent
+
+
+async def _owe_a_stop(h, tmp_path) -> None:  # noqa: ANN001
+    """A recording whose stop RHX never answered: the stop is owed."""
+    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.start_recording()
+    h.fake.silent = True
+    await h.service.stop_recording()
+    assert h.fake.params["runmode"] == "Record"
+
+
+async def test_an_owed_stop_leaves_a_recording_started_by_hand_alone(rig, tmp_path):
+    """RHX was stopped and started again by hand while unreachable: the file it
+    writes now is not the run the session ended, so it is not stopped. Said
+    plainly instead."""
+    h = await rig(poll_s=30.0, stop_timeout_s=0.5)
+    await _owe_a_stop(h, tmp_path)
+    h.fake.params["filename.activefiletimestamp"] = "260920_111111"
+
+    h.fake.silent = False
+    await h.service._poll_once()
+    await asyncio.sleep(0.2)
+
+    assert h.fake.params["runmode"] == "Record"
+    assert "left it alone" in h.service.status_json()["message"]
+    await h.service._poll_once()  # and never on a later poll either
+    await asyncio.sleep(0.2)
+    assert h.fake.params["runmode"] == "Record"
+
+
+async def test_an_owed_stop_waits_while_rhx_cannot_say_what_it_records(rig, tmp_path):
+    """A stamp that can't be read is no verdict: RHX is left alone meanwhile,
+    and the stop is still owed when a later poll can read it."""
+    h = await rig(poll_s=30.0, stop_timeout_s=0.5)
+    await _owe_a_stop(h, tmp_path)
+    del h.fake.params["filename.activefiletimestamp"]
+
+    h.fake.silent = False
+    await h.service._poll_once()
+    await asyncio.sleep(0.2)
+
+    assert h.fake.params["runmode"] == "Record"
+    assert "left it alone" in h.service.status_json()["message"]
+
+    h.fake.params["filename.activefiletimestamp"] = "260920_101500"
+    await h.service._poll_once()
+    await h.until(lambda: h.fake.params["runmode"] == "Stop")
+
+
+async def test_a_lost_link_keeps_saying_a_stop_is_owed(rig, tmp_path):
+    """The link given up on after the failed stop: the debt, and the message
+    saying so, outlive it."""
+    h = await rig(poll_s=30.0, stop_timeout_s=0.5)
+    await _owe_a_stop(h, tmp_path)
+    for _ in range(SILENT_POLLS):  # unanswered polls: the link is given up on
+        await h.service._poll_once()
+
+    status = h.service.status_json()
+    assert status["connected"] is False
+    assert "could not stop the RHX recording" in status["message"]
+
+
+async def test_a_reconnect_does_not_adopt_a_recording_started_by_hand(rig, tmp_path):
+    """The link drops, and RHX is stopped and started again by hand. On
+    reconnect RHX is in Record, but not writing this run: it is not picked
+    back up as ours, and the End that follows does not stop it."""
+    h = await rig(poll_s=0.05, stop_timeout_s=0.5)
+    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.start_recording()
+    await h.fake.stop_listening()
+    await h.until(lambda: h.service.status_json()["state"] == "error")
+    h.fake.params["filename.activefiletimestamp"] = "260920_111111"
+
+    await h.fake.listen_again()
+    # Reconnected and decided: the lost-link message is gone either way.
+    await h.until(lambda: "Lost contact" not in (h.service.status_json()["message"] or ""))
+    status = h.service.status_json()
+    assert status["state"] == "error" and "not this run" in status["message"]
+
+    run = await h.service.stop_recording()
+    await asyncio.sleep(0.2)
+    assert run is not None
+    assert h.fake.params["runmode"] == "Record"
+
+
+async def test_an_end_waiting_on_boxes_offers_end_now_with_rhx_lost(rig, tmp_path):
+    """Mission Control offers End now only while `stopping`. With the link
+    lost, an End still waits on the boxes, so it must still be offered --
+    and the reason RHX is in trouble must not vanish."""
+    h = await rig(poll_s=0.05)
+    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.start_recording()
+    await h.fake.stop_listening()
+    await h.until(lambda: h.service.status_json()["state"] == "error")
+
+    h.service.note_waiting([1, 3])
+    await asyncio.sleep(0.3)  # several polls, each failing to reconnect
+
+    status = h.service.status_json()
+    assert (status["state"], status["waitingOn"]) == ("stopping", [1, 3])
+    assert "Lost contact with RHX" in status["message"]
+
+    # The link back mid-wait: the run is picked up, and End now stays.
+    await h.fake.listen_again()
+    await h.until(lambda: "Lost contact" not in (h.service.status_json()["message"] or ""))
+    assert h.service.status_json()["state"] == "stopping"
+
+
+async def test_a_reconnect_adopts_the_run_once_its_stamp_can_be_read(rig, tmp_path):
+    """One stamp read that fails on reconnect is not a verdict: a later poll
+    reads it, finds RHX on this run's file, and picks the run back up."""
+    h = await rig(poll_s=0.05)
+    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.start_recording()
+    await h.fake.stop_listening()
+    await h.until(lambda: h.service.status_json()["state"] == "error")
+    del h.fake.params["filename.activefiletimestamp"]
+
+    await h.fake.listen_again()
+    await h.until(lambda: "Lost contact" not in (h.service.status_json()["message"] or ""))
+    assert h.service.status_json()["state"] == "error"  # not adopted on an unread stamp
+    h.fake.params["filename.activefiletimestamp"] = "260920_101500"
+
+    await h.until(lambda: h.service.status_json()["state"] == "recording")
+
+
+async def test_a_stop_and_record_by_hand_during_the_grace_is_not_stopped(rig, tmp_path):
+    """While End waits on the boxes, Stop then Record is pressed in RHX: a new
+    file. The post-roll stop must not end that recording as if it were ours."""
+    h = await rig(poll_s=30.0, stop_timeout_s=0.5)
+    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.start_recording()
+    h.service.note_waiting([1])
+    h.fake.params["runmode"] = "Stop"
+    await h.service._poll_once()
+    assert h.service.status_json()["state"] == "stopping"  # End now stays offered
+    h.fake.params["runmode"] = "Record"
+    h.fake.params["filename.activefiletimestamp"] = "260920_111111"
+    h.service.note_waiting([])
+
+    run = await h.service.stop_recording()
+    await asyncio.sleep(0.2)
+
+    assert run is not None
+    assert h.fake.params["runmode"] == "Record"
+
+
+async def test_an_owed_stop_is_dropped_when_rhx_was_stopped_by_hand(rig, tmp_path):
+    """Stopped from RHX before the link came back: nothing is left to stop, and
+    the next recording RHX is put in is not touched."""
+    h = await rig(poll_s=30.0, stop_timeout_s=0.5)
+    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.start_recording()
+    h.fake.silent = True
+    await h.service.stop_recording()
+
+    h.fake.params["runmode"] = "Stop"
+    h.fake.silent = False
+    await h.service._poll_once()
+    h.fake.params["runmode"] = "Record"
+    await h.service._poll_once()
+    await asyncio.sleep(0.2)
+    assert h.fake.params["runmode"] == "Record"
 
 
 async def test_losing_rhx_mid_recording_is_loud_and_the_run_is_kept(rig, tmp_path):

@@ -198,6 +198,7 @@ export const ERR = {
   INTAN_UNAVAILABLE: "INTAN_UNAVAILABLE",
   INTAN_NOT_READY: "INTAN_NOT_READY",
   INTAN_COMMAND_FAILED: "INTAN_COMMAND_FAILED",
+  ARCHIVE_BUSY: "ARCHIVE_BUSY",
   INTERNAL: "INTERNAL",
 } as const;
 
@@ -950,6 +951,13 @@ export interface ActiveSessions {
    * mid-group.
    */
   stale: Session[];
+  /**
+   * How many mappings `sessions.confirmMapping` has confirmed since the sidecar started. Nothing
+   * else in this payload is guaranteed to change when the same mapping is confirmed again, so
+   * this is how a client learns a new group run is set up: a value it has not seen means clear
+   * every box's live run (`ARCHITECTURE.md#live-session-views`). Per process, not persisted.
+   */
+  confirmations: number;
 }
 
 /** One session, from sessions.list or inside a summary. */
@@ -1781,9 +1789,9 @@ export interface TaskPreview {
   /** Bytes the built START line would occupy, seed included. */
   startLineLength: number;
   /**
-   * The firmware's cap, so the editor can show headroom without hardcoding it. Over it is TSK107
-   * and a refused generation — `readLineInto()` truncates in silence, so this is checked rather
-   * than trusted.
+   * The firmware's cap, so the editor can show headroom without hardcoding it. At or over it is
+   * TSK107 and a refused generation — `readLineInto()` truncates in silence, so this is checked
+   * rather than trusted.
    */
   startLineMax: number;
   /** What this definition compiles to. */

@@ -20,7 +20,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from ..tasks.metrics import MetricSet
 from ..tasks.profile import TaskProfile
@@ -29,6 +29,10 @@ from ..tasks.start_command import with_trial_seed
 from .models import SessionAnimalRun
 from .paths import AnimalFilePaths, resolve_animal_files
 from .writer import AnimalWriter
+
+if TYPE_CHECKING:
+    from ..ports.handler import SessionClaim
+    from ..ports.manager import PortManager
 
 log = logging.getLogger(__name__)
 
@@ -81,6 +85,9 @@ class ActiveRun:
     deadline: asyncio.TimerHandle | None = None
     #: Guards writer.record against finalize running concurrently.
     lock: threading.Lock = field(default_factory=threading.Lock)
+    #: The port's hold on this run. Set before the run is registered: a box
+    #: whose port refused is never a run.
+    claim: SessionClaim | None = None
 
     @property
     def file_json(self) -> str | None:
@@ -92,7 +99,7 @@ class SessionRunner:
     def __init__(
         self,
         loop: asyncio.AbstractEventLoop,
-        ports: Any,
+        ports: PortManager,
         broadcast: Callable[[dict[str, Any]], Awaitable[None]],
         on_animal_ended: Callable[[ActiveRun, str], Awaitable[None]],
         backup: Any = None,
@@ -115,6 +122,9 @@ class SessionRunner:
         # `end_all` drains this so a caller that clears session state right
         # after it returns can't strand a finalization mid-write.
         self._finalizations: set[asyncio.Task] = set()
+        # Boxes whose run has left `_active` but is still being written: its
+        # `.json` landing, its record committing. One entry per finalization.
+        self._finalizing: list[int] = []
         self._session_folder: Path | None = None
         self._session_id_label: str = ""
         self._session_id: str = ""
@@ -202,6 +212,11 @@ class SessionRunner:
     def running_boxes(self) -> list[int]:
         return sorted(self._active)
 
+    def writing_boxes(self) -> list[int]:
+        """Boxes whose files are still being written: running, or finalizing
+        until their run is recorded (`ARCHITECTURE.md#session-lifecycle`)."""
+        return sorted({*self.running_boxes(), *self._finalizing})
+
     def configured_boxes(self) -> list[int]:
         return sorted(self._configs)
 
@@ -235,6 +250,17 @@ class SessionRunner:
             end_code=config.profile.end_code if config.profile else None,
             host_seed=host_seed,
         )
+        # The port first: it raises before anything here is registered, so a
+        # box whose port refused leaves no run, no time limit and nothing for
+        # End to stop. The callbacks are bound to this run, not to whatever
+        # `_active` holds for the box when they fire.
+        run.claim = self._ports.claim_session(
+            box,
+            with_trial_seed(config.start_command, host_seed),
+            on_ready=lambda seed: self._on_ready(run, seed),
+            on_strobe=lambda code, ts: self._on_strobe(run, code, ts),
+            on_lost=lambda reason: self._on_lost(run, reason),
+        )
         self._active[box] = run
         self._ended.discard(box)
         # The time limit counts from this box's own start (`ARCHITECTURE.md#configuration`). STOP is
@@ -245,20 +271,13 @@ class SessionRunner:
                 self._duration_s, self._on_deadline, box
             )
 
-        self._ports.start_session(
-            box,
-            with_trial_seed(config.start_command, host_seed),
-            on_ready=lambda seed, b=box: self._on_ready(b, seed),
-            on_strobe=lambda code, ts, b=box: self._on_strobe(b, code, ts),
-        )
-
     # --- session-thread callbacks (off the event loop) --------------------
 
-    def _on_ready(self, box: int, seed: int | None) -> None:
+    def _on_ready(self, run: ActiveRun, seed: int | None) -> None:
         """Handshake resolved — open the file and write its header (`DATA.md#the-tsv-log`)."""
-        run = self._active.get(box)
-        if run is None or self._session_folder is None:
+        if run.resolved or self._session_folder is None:
             return
+        box = run.box
         run.seed = seed
 
         when = datetime.now()
@@ -334,7 +353,7 @@ class SessionRunner:
             # exact file standing in the way.
             log.error("box %d: couldn't open session files: %s", box, exc)
             self._schedule(self._emit_write_error(box, str(exc)))
-            self._schedule_finalize(box, f"sidecar error: {exc}", clean=True)
+            self._schedule_finalize(box, f"sidecar error: {exc}")
             return
         run.writer = writer
         run.metrics = MetricSet(run.config.profile)
@@ -348,10 +367,10 @@ class SessionRunner:
             except Exception:  # noqa: BLE001
                 log.exception("box %d: recording start hook failed", box)
 
-    def _on_strobe(self, box: int, code: int, ts: int) -> None:
-        run = self._active.get(box)
-        if run is None or run.writer is None or run.resolved:
+    def _on_strobe(self, run: ActiveRun, code: int, ts: int) -> None:
+        if run.writer is None or run.resolved:
             return
+        box = run.box
         with run.lock:
             if run.resolved:
                 return
@@ -380,14 +399,21 @@ class SessionRunner:
 
         if run.end_code is not None and code == run.end_code:
             # Clean firmware-reported end (`ARCHITECTURE.md#clean-exit`).
-            self._schedule_finalize(box, CLEAN_STOP_REASON, clean=True)
+            self._schedule_finalize(box, CLEAN_STOP_REASON)
 
     # --- stop / end -------------------------------------------------------
 
-    def stop_box(self, box: int) -> None:
-        """Send `STOP`; the board's own end strobe ends the run (`ARCHITECTURE.md#clean-exit`)."""
-        if box in self._active:
-            self._ports.stop_session(box)
+    def stop_box(self, box: int) -> bool:
+        """Send `STOP`; the board's own end strobe ends the run (`ARCHITECTURE.md#clean-exit`).
+
+        Never raises. False when the box isn't running or its port couldn't
+        take the line: a board lost meanwhile is finalized by `_on_lost`, and
+        `end_all` finalizes whatever is still out when its grace period ends.
+        """
+        run = self._active.get(box)
+        if run is None or run.claim is None:
+            return False
+        return run.claim.request_stop()
 
     def _on_deadline(self, box: int) -> None:
         """The time limit elapsed for one box — runs on the loop.
@@ -404,17 +430,28 @@ class SessionRunner:
         log.info("box %d: session time limit reached; sending STOP", box)
         self.stop_box(box)
 
-    async def finalize_box(self, box: int, reason: str, clean: bool) -> None:
+    async def finalize_box(self, box: int, reason: str) -> None:
         """Finalize one animal's run and free the box.
 
-        `clean` transitions `IN_SESSION → IDLE`; a board drop is already in
-        `ERROR` (via the handler's `force_error`), so we only finalize the file.
+        Releases the run's claim, which moves the port `IN_SESSION → IDLE` only
+        if it is still in the session: a board lost at any point up to here,
+        the writer's finalize included, leaves the port in `ERROR` for the
+        operator to acknowledge (`ARCHITECTURE.md#board-drop`).
         """
         run = self._active.get(box)
         if run is None or run.resolved:
             return
         run.resolved = True
         self._active.pop(box, None)
+        # Still writing until the run is recorded: a walk of the archive in
+        # between would find the `.json` with no record claiming it.
+        self._finalizing.append(box)
+        try:
+            await self._finalize(box, run, reason)
+        finally:
+            self._finalizing.remove(box)
+
+    async def _finalize(self, box: int, run: ActiveRun, reason: str) -> None:
         if run.deadline is not None:
             run.deadline.cancel()
             run.deadline = None
@@ -427,11 +464,8 @@ class SessionRunner:
         if self._backup is not None and run.files is not None:
             self._backup.untrack(run.files.tsv)
             self._backup.enqueue(run.files.tsv, run.files.json, run.files.mat)
-        if clean:
-            try:
-                await asyncio.to_thread(self._ports.end_session, box, reason)
-            except Exception as exc:  # noqa: BLE001 - already torn down is fine
-                log.debug("box %d: end_session during finalize: %s", box, exc)
+        if run.claim is not None:
+            await asyncio.to_thread(run.claim.release, reason)
 
         # Before the event goes out, so a client that re-asks on it sees the
         # box as ended — unless it was started again during the awaits above.
@@ -439,10 +473,12 @@ class SessionRunner:
             self._ended.add(box)
         await self._on_animal_ended(run, reason)
 
-    def board_dropped(self, box: int) -> None:
-        """Called when a box drops to ERROR mid-session (hook from app, `ARCHITECTURE.md#board-drop`)."""
-        if box in self._active:
-            self._schedule_finalize(box, "board disconnected", clean=False)
+    def _on_lost(self, run: ActiveRun, reason: str) -> None:
+        """The port left `IN_SESSION` for `ERROR` under this run (`ARCHITECTURE.md#board-drop`).
+        Runs on the loop. Finalizes whatever the write-ahead log durably captured."""
+        log.warning("box %d: session lost: %s", run.box, reason)
+        if self._active.get(run.box) is run:
+            self._schedule_finalize(run.box, "board disconnected")
 
     async def end_all(
         self,
@@ -479,7 +515,7 @@ class SessionRunner:
         if on_waiting is not None and waiting:
             on_waiting([])
         for box in list(self._active):
-            await self.finalize_box(box, reason, clean=True)
+            await self.finalize_box(box, reason)
         # Fire-and-forget finalizations (an end strobe that landed just before
         # or during the grace window, a board drop racing the stop) may still
         # be mid-write. Wait them out: the caller closes the group run, clears
@@ -521,7 +557,7 @@ class SessionRunner:
         """Hand a coroutine to the event loop from a worker thread."""
         self._loop.call_soon_threadsafe(lambda: asyncio.ensure_future(coro))
 
-    def _schedule_finalize(self, box: int, reason: str, clean: bool) -> None:
+    def _schedule_finalize(self, box: int, reason: str) -> None:
         """Schedule a finalization *and track it* until it completes.
 
         Every fire-and-forget path into `finalize_box` goes through here, so
@@ -530,7 +566,7 @@ class SessionRunner:
         """
 
         def _create() -> None:
-            task = asyncio.ensure_future(self.finalize_box(box, reason, clean))
+            task = asyncio.ensure_future(self.finalize_box(box, reason))
             self._finalizations.add(task)
             task.add_done_callback(self._finalizations.discard)
 

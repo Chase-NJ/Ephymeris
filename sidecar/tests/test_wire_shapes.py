@@ -227,7 +227,7 @@ async def test_flash_queue_status_matches_schema(fake_serial) -> None:  # noqa: 
     rig.queue.submit([rig.job(1, "session"), rig.job(2, "debug", baud=9600)])
     await rig.settle()
     rig.tool.fail = FlashFailed("compile", "compile failed")
-    run_a_session(rig, 3)  # busy, so its session flash waits
+    claim = run_a_session(rig, 3)  # busy, so its session flash waits
     rig.queue.submit([rig.job(2, "debug"), rig.job(3, "session")])
     for _ in range(100):
         await asyncio.sleep(0.01)
@@ -235,7 +235,7 @@ async def test_flash_queue_status_matches_schema(fake_serial) -> None:  # noqa: 
             break
 
     status = rig.queue.status()
-    rig.ports.end_session(3, "test over")
+    claim.release("test over")
     assert {rig.row(b)["state"] for b in (1, 2, 3)} == {"done", "failed", "waiting"}
     for name in ("flash.enqueue", "flash.cancel", "flash.status", "sessions.flash"):
         assert validate_command_result(name, status) == [], name
@@ -376,7 +376,7 @@ def test_a_populated_discovery_matches_schema(
     payload = discover(generated_root=generated, pinned_root=pinned).to_json()
     assert {s["source"] for s in payload["sketches"]} == {"bundled", "rig"}
     assert validate(("ref", "SketchDiscovery"), payload) == []
-    # Through the event builder too, which is what `_replay_state` sends.
+    # Through the event builder too, which is what the connect replay sends.
     assert event(Evt.SKETCHES_UPDATED, payload)["data"] == payload
 
 

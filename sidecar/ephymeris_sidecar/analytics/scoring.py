@@ -308,17 +308,6 @@ class RunScorer:
 
     # --- one run, for a chart ----------------------------------------------
 
-    def resolve_for_series(self, run: SessionAnimalRun) -> _Resolved:
-        """Interim: `series`'s half of the ladder until it calls `decode`."""
-        return self._resolve_profile(run, _Pass(remember=None))
-
-    def scoring_profile_for_series(
-        self, resolved: _Resolved, document: dict[str, Any]
-    ) -> TaskProfile | None:
-        """Interim: `series`'s half of the ladder until it calls `decode`."""
-        profile, _, _ = self._scoring_profile(resolved, document, _Pass(remember=None))
-        return profile
-
     def decode(self, run: SessionAnimalRun) -> Decoded:
         """Read one run and settle the profile it decodes with — the same
         ladder `score` scores with, so a chart draws the trials the summary

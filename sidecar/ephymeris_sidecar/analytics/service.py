@@ -251,44 +251,55 @@ class AnalyticsService:
         out: list[dict[str, Any]] = []
         warnings: list[dict[str, Any]] = []
         for run_id in run_ids:
-            run = await asyncio.to_thread(self._archive.run, run_id)
-            if run is None or not run.file_path:
-                warnings.append({"code": "missing", "runId": run_id, "message": "no file"})
-                continue
-            result = await asyncio.to_thread(reader.read_run, run.file_path)
-            if not result.ok or result.document is None:
-                warnings.append(
-                    {"code": result.status, "runId": run_id, "message": result.detail or ""}
-                )
-                continue
-            resolved = await asyncio.to_thread(self._scorer.resolve_for_series, run)
-            # The same ladder `score` scores with, ending on the same
-            # inference rung — a run charted from an inferred profile must draw
-            # the same trials the summary counted, or the two panels disagree.
-            profile = self._scorer.scoring_profile_for_series(resolved, result.document)
-            metrics = derive.series(
-                result.document, profile, mode=mode, metric_ids=metric_ids
+            # One hop per run, and all of the run's work inside it: decoding
+            # and scoring up to `MAX_SERIES_RUNS` files is not work for the
+            # loop that flushes six boxes' output
+            # (`DATA.md#never-at-the-expense-of-a-session`). Sequential, like
+            # the summary's reads.
+            charted, warning = await asyncio.to_thread(
+                self._chart, run_id, mode, metric_ids
             )
-            # The joint walk rides along with the per-metric series rather than
-            # taking a command of its own: the file is already open and already
-            # decoded here, and the one panel that wants it is on the same
-            # screen as the ones that want the series. It is empty for any
-            # profile that doesn't declare exactly two conditions.
-            trail = derive.strategy_trail(result.document, profile)
-            # The per-trial tape rides along for the same reason the trail
-            # does: the file is already open and decoded, and the panel that
-            # wants it is on the same screen as the ones that want the series.
-            trials = derive.trials_of(result.document, profile)
-            out.append(
-                {
-                    "runId": run_id,
-                    "mode": mode,
-                    "metrics": [m.to_json() for m in metrics],
-                    "trail": [p.to_json() for p in trail],
-                    "trials": [t.to_json() for t in trials],
-                }
-            )
+            if warning is not None:
+                warnings.append(warning)
+            else:
+                out.append(charted)
         return {"series": out, "warnings": warnings}
+
+    def _chart(
+        self, run_id: str, mode: str, metric_ids: list[str] | None
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        """One run's series, trail and trial tape, or the warning instead.
+        Blocking; `series` runs it in a worker thread."""
+        run = self._archive.run(run_id)
+        if run is None or not run.file_path:
+            return None, {"code": "missing", "runId": run_id, "message": "no file"}
+        # The same ladder `score` scores with, ending on the same inference
+        # rung — a run charted from an inferred profile must draw the same
+        # trials the summary counted, or the two panels disagree.
+        decoded = self._scorer.decode(run)
+        if decoded.document is None:
+            return None, {
+                "code": decoded.status, "runId": run_id, "message": decoded.detail or "",
+            }
+        document, profile = decoded.document, decoded.profile
+        metrics = derive.series(document, profile, mode=mode, metric_ids=metric_ids)
+        # The joint walk rides along with the per-metric series rather than
+        # taking a command of its own: the file is already open and already
+        # decoded here, and the one panel that wants it is on the same
+        # screen as the ones that want the series. It is empty for any
+        # profile that doesn't declare exactly two conditions.
+        trail = derive.strategy_trail(document, profile)
+        # The per-trial tape rides along for the same reason the trail
+        # does: the file is already open and decoded, and the panel that
+        # wants it is on the same screen as the ones that want the series.
+        trials = derive.trials_of(document, profile)
+        return {
+            "runId": run_id,
+            "mode": mode,
+            "metrics": [m.to_json() for m in metrics],
+            "trail": [p.to_json() for p in trail],
+            "trials": [t.to_json() for t in trials],
+        }, None
 
     # --- recent sessions ----------------------------------------------------
 

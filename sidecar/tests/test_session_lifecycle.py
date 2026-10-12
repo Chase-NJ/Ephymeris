@@ -111,18 +111,22 @@ class FakeIntan:
 
     def __init__(self, log: list[str]) -> None:
         self.log = log
-        #: The (session, group) the Record step set a recording up for.
-        self.set_up_for: tuple[str, str] | None = None
+        #: The (session, group, mapping confirmation) the Record step set a
+        #: recording up for.
+        self.set_up_for: tuple[str, str, int] | None = None
         self.is_recording = False
         self.force_stop = asyncio.Event()
         self.gate: asyncio.Event | None = None
 
-    def set_up(self, session_id: str, group_id: str) -> None:
+    def set_up(self, session_id: str, group_id: str, confirmation: int) -> None:
         """What the Record step's `intan.configure` leaves behind."""
-        self.set_up_for = (session_id, group_id)
+        self.set_up_for = (session_id, group_id, confirmation)
 
-    def refuse_unless_ready(self, session_id: str, group_id: str) -> None:
-        if self.set_up_for != (session_id, group_id):
+    def refuse_unless_ready(self, session_id: str, group_id: str, confirmation: int) -> None:
+        ours = self.set_up_for is not None and self.set_up_for[:2] == (session_id, group_id)
+        if ours and self.is_recording:
+            return
+        if self.set_up_for != (session_id, group_id, confirmation):
             raise IntanNotReady("Finish the Recording step first.")
 
     def run_open_for(self, session_id: str) -> bool:
@@ -288,7 +292,7 @@ class Rig:
         entries = self.mapping(session)
         await self.lifecycle.confirm_mapping(session.id, group_id, entries)
         if self.intan is not None and session.recording is not None and self.record_step:
-            self.intan.set_up(session.id, group_id)
+            self.intan.set_up(session.id, group_id, self.lifecycle.confirmations)
         if flash:
             for entry in entries:
                 self.flash(entry.box, Path(entry.sketch_path))
@@ -906,7 +910,10 @@ async def _recording_rig(db: Database, tmp_path: Path, rhx, ports=None):  # noqa
     rig.record_step = False
     session = rig.session(recording=True)
     await rig.confirm(session)
-    await service.configure(session.id, "g-a", _two_box_recording(tmp_path), "x")
+    await service.configure(
+        session.id, "g-a", _two_box_recording(tmp_path), "x",
+        confirmation=rig.lifecycle.confirmations,
+    )
     return rig, session
 
 
@@ -1301,13 +1308,13 @@ async def test_a_runner_reports_a_row_per_mapped_box(runner) -> None:  # noqa: A
 
 @pytest.fixture(params=["FakeIntan", "IntanService"])
 async def intan(request: pytest.FixtureRequest, tmp_path: Path):  # noqa: ANN201
-    """`(service, set_up)`: `set_up(session, group)` does what the Record step's
-    `intan.configure` does, for the fake or against a fake RHX."""
+    """`(service, set_up)`: `set_up(session, group, confirmation)` does what the
+    Record step's `intan.configure` does, for the fake or against a fake RHX."""
     if request.param == "FakeIntan":
         fake = FakeIntan([])
 
-        async def set_up(session_id: str, group_id: str) -> None:
-            fake.set_up(session_id, group_id)
+        async def set_up(session_id: str, group_id: str, confirmation: int = 1) -> None:
+            fake.set_up(session_id, group_id, confirmation)
 
         yield fake, set_up
         return
@@ -1328,8 +1335,8 @@ async def intan(request: pytest.FixtureRequest, tmp_path: Path):  # noqa: ANN201
     )
     service.start()
 
-    async def set_up(session_id: str, group_id: str) -> None:
-        await service.configure(session_id, group_id, config(tmp_path), "x")
+    async def set_up(session_id: str, group_id: str, confirmation: int = 1) -> None:
+        await service.configure(session_id, group_id, config(tmp_path), "x", confirmation=confirmation)
 
     try:
         yield service, set_up
@@ -1338,11 +1345,11 @@ async def intan(request: pytest.FixtureRequest, tmp_path: Path):  # noqa: ANN201
         await rhx.stop()
 
 
-def _ready(service, session_id: str, group_id: str) -> bool:  # noqa: ANN001
+def _ready(service, session_id: str, group_id: str, confirmation: int = 1) -> bool:  # noqa: ANN001
     from ephymeris_sidecar.intan.client import RhxUnavailable
 
     try:
-        service.refuse_unless_ready(session_id, group_id)
+        service.refuse_unless_ready(session_id, group_id, confirmation)
     except (IntanNotReady, RhxUnavailable):
         return False
     return True
@@ -1355,6 +1362,24 @@ async def test_a_recording_is_set_up_for_one_session_and_group(intan) -> None:  
     assert _ready(service, "s1", "g1")
     assert not _ready(service, "s1", "g2")
     assert not _ready(service, "s2", "g1")
+
+
+async def test_a_recording_is_set_up_for_one_mapping_confirmation(intan) -> None:  # noqa: ANN001
+    """A mapping confirmed again after the Record step may have moved animals
+    between boxes; RHX still holds the old ones (`RECORDING.md#record-step`)."""
+    service, set_up = intan
+    await set_up("s1", "g1", 4)
+    assert _ready(service, "s1", "g1", 4)
+    assert not _ready(service, "s1", "g1", 5)
+
+
+async def test_a_recording_already_running_is_not_refused_by_a_later_confirmation(intan) -> None:  # noqa: ANN001
+    """Its boxes are recording; the Record step can't be redone mid-run."""
+    service, set_up = intan
+    await set_up("s1", "g1", 4)
+    await service.start_recording()
+    assert _ready(service, "s1", "g1", 5)
+    await service.stop_recording()
 
 
 async def test_a_recording_runs_from_start_to_stop(intan) -> None:  # noqa: ANN001

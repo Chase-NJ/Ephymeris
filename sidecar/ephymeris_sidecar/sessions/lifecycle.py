@@ -21,7 +21,7 @@ import logging
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, AsyncContextManager, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, AsyncContextManager, Awaitable, Callable, Iterable
 
 from ..ports.flashing import FlashJob, FlashQueue
 from ..ports.manager import CarriedSketch, sketch_fingerprint
@@ -57,6 +57,24 @@ class SketchNotCarried(SessionRefused):
     (`ARCHITECTURE.md#what-a-board-carries`). Nothing was started."""
 
     def __init__(self, message: str, boxes: list[int]) -> None:
+        super().__init__(message)
+        self.boxes = boxes
+
+
+class BoxesNotMapped(SessionRefused):
+    """A recording was set up for boxes the held mapping doesn't have
+    (`SessionLifecycle.mapped_boxes`). Nothing reached RHX."""
+
+    def __init__(self, boxes: list[int], *, this_group: bool) -> None:
+        if not this_group:
+            message = "Confirm this group's mapping before setting up its recording."
+        else:
+            names = ", ".join(str(b) for b in boxes)
+            message = (
+                f"{'Box' if len(boxes) == 1 else 'Boxes'} {names} "
+                f"{'is' if len(boxes) == 1 else 'are'} not in this group's confirmed "
+                "mapping, so RHX was not set up."
+            )
         super().__init__(message)
         self.boxes = boxes
 
@@ -198,6 +216,12 @@ class SessionLifecycle:
         """Any box running, so a live `.tsv` with no `.json` yet exists."""
         return bool(self._runner.running_boxes())
 
+    @property
+    def confirmations(self) -> int:
+        """Mappings confirmed since this process started. A recording set up
+        for one confirmation starts for that one only (`RECORDING.md#record-step`)."""
+        return self._confirmations
+
     # --- reads --------------------------------------------------------------
 
     async def status(self, session_id: str) -> dict[str, Any]:
@@ -214,6 +238,25 @@ class SessionLifecycle:
             "groupId": (self._runner.group_id or None) if held else None,
             "boxes": self._runner.snapshot() if held else [],
         }
+
+    def mapped_boxes(
+        self, session_id: str, group_id: str, boxes: Iterable[int]
+    ) -> dict[int, BoxConfig]:
+        """The held mapping's row for each of these boxes, as a recording's
+        setup names them (`RECORDING.md#record-step`).
+
+        Raises `BoxesNotMapped` naming every box the mapping lacks: all of them
+        unless the held session is this one and its mapping is this group's,
+        because the runner carries one group's mapping and its box 1 is not
+        another group's box 1.
+        """
+        wanted = list(dict.fromkeys(boxes))
+        this_group = self._held == session_id and self._runner.group_id == group_id
+        configs = {c.box: c for c in self._runner.box_configs()} if this_group else {}
+        missing = [box for box in wanted if box not in configs]
+        if missing:
+            raise BoxesNotMapped(missing, this_group=this_group)
+        return {box: configs[box] for box in wanted}
 
     async def active(self) -> dict[str, Any]:
         unfinished = await asyncio.to_thread(self._sessions.list_unfinished)
@@ -653,7 +696,9 @@ class SessionLifecycle:
             return
         # Raises the refusal that names what is wrong: nothing set up, or RHX
         # out of reach (`RECORDING.md#when-rhx-goes-away`).
-        self._intan.refuse_unless_ready(session_id, self._runner.group_id)
+        self._intan.refuse_unless_ready(
+            session_id, self._runner.group_id, self._confirmations
+        )
         await self._intan.start_recording()
 
     async def _end_all_boxes(self, session_id: str) -> None:

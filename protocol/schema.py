@@ -3416,8 +3416,12 @@ COMMANDS = (
         "the first problem: the rig's wiring declares no `sync` channel, a box "
         "with no digital input, a port with no headstage, two boxes claiming "
         "one channel, or nothing selected to save. `SESSION_INVALID` for a "
-        "session that is not a recording. Long-running; the client raises its "
-        "reply timeout.",
+        "session that is not a recording, and, with `detail.boxes`, for boxes "
+        "this group's confirmed mapping doesn't have (all of them unless the "
+        "held session is this one with this group's mapping), before RHX is "
+        "touched. The setup is for the mapping as confirmed now: confirming it "
+        "again makes Start refuse until this runs again. Long-running; the "
+        "client raises its reply timeout.",
     ),
     Command(
         "intan.parseProbeMap",
@@ -3957,7 +3961,8 @@ ERRORS = (
     ErrorCode(
         "INTAN_NOT_READY",
         "RHX is reachable but this cannot be done now — RHX is already "
-        "recording, no recording is configured for this group, a box has no "
+        "recording, no recording is configured for this group as its mapping "
+        "was last confirmed, a box has no "
         "digital input, the rig's wiring has no sync channel, or a scope asked "
         "for a channel the box does not own. The message is the operator's "
         "next step.",

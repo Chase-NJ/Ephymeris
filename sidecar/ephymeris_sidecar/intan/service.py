@@ -153,6 +153,9 @@ class Recording:
     file_format: str
     sample_rate: int
     boxes: dict[int, BoxPlan]
+    #: The mapping confirmation this was set up for (`SessionLifecycle.confirmations`).
+    #: None for a setup made without one, which never starts a recording.
+    confirmation: int | None = None
     file_timestamp: str | None = None
     started_at: str | None = None
     ended_at: str | None = None
@@ -596,7 +599,12 @@ class IntanService:
         config: dict[str, Any],
         base_filename: str,
         notes: tuple[str, str, str] = ("", "", ""),
+        *,
+        confirmation: int | None = None,
     ) -> None:
+        """Set RHX up for this group's recording. `confirmation` is the mapping
+        confirmation the boxes in `config` were read from: a recording only
+        starts for that one (`refuse_unless_ready`)."""
         if self._run_open:
             raise IntanNotReady("A recording is already running.")
         if not self._client.connected:
@@ -614,6 +622,7 @@ class IntanService:
             self._run_mode = "stop"
 
         plan = self._plan(session_id, group_id, config, base_filename)
+        plan.confirmation = confirmation
         controller = self._info.get("controller")
 
         directory = Path(plan.path)
@@ -808,15 +817,25 @@ class IntanService:
                 self._set_state("idle", None)
             self._loop.create_task(self.publish())
 
-    def refuse_unless_ready(self, session_id: str, group_id: str) -> None:
-        """Raise unless this group's recording is set up and RHX can be told to
-        start it, or is recording it already. The refusal says what is actually
-        wrong: a lost link sends the operator to RHX, not back to a Recording
-        step they finished."""
+    def refuse_unless_ready(self, session_id: str, group_id: str, confirmation: int) -> None:
+        """Raise unless this group's recording is set up for this mapping
+        confirmation and RHX can be told to start it, or is recording it
+        already. The refusal says what is actually wrong: a lost link sends the
+        operator to RHX, not back to a Recording step they finished."""
         r = self._recording
         ours = r is not None and r.session_id == session_id and r.group_id == group_id
-        if ours and self._state in ("configured", "recording"):
+        if ours and self._state == "recording":
             return
+        if ours and self._state == "configured":
+            if r.confirmation == confirmation:
+                return
+            # RHX holds the notes, channels and digital inputs of the boxes
+            # the earlier mapping had (`RECORDING.md#record-step`).
+            raise IntanNotReady(
+                "The mapping was confirmed again after the Record step set this "
+                "recording up, so RHX is set up for the old boxes. Go through the "
+                "Record step again."
+            )
         if ours and self._run_open and not self._client.connected:
             raise RhxUnavailable(
                 "Lost contact with RHX, which keeps recording this group on its own. "

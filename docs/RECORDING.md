@@ -344,7 +344,13 @@ box the animal is on now; an animal with none remembered starts blank.
   under a chosen root (recordings are large and often live on their own drive; the shared folder name lets
   the two halves match by eye), with the defaults collapsed to one summary behind an Edit door.
 - **Boxes**: per mapped box, Record or Behavior only, its DIN, headstage port, channel range and optional
-  probe-map XML. Two boxes may share a port on disjoint ranges; an overlap is refused.
+  probe-map XML. Two boxes may share a port on disjoint ranges; an overlap is refused. A box the group's
+  confirmed mapping doesn't have is refused before RHX is touched (`SessionLifecycle.mapped_boxes`), so
+  RHX's notes always name each box's animal.
+
+The setup belongs to the mapping as confirmed when **Continue** was pressed (`SessionLifecycle.confirmations`).
+Confirming the group's mapping again, even unchanged, leaves RHX holding the old boxes' notes, channels and
+digital inputs, so Start refuses until the Record step has run again ([Start](#start)).
 
 ![The Set Up the Recording step: Readiness 5/5 (RHX version and controller, RHX is not recording, headstage on port A, the wiring has a sync channel, every recorded box has a digital input), Saving with a save location ending in /ephys and a warning that the path contains a space, "Using your defaults" with Edit for this session, and the first box's Record or Behavior only choice with its port, channels 0 to 15 and probe map](images/record-step.webp)
 
@@ -415,7 +421,8 @@ known to be writing is stopped outright; any other goes through the owed-stop ch
 
 A failure in 1–2 is an `INTAN_*` error with no box started. Before step 1,
 `IntanService.refuse_unless_ready` refuses with the reason that applies: `INTAN_NOT_READY` when no
-recording is set up for this group, `INTAN_UNAVAILABLE` when RHX is out of reach. A box started while the
+recording is set up for this group, or one was set up before its mapping was last confirmed;
+`INTAN_UNAVAILABLE` when RHX is out of reach. A box started while the
 group's recording has lost its link is refused the same way, naming the lost link; one started after Stop
 was pressed in RHX gets `INTAN_NOT_READY`, pointing to Switch Group or End.
 

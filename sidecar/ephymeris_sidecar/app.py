@@ -1525,20 +1525,23 @@ class Application:
             _filename_token(part)
             for part in (session.prefix_name, session.session_number, session.date, group_name)
         )
-        runner = self.runner
-        animals = {
-            cfg.box: cfg.animal_name for cfg in (runner.box_configs() if runner else [])
-        }
+        rows = config.get("boxes") or []
+        # A box the held mapping lacks would reach RHX with no animal
+        # (`RECORDING.md#record-step`).
+        lifecycle = self._require_lifecycle()
+        mapped = lifecycle.mapped_boxes(session_id, group_id, (b["box"] for b in rows))
+        # Read with the mapping, before RHX is awaited: a confirmation landing
+        # during the setup leaves it for the earlier one, which Start refuses.
+        confirmation = lifecycle.confirmations
         mapping = ", ".join(
-            f"box {b['box']}={animals.get(b['box'], '?')} port {b.get('port')}"
-            for b in config.get("boxes") or []
+            f"box {b['box']}={mapped[b['box']].animal_name} port {b.get('port')}" for b in rows
         )
         notes = (
             f"Ephymeris {session.prefix_name} {session.session_number} {session.date}",
             f"cohort {cohort.name} group {group_name}",
             mapping,
         )
-        await intan.configure(session_id, group_id, config, base, notes)
+        await intan.configure(session_id, group_id, config, base, notes, confirmation=confirmation)
         return intan.status_json()
 
     async def _intan_parse_probe_map(self, args: Args) -> dict[str, Any]:

@@ -486,11 +486,11 @@ class AnalyticsService:
             ]
             adopted = 0
             if adopt_orphans and adoptable:
-                # INSERT OR REPLACE on the deterministic id, so a file whose
-                # content changed since adoption refreshes its row in place
-                # rather than duplicating it.
-                await asyncio.to_thread(self._repo.store_adopted, adoptable)
-                adopted = len(adoptable)
+                # INSERT OR REPLACE on the row's id, so a file whose content
+                # changed since adoption refreshes its row in place rather than
+                # duplicating it. Counted as written: a row another cohort
+                # holds is never taken.
+                adopted = await asyncio.to_thread(self._repo.store_adopted, adoptable)
             if carried:
                 log.info(
                     "analytics: rescan of cohort %s reused %d already-adopted"

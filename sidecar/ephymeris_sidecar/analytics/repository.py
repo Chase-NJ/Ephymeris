@@ -207,13 +207,41 @@ class AnalyticsRepository:
 
     # --- adopted orphans (DATA.md#orphan-adoption) ----------------------
 
-    def store_adopted(self, entries: list["AdoptedRun"]) -> None:
+    def store_adopted(self, entries: list["AdoptedRun"]) -> int:
         """Record adoptions in one transaction — same commit discipline as
-        `store`, and `INSERT OR REPLACE` on the deterministic id makes a
-        re-run refresh rather than duplicate."""
+        `store` — and return how many were written.
+
+        `INSERT OR REPLACE` on the id makes a re-run refresh a row rather than
+        duplicate it. It never takes a row another cohort holds: moving a run
+        between cohorts is a move's job (`DATA.md#moving-animals-between-cohorts`),
+        and a replace would silently drop the run from that cohort's history
+        (`DATA.md#orphan-adoption`). Such an entry is left out and logged; the
+        rest of the batch is written.
+        """
         if not entries:
-            return
+            return 0
         with self._db.lock:
+            owners: dict[str, str] = {}
+            for chunk in _chunks([entry.id for entry in entries], 400):
+                marks = ",".join("?" * len(chunk))
+                owners.update(
+                    self._db.conn.execute(
+                        f"SELECT id, cohort_id FROM adopted_runs WHERE id IN ({marks})",
+                        tuple(chunk),
+                    ).fetchall()
+                )
+            ours = [e for e in entries if owners.get(e.id, e.cohort_id) == e.cohort_id]
+            for entry in (e for e in entries if owners.get(e.id, e.cohort_id) != e.cohort_id):
+                log.warning(
+                    "adoption of %s for cohort %s left out: cohort %s holds its id %s",
+                    entry.file_path,
+                    entry.cohort_id,
+                    owners[entry.id],
+                    entry.id,
+                )
+            entries = ours
+            if not entries:
+                return 0
             self._db.conn.executemany(
                 "INSERT OR REPLACE INTO adopted_runs"
                 " (id, cohort_id, animal_id, file_path, prefix_name,"
@@ -240,6 +268,7 @@ class AnalyticsRepository:
                 ],
             )
             self._db.conn.commit()
+        return len(entries)
 
     def adopted_for_cohort(self, cohort_id: str) -> list["AdoptedRun"]:
         with self._db.lock:

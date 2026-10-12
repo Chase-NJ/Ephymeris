@@ -90,6 +90,18 @@ def test_a_rollback_undoes_only_its_own_work(db: Database) -> None:
     assert committed(db, "SELECT hash FROM task_profiles") == [(digest,)]
 
 
+def test_a_unit_that_commits_over_a_write_left_open_makes_both_durable(db: Database) -> None:
+    """As any commit on the one connection does, and it says so."""
+    digest = AnalyticsRepository(db).remember_profile(parse_profile({"taskName": "Pending"}))
+    seen = commits_of(db)
+    with db.write() as tx:
+        add_prefix(tx, "a")
+    assert prefixes(db) == ["a"]
+    assert committed(db, "SELECT hash FROM task_profiles") == [(digest,)]
+    assert seen == [1]
+    assert not db.conn.in_transaction
+
+
 # --- one unit, shared ---------------------------------------------------------
 
 

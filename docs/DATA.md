@@ -712,7 +712,7 @@ with db.write() as tx:                 # the lock, then BEGIN IMMEDIATE
 
 - **Join or own.** A repository method given `tx=` runs inside that unit and commits nothing; given none, it is its own unit. Only the unit's opener commits.
 - **No nesting.** Opening a second unit on the thread that holds one raises `NestedWrite`, as does joining a unit from another thread or after it ended. Pass the open unit instead.
-- **A rollback undoes only its own work.** A unit opened while some caller has left a write open runs as a savepoint inside it, so its rollback leaves that write alone.
+- **A rollback undoes only its own work.** A unit opened while some caller has left a write open runs as a savepoint inside it, so its rollback leaves that write alone. Its commit makes that write durable too, as any commit on the one connection does, and so always announces.
 - **`db.read()`** holds the lock for reading; inside the thread's own unit it is that unit, so a read sees the unit's own rows.
 - **What a commit announces.** The database hook ([backup](#the-database-copy)) fires once per committed unit that changed a row, under the lock right after `COMMIT`. A unit that rolled back, or changed nothing, announces nothing. `tx.on_commit(fn)` runs `fn` once after the commit, with the lock free.
 
@@ -796,7 +796,6 @@ Two relocated cohort folders sharing a basename both get a short path-derived su
 > **The trigger hangs off the commit itself** (`_TrackedConnection`, and each [unit of work](#transactions)'s `COMMIT`), not a call in each repository method: no write path can forget to announce itself, and the trigger is truly "the database changed" — `session_animal_runs` is written during unattended overnight runs.
 
 **The snapshot never runs with a write open.** SQLite's online backup answers busy to an open write on its source, and Python retries busy forever — here holding the lock that every way out of the write needs, which would stall every database call in the app. So `snapshot_to` raises `WriteInProgress` instead, the pass leaves the database marked dirty, and a later pass copies it once the write has ended.
-
 **The copy is two-step.** `Database.snapshot_to` uses SQLite's online backup API (a plain copy of a live database can capture a torn page), but that holds the lock, so it writes to a **local** temp file first and the slow copy to the mirror happens with nothing locked. Pointing it straight at a network share would let the share's latency block every database read.
 
 **Dated snapshots** exist because a single live mirror would faithfully propagate an accidental cohort deletion within seconds. One per day, **first-of-day wins** (a later one would overwrite the state someone is trying to undo), newest `DB_SNAPSHOT_KEEP` retained.

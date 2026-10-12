@@ -713,14 +713,13 @@ def _migrate(conn: sqlite3.Connection, found: int) -> None:
 
 class NestedWrite(RuntimeError):
     """A unit of work was opened inside another on the same thread, or a unit
-    was joined that isn't this thread's open one (`DATA.md#transactions`).
-    Pass the open unit (`tx=`) to share it."""
+    was joined, or used, other than on its thread while it is open
+    (`DATA.md#transactions`). Pass the open unit (`tx=`) to share it."""
 
 
 class WriteInProgress(RuntimeError):
-    """A snapshot found a write still open on the connection. SQLite's online
-    backup would retry it forever, holding the lock every way out of the
-    write needs, so the snapshot refuses instead and the caller tries later."""
+    """A snapshot found a write still open on the connection, and refused
+    rather than wait on it forever (`DATA.md#the-database-copy`). Try later."""
 
 
 class Query:
@@ -825,10 +824,11 @@ class Database:
         follow_ups: list[Callable[[], None]] = []
         with self._lock:
             conn = self.conn
-            # A write some caller left open without a unit -- the indexing
-            # pass's remembered profiles, until it gets one. Its rows are not
-            # this unit's to roll back, so this unit runs as a savepoint inside
-            # it, and its commit makes both durable, as a commit always has.
+            # A write some caller left open without a unit (the indexing
+            # pass's remembered profiles, `DATA.md#transactions`). Its rows
+            # are not this unit's to roll back, so the unit runs as a savepoint
+            # inside it; its COMMIT makes both durable, as any commit on the
+            # one connection does.
             adopted = conn.in_transaction
             conn.execute("SAVEPOINT unit_of_work" if adopted else "BEGIN IMMEDIATE")
             before = conn.total_changes
@@ -841,14 +841,17 @@ class Database:
                     self._tx = None
                     unit._close()
                 changed = conn.total_changes != before
-                if adopted:
-                    conn.execute("RELEASE unit_of_work")
+                # COMMIT releases the savepoint too; were it to fail, the
+                # savepoint is still there for `_undo` to roll back to.
                 conn.execute("COMMIT")
             except BaseException:
                 _undo(conn, adopted)
                 raise
             if (changed or adopted) and self._on_commit is not None:
-                self._on_commit()
+                try:
+                    self._on_commit()
+                except Exception:  # noqa: BLE001 - committed regardless
+                    log.exception("the database's commit hook failed")
             follow_ups = unit._after
         for callback in follow_ups:
             try:
@@ -924,9 +927,7 @@ class Database:
 
         Raises `WriteInProgress`, copying nothing, if a write is open on the
         connection -- inside this thread's own unit of work, or left open by a
-        caller without one. SQLite's backup answers busy to an open write and
-        Python retries busy forever, here with the lock held that every way
-        out of the write needs (#55).
+        caller without one (`DATA.md#the-database-copy`).
         """
         destination.parent.mkdir(parents=True, exist_ok=True)
         with self.read():

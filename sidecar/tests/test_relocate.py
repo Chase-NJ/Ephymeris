@@ -71,8 +71,8 @@ class Archive:
                 stop_reason="BF_END_SESSION received",
             )
         )
-        # The id a rescan would give it: a hash of the run identity.
-        self.adopted_id = _orphan_run_id(recovered)
+        # The id a rescan would give it: a hash of the cohort and run identity.
+        self.adopted_id = _orphan_run_id(self.cohort.id, recovered)
         self.analytics = AnalyticsRepository(db)
         self.analytics.store_adopted([
             AdoptedRun(

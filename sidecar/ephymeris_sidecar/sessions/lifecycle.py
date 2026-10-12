@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncContextManager, Awaitable, Callable, Iterable
 
+from ..cohorts.db import NestedWrite
 from ..ports.flashing import FlashJob, FlashQueue
 from ..ports.manager import CarriedSketch, sketch_fingerprint
 from ..protocol import Evt, event
@@ -649,6 +650,8 @@ class SessionLifecycle:
                     record = replace(
                         record, profile_hash=self._profiles.remember_profile(profile, tx=tx)
                     )
+                except NestedWrite:
+                    raise  # a wiring mistake, not a profile that won't snapshot
                 except Exception:  # noqa: BLE001 - never fail a finalization over this
                     log.exception(
                         "couldn't snapshot the task profile for box %d", record.box_number

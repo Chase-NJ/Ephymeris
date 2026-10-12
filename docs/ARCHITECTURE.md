@@ -427,7 +427,7 @@ sidecar's receiving end: `sidecar/ephymeris_sidecar/settings.py`.
 | `defaultBaud` | Rig | yes | Starting baud per console ([Baud](#baud)) |
 | `boxes` | Rig (board, label), Recording (`intanDigitalIn`) | yes | The box list ([Box bindings](#box-bindings)) |
 | `intan` | Recording | yes | RHX's command, waveform and spike ports. No host: RHX is always local |
-| `recordingDefaults` | Recording, and the Record step | no | What a recording saves, thresholds, save root, per-box memory (`src/lib/intan/defaults.ts`) |
+| `recordingDefaults` | Recording, and the Record step | no | What a recording saves, thresholds, save root, per-box wiring and per-animal probe maps (`src/lib/intan/defaults.ts`) |
 | `reducedMotion` | Settings | no | Forces reduced motion on; the system preference applies on top |
 | `constellation` | Rig | no | Zodiac layout of the status constellation, validated against the catalogue on load |
 | `constellationSlots` | Rig (drag, and box add/remove) | no | Which star each box sits on. `reconcileSlots` is the single authority and runs in the same write as a box add or remove |
@@ -1012,11 +1012,13 @@ was. `lib/sessions/setupResume.ts` remembers two things:
   mid-placement picks up again at the first box no flash was asked for, read from the
   [flash queue](#the-flash-queue), whose flashes carried on meanwhile. A Boxes draft holds each box's sketch and the operator's own overrides, never the merged
   config, so a default changed during the visit is followed on return ([TASKS.md](TASKS.md#three-layer-merge)).
-  A Record draft follows the mapping: a box still mapped keeps its row as typed, a box no longer mapped is
-  dropped, and a newly mapped one starts from the recording defaults (`reconcileRows`,
-  `lib/intan/recordingSetup.ts`) and, with no remembered port RHX still reports, is guessed onto a free one
-  (`assignPorts`), so a return to Boxes that moved an animal cannot leave `intan.configure` naming the box it
-  left.
+  A Record draft follows the mapping (`reconcileRows`, `lib/intan/recordingSetup.ts`). The same animal on
+  the same box keeps its row as typed, and a box no longer mapped is dropped. A newly mapped box, or one
+  whose animal changed, gets a fresh row: the box's remembered wiring and the **animal's** probe map
+  ([RECORDING.md](RECORDING.md#record-step)), the one chosen for it earlier in this visit if any, else the
+  remembered one. With no remembered port RHX still reports, it is guessed onto a free one (`assignPorts`).
+  So a return to Boxes that moved or swapped animals cannot leave `intan.configure` naming the box an animal
+  left, or carrying another animal's probe map.
 
 The memory is dropped on reaching Mission Control and by a deliberate Cancel or End session, and the offer is
 withheld whenever `sessions.active` no longer reports the session, because the sidecar is the authority on

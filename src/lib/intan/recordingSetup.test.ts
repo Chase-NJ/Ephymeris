@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_RECORDING_DEFAULTS, type RecordingDefaults } from "./defaults";
+import { DEFAULT_RECORDING_DEFAULTS, normalizeRecordingDefaults, type RecordingDefaults } from "./defaults";
 import {
+  applyParsedProbeMap,
   assignPorts,
   configurePayload,
   presentPorts,
@@ -11,21 +12,35 @@ import {
   saveDirectory,
   type BoxRow,
   type IntanFacts,
+  type MappedBox,
 } from "./recordingSetup";
 import type { ProbeMap } from "./types";
 
-/** Defaults remembering box 3 on port A and box 5 on port B. */
-const remembered: RecordingDefaults = {
-  ...DEFAULT_RECORDING_DEFAULTS,
+/**
+ * What earlier Record steps remembered, loaded as settings are: box 3 wired to
+ * port A, box 5 to port B, and probe maps for Rat-07 and Rat-09. Box 3's entry
+ * still carries the per-box probe map an older build stored, Rat-02's, the
+ * animal that last recorded there.
+ */
+const remembered: RecordingDefaults = normalizeRecordingDefaults({
   boxes: {
-    "3": { record: true, port: "A", firstChannel: 0, lastChannel: 31, probeMapPath: "/maps/a.xml" },
+    "3": { record: true, port: "A", firstChannel: 0, lastChannel: 31, probeMapPath: "/maps/rat02.xml" },
     "5": { record: false, port: "B", firstChannel: 4, lastChannel: 15, probeMapPath: null },
   },
-};
+  probeMaps: { "id-Rat-07": "/maps/rat07.xml", "id-Rat-09": "/maps/rat09.xml" },
+});
+
+const MAP_07: ProbeMap = { name: "rat07", pages: [], siteCount: 16 };
+
+/** A mapped box as the sidecar reports it; the animal's id is derived from its name. */
+function mapped(box: number, animalName: string): MappedBox {
+  return { box, animalId: `id-${animalName}`, animalName };
+}
 
 function row(box: number, animalName: string, changes: Partial<BoxRow> = {}): BoxRow {
   return {
     box,
+    animalId: `id-${animalName}`,
     animalName,
     record: true,
     port: "",
@@ -39,31 +54,58 @@ function row(box: number, animalName: string, changes: Partial<BoxRow> = {}): Bo
 }
 
 describe("reconcileRows", () => {
-  it("seeds each mapped box from what the last Record step remembered for it", () => {
-    const rows = reconcileRows(
-      [
-        { box: 3, animalName: "Rat-07" },
-        { box: 4, animalName: "Rat-08" },
-      ],
-      remembered,
-      [],
-    );
+  it("seeds each box's wiring from the box's memory, and its probe map from its animal's", () => {
+    const rows = reconcileRows([mapped(3, "Rat-07"), mapped(4, "Rat-08")], remembered, []);
     expect(rows).toEqual([
-      row(3, "Rat-07", { port: "A", lastChannel: 31, probeMapPath: "/maps/a.xml" }),
+      row(3, "Rat-07", { port: "A", lastChannel: 31, probeMapPath: "/maps/rat07.xml" }),
       row(4, "Rat-08"),
     ]);
   });
 
-  it("keeps what was typed for a box that is still mapped", () => {
-    const typed = [row(3, "Rat-07", { port: "C", firstChannel: 8, lastChannel: 23 })];
-    expect(reconcileRows([{ box: 3, animalName: "Rat-07" }], remembered, typed)).toEqual(typed);
+  it("starts a new animal with no remembered probe map blank, though its box held another animal's", () => {
+    const rows = reconcileRows([mapped(3, "Rat-11")], remembered, []);
+    expect(rows).toEqual([row(3, "Rat-11", { port: "A", lastChannel: 31 })]);
+  });
+
+  it("brings an animal's remembered probe map to whichever box it is on now", () => {
+    const rows = reconcileRows([mapped(5, "Rat-09")], remembered, []);
+    expect(rows).toEqual([
+      row(5, "Rat-09", { record: false, port: "B", firstChannel: 4, lastChannel: 15, probeMapPath: "/maps/rat09.xml" }),
+    ]);
+  });
+
+  it("brings the probe map chosen this visit to a box the animal moved to that wasn't in the draft", () => {
+    const draft = [row(5, "Rat-07", { port: "B", lastChannel: 15, probeMapPath: "/maps/rat07-today.xml", probeMap: MAP_07 })];
+    const rows = reconcileRows([mapped(3, "Rat-07")], remembered, draft);
+    expect(rows).toEqual([
+      row(3, "Rat-07", { port: "A", lastChannel: 31, probeMapPath: "/maps/rat07-today.xml", probeMap: MAP_07 }),
+    ]);
+  });
+
+  it("keeps what was typed, probe map included, for the same animal on the same box", () => {
+    const typed = [
+      row(3, "Rat-07", {
+        port: "C",
+        firstChannel: 8,
+        lastChannel: 23,
+        probeMapPath: "/maps/rat07.xml",
+        probeMap: { name: "rat07", pages: [], siteCount: 16 },
+      }),
+    ];
+    expect(reconcileRows([mapped(3, "Rat-07")], remembered, typed)).toBe(typed);
+  });
+
+  it("keeps the row of an animal renamed meanwhile, under its new name", () => {
+    const typed = [row(3, "Rat-07", { port: "C", probeMapPath: "/maps/rat07.xml" })];
+    const rows = reconcileRows([{ box: 3, animalId: "id-Rat-07", animalName: "Rat-07b" }], remembered, typed);
+    expect(rows).toEqual([{ ...typed[0]!, animalName: "Rat-07b" }]);
   });
 
   // B5: Back to Boxes, move the animal from box 3 to box 5, return to Record.
   // The draft still holds box 3's row; `intan.configure` must not name box 3.
   it("follows an animal moved from box 3 to box 5 after the draft was saved (B5)", () => {
     const draft = [row(3, "Rat-07", { port: "A", lastChannel: 31 })];
-    const rows = reconcileRows([{ box: 5, animalName: "Rat-07" }], remembered, draft);
+    const rows = reconcileRows([mapped(5, "Rat-07")], remembered, draft);
     expect(rows.map((r) => r.box)).toEqual([5]);
     expect(rows[0]).toEqual(row(5, "Rat-07", { record: false, port: "B", firstChannel: 4, lastChannel: 15 }));
   });
@@ -75,8 +117,8 @@ describe("reconcileRows", () => {
     ];
     const rows = reconcileRows(
       [
-        { box: 4, animalName: "Rat-08" },
-        { box: 5, animalName: "Rat-07" },
+        mapped(4, "Rat-08"),
+        mapped(5, "Rat-07"),
       ],
       remembered,
       draft,
@@ -87,17 +129,35 @@ describe("reconcileRows", () => {
     ]);
   });
 
-  it("names the animal mapped now on a box kept from the draft (B5)", () => {
-    const draft = [row(3, "Rat-07", { port: "A" })];
-    const rows = reconcileRows([{ box: 3, animalName: "Rat-09" }], remembered, draft);
-    expect(rows).toEqual([row(3, "Rat-09", { port: "A" })]);
+  // Decisions on #38: a box whose animal changed since the draft was saved
+  // resets its row. Port and range are the box's wiring, so they come from the
+  // box's memory; the probe map is the animal's implant, so it is the one last
+  // used for the animal now on the box, wherever it moved.
+  it("resets a box whose animal changed since the draft: box wiring from memory, the new animal's probe map", () => {
+    const draft = [
+      row(3, "Rat-07", { port: "C", firstChannel: 8, lastChannel: 23, probeMapPath: "/maps/rat07.xml", probeMap: MAP_07 }),
+    ];
+    const rows = reconcileRows([mapped(3, "Rat-09")], remembered, draft);
+    expect(rows).toEqual([row(3, "Rat-09", { port: "A", lastChannel: 31, probeMapPath: "/maps/rat09.xml" })]);
+  });
+
+  it("resets both rows when two animals swap boxes, and each brings its own probe map", () => {
+    const draft = [
+      row(3, "Rat-07", { port: "A", lastChannel: 31, probeMapPath: "/maps/rat07-today.xml" }),
+      row(5, "Rat-09", { port: "C", lastChannel: 15, probeMapPath: "/maps/rat09-today.xml" }),
+    ];
+    const rows = reconcileRows([mapped(3, "Rat-09"), mapped(5, "Rat-07")], remembered, draft);
+    expect(rows).toEqual([
+      row(3, "Rat-09", { port: "A", lastChannel: 31, probeMapPath: "/maps/rat09-today.xml" }),
+      row(5, "Rat-07", { record: false, port: "B", firstChannel: 4, lastChannel: 15, probeMapPath: "/maps/rat07-today.xml" }),
+    ]);
   });
 
   it("returns the same rows when the mapping hasn't changed", () => {
     const typed = [row(3, "Rat-07", { port: "C" }), row(4, "Rat-08")];
     const boxes = [
-      { box: 3, animalName: "Rat-07" },
-      { box: 4, animalName: "Rat-08" },
+      mapped(3, "Rat-07"),
+      mapped(4, "Rat-08"),
     ];
     expect(reconcileRows(boxes, remembered, typed)).toBe(typed);
   });
@@ -250,21 +310,75 @@ describe("configurePayload", () => {
 
   it("follows a moved animal: rows reconciled to box 5 configure box 5, never box 3 (B5)", () => {
     const draft = [row(3, "Rat-07", { port: "A", lastChannel: 31 })];
-    const rows = assignPorts(reconcileRows([{ box: 5, animalName: "Rat-07" }], DEFAULT_RECORDING_DEFAULTS, draft), {
+    const rows = assignPorts(reconcileRows([mapped(5, "Rat-07")], DEFAULT_RECORDING_DEFAULTS, draft), {
       A: 32,
     });
     expect(configurePayload(rows, config, null, "/s").boxes.map((b) => b.box)).toEqual([5]);
   });
 
-  it("remembers every row's port, range and probe as the next starting point", () => {
-    const rows = [row(3, "R3", { port: "A", lastChannel: 31, probeMapPath: "/maps/a.xml", probeMap: map }), row(5, "R5", { record: false })];
-    expect(rememberedDefaults(rows, config, "/ephys")).toEqual({
+  it("remembers each box's wiring under the box, and each probe map under its animal", () => {
+    const rows = [
+      row(3, "R3", { port: "A", lastChannel: 31, probeMapPath: "/maps/a.xml", probeMap: map }),
+      row(5, "R5", { record: false }),
+    ];
+    const before = { "id-R3": "/maps/old.xml", "id-R5": "/maps/r5.xml", "id-Rat-02": "/maps/rat02.xml" };
+    expect(rememberedDefaults(rows, config, "/ephys", before)).toEqual({
       saveRoot: "/ephys",
       config,
       boxes: {
-        "3": { record: true, port: "A", firstChannel: 0, lastChannel: 31, probeMapPath: "/maps/a.xml" },
-        "5": { record: false, port: "", firstChannel: 0, lastChannel: -1, probeMapPath: null },
+        "3": { record: true, port: "A", firstChannel: 0, lastChannel: 31 },
+        "5": { record: false, port: "", firstChannel: 0, lastChannel: -1 },
       },
+      // R3's map replaced, R5's cleared on the form and so forgotten, and an
+      // animal not on the rig this group keeps its own.
+      probeMaps: { "id-R3": "/maps/a.xml", "id-Rat-02": "/maps/rat02.xml" },
     });
+  });
+
+  it("follows an animal's probe map through Continue and a later group on another box", () => {
+    const first = [row(3, "Rat-07", { port: "A", lastChannel: 31, probeMapPath: "/maps/rat07.xml", probeMap: map })];
+    const saved = rememberedDefaults(first, config, null, {});
+    const next = reconcileRows([mapped(5, "Rat-07"), mapped(3, "Rat-02")], saved, []);
+    expect(next.map((r) => [r.box, r.animalName, r.port, r.probeMapPath])).toEqual([
+      [5, "Rat-07", "", "/maps/rat07.xml"],
+      [3, "Rat-02", "A", null],
+    ]);
+  });
+});
+
+describe("applyParsedProbeMap", () => {
+  it("shows a parsed map on the row that asked for it, and leaves the others", () => {
+    const rows = [row(3, "Rat-07", { probeMapPath: "/maps/rat07.xml" }), row(5, "Rat-09")];
+    expect(applyParsedProbeMap(rows, 3, "/maps/rat07.xml", { probeMap: MAP_07 })).toEqual([
+      row(3, "Rat-07", { probeMapPath: "/maps/rat07.xml", probeMap: MAP_07 }),
+      row(5, "Rat-09"),
+    ]);
+  });
+
+  // A parse is asked for on mount, before `sessions.status` answers. If the
+  // animals swapped meanwhile, `reconcileRows` gives box 3 to another animal
+  // before the reply lands, and that animal must not get the old map.
+  it("drops a reply for a path the row on that box no longer has, after a swap", () => {
+    const rows = [row(3, "Rat-09", { probeMapPath: "/maps/rat09.xml" })];
+    expect(applyParsedProbeMap(rows, 3, "/maps/rat07.xml", { probeMap: MAP_07 })).toBe(rows);
+  });
+
+  it("drops an older reply that lands after the operator chose another map", () => {
+    const newer: ProbeMap = { name: "newer", pages: [], siteCount: 32 };
+    const rows = [row(3, "Rat-07", { probeMapPath: "/maps/newer.xml", probeMap: newer })];
+    expect(applyParsedProbeMap(rows, 3, "/maps/rat07.xml", { probeMap: MAP_07 })).toBe(rows);
+    expect(applyParsedProbeMap(rows, 3, "/maps/rat07.xml", { error: "late failure" })).toBe(rows);
+  });
+
+  it("drops a reply for a row whose probe map was removed meanwhile", () => {
+    const rows = [row(3, "Rat-07")];
+    expect(applyParsedProbeMap(rows, 3, "/maps/rat07.xml", { probeMap: MAP_07 })).toBe(rows);
+  });
+
+  it("records why a map didn't parse on the row that asked for it", () => {
+    const rows = [row(3, "Rat-07", { probeMapPath: "/maps/broken.xml" })];
+    expect(applyParsedProbeMap(rows, 3, "/maps/broken.xml", { error: "not a probe map" })).toEqual([
+      row(3, "Rat-07", { probeMapPath: "/maps/broken.xml", probeError: "not a probe map" }),
+    ]);
   });
 });

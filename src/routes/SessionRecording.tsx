@@ -11,7 +11,7 @@ import {
   Radio,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 
 import { HudTile } from "@/components/common/HudTile";
@@ -26,6 +26,7 @@ import { errorMessage } from "@/lib/cohorts/commands";
 import { useIntanStatus } from "@/lib/intan/context";
 import { summarizeRecordingConfig, type RecordingConfigDefaults } from "@/lib/intan/defaults";
 import {
+  applyParsedProbeMap,
   assignPorts,
   configurePayload,
   presentPorts,
@@ -34,6 +35,7 @@ import {
   rememberedDefaults,
   saveDirectory,
   type BoxRow,
+  type ProbeMapParse,
 } from "@/lib/intan/recordingSetup";
 import { channelRange } from "@/lib/intan/scopeMath";
 import { FILE_FORMATS, type ProbeMap } from "@/lib/intan/types";
@@ -127,16 +129,21 @@ export function SessionRecording() {
     setRows((current) => assignPorts(current, intan.ports));
   }, [intan.ports]);
 
-  // Re-parse a remembered probe map, so the preview is there on arrival — and
-  // for a box the mapping swapped in, whose row count may not have changed.
-  const rowBoxes = rows.map((r) => r.box).join(",");
+  // Parse every probe map a row has but hasn't parsed: a remembered one on
+  // arrival, one reconciling brought (a swap does without changing which boxes
+  // there are), and one just chosen. Keyed on which rows are waiting, so
+  // choosing the same file again, after a failure or to refresh it, parses again.
+  const waiting = rows
+    .filter((r) => r.probeMapPath && !r.probeMap && !r.probeError)
+    .map((r) => `${r.box}:${r.probeMapPath}`)
+    .join("\u0000");
   useEffect(() => {
     if (link !== "connected") return;
     for (const row of rows) {
       if (row.probeMapPath && !row.probeMap && !row.probeError) void loadProbeMap(row.box, row.probeMapPath);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [link, rowBoxes]);
+  }, [link, waiting]);
 
   function patchRow(box: number, changes: Partial<BoxRow>) {
     setRows((current) => current.map((r) => (r.box === box ? { ...r, ...changes } : r)));
@@ -146,22 +153,33 @@ export function SessionRecording() {
     setConfig((current) => (current ? { ...current, ...changes } : current));
   }
 
+  // A reply is applied only to the row that still has that box and path
+  // (`applyParsedProbeMap`); one parse per box and path at a time.
+  const parsing = useRef(new Set<string>());
   async function loadProbeMap(box: number, path: string) {
+    const key = `${box}:${path}`;
+    if (parsing.current.has(key)) return;
+    parsing.current.add(key);
+    let parsed: ProbeMapParse;
     try {
       const reply = await client.call(CMD.INTAN_PARSE_PROBE_MAP, { path });
-      patchRow(box, { probeMapPath: path, probeMap: reply.probeMap as ProbeMap, probeError: null });
+      parsed = { probeMap: reply.probeMap as ProbeMap };
     } catch (err) {
-      patchRow(box, { probeMapPath: path, probeMap: null, probeError: errorMessage(err) });
+      parsed = { error: errorMessage(err) };
+    } finally {
+      parsing.current.delete(key);
     }
+    setRows((current) => applyParsedProbeMap(current, box, path, parsed));
   }
 
+  // The choice lands on the row at once, and the parse above follows it.
   async function chooseProbeMap(box: number) {
     const picked = await open({
       multiple: false,
       title: `Probe map for box ${box}`,
       filters: [{ name: "Intan probe map", extensions: ["xml"] }],
     });
-    if (typeof picked === "string") await loadProbeMap(box, picked);
+    if (typeof picked === "string") patchRow(box, { probeMapPath: picked, probeMap: null, probeError: null });
   }
 
   const recorded = rows.filter((r) => r.record);
@@ -185,7 +203,7 @@ export function SessionRecording() {
         config: configurePayload(rows, config, saveRoot, sessionFolder),
       });
       // Remembered as the next recording's starting point.
-      void save(rememberedDefaults(rows, config, saveRoot));
+      void save(rememberedDefaults(rows, config, saveRoot, defaults.probeMaps));
       navigate(stepUrl.control(sessionId!));
     } catch (err) {
       setError(errorMessage(err));

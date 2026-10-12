@@ -14,6 +14,8 @@ import type { IntanStatus, ProbeMap, RecordingBoxConfig, RecordingConfig } from 
 /** A box's row in the form. `record: false` runs the box behavior-only. */
 export interface BoxRow {
   box: number;
+  /** The animal the row was filled in for. */
+  animalId: string;
   animalName: string;
   record: boolean;
   port: string;
@@ -27,24 +29,32 @@ export interface BoxRow {
 /** A mapped box as the sidecar reports it; only what a row needs. */
 export interface MappedBox {
   box: number;
+  animalId: string;
   animalName: string;
 }
 
 // --- the rows -----------------------------------------------------------------
 
-/** A new row for a box, from what the last Record step remembered for it. */
-function seedRow(box: MappedBox, defaults: RecordingDefaults): BoxRow {
+/**
+ * A new row for a box: its wiring from what the box remembers, and its probe
+ * map from its animal — the one chosen for it this visit (`chosen`, a draft
+ * row of the same animal on another box), else the one remembered for it,
+ * else none.
+ */
+function seedRow(box: MappedBox, defaults: RecordingDefaults, chosen: BoxRow | undefined): BoxRow {
   const memory = defaults.boxes[String(box.box)];
+  const probe = chosen
+    ? { probeMapPath: chosen.probeMapPath, probeMap: chosen.probeMap, probeError: chosen.probeError }
+    : { probeMapPath: defaults.probeMaps[box.animalId] ?? null, probeMap: null, probeError: null };
   return {
     box: box.box,
+    animalId: box.animalId,
     animalName: box.animalName,
     record: memory?.record ?? true,
     port: memory?.port ?? "",
     firstChannel: memory?.firstChannel ?? 0,
     lastChannel: memory?.lastChannel ?? -1,
-    probeMapPath: memory?.probeMapPath ?? null,
-    probeMap: null,
-    probeError: null,
+    ...probe,
   };
 }
 
@@ -52,11 +62,12 @@ function seedRow(box: MappedBox, defaults: RecordingDefaults): BoxRow {
  * The form's rows for the boxes mapped now, given the rows it already holds (a
  * restored draft, or what was typed).
  *
- * Keyed to the CURRENT boxes, never to the rows: a box still mapped keeps what
- * was typed for it, under the animal mapped there now; a box no longer mapped
- * is dropped; a newly mapped box is seeded from the remembered defaults. So a
- * return to Boxes that moved an animal cannot leave `intan.configure` naming
- * the box it left (`ARCHITECTURE.md#leaving-set-up`).
+ * Keyed to the CURRENT boxes, never to the rows (`ARCHITECTURE.md#leaving-set-up`):
+ * - the same animal on the same box keeps what was typed for it (under its
+ *   current name, should it have been renamed);
+ * - a box no longer mapped is dropped;
+ * - a newly mapped box, or one whose animal changed, gets a fresh row
+ *   (`seedRow`): the box's wiring, and its animal's probe map.
  *
  * The same array comes back when nothing changed, so a repeated answer from
  * the sidecar neither re-renders nor rewrites the draft. No boxes (not loaded
@@ -68,14 +79,32 @@ export function reconcileRows(
   draftRows: BoxRow[],
 ): BoxRow[] {
   if (boxes.length === 0) return draftRows;
-  const held = new Map(draftRows.map((r) => [r.box, r]));
+  const byBox = new Map(draftRows.map((r) => [r.box, r]));
+  const byAnimal = new Map(draftRows.map((r) => [r.animalId, r]));
   const next = boxes.map((b) => {
-    const kept = held.get(b.box);
-    if (!kept) return seedRow(b, defaults);
+    const kept = byBox.get(b.box);
+    if (!kept || kept.animalId !== b.animalId) return seedRow(b, defaults, byAnimal.get(b.animalId));
     return kept.animalName === b.animalName ? kept : { ...kept, animalName: b.animalName };
   });
   const unchanged = next.length === draftRows.length && next.every((r, i) => r === draftRows[i]);
   return unchanged ? draftRows : next;
+}
+
+/** What `intan.parseProbeMap` answered for one path. */
+export type ProbeMapParse = { probeMap: ProbeMap } | { error: string };
+
+/**
+ * The rows with a parse of `path` applied to the row on `box` — only while
+ * that row still has that path. A reply lands after the fact: meanwhile the
+ * box may have gone to another animal (a swap reconciled after the parse was
+ * asked for), or the operator chose another map or removed it. Those replies
+ * are dropped, and the same array comes back.
+ */
+export function applyParsedProbeMap(rows: BoxRow[], box: number, path: string, parsed: ProbeMapParse): BoxRow[] {
+  if (!rows.some((r) => r.box === box && r.probeMapPath === path)) return rows;
+  const patch =
+    "probeMap" in parsed ? { probeMap: parsed.probeMap, probeError: null } : { probeMap: null, probeError: parsed.error };
+  return rows.map((r) => (r.box === box && r.probeMapPath === path ? { ...r, ...patch } : r));
 }
 
 // --- ports ------------------------------------------------------------------
@@ -269,26 +298,30 @@ export function configurePayload(
 /**
  * What a confirmed Record step leaves as the next one's starting point — not
  * the save directory (it is per session) and not the boxes list (it is per
- * group), but each box's port, range and probe, behavior-only boxes included.
+ * group), but each box's port and range under the box, behavior-only boxes
+ * included, and each row's probe map under its animal. `probeMaps` is what was
+ * remembered before: an animal not on the form keeps its entry, and one whose
+ * row has no probe map forgets it.
  */
 export function rememberedDefaults(
   rows: readonly BoxRow[],
   config: RecordingConfigDefaults,
   saveRoot: string | null,
+  probeMaps: Readonly<Record<string, string>>,
 ): RecordingDefaults {
+  const nextMaps: Record<string, string> = { ...probeMaps };
+  for (const r of rows) {
+    if (r.probeMapPath) nextMaps[r.animalId] = r.probeMapPath;
+    else delete nextMaps[r.animalId];
+  }
   return {
     saveRoot,
     config,
+    probeMaps: nextMaps,
     boxes: Object.fromEntries(
       rows.map((r) => [
         String(r.box),
-        {
-          record: r.record,
-          port: r.port,
-          firstChannel: r.firstChannel,
-          lastChannel: r.lastChannel,
-          probeMapPath: r.probeMapPath,
-        },
+        { record: r.record, port: r.port, firstChannel: r.firstChannel, lastChannel: r.lastChannel },
       ]),
     ),
   };

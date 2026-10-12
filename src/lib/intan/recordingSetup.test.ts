@@ -304,13 +304,14 @@ describe("configurePayload", () => {
 
   it("remembers every row's port, range and probe as the next starting point", () => {
     const rows = [row(3, "R3", { port: "A", lastChannel: 31, probeMapPath: "/maps/a.xml", probeMap: map }), row(5, "R5", { record: false })];
-    expect(rememberedDefaults(rows, config, "/ephys")).toEqual({
+    expect(rememberedDefaults(rows, config, "/ephys", {})).toEqual({
       saveRoot: "/ephys",
       config,
       boxes: {
         "3": { record: true, port: "A", firstChannel: 0, lastChannel: 31, probeMapPath: "/maps/a.xml" },
         "5": { record: false, port: "", firstChannel: 0, lastChannel: -1, probeMapPath: null },
       },
+      probeMaps: {},
     });
   });
 });

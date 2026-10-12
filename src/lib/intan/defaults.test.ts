@@ -36,8 +36,19 @@ describe("normalizeRecordingDefaults", () => {
     expect(DEFAULT_RECORDING_DEFAULTS.saveRoot).toBeNull();
   });
 
-  it("round-trips what the Record step stored before the shape existed", () => {
-    expect(normalizeRecordingDefaults(STORED_BY_THE_STEP)).toEqual(STORED_BY_THE_STEP);
+  it("loads what the Record step stored before probe maps followed the animal, with none remembered", () => {
+    expect(normalizeRecordingDefaults(STORED_BY_THE_STEP)).toEqual({ ...STORED_BY_THE_STEP, probeMaps: {} });
+  });
+
+  it("keeps each animal's remembered probe map, and drops one that isn't a path", () => {
+    const out = normalizeRecordingDefaults({
+      ...STORED_BY_THE_STEP,
+      probeMaps: { "rat-07": "C:/maps/rat07.xml", "rat-09": "   ", "rat-11": 4, "": "C:/maps/x.xml" },
+    });
+    expect(out.probeMaps).toEqual({ "rat-07": "C:/maps/rat07.xml" });
+    expect(normalizeRecordingDefaults({ ...STORED_BY_THE_STEP, probeMaps: ["C:/maps/rat07.xml"] }).probeMaps).toEqual(
+      {},
+    );
   });
 
   it("heals per key, keeping every value that is still legal", () => {

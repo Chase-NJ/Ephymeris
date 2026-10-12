@@ -38,6 +38,12 @@ export type RecordingDefaults = {
   config: RecordingConfigDefaults;
   /** Keyed by box number, "1"…"6". */
   boxes: Record<string, RecordingBoxMemory>;
+  /**
+   * The probe map last used for each animal, keyed by animal id. A probe map
+   * describes the animal's implant, so it follows the animal from box to box;
+   * the box keeps only its wiring (port and range).
+   */
+  probeMaps: Record<string, string>;
 };
 
 const DOWNSAMPLE = [1, 2, 4, 8, 16, 32, 64, 128];
@@ -53,6 +59,7 @@ export const DEFAULT_RECORDING_DEFAULTS: RecordingDefaults = {
   saveRoot: null,
   config: baseConfig(),
   boxes: {},
+  probeMaps: {},
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -145,10 +152,20 @@ export function normalizeRecordingDefaults(raw: unknown): RecordingDefaults {
       if (memory) boxes[key] = memory;
     }
   }
+  // Absent from a file written before probe maps followed the animal: none
+  // remembered, rather than a guess at whose a box's old one was.
+  const probeMaps: Record<string, string> = {};
+  if (isRecord(raw["probeMaps"])) {
+    for (const [animalId, path] of Object.entries(raw["probeMaps"])) {
+      const kept = optString(path);
+      if (animalId !== "" && kept) probeMaps[animalId] = kept;
+    }
+  }
   return {
     saveRoot: optString(raw["saveRoot"]),
     config: normalizeConfig(raw["config"]),
     boxes,
+    probeMaps,
   };
 }
 

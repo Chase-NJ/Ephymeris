@@ -283,10 +283,12 @@ export function rememberedDefaults(
   rows: readonly BoxRow[],
   config: RecordingConfigDefaults,
   saveRoot: string | null,
+  probeMaps: Readonly<Record<string, string>>,
 ): RecordingDefaults {
   return {
     saveRoot,
     config,
+    probeMaps: { ...probeMaps },
     boxes: Object.fromEntries(
       rows.map((r) => [
         String(r.box),

@@ -185,7 +185,7 @@ export function SessionRecording() {
         config: configurePayload(rows, config, saveRoot, sessionFolder),
       });
       // Remembered as the next recording's starting point.
-      void save(rememberedDefaults(rows, config, saveRoot));
+      void save(rememberedDefaults(rows, config, saveRoot, defaults.probeMaps));
       navigate(stepUrl.control(sessionId!));
     } catch (err) {
       setError(errorMessage(err));

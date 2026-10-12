@@ -674,7 +674,7 @@ erDiagram
 | `sessions` | `id`, `cohort_id`, `prefix_id`, `prefix_name`, `session_number`, `date`, `started_at`, `ended_at`, `status`, `folder_path`, `group_runs` (JSON), `duration_minutes`, `recording_json` | No FK on `prefix_id` |
 | `session_animal_runs` | `id`, `session_id`, `animal_id`, `box_number`, `sketch_path`, `file_path`, `started_at`, `ended_at`, `stop_reason`, `profile_hash`, `config_json`, `params_hash` | Cascades from `sessions`; **no FK on `animal_id`** |
 | `task_profiles` | `hash`, `task_name`, `kind`, `profile_json`, `first_seen_at` | **Content-addressed** snapshots: identical profiles store once, and comparability is an indexed equality test |
-| `run_metrics_cache` | `run_id`, `file_path`, `file_mtime_ns`, `file_size`, `profile_hash`, `profile_source`, `scored_profile_hash`, `params_hash`, `config_json`, `codec_version`, `computed_at`, `status`, `detail`, `summary_json` | A pure cache. **No FK on `run_id`** — adopted runs have no run record. `profile_hash` is what *resolution* reached; `scored_profile_hash` what the run was *scored* with ([why both](#which-profile-decodes-a-run)) |
+| `run_metrics_cache` | `run_id`, `file_path`, `file_mtime_ns`, `file_size`, `profile_hash`, `profile_source`, `scored_profile_hash`, `params_hash`, `config_json`, `codec_version`, `computed_at`, `status`, `detail`, `summary_json` | A pure cache. **No FK on `run_id`** — adopted runs have no run record. `profile_hash` is what *resolution* reached; `scored_profile_hash` what the run was *scored* with ([why both](#which-profile-decodes-a-run)). `codec_version` holds the [cache version](#caching) |
 | `adopted_runs` | `id`, `cohort_id`, `animal_id`, `file_path`, `prefix_name`, `session_number`, `date`, `started_at`, `sketch_name`, `sketch_path`, `adopted_at`, `file_mtime_ns`, `file_size` | Files the archive walk matched to an animal. Deliberately separate from `sessions`/`session_animal_runs` |
 | `session_notes` | `id`, `session_id`, `cohort_id`, `at`, `created_at`, `edited_at`, `deleted_at`, `tag`, `scope_kind`, `animal_id`, `box_number`, `body`, `carry_forward`, `resolved_at`, `resolved_in_session` | [The session log](#notes). Cascades from `sessions` and `cohorts`; **no FK on `animal_id`** (the caution below) or `resolved_in_session` |
 | `session_logs` | `session_id`, `operator`, `summary`, `updated_at` | One per session that has one. Cascades from `sessions` |
@@ -789,7 +789,7 @@ Mirroring failures surface as `state: "failed"` on `backup.status` with the unde
 
 ## Reading the archive
 
-`analytics/` reads runs back: `reader.py` (walking and reading files), `archive.py` ([the cohort archive](#the-cohort-archive)), `service.py` (indexing, adoption, pruning, tidy), `repository.py` (the cache and adoptions), `derive.py` (the [metrics](#derived-metrics)) and `infer.py` (inference).
+`analytics/` reads runs back: `reader.py` (walking and reading files), `archive.py` ([the cohort archive](#the-cohort-archive)), `scoring.py` (`RunScorer`: [which profile decodes a run](#which-profile-decodes-a-run), scoring, and the [cache](#caching) and its version), `service.py` (the commands, adoption, pruning, tidy), `repository.py` (the cache and adoptions tables), `derive.py` (the [metrics](#derived-metrics)) and `infer.py` (inference).
 
 ### Database first
 
@@ -879,7 +879,7 @@ The ladder has four rungs:
 3. **today's `task.json`** for the recorded sketch name — including a saved task whose `legacyNames` claim a historical name;
 4. **inference** from the stream.
 
-Rungs 1 and 3 are *resolution* and run before any file is opened (`_resolve_profile`); rungs 2 and 4 need the file open and live in `_scoring_profile`. A malformed `task.json` or a damaged embedded snapshot degrades to the next rung rather than raising: a file with a broken declaration is still a file full of real strobes. So does a declaration with no `liveMetrics`: a rung is taken only if its profile declares something to score.
+Rungs 1 and 3 are *resolution* and run before any file is opened (`RunScorer._resolve_profile`); rungs 2 and 4 need the file open and live in `scoring._settle`. `analytics.summary` (`RunScorer.score`) and `analytics.series` (`RunScorer.decode`) climb the same ladder, so a chart draws the trials the summary counted. A malformed `task.json` or a damaged embedded snapshot degrades to the next rung rather than raising: a file with a broken declaration is still a file full of real strobes. So does a declaration with no `liveMetrics`: a rung is taken only if its profile declares something to score.
 
 ```mermaid
 flowchart TD
@@ -915,10 +915,18 @@ Each "no" also covers a rung whose profile exists but declares no `liveMetrics`,
 
 **Persist summaries; never persist series.** Summaries go in `run_metrics_cache` and survive a sidecar restart (every app launch). Series (`analytics.series`) are computed from the file on each request: persisted, a cohort's floats would bloat a database the backup copies wholesale on a 5 s debounce.
 
-The cache key (`repository.CacheKey`) is file path, mtime, size, profile hash and `CODEC_VERSION`. **Every part is answerable from a `stat`, so a cache hit opens nothing**: `stat_run` settles the key and `parse_run` runs only on a miss. On a networked 444-run archive that is the difference between reading 30 MB per dashboard open and reading nothing.
+The cache key (`repository.CacheKey`) is file path, mtime, size, profile hash and the **cache version**. **Every part is answerable without opening the file, so a cache hit opens nothing**: `stat_run` settles the key and `parse_run` runs only on a miss. On a networked 444-run archive that is the difference between reading 30 MB per dashboard open and reading nothing.
+
+The version (`scoring.current_version`) covers everything else a row depends on, and moves by itself when any of it changes:
+
+- **`SCORE_VERSION`** (`analytics/scoring.py`), set by hand, in the high bits (`version >> 32`).
+- **The canary**: a hash of what the scoring code answers for a fixed set of runs, one per rung of the [ladder](#which-profile-decodes-a-run) and a few more (`canary_fingerprint`). Each goes through the function a real pass scores with, and every field a row keeps is hashed, keys included. So a change to the maths, the payload's shape, inference, the recorded parameters or the parsing of an embedded profile moves it.
+- **This machine's [strobe vocabulary](TASKS.md#strobe-vocabulary)**, read once per pass and handed to inference, so the key and the decode agree.
+
+It is computed on every pass (about 2 ms), never remembered. A version moves for every row at once: the first summary after an upgrade or a vocabulary edit re-reads the cohort.
 
 > [!CAUTION]
-> **Bump `CODEC_VERSION` in `analytics/derive.py` whenever the payload changes — the maths *or its shape*.** A cache hit is served verbatim, so without a bump every already-indexed run keeps the old answer forever, with no symptom. "The numbers didn't move" is not an exemption: adding a field without a bump means every warm-cache run answers without it. (When `answerSide` was added that way, the strategy plane concluded "no condition says which well it rewards" on an archive whose profiles say exactly that.) `tests/test_analytics_derive.py` pins the payload's field names as a literal list against the version.
+> **A cache hit is served verbatim, so the version must move whenever what a row would hold does.** It does by itself for any change the canary can see. `tests/test_analytics_scoring.py` pins the canary's answer as a literal: when it fails, every machine re-reads its archive once, so update it deliberately. If you change scoring and the pin does **not** fail, the canary is blind to your change: add a case to `scoring._canary_runs` that shows it, or bump `SCORE_VERSION`. "The numbers didn't move" is not an exemption: when `answerSide` was added to the payload without a version change, every warm-cache run answered without it, and the strategy plane concluded "no condition says which well it rewards" on an archive whose profiles say exactly that.
 
 - **A relocate or a move carries a key only if it was fresh for the original** (`cohorts/freshness.py`). The copy's stat need not be the original's: a volume that keeps mtimes coarser than NTFS rounds them (exFAT to 10 ms, FAT32 to 1 s). So each row in `run_metrics_cache`, `adopted_runs` and `strobe_scan_cache` whose key matched the original's stat takes the copy's, and any other row keeps its key and is re-read.
 
@@ -926,7 +934,10 @@ The cache key (`repository.CacheKey`) is file path, mtime, size, profile hash an
 > **A key left at the original's is not only a re-read.** An adopted run that misses is [matched to an animal by name](#orphan-adoption) again. If the animal was renamed since adoption, the run turns into an unattributed orphan on every rescan; if its old name now belongs to another animal, the run silently changes animal. Carrying a key that was already stale is wrong the other way: the copy would vouch for a summary of content the file no longer has.
 
 - **Profile resolution is memoized per indexing pass, never across passes**, so an edited `task.json` takes effect on the next summary.
-- **Never delete a cache entry because a file vanished** on the read path — mark it stale and keep serving it. The read path cannot tell a deletion from an unplugged drive; only [pruning](#pruning) can.
+- **Nothing in the cache depends on `minCountedTrials`.** `lowConfidence` is judged against each request's threshold on every row served (`derive.with_threshold`), hit or miss.
+- **A pass writes once.** The profiles it decoded with and the rows it recomputed go in one transaction at its end; `analytics.series` writes nothing.
+- **A reader that opens no file reads only rows of the current version** (`load_cached(…, version=…)`): the [archive](#the-cohort-archive)'s session clocks, its false-start verdicts and the session log's [what changed](#what-changed). Another version's row is one the next summary recomputes; until then the run counts as unread.
+- **Never delete a cache entry because a file vanished** on the read path — mark it stale and keep serving it. The read path cannot tell a deletion from an unplugged drive; only [pruning](#pruning) can. The kept row is re-keyed with no stat, so the file's return is always a miss.
 - **A corrupt file caches its negative result** (`unreadable`) under the same key and surfaces as a warning. One bad `.json` must never blank a year of history.
 
 ### Never at the expense of a session
@@ -937,6 +948,7 @@ The cache key (`repository.CacheKey`) is file path, mtime, size, profile hash an
 - **One indexing job at a time** behind the [archive lock](#the-cohort-archive); a second rescan is refused (`ArchiveBusy`), so a double-click cannot launch two walks.
 - **Reads are sequential in one worker thread, not a pool** — six boxes are fsyncing per strobe, and a pool would multiply disk contention against the write-ahead log.
 - **Runs go to that worker in chunks** (`INDEX_CHUNK`), still read one after another, small enough that a batch of misses cannot hold the event loop off a live `port.output` flush.
+- **`analytics.series` takes one worker hop per run**, sequentially, and does everything in it: the read, the ladder, the series, the trail and the trial tape.
 - **Cache writes go in one transaction per job**; per-run commits would trigger a whole-file backup copy each time.
 
 ### Pruning

@@ -56,11 +56,14 @@ function seedRow(box: MappedBox, defaults: RecordingDefaults): BoxRow {
  * The form's rows for the boxes mapped now, given the rows it already holds (a
  * restored draft, or what was typed).
  *
- * Keyed to the CURRENT boxes, never to the rows: a box still mapped keeps what
- * was typed for it, under the animal mapped there now; a box no longer mapped
- * is dropped; a newly mapped box is seeded from the remembered defaults. So a
- * return to Boxes that moved an animal cannot leave `intan.configure` naming
- * the box it left (`ARCHITECTURE.md#leaving-set-up`).
+ * Keyed to the CURRENT boxes, never to the rows (`ARCHITECTURE.md#leaving-set-up`):
+ * - the same animal on the same box keeps what was typed for it (under its
+ *   current name, should it have been renamed);
+ * - a box no longer mapped is dropped;
+ * - a newly mapped box is seeded from the remembered defaults;
+ * - a box whose animal changed is reset: seeded like a new box, except that it
+ *   takes no probe map. Port and range are the box's wiring, but a probe map is
+ *   the animal's implant, and the box's memory may hold the previous animal's.
  *
  * The same array comes back when nothing changed, so a repeated answer from
  * the sidecar neither re-renders nor rewrites the draft. No boxes (not loaded
@@ -76,9 +79,8 @@ export function reconcileRows(
   const next = boxes.map((b) => {
     const kept = held.get(b.box);
     if (!kept) return seedRow(b, defaults);
-    return kept.animalId === b.animalId && kept.animalName === b.animalName
-      ? kept
-      : { ...kept, animalId: b.animalId, animalName: b.animalName };
+    if (kept.animalId !== b.animalId) return { ...seedRow(b, defaults), probeMapPath: null };
+    return kept.animalName === b.animalName ? kept : { ...kept, animalName: b.animalName };
   });
   const unchanged = next.length === draftRows.length && next.every((r, i) => r === draftRows[i]);
   return unchanged ? draftRows : next;

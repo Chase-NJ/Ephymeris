@@ -1012,11 +1012,13 @@ was. `lib/sessions/setupResume.ts` remembers two things:
   mid-placement picks up again at the first box no flash was asked for, read from the
   [flash queue](#the-flash-queue), whose flashes carried on meanwhile. A Boxes draft holds each box's sketch and the operator's own overrides, never the merged
   config, so a default changed during the visit is followed on return ([TASKS.md](TASKS.md#three-layer-merge)).
-  A Record draft follows the mapping: a box still mapped keeps its row as typed, a box no longer mapped is
-  dropped, and a newly mapped one starts from the recording defaults (`reconcileRows`,
-  `lib/intan/recordingSetup.ts`) and, with no remembered port RHX still reports, is guessed onto a free one
-  (`assignPorts`), so a return to Boxes that moved an animal cannot leave `intan.configure` naming the box it
-  left.
+  A Record draft follows the mapping (`reconcileRows`, `lib/intan/recordingSetup.ts`). The same animal on
+  the same box keeps its row as typed, and a box no longer mapped is dropped. A newly mapped box starts from
+  the recording defaults, and so does a box whose animal changed, except that it takes **no probe map**: the
+  port and range are the box's wiring, but the probe map is the animal's implant, and the box's remembered
+  one may be the previous animal's. Either kind, with no remembered port RHX still reports, is guessed onto a
+  free one (`assignPorts`). So a return to Boxes that moved or swapped animals cannot leave `intan.configure`
+  naming the box an animal left, or a probe map from another animal.
 
 The memory is dropped on reaching Mission Control and by a deliberate Cancel or End session, and the offer is
 withheld whenever `sessions.active` no longer reports the session, because the sidecar is the authority on

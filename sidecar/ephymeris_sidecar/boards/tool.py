@@ -17,6 +17,18 @@ from typing import Callable
 #: Progress callback: (stream, text) — `stream` is "stdout" or "stderr".
 ProgressLine = Callable[[str, str], None]
 
+#: How many timeouts avrdude may report during one upload before it is called
+#: stalled. A working upload recovers from a few (three, through a good hub). A
+#: board whose page writes never land reports four per page, a round every
+#: ~5.5 s, until the upload timeout. Twelve is three such rounds: about 16 s
+#: rather than two minutes of a box shown flashing (`ARCHITECTURE.md#flashing`).
+STALL_TIMEOUTS = 12
+
+STALLED_MESSAGE = (
+    "the board stopped answering mid-upload (avrdude kept timing out) — check the "
+    "USB cable, any hub between it and the computer, and the box's power, then flash again"
+)
+
 
 class FlashFailed(Exception):
     """A compile or upload step failed.
@@ -31,6 +43,48 @@ class FlashFailed(Exception):
         self.phase = phase
         self.message = message
         self.detail = detail
+
+
+class StallWatch:
+    """Wraps an upload's `on_line` and counts the timeouts avrdude reports.
+
+    Every line still reaches `on_line`. `stalled` turns true once there have
+    been too many to be a hiccup (`STALL_TIMEOUTS`); the backend then ends the
+    upload and raises `failure()`. Only a backend that sees avrdude's lines as
+    they happen can use it.
+    """
+
+    def __init__(self, on_line: ProgressLine) -> None:
+        self._on_line = on_line
+        self._timeouts = 0
+
+    def __call__(self, stream: str, text: str) -> None:
+        self._on_line(stream, text)
+        if stream == "stderr" and "timeout" in text.lower():
+            self._timeouts += 1
+
+    @property
+    def stalled(self) -> bool:
+        return self._timeouts >= STALL_TIMEOUTS
+
+    @staticmethod
+    def failure() -> FlashFailed:
+        return FlashFailed("upload", STALLED_MESSAGE)
+
+
+def failure_line(phase: str, lines: list[str]) -> str | None:
+    """The tool output line that explains a failed phase, or None.
+
+    A compile's first `error:` line is the cause; the rest follow from it. An
+    upload's last one is the verdict: avrdude reports every retried timeout
+    as an error before the one it gave up on. With no `error:` line, the last
+    thing said.
+    """
+    lines = [line.strip() for line in lines if line.strip()]
+    errors = [line for line in lines if "error:" in line.lower()]
+    if errors:
+        return errors[0] if phase == "compile" else errors[-1]
+    return lines[-1] if lines else None
 
 
 @dataclass(frozen=True)

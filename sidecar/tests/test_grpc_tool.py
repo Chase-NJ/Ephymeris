@@ -17,11 +17,12 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 import ephymeris_sidecar.boards.rpc  # noqa: F401 - stub tree onto sys.path
-from cc.arduino.cli.commands.v1 import board_pb2, port_pb2
+from cc.arduino.cli.commands.v1 import board_pb2, port_pb2, upload_pb2
 
 from ephymeris_sidecar.boards import create_board_tool
 from ephymeris_sidecar.boards.cli_tool import ArduinoCliTool, _command_echo
@@ -33,7 +34,14 @@ from ephymeris_sidecar.boards.grpc_tool import (
     _daemon_echo,
     parse_daemon_address,
 )
-from ephymeris_sidecar.boards.tool import DetectedBoard, FlashFailed
+from ephymeris_sidecar.boards.tool import (
+    STALL_TIMEOUTS,
+    STALLED_MESSAGE,
+    DetectedBoard,
+    FlashFailed,
+    StallWatch,
+    failure_line,
+)
 
 
 # --- daemon banner parsing --------------------------------------------------
@@ -217,6 +225,97 @@ async def test_a_failed_upload_says_its_last_line_else_its_exit_status(fake_ardu
     with pytest.raises(FlashFailed) as failed:
         await tool.upload("/sk", "arduino:avr:mega", "COM7", lambda s, t: None)
     assert failed.value.message == "upload failed (arduino-cli exited 2)"
+
+
+async def test_a_failed_upload_names_avrdudes_verdict_not_its_first_retry(fake_arduino_cli) -> None:  # noqa: ANN001
+    """avrdude reports every retried timeout as an error before the one it gave
+    up on: an upload's message is the last `error:` line, a compile's the first."""
+    fake_arduino_cli.answer("upload", rc=1, stdout=json.dumps({
+        "stderr": "Error: timeout\nError: timeout\nError: flash verification mismatch\nAvrdude done.",
+    }))
+    tool = ArduinoCliTool(binary=str(fake_arduino_cli.path))
+    with pytest.raises(FlashFailed) as failed:
+        await tool.upload("/sk", "arduino:avr:mega", "COM7", lambda s, t: None)
+    assert failed.value.message == "Error: flash verification mismatch"
+
+    assert failure_line("compile", ["a.ino:1: error: first", "a.ino:2: error: second"]) == (
+        "a.ino:1: error: first"
+    )
+    assert failure_line("upload", ["  ", "last words"]) == "last words"
+    assert failure_line("upload", []) is None
+
+
+async def test_the_subprocess_upload_verifies(fake_arduino_cli) -> None:  # noqa: ANN001
+    """Without `--verify` avrdude runs with `-V`, and an upload whose writes
+    never landed exits 0."""
+    tool = ArduinoCliTool(binary=str(fake_arduino_cli.path))
+    await tool.upload("/sk", "arduino:avr:mega", "COM7", lambda s, t: None)
+    assert "--verify" in fake_arduino_cli.calls[-1]
+
+
+# --- a stalled upload (`ARCHITECTURE.md#flashing`) ---------------------------
+
+
+def test_the_stall_watch_passes_every_line_and_counts_only_avrdudes_timeouts() -> None:
+    seen: list[tuple[str, str]] = []
+    watch = StallWatch(lambda s, t: seen.append((s, t)))
+
+    watch("stdout", "arduino-cli daemon: Upload(sketch=/rig/Timeout Task)")
+    for _ in range(STALL_TIMEOUTS - 1):
+        watch("stderr", "Error: timeout")
+    assert not watch.stalled  # a few recovered timeouts are a working upload
+    watch("stderr", "Error: timeout")
+    assert watch.stalled
+    assert len(seen) == STALL_TIMEOUTS + 1
+
+
+class _UploadCall:
+    """A daemon `Upload` call whose avrdude never stops timing out."""
+
+    def __init__(self) -> None:
+        self.cancelled = False
+
+    def __aiter__(self):  # noqa: ANN204
+        return self._stream()
+
+    async def _stream(self):  # noqa: ANN202
+        while not self.cancelled:
+            yield upload_pb2.UploadResponse(err_stream=b"Error: timeout\n")
+            await asyncio.sleep(0)
+
+    def cancel(self) -> bool:
+        self.cancelled = True
+        return True
+
+
+class _UploadStub:
+    def __init__(self) -> None:
+        self.call = _UploadCall()
+        self.requests: list[upload_pb2.UploadRequest] = []
+
+    def Upload(self, request, timeout):  # noqa: ANN001, ANN201, N802 - the stub's name
+        self.requests.append(request)
+        return self.call
+
+
+async def test_a_stalled_upload_is_cancelled_and_says_what_to_check() -> None:
+    """Not two minutes of a box shown flashing: the call is cancelled, which
+    ends avrdude in the daemon, and the message names cable, hub and power."""
+    tool = GrpcBoardTool(binary="arduino-cli")
+    stub = _UploadStub()
+
+    async def acquire():  # noqa: ANN202
+        return SimpleNamespace(stub=stub, instance=None)
+
+    tool._acquire = acquire  # type: ignore[method-assign]
+    lines: list[tuple[str, str]] = []
+    with pytest.raises(FlashFailed) as failed:
+        await tool.upload("/sk", "arduino:avr:mega", "COM7", lambda s, t: lines.append((s, t)))
+
+    assert (failed.value.phase, failed.value.message) == ("upload", STALLED_MESSAGE)
+    assert stub.call.cancelled
+    assert stub.requests[0].verify, "the daemon upload must read the flash back"
+    assert sum(1 for s, _ in lines if s == "stderr") == STALL_TIMEOUTS
 
 
 async def test_the_factory_honours_the_escape_hatch(monkeypatch: pytest.MonkeyPatch) -> None:

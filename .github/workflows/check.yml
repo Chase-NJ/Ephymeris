@@ -10,6 +10,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read # checkout only; no job writes
+
 # A newer push to the same branch makes an older run's answer irrelevant.
 concurrency:
   group: check-${{ github.ref }}

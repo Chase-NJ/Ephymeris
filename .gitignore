@@ -1,12 +1,11 @@
 .DS_Store
 
 # Claude Code: agent instructions, settings and local memory stay on this machine,
-# except the shared guardrails (settings.json and its hook) and the Review II run brief.
+# except the shared settings.json and the Review II run brief.
 CLAUDE.md
 CLAUDE.local.md
 .claude/*
 !.claude/settings.json
-!.claude/hooks/
 !.claude/review-ii-run.md
 .mcp.json
 

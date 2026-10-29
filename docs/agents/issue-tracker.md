@@ -15,7 +15,7 @@ Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all o
 
 Infer the repo from `git remote -v`; `gh` does this automatically when run inside a clone.
 
-**Never write through `gh api`.** The project's guardrail hook (`.claude/hooks/block-dangerous-git.py`) refuses every `gh api` call that is not a read, so use the `gh issue` / `gh pr` flags above for every change. `gh api` stays available for reads.
+**Never write through `gh api`.** Use the `gh issue` / `gh pr` flags above for every change; `gh api` is for reads.
 
 ## Pull requests as a triage surface
 

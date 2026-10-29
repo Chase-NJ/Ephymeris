@@ -44,7 +44,7 @@ from . import rpc  # noqa: F401  — puts the vendored stub tree on sys.path
 from cc.arduino.cli.commands.v1 import board_pb2, commands_pb2, commands_pb2_grpc, compile_pb2, port_pb2, upload_pb2
 
 from .cli_tool import COMPILE_TIMEOUT_S, LIST_TIMEOUT_S, UPLOAD_TIMEOUT_S, ArduinoCliTool
-from .tool import BoardTool, DetectedBoard, FlashFailed, ProgressLine
+from .tool import BoardTool, DetectedBoard, FlashFailed, ProgressLine, StallWatch, failure_line
 
 log = logging.getLogger(__name__)
 
@@ -211,6 +211,9 @@ class GrpcBoardTool(BoardTool):
             fqbn=fqbn,
             sketch_path=sketch_dir,
             port=port_pb2.Port(address=address, protocol="serial"),
+            # Read the flash back: without it an upload whose writes never
+            # landed succeeds (`ARCHITECTURE.md#flashing`).
+            verify=True,
         )
         on_line(
             "stdout",
@@ -222,14 +225,21 @@ class GrpcBoardTool(BoardTool):
             ),
         )
         err_lines: list[str] = []
-        splitter = _LineSplitter(_collecting(on_line, err_lines))
+        watch = StallWatch(_collecting(on_line, err_lines))
+        splitter = _LineSplitter(watch)
+        call = daemon.stub.Upload(request, timeout=UPLOAD_TIMEOUT_S)
         try:
-            async for response in daemon.stub.Upload(request, timeout=UPLOAD_TIMEOUT_S):
+            async for response in call:
                 which = response.WhichOneof("message")
                 if which == "out_stream":
                     splitter.feed("stdout", response.out_stream)
                 elif which == "err_stream":
                     splitter.feed("stderr", response.err_stream)
+                if watch.stalled:
+                    # Cancelling the call cancels the daemon's context, which
+                    # ends avrdude and frees the port.
+                    call.cancel()
+                    raise watch.failure()
             splitter.flush()
         except grpc.RpcError as exc:
             splitter.flush()
@@ -502,15 +512,9 @@ def _emit_progress(on_line: ProgressLine, progress: Any) -> None:
 
 
 def _failure_message(phase: str, err_lines: list[str], exc: grpc.RpcError) -> str:
-    """The line that explains the failure — same rule as the subprocess path:
-    the `error:` line if the compiler printed one, else the last thing it
-    said, else whatever the RPC status carries."""
-    for line in err_lines:
-        if "error:" in line.lower():
-            return line.strip()
-    if err_lines:
-        return err_lines[-1].strip()
-    return _rpc_text(exc) or f"{phase} failed"
+    """The line that explains the failure — `failure_line`, as on the
+    subprocess path — else whatever the RPC status carries."""
+    return failure_line(phase, err_lines) or _rpc_text(exc) or f"{phase} failed"
 
 
 def _tail(err_lines: list[str]) -> str | None:

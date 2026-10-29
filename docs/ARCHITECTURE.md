@@ -639,7 +639,21 @@ current discovery result — the bundled library plus this rig's saved tasks
 ([TASKS.md](TASKS.md#sketch-library)) — and `flash.enqueue` enforces that with `SKETCH_UNKNOWN`, not just
 the picker, and the queue checks again when the flash runs. Progress streams as `flash.progress`, tagged by
 box. A compile or upload failure moves the port to `ERROR` with the parsed message; it never falls back
-silently to `IDLE`.
+silently to `IDLE`. The message is the tool's own line (`failure_line`, `boards/tool.py`): a compile's
+first `error:` line, an upload's last, because avrdude reports each retried timeout as an error before the
+one it gave up on.
+
+Every upload reads the flash back (`--verify`, or `verify` on the daemon's request), so a board that
+answers the bootloader but keeps none of the write fails the flash. On the daemon, an upload whose avrdude
+reports `STALL_TIMEOUTS` timeouts is cancelled and fails with a message naming the cable, hub and power,
+rather than running to `UPLOAD_TIMEOUT_S`. A working upload can recover from a few timeouts; a write that
+never lands reports four per page, about every 5.5 s. The subprocess backend can't do this: `--format json`
+holds avrdude's lines until it exits, so it waits out the timeout.
+
+> [!CAUTION]
+> **Never drop the upload's verify.** Without it avrdude runs with `-V`, and an upload whose writes never
+> landed exits 0. The app then records the board as carrying a sketch it doesn't
+> ([What a board carries](#what-a-board-carries)). A marginal USB hub did exactly that.
 
 `boards/__init__.py`'s `create_board_tool` picks a `BoardTool` (`boards/tool.py`) backend:
 `boards/grpc_tool.py`, one long-lived `arduino-cli daemon` over gRPC with live streaming and no spawn per

@@ -16,7 +16,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from .tool import BoardTool, DetectedBoard, FlashFailed, ProgressLine
+from .tool import BoardTool, DetectedBoard, FlashFailed, ProgressLine, failure_line
 
 log = logging.getLogger(__name__)
 
@@ -179,7 +179,10 @@ class ArduinoCliTool(BoardTool):
         address: str,
         on_line: ProgressLine,
     ) -> None:
-        args = ["upload", "-p", address, "--fqbn", fqbn, "--format", "json", sketch_dir]
+        # `--verify` reads the flash back: without it avrdude runs with `-V`, and
+        # an upload whose writes never landed exits 0 (`ARCHITECTURE.md#flashing`).
+        # No stall watch here: `--format json` holds avrdude's lines until it exits.
+        args = ["upload", "-p", address, "--fqbn", fqbn, "--verify", "--format", "json", sketch_dir]
         rc, stdout = await self._run_streaming(args, UPLOAD_TIMEOUT_S, "upload", on_line)
         payload = _try_json(stdout)
 
@@ -281,17 +284,14 @@ def _try_json(text: str) -> dict[str, Any]:
 def _failure_message(phase: str, payload: dict[str, Any], rc: int) -> str:
     """Pull the line that actually explains the failure out of the tool output.
 
-    A compile failure's useful text is the `error:` line in `compiler_err`;
-    everything else ("exit status 1") is noise the user shouldn't have to
-    read a log to get past.
+    `failure_line` picks it from `compiler_err` or the upload's stderr;
+    anything else ("exit status 1") is noise the user shouldn't have to read
+    a log to get past.
     """
     blob = str(payload.get("compiler_err") or payload.get("stderr") or "")
-    lines = [line.strip() for line in blob.splitlines() if line.strip()]
-    for line in lines:
-        if "error:" in line.lower():
-            return line
-    if lines:
-        return lines[-1]
+    line = failure_line(phase, blob.splitlines())
+    if line:
+        return line
     if isinstance(payload.get("error"), str) and payload["error"]:
         return payload["error"]
     return f"{phase} failed (arduino-cli exited {rc})"

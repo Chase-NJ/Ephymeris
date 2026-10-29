@@ -109,7 +109,7 @@ class Application:
         # backend otherwise (`boards/__init__.py`). Tests pass their own.
         self.tool = tool if tool is not None else create_board_tool(app_data_dir=data_dir)
         self.ports: PortManager | None = None
-        #: Every flash, one at a time, rig-wide (`ports/flashing.py`).
+        #: Every flash: one compile at a time, restores side by side (`ports/flashing.py`).
         self.flashes: FlashQueue | None = None
         self.utility: UtilityBaseline | None = None
         #: Tasks started by hand from Debug Mode, scored live (`debug_run.py`).

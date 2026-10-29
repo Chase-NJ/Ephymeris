@@ -20,9 +20,10 @@ import hashlib
 import logging
 import os
 import time
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Awaitable, Callable
+from typing import AsyncContextManager, AsyncIterator, Awaitable, Callable
 
 import serial
 
@@ -45,6 +46,22 @@ POLL_INTERVAL_S = 1.5
 FLUSH_INTERVAL_S = 0.05
 #: Don't re-log an unreachable arduino-cli on every single poll.
 FAILURE_LOG_EVERY = 40
+
+#: How a flash gets its build: called with the sketch folder, its fingerprint
+#: and the compile to run, it compiles (or finds the build already made) and
+#: stays entered while the upload reads the build (`ports/flashing.py`'s
+#: `SharedBuilds`).
+BuildGate = Callable[[str, str, Callable[[], Awaitable[None]]], AsyncContextManager[None]]
+
+
+@asynccontextmanager
+async def compile_first(
+    _sketch_dir: str, _fingerprint: str, compile: Callable[[], Awaitable[None]]
+) -> AsyncIterator[None]:
+    """The plain gate: this flash compiles its own build."""
+    await compile()
+    yield
+
 
 StateCallback = Callable[[int, PortState, PortState, str], None]
 OutputCallback = Callable[[int, list[OutputLine]], Awaitable[None]]
@@ -233,9 +250,11 @@ class PortManager:
         suppress_passthrough_resume: bool = False,
         *,
         from_: frozenset[PortState] = IDLE_ONLY,
+        build: BuildGate = compile_first,
     ) -> tuple[PortState, bool]:
         """Compile + upload (`ARCHITECTURE.md#flashing`). Called only by the
-        flash queue (`ports/flashing.py`), which keeps it to one at a time.
+        flash queue (`ports/flashing.py`), which decides what runs beside what
+        and passes `build` so that one compile serves every upload of it.
 
         `from_` is what this flash may take (`PortHandler.release_for`): a
         port in any other state raises `TakeRefused` before anything starts.
@@ -272,14 +291,19 @@ class PortManager:
             # argument that was malformed when a packaged build stopped finding
             # its bundled library. Each backend echoes its own real invocation
             # (`boards/cli_tool.py`, `boards/grpc_tool.py`).
-            await self._tool.compile(
-                sketch_dir, FQBN, libraries_path,
-                lambda stream, text: on_progress("compile", stream, text),
-            )
-            await self._tool.upload(
-                sketch_dir, FQBN, address,
-                lambda stream, text: on_progress("upload", stream, text),
-            )
+            def compile() -> Awaitable[None]:
+                return self._tool.compile(
+                    sketch_dir, FQBN, libraries_path,
+                    lambda stream, text: on_progress("compile", stream, text),
+                )
+
+            # The upload reads the folder's build, so it stays inside the gate:
+            # no compile of this folder may rewrite the build under it.
+            async with build(sketch_dir, fingerprint, compile):
+                await self._tool.upload(
+                    sketch_dir, FQBN, address,
+                    lambda stream, text: on_progress("upload", stream, text),
+                )
         except Exception as exc:
             handler.force_error(f"flash failed: {exc}")
             raise

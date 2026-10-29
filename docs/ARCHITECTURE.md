@@ -662,11 +662,21 @@ vendored in `sidecar/proto/` by `sidecar/scripts/gen_grpc.py`; re-vendor at the 
 ### The flash queue
 
 Every flash goes through one queue in the sidecar (`FlashQueue`, `ports/flashing.py`), the only caller of
-`PortManager.flash`. **One box flashes at a time, rig-wide**, whoever asked: two `arduino-cli` builds at
-once are slower than one after the other on the lab machines, and a half-flashed pair is worse than a
-whole one. The queue runs the first job, in the order queued, whose port is free, so a busy box never holds
-up the rest. Each job holds the rig definition's read side from choosing its sketch until what the board
-carries is recorded ([TASKS.md](TASKS.md#the-rig-definition)).
+`PortManager.flash`. The queue starts the first job, in the order queued, whose port is free, so a busy box
+never holds up the rest. What may run beside what:
+
+- **One compile at a time, rig-wide**, whoever asked: two `arduino-cli` builds at once are slower than one
+  after the other on the lab machines (`SharedBuilds`).
+- **Restores run side by side** and share one compile: a flash that finds its folder's build still live at
+  the same fingerprint uploads from it, so a cold start compiles the box utility once and uploads to every
+  box at once, each upload on its own serial port. The `arduino-cli` daemon runs concurrent `Upload` calls,
+  each with its own `avrdude` ([ADR 0002](adr/0002-restores-upload-side-by-side.md)).
+- **A session or Debug flash runs alone.** It waits for the flashes under way, and once its port is free
+  nothing queued behind it starts first.
+- **One job per box.** A box's next job, of any origin, waits for the one under way there to land.
+
+Each job holds the rig definition's read side from choosing its sketch until what the board carries is
+recorded ([TASKS.md](TASKS.md#the-rig-definition)), so restores side by side are that many readers.
 
 | Origin | Asked for by | Sketch | Port | Lands in | Pinned |
 |---|---|---|---|---|---|
@@ -677,7 +687,8 @@ carries is recorded ([TASKS.md](TASKS.md#the-rig-definition)).
 A waiting job gives up after `PORT_WAIT_S` (three minutes, `ports/flashing.py`); a port in `ERROR` or a box
 with no board fails it at once. One job failing never stops the rest. `flash.cancel` drops queued session
 and Debug jobs, and a new `sessions.confirmMapping`, an end or an abandon drops the session's; a flash
-already under way always finishes, because stopping an upload part-way leaves a board nobody can name.
+already under way always finishes, however many are, because stopping an upload part-way leaves a board
+nobody can name.
 
 What the queue is doing is `flash.queue`, a snapshot of every box's last job and what each board
 [carries](#what-a-board-carries), pushed on every change and **replayed on connect**. The commands that
@@ -689,6 +700,12 @@ Debug Mode's flash dialogs only ask and render.
 > and two flashes racing for one box. What a flash may take is the queue's to say, by origin (`TAKES` in
 > `ports/flashing.py`, passed as `from_`); a new caller must pass `IDLE_ONLY` unless a person asked for
 > this flash, or it takes their console ([Port verbs](#port-verbs)).
+
+> [!CAUTION]
+> **A compile must never overlap an upload of the same folder.** An upload reads the folder's build from
+> `arduino-cli`'s build directory, not from anything the compile hands it, so a compile there mid-upload
+> can rewrite the file `avrdude` is reading. `SharedBuilds` makes a compile of a folder wait until every
+> upload of its older build has ended; a flash outside the queue would not.
 
 > [!CAUTION]
 > **A session job reads its sketch from the mapping when it runs, never when it was queued.** A mapping
@@ -806,9 +823,9 @@ flowchart TD
     flash -->|error| failed["failed: reported,<br/>ERROR acknowledged automatically"]
 ```
 
-Restores run **one box at a time**, on the same [flash queue](#the-flash-queue) as every other flash, so a
-cold start is up to six sequential flashes. If that proves annoying, defer the cold restore until a box is
-needed; don't parallelise it, which would fight the one-owner rule. A pinned box reads `pinned` even with
+Restores run on the same [flash queue](#the-flash-queue) as every other flash, **side by side**: a cold
+start compiles the box utility once and uploads it to every free box at once. Each box keeps one owner,
+because each restore still takes its own port through `release_for`. A pinned box reads `pinned` even with
 its console open, because the Debug flash that pinned it ends in that console.
 
 ### Three rules it never breaks

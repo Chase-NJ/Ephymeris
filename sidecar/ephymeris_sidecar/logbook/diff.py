@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import PurePath
 from typing import Any
 
-from ..analytics.false_starts import Verdict
+from ..analytics.stream.false_starts import Verdict
 from ..sessions.models import SessionAnimalRun
 
 
@@ -95,7 +95,7 @@ def compare(
 ) -> dict[str, dict[str, Any]]:
     """`RunChange` payloads keyed by run id (`PROTOCOL.md#shape-runchange`).
 
-    A false start (`verdicts`, `DATA.md#false-starts`) is compared with nothing
+    A false start (`verdicts`, `ANALYTICS.md#false-starts`) is compared with nothing
     and is nobody's previous run: the run that restarted it is compared with
     the animal's run before it, which is the change that actually happened.
     """

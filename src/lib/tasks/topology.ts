@@ -11,8 +11,8 @@
  * sketch's historical runs from its future runs on every plot — with nothing to
  * recompute the old hashes. A visualization must not cost that.
  *
- * Keyed off strobe **names**, never raw codes — the same rule `liveTrials.ts`,
- * `metrics.py` and `derive.py` already follow. A code number means nothing
+ * Keyed off strobe **names**, never raw codes — the same rule `liveTrials.ts`
+ * and `analytics/stream/` already follow. A code number means nothing
  * without the map that names it.
  *
  * The shape, whatever the task presents:
@@ -63,7 +63,7 @@ export type EdgeKind = "advance" | "choice" | "abort" | "error" | "reward" | "re
 /*
  * THE MODEL CARRIES NO COUNTS, DELIBERATELY.
  *
- * An earlier version tagged each edge with the `derive.py` bucket that would
+ * An earlier version tagged each edge with the `analytics/stream/` bucket that would
  * fill it, so a run's figures could be drawn onto the diagram. Nothing ever
  * passed them, because the only place a graph and a live run coexist is
  * Mission Control — and a partial mid-session tally is exactly the number that
@@ -738,7 +738,7 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
   /*
    * ODOR_UNPOKE_EARLY is ONE code for TWO firmware edges — releasing before
    * odor delivery, and releasing during sampling. They are distinguishable only
-   * by whether an odor-on code preceded them, which is exactly how `derive.py`
+   * by whether an odor-on code preceded them, which is exactly how `stream/engagement.py`
    * separates them: the engagement ladder's two gaps. Both edges are drawn, and
    * each takes its count from the matching gap.
    */

@@ -51,7 +51,7 @@ export function sessionRunsOf(
 }
 
 /**
- * The session's runs set aside as false starts (`DATA.md#false-starts`), in
+ * The session's runs set aside as false starts (`ANALYTICS.md#false-starts`), in
  * the same order as `sessionRunsOf`. Never mixed into that list: every panel
  * that reads it would otherwise have to remember to skip them.
  */
@@ -224,7 +224,7 @@ export function runEnd(run: RunSummary): RunClock {
 }
 
 /** One stacked-bar segment, in the fixed order of
- *  `DATA.md#rewarded-and-response-accuracy`. */
+ *  `ANALYTICS.md#rewarded-and-response-accuracy`. */
 export interface OutcomePart {
   key: OutcomeKey;
   value: number;

@@ -980,7 +980,7 @@ The whole cohort table in **one** call (`DATA.md#analytics-views`): sessions, an
 <a id="cmd-analytics.setfalsestart"></a>
 #### `analytics.setFalseStart`
 
-A person's ruling on one run (`DATA.md#false-starts`), stored in `run_flags`. Broadcasts `logbook.updated` for the run's session, since what changed is recomputed around it; the client refetches `analytics.summary`. `BAD_MESSAGE` for a run the cohort does not hold.
+A person's ruling on one run (`ANALYTICS.md#false-starts`), stored in `run_flags`. Broadcasts `logbook.updated` for the run's session, since what changed is recomputed around it; the client refetches `analytics.summary`. `BAD_MESSAGE` for a run the cohort does not hold.
 
 **Args**
 
@@ -999,7 +999,7 @@ A person's ruling on one run (`DATA.md#false-starts`), stored in `run_flags`. Br
 <a id="cmd-analytics.series"></a>
 #### `analytics.series`
 
-Per-run learning-curve data (`DATA.md#derived-metrics`), plus each run's strategy-plane `trail` and per-trial `trials` tape, which ride here because the file is already open and decoded. The x-axis is the counted-trial index and is implicit.
+Per-run learning-curve data (`ANALYTICS.md#how-a-strobe-stream-is-scored`), plus each run's strategy-plane `trail` and per-trial `trials` tape, which ride here because the file is already open and decoded. The x-axis is the counted-trial index and is implicit.
 
 **Args**
 
@@ -1630,7 +1630,7 @@ The whole cohort table in one call; selections filter it client-side.
 | `animals` | [AnalyticsAnimal](#shape-analyticsanimal)[] |  |
 | `groups` | [Group](#shape-group)[] |  |
 | `runs` | [RunSummary](#shape-runsummary)[] | Flat, not a matrix — two runs really can share one (animal, session). False starts excluded: every metric reads this list. |
-| `falseStarts` | [RunSummary](#shape-runsummary)[] | Runs set aside as false starts (`DATA.md#false-starts`). Listed where runs are listed, muted; counted nowhere. |
+| `falseStarts` | [RunSummary](#shape-runsummary)[] | Runs set aside as false starts (`ANALYTICS.md#false-starts`). Listed where runs are listed, muted; counted nowhere. |
 | `profileGroups` | [ProfileGroup](#shape-profilegroup)[] |  |
 | `counts` | [AnalyticsCounts](#shape-analyticscounts) |  |
 | `warnings` | [AnalyticsWarning](#shape-analyticswarning)[] |  |
@@ -1853,7 +1853,7 @@ Enough for the cohort browser and the dashboard tile, no per-animal detail.
 <a id="shape-conditionoutcomes"></a>
 #### ConditionOutcomes
 
-TrialOutcomes restricted to one declared condition (`DATA.md#derived-metrics`), in authored liveMetrics order; the entries partition `RunSummary.outcomes` field for field. Answers 'how many trials of this kind were administered, and how many of those paid out'.
+TrialOutcomes restricted to one declared condition (`ANALYTICS.md#how-a-strobe-stream-is-scored`), in authored liveMetrics order; the entries partition `RunSummary.outcomes` field for field. Answers 'how many trials of this kind were administered, and how many of those paid out'.
 
 | Field | Type | Notes |
 |---|---|---|
@@ -2191,7 +2191,7 @@ A cohort's whole session log, flat; the client groups it by `sessionId`. Session
 <a id="shape-metricsummary"></a>
 #### MetricSummary
 
-One metric's whole-session result (`DATA.md#derived-metrics`).
+One metric's whole-session result (`ANALYTICS.md#how-a-strobe-stream-is-scored`).
 
 | Field | Type | Notes |
 |---|---|---|
@@ -2576,7 +2576,7 @@ What differs between a run and the same animal's previous run, recorded and reco
 | `boxChange` | [ValueChange](#shape-valuechange) \| null | Only between two runs that both know their box. |
 | `params` | [ParamChange](#shape-paramchange)[] |  |
 | `paramsKnown` | boolean | False when either run carries no parameters — a run from before they were recorded, or a recovered file too old to hold them, or one the analytics index has not read yet. Unknown, never reported as changed. |
-| `falseStart` | boolean | Set aside (`DATA.md#false-starts`): compared with nothing and never the previous run of the next one, which is compared with the run before this instead. |
+| `falseStart` | boolean | Set aside (`ANALYTICS.md#false-starts`): compared with nothing and never the previous run of the next one, which is compared with the run before this instead. |
 | `falseStartSource` | "automatic" \| "marked" \| "restored" \| null | As `RunSummary.falseStartSource`. |
 
 <a id="shape-runnersession"></a>
@@ -2598,7 +2598,7 @@ The runner-held session — the same shape a sessions.status reply carries.
 | `runId` | string |  |
 | `mode` | "rolling" \| "cumulative" |  |
 | `metrics` | [MetricSeries](#shape-metricseries)[] |  |
-| `trail` | [StrategyPoint](#shape-strategypoint)[] | The joint walk through the strategy plane. Always rolling, whatever `mode` is — 'what strategy is running right now' is a rolling question. Empty when the profile's conditions can't be split into two opposing sides (`derive.strategy_axes`). Starts only once both windows hold enough counted trials, since a one-trial proportion pins the walk to a corner. Cannot be assembled client-side from `metrics`: those are indexed by each metric's own counted trials, which interleave. |
+| `trail` | [StrategyPoint](#shape-strategypoint)[] | The joint walk through the strategy plane. Always rolling, whatever `mode` is — 'what strategy is running right now' is a rolling question. Empty when the profile's conditions can't be split into two opposing sides (`stream.strategy_axes`). Starts only once both windows hold enough counted trials, since a one-trial proportion pins the walk to a corner. Cannot be assembled client-side from `metrics`: those are indexed by each metric's own counted trials, which interleave. |
 | `trials` | [TrialRecord](#shape-trialrecord)[] | Every trial in stream order. Empty when the profile can't express outcomes, on the same rule as `RunSummary.outcomes`. Tallying this list reproduces the run's `TrialOutcomes` and, grouped by `triggerCode`, its `ConditionOutcomes` — pinned by test, so the tape and the tallies can never disagree. |
 
 <a id="shape-runstatus"></a>
@@ -2623,15 +2623,15 @@ The runner-held session — the same shape a sessions.status reply carries.
 | `paramsHash` | string \| null | Hash of the task parameters this run used (`TASKS.md#profile-and-params-hashes`). Comparability is the PAIR with `profileHash` — that one covers the profile declaration, which is identical across every run of a sketch however it was tuned. Null when the run recorded no parameters. |
 | `profileSource` | [ProfileSource](#shape-profilesource) |  |
 | `stale` | boolean | The file is gone but this is its last known-good summary. |
-| `falseStart` | boolean | Set aside as a false start (`DATA.md#false-starts`): restarted and short, or ruled so by hand. Such a run arrives in `AnalyticsSummary.falseStarts`, never in `runs`. |
+| `falseStart` | boolean | Set aside as a false start (`ANALYTICS.md#false-starts`): restarted and short, or ruled so by hand. Such a run arrives in `AnalyticsSummary.falseStarts`, never in `runs`. |
 | `falseStartSource` | "automatic" \| "marked" \| "restored" \| null | Why: `automatic` (the rule), `marked` (a person set it aside), `restored` (the rule would, a person said count it). Null for an ordinary run. |
 | `restartedBy` | string \| null | The next run of the same animal in the same session, if any. |
 | `status` | [RunStatus](#shape-runstatus) |  |
 | `metrics` | [MetricSummary](#shape-metricsummary)[] |  |
-| `overall` | [MetricSummary](#shape-metricsummary) \| null | Accuracy pooled across every metric — the only single number that can tell learning from a side bias (`DATA.md#derived-metrics`). |
-| `outcomes` | [TrialOutcomes](#shape-trialoutcomes) \| null | Null when the profile declares no reward vocabulary (`DATA.md#derived-metrics`) — absent rather than zeroed, since 'this task has no notion of a reward delivery' is not 'this animal earned nothing'. |
+| `overall` | [MetricSummary](#shape-metricsummary) \| null | Accuracy pooled across every metric — the only single number that can tell learning from a side bias (`ANALYTICS.md#how-a-strobe-stream-is-scored`). |
+| `outcomes` | [TrialOutcomes](#shape-trialoutcomes) \| null | Null when the profile declares no reward vocabulary (`ANALYTICS.md#how-a-strobe-stream-is-scored`) — absent rather than zeroed, since 'this task has no notion of a reward delivery' is not 'this animal earned nothing'. |
 | `conditions` | [ConditionOutcomes](#shape-conditionoutcomes)[] | Empty — not null — whenever `outcomes` is null: there is no separate claim to make about a task that can't express an outcome at all. |
-| `engagement` | [TrialEngagement](#shape-trialengagement) \| null | How many trials the box offered and how far each got (`DATA.md#derived-metrics`) — the layer above every other count here. Null when the profile declares no trial light, on the same rule as `outcomes`: a zeroed ladder would read as an animal that never engaged rather than as a task that can't say. |
+| `engagement` | [TrialEngagement](#shape-trialengagement) \| null | How many trials the box offered and how far each got (`ANALYTICS.md#how-a-strobe-stream-is-scored`) — the layer above every other count here. Null when the profile declares no trial light, on the same rule as `outcomes`: a zeroed ladder would read as an animal that never engaged rather than as a task that can't say. |
 | `totalEvents` | number |  |
 | `durationMs` | number \| null |  |
 | `stopReason` | string \| null |  |
@@ -3124,7 +3124,7 @@ One session record as the tidy preview names it (`DATA.md#reading-the-archive`).
 <a id="shape-trialengagement"></a>
 #### TrialEngagement
 
-How far each offered trial got before the animal dropped out (`DATA.md#derived-metrics`). Delimited on the trial light, not on odor onset — the firmware only strobes odor-on after the animal has poked and held, so every other count in a run summary is silently conditioned on engagement and none of them can measure it. A ladder, not a partition: presented >= poked >= odorDelivered by construction.
+How far each offered trial got before the animal dropped out (`ANALYTICS.md#how-a-strobe-stream-is-scored`). Delimited on the trial light, not on odor onset — the firmware only strobes odor-on after the animal has poked and held, so every other count in a run summary is silently conditioned on engagement and none of them can measure it. A ladder, not a partition: presented >= poked >= odorDelivered by construction.
 
 | Field | Type | Notes |
 |---|---|---|
@@ -3141,7 +3141,7 @@ How far each offered trial got before the animal dropped out (`DATA.md#derived-m
 <a id="shape-trialoutcomes"></a>
 #### TrialOutcomes
 
-What actually happened per trial (`DATA.md#derived-metrics`). Distinct from the declared metrics, which are reward-*unconditional* — they score a detected poke whether or not the fluid hold cleared.
+What actually happened per trial (`ANALYTICS.md#how-a-strobe-stream-is-scored`). Distinct from the declared metrics, which are reward-*unconditional* — they score a detected poke whether or not the fluid hold cleared.
 
 | Field | Type | Notes |
 |---|---|---|
@@ -3162,7 +3162,7 @@ What actually happened per trial (`DATA.md#derived-metrics`). Distinct from the 
 <a id="shape-trialrecord"></a>
 #### TrialRecord
 
-One classified trial (`DATA.md#derived-metrics`) — the same classification pass the outcome tallies come from, kept as a sequence instead of being summed away.
+One classified trial (`ANALYTICS.md#how-a-strobe-stream-is-scored`) — the same classification pass the outcome tallies come from, kept as a sequence instead of being summed away.
 
 | Field | Type | Notes |
 |---|---|---|

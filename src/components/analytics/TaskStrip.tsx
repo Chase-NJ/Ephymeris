@@ -14,7 +14,7 @@ import {
  * unfiltered trends below readable (`DATA.md#pooling-across-tasks`).
  *
  * The trends pool every run because their measurements are vocabulary-defined
- * and identical across tasks (`DATA.md#rewarded-and-response-accuracy`); what
+ * and identical across tasks (`ANALYTICS.md#rewarded-and-response-accuracy`); what
  * changes across tasks is *difficulty*. This strip is that disclosure: an
  * accuracy cliff that lines up with a boundary here is a task change, not a
  * cohort forgetting. It shares the trends' session slots, so a boundary sits

@@ -179,7 +179,7 @@ export function taskLabels(summary: AnalyticsSummary): Map<string, string> {
  * decode with, which is empty for a session recorded on the other rig and
  * copied into the cohort folder: the archive walk adopts the file, the name it
  * records matches no sketch in this install, and the run scores by inference
- * (`DATA.md#which-profile-decodes-a-run`). Reading the path alone displayed
+ * (`ANALYTICS.md#which-profile-decodes-a-run`). Reading the path alone displayed
  * every such run as "unknown sketch" — a claim that the record is silent, when
  * the file says exactly what it ran.
  */
@@ -199,7 +199,7 @@ export function programOf(run: RunSummary): string {
  * generalizes without changing what a position means.
  *
  * x takes the side of the FIRST declared metric, matching
- * `derive.strategy_axes` so the session walk and the cross-session trail agree
+ * `stream.strategy_axes` so the session walk and the cross-session trail agree
  * — and so a two-condition task keeps precisely the orientation it always had.
  */
 export interface StrategyAxis {
@@ -260,7 +260,7 @@ export function strategyAxes(group: ProfileGroup | null): StrategyAxes | null {
  * of these conditions". Averaging the two proportions instead would let a
  * condition the animal barely met pull the axis as hard as one it met
  * constantly — the same mistake `_overall` exists to avoid
- * (`DATA.md#pooled-accuracy`).
+ * (`ANALYTICS.md#pooled-accuracy`).
  */
 export function pooledAxis(
   run: RunSummary,
@@ -417,7 +417,7 @@ export function declaredMetrics(group: ProfileGroup | null) {
   return group ? group.metrics.filter((metric) => metric.id !== OVERALL_ID) : [];
 }
 
-// --- trial outcomes (`DATA.md#rewarded-and-response-accuracy`) --------------
+// --- trial outcomes (`ANALYTICS.md#rewarded-and-response-accuracy`) --------------
 
 /**
  * The trial-outcome palette — status colours plus Halo, so nothing new enters
@@ -437,7 +437,7 @@ export type OutcomeKey = keyof typeof OUTCOME_STYLE;
 /** A pooled outcome tally — one session's, one animal's, or a whole cohort's. */
 export interface PooledOutcomes {
   /** Every trial boundary seen — administered or not
-   *  (`DATA.md#rewarded-and-response-accuracy`). */
+   *  (`ANALYTICS.md#rewarded-and-response-accuracy`). */
   trials: number;
   administered: number;
   rewarded: number;
@@ -480,7 +480,7 @@ export const NO_OUTCOMES: PooledOutcomes = {
 const Z_95 = 1.959964;
 
 /**
- * Wilson score interval, mirroring `derive.wilson_interval`.
+ * Wilson score interval, mirroring `stream.wilson_interval`.
  *
  * Recomputed here rather than summed from per-run bounds because an interval
  * is not additive: averaging two runs' bounds is not the bound of their pooled
@@ -504,7 +504,7 @@ export function wilsonInterval(hits: number, n: number): [number, number] | null
  * Pool the outcome tallies of several runs.
  *
  * Pooled by summing trials rather than averaging each run's proportion, for
- * the same reason `_overall` does (`DATA.md#pooled-accuracy`): a session where
+ * the same reason `_overall` does (`ANALYTICS.md#pooled-accuracy`): a session where
  * one animal ran 200 trials and another ran 20 is not two equal votes.
  */
 export function poolOutcomes(runs: RunSummary[]): PooledOutcomes {
@@ -537,7 +537,7 @@ export function poolOutcomes(runs: RunSummary[]): PooledOutcomes {
 }
 
 /**
- * A pooled engagement ladder (`DATA.md#engagement-ladder`) — the layer above
+ * A pooled engagement ladder (`ANALYTICS.md#engagement-ladder`) — the layer above
  * `PooledOutcomes`, counting the trials the boxes *offered*.
  *
  * Monotone like the per-run ladder it sums: `presented ≥ poked ≥ odorDelivered`
@@ -568,7 +568,7 @@ export const NO_ENGAGEMENT: PooledEngagement = {
 };
 
 /** Pool several runs' engagement ladders — summed trials, not averaged rates,
- *  for the same reason `poolOutcomes` sums (`DATA.md#pooled-accuracy`). */
+ *  for the same reason `poolOutcomes` sums (`ANALYTICS.md#pooled-accuracy`). */
 export function poolEngagement(runs: RunSummary[]): PooledEngagement {
   const total = { ...NO_ENGAGEMENT };
   for (const run of runs) {
@@ -593,7 +593,7 @@ export function poolEngagement(runs: RunSummary[]): PooledEngagement {
 export interface SessionOutcomePoint {
   session: SessionListItem;
   outcomes: PooledOutcomes;
-  /** The presentation layer above `outcomes` (`DATA.md#engagement-ladder`) —
+  /** The presentation layer above `outcomes` (`ANALYTICS.md#engagement-ladder`) —
    *  how many trials the boxes offered, which is the denominator the outcome
    *  counts are silently conditioned on. `known: false` for a task that
    *  declares no trial light. */
@@ -622,10 +622,10 @@ export interface SessionOutcomePoint {
  *
  * A session whose runs all report `outcomes: null` contributes nothing: no
  * task in it has a reward vocabulary, which is not a session that earned
- * nothing (`DATA.md#rewarded-and-response-accuracy`). But a session whose
+ * nothing (`ANALYTICS.md#rewarded-and-response-accuracy`). But a session whose
  * administered count is zero *stays* — "ran and aborted everything" is data,
  * and the panels that can't plot it show a gap rather than pretending the
- * session never happened (`DATA.md#edge-cases`).
+ * session never happened (`ANALYTICS.md#edge-cases`).
  */
 export function sessionOutcomePoints(summary: AnalyticsSummary): SessionOutcomePoint[] {
   const bySession = new Map<string, RunSummary[]>();
@@ -673,7 +673,7 @@ export function sessionSlot(index: number, total: number): number {
  * The pair is deliberately symmetric — same x slots, same denominator, same
  * hollow-mark rule — because the whole point of showing both is that the
  * **vertical gap between them is the hold-failure rate**
- * (`DATA.md#rewarded-and-response-accuracy`). A reader can only read that gap
+ * (`ANALYTICS.md#rewarded-and-response-accuracy`). A reader can only read that gap
  * if nothing else differs.
  */
 export interface AccuracyReading {
@@ -693,7 +693,7 @@ export const REWARDED_ACCURACY: AccuracyReading = {
  * The correct well was answered, whether or not the hold earned the drop —
  * the choice rather than the consummatory act. Always ≥ rewarded accuracy,
  * and the figure the declared metrics themselves score
- * (`DATA.md#rewarded-and-response-accuracy`).
+ * (`ANALYTICS.md#rewarded-and-response-accuracy`).
  */
 export const RESPONSE_ACCURACY: AccuracyReading = {
   value: (o) => o.pSide,
@@ -733,7 +733,7 @@ export interface AnimalAccuracyPoint {
   x: number;
   y: number;
   /** Too few administered trials to read firmly — drawn hollow
-   * (`DATA.md#uncertainty`). */
+   * (`ANALYTICS.md#uncertainty`). */
   thin: boolean;
 }
 
@@ -741,7 +741,7 @@ export interface AnimalAccuracyPoint {
  * Each animal's own line at the pooled line's x slots, so the two are directly
  * comparable. A slot where the animal administered nothing stays `null`, so
  * its line shows the gap rather than interpolating through a session it sat
- * out (`DATA.md#edge-cases`). Animals that ran nothing at all are dropped
+ * out (`ANALYTICS.md#edge-cases`). Animals that ran nothing at all are dropped
  * entirely.
  */
 export function animalAccuracyLines(

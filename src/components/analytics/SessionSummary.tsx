@@ -19,7 +19,7 @@ import { springSnappy } from "@/lib/motion";
 
 /**
  * One session, per animal (`DATA.md#pooling-across-tasks`,
- * `DATA.md#rewarded-and-response-accuracy`).
+ * `ANALYTICS.md#rewarded-and-response-accuracy`).
  *
  * The panel answers "what happened in this session" at a glance, which the
  * cohort-scale views deliberately cannot: they compare sessions, this one

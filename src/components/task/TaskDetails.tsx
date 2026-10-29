@@ -15,7 +15,7 @@ import type { TaskDefinition } from "@/lib/taskdef/types";
  *
  * `legacyNames` IS THE ONE THAT MATTERS, and it is the least obvious. A
  * pre-Ephymeris archive records `sketch` as a human label — `Shape - R`,
- * `GRGL_2-Odor` — and the archive walk (`DATA.md#which-profile-decodes-a-run`)
+ * `GRGL_2-Odor` — and the archive walk (`ANALYTICS.md#which-profile-decodes-a-run`)
  * resolves that to a task by matching this list. A name typed here is what
  * makes those runs decode against the profile that actually ran them instead of
  * falling through to inference. Declared rather than guessed on purpose:

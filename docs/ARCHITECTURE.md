@@ -1447,7 +1447,7 @@ creation in Step 1. The quick note (**n**, or a box panel's **Note about box N**
 without leaving the view.
 
 A star's temperature is **pooled** rolling accuracy with chance as the ramp's floor, because a single
-condition can't tell learning from a side bias ([DATA.md](DATA.md#derived-metrics)).
+condition can't tell learning from a side bias ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#how-a-strobe-stream-is-scored)).
 
 ### Drag and drop
 
@@ -1557,7 +1557,7 @@ resolves it once and freezes it, so the exposure is dev and packaging machines.
 > nothing that worked before stops working.
 
 Small maths stays hand-written when the package's import costs more than the code it would replace: the
-Wilson interval ([DATA.md](DATA.md#derived-metrics)) is a few lines over `math.sqrt`, and `scipy.stats`
+Wilson interval ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#uncertainty)) is a few lines over `math.sqrt`, and `scipy.stats`
 takes about 0.3 s to import.
 
 The shell's `tauri-plugin-updater` meets the same four: it is Tauri's own, it replaces a signed download
@@ -1591,12 +1591,12 @@ own chunk, costs nothing until the first export, and a failure to load it loses 
 | `debug_run.py` | Live scoring for a task started from Debug Mode | [Running a task from Debug Mode](#running-a-task-from-debug-mode) |
 | `sessions/` | `lifecycle.py` (the held session and its ordering), `runner.py`, `writer.py` (write-ahead `.tsv`), `matwriter.py`, `models.py`, `repository.py`, `paths.py` (`parse_name_date`), `recovery.py`, `tidy.py` | [Session lifecycle](#session-lifecycle), [DATA.md](DATA.md#per-animal-files) |
 | `cohorts/` | `db.py` (SQLite, schema, migrations), `models.py`, `repository.py`, `folders.py`, `grouping.py`, `members.py` (former members), `move.py` / `move_apply.py` (moving animals between cohorts: plan, then journal, copy, commit, clean up), `relocate.py` (moving a data folder with its records' paths) | [DATA.md](DATA.md#cohorts-animals-and-groups), [DATA.md](DATA.md#moving-animals-between-cohorts) |
-| `tasks/` | `profile.py` (`task.json`, hashes), `start_command.py`, `metrics.py` (`MetricSet`), `seed.py` | [TASKS.md](TASKS.md#task-profile) |
+| `tasks/` | `profile.py` (`task.json`, hashes), `start_command.py`, `seed.py` | [TASKS.md](TASKS.md#task-profile) |
 | `taskdef/` | Task definitions: `model.py`, `fields.py`, `validate.py`, `generate.py`, `store.py`, `bundled.py` | [TASKS.md](TASKS.md#task-definitions) |
 | `rig/` | The rig definition: `registry.py` (channel and strobe registries, context-local hypotheticals), `definition.py` (impact check, writes, the read/write lock), `schema/` (including the default vocabulary seed), `hardware/` pinouts, `paths.py` | [TASKS.md](TASKS.md#the-rig-definition) |
 | `strobes/` | The machine's strobe vocabulary: `store.py` (`<data_dir>/strobes/vocabulary.json`, seeding, every edit, import merge), `usage.py` (firmware references, the cached archive scan) | [TASKS.md](TASKS.md#strobe-vocabulary) |
 | `hardware/` | The operator's `rig.json`: `store.py` (load, validate, save), `service.py` (located problems) | [TASKS.md](TASKS.md#rig-wiring) |
-| `analytics/` | `archive.py` (the cohort archive: recorded and recovered sessions in one read, and the one way to write it: the archive lock, the rig asked under it, `on_changed`), `scoring.py` (`RunScorer`: the profile ladder, scoring, the cache and its version), `derive.py` (pure metric definitions), `infer.py` (profile inferred from a stream), `false_starts.py` (which runs are set aside), `reader.py`, `repository.py`, `service.py` | [DATA.md](DATA.md#the-cohort-archive), [DATA.md](DATA.md#caching), [DATA.md](DATA.md#derived-metrics), [DATA.md](DATA.md#false-starts) |
+| `analytics/` | `archive.py` (the cohort archive: recorded and recovered sessions in one read, and the one way to write it: the archive lock, the rig asked under it, `on_changed`), `scoring.py` (`RunScorer`: the profile ladder, scoring, the cache and its version), `stream/` (pure: the trial definition and every metric, profile inference, false starts), `reader.py`, `repository.py`, `service.py` | [ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#the-folder-at-a-glance), [DATA.md](DATA.md#the-cohort-archive), [DATA.md](DATA.md#caching) |
 | `backup/` | `manager.py` (the mirror), `paths.py` (cohort-anchored paths) | [DATA.md](DATA.md#backup-mirroring) |
 | `logbook/` | The session log: `models.py`, `repository.py`, `service.py`, `diff.py` (what changed), `mirror.py` (`notes.md`) | [DATA.md](DATA.md#the-session-log) |
 | `intan/` | `client.py`, `streams.py`, `analysis.py`, `probemap.py`, `service.py` | [RECORDING.md](RECORDING.md) |

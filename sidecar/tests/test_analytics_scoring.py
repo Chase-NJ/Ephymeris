@@ -3,7 +3,7 @@
 
 `test_analytics_service.py` covers the ladder and the cache from the
 summary's side. This file holds the cache's version: a warm row answers to
-*every* input that produced it, not just to `derive`'s maths. And the
+*every* input that produced it, not just to `stream`'s maths. And the
 scorer's other promises: `analytics.series` scores off the event loop, a
 read-only `series` leaves nothing behind in the database, and a pass writes
 once.
@@ -22,7 +22,8 @@ from pathlib import Path
 
 import pytest
 
-from ephymeris_sidecar.analytics import AnalyticsService, derive, infer, scoring
+from ephymeris_sidecar.analytics import AnalyticsService, scoring, stream
+from ephymeris_sidecar.analytics.stream import infer, summary
 from ephymeris_sidecar.cohorts.db import Database
 from ephymeris_sidecar.rig import registry
 from ephymeris_sidecar.rig.registry import Vocabulary
@@ -133,9 +134,9 @@ async def test_series_scores_off_the_event_loop(
 
     # The scoring rungs: a run with no snapshot asks the file for its own.
     spy(task_profile, "embedded_profile")
-    spy(derive, "series")
-    spy(derive, "strategy_trail")
-    spy(derive, "trials_of")
+    spy(stream, "series")
+    spy(stream, "strategy_trail")
+    spy(stream, "trials_of")
 
     session = rig.add_session("1", "2026-07-22")
     run_id = rig.add_run(session, "a1", HIT_1 * 15 + MISS_1 * 5, snapshot=False)
@@ -174,7 +175,7 @@ async def test_a_cached_summary_answers_to_the_requested_threshold(rig: Rig) -> 
 # --- every input a cached row depends on ------------------------------------
 #
 # A cached row is served verbatim (`DATA.md#caching`), so a row must stop
-# answering when anything that produced it changes — not only `derive`'s
+# answering when anything that produced it changes — not only `stream`'s
 # maths. Each test below warms the cache, changes one input the way a release
 # would, and asks again through a NEW service on the same database: what an
 # upgraded app sees on its first launch.
@@ -346,18 +347,18 @@ def _set(owner: object, name: str, value: object):
     "change",
     [
         _set(infer, "INFERRED_WINDOW", infer.INFERRED_WINDOW + 1),
-        _set(derive, "wilson_interval", lambda hits, n, z=1.0: (0.0, 1.0)),
-        _set(derive, "OVERALL_ID", "__pooled__"),
+        _set(summary, "wilson_interval", lambda hits, n, z=1.0: (0.0, 1.0)),
+        _set(summary, "OVERALL_ID", "__pooled__"),
         _set(task_profile, "embedded_profile", lambda document: None),
         _set(task_profile, "recorded_config", lambda document, profile: None),
         _set(task_profile, "params_hash", lambda config: "same-for-all"),
         _set(
-            derive.RunSummary, "to_json",
-            (lambda real: lambda self: {**real(self), "added": True})(derive.RunSummary.to_json),
+            summary.RunSummary, "to_json",
+            (lambda real: lambda self: {**real(self), "added": True})(summary.RunSummary.to_json),
         ),
     ],
     ids=[
-        "inference window", "derive maths", "payload value", "embedded-profile parsing",
+        "inference window", "stream maths", "payload value", "embedded-profile parsing",
         "recorded config", "params hash", "payload shape",
     ],
 )

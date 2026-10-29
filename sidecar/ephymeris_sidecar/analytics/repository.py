@@ -1,5 +1,5 @@
 """Profile snapshots and the derived-metrics cache —
-`DATA.md#which-profile-decodes-a-run`, `DATA.md#caching`.
+`ANALYTICS.md#which-profile-decodes-a-run`, `DATA.md#caching`.
 
 Synchronous, like every other repository here; callers wrap in
 `asyncio.to_thread`. Shares the cohort database; each write is its own unit
@@ -50,7 +50,7 @@ class CachedRun:
     #: The profile this run was SCORED with — not necessarily the one
     #: resolution reached (`key.profile_hash`), which is NULL whenever the
     #: scoring profile came out of the file itself or its strobes
-    #: (`DATA.md#which-profile-decodes-a-run`).
+    #: (`ANALYTICS.md#which-profile-decodes-a-run`).
     profile_hash: str | None
     profile_source: str
     #: The parameters the run's own FILE records
@@ -101,7 +101,7 @@ class AnalyticsRepository:
             unit.execute(sql, row)
         return digest
 
-    # --- false-start overrides (DATA.md#false-starts) -----------------------
+    # --- false-start overrides (ANALYTICS.md#false-starts) -----------------------
 
     def false_start_overrides(self) -> dict[str, bool]:
         """Every run a person has ruled on: run id -> set aside or not."""
@@ -283,7 +283,7 @@ class AnalyticsRepository:
         unit: Tx, entries: list["AdoptedRun"], earlier_ids: dict[str, list[str]]
     ) -> None:
         """Move a ruling left on an id no row holds any more onto the entry
-        that now holds its run (`DATA.md#false-starts`). Inside
+        that now holds its run (`ANALYTICS.md#false-starts`). Inside
         `store_adopted`'s transaction, so the row and its ruling land together.
 
         Each entry's candidates are tried in order and the first ruling found

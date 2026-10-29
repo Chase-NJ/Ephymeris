@@ -31,7 +31,7 @@ export function ProfilePicker({
   value: string;
   onChange: (hash: string) => void;
   /** Profile hash → program name (`taskLabels`), which now prefers the name a
-   *  run RECORDED over the path this machine resolved (`DATA.md#which-profile-decodes-a-run`). */
+   *  run RECORDED over the path this machine resolved (`ANALYTICS.md#which-profile-decodes-a-run`). */
   labels: Map<string, string>;
 }) {
   if (profiles.length <= 1) return null;

@@ -244,7 +244,7 @@ export function StarPanel({
         </div>
 
         <div className="flex flex-col gap-3">
-          {/* The sidecar-computed rolling metrics (`TASKS.md#live-metrics`) —
+          {/* The sidecar-computed rolling metrics (`ANALYTICS.md#trials-hits-misses-and-exclusions`) —
               the same strip the collapsed tile shows, so focusing a star never
               costs the readout it was showing. */}
           <HudSection title="Live metrics">

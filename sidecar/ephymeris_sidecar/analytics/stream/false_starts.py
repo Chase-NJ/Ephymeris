@@ -1,8 +1,8 @@
-"""False starts: runs an animal restarted before they got going — `DATA.md#false-starts`.
+"""False starts: runs an animal restarted before they got going — `ANALYTICS.md#false-starts`.
 
 A box is started, something is wrong (the wrong animal, a dry line, a door
 left open), it is stopped within a minute or two and started again. Both runs
-are real files and both are real runs, and DATA.md#edge-cases forbids any view
+are real files and both are real runs, and ANALYTICS.md#edge-cases forbids any view
 silently keeping one of them. But counting the first one makes every
 per-session figure lie a little: a second point on the strategy plane, a
 second curve, an unweighted session mean dragged by a run of three trials, and
@@ -35,7 +35,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from ..sessions.paths import parse_name_time
+from ...sessions.paths import parse_name_time
 
 #: Fewer trials than this, and restarted, is a false start. The same number as
 #: the cohort's default minimum for trusting a rate (`DEFAULT_MIN_COUNTED`) —

@@ -1240,7 +1240,7 @@ class Application:
         )
 
     async def _analytics_set_false_start(self, args: Args) -> dict[str, Any]:
-        """A person's ruling on one run (`DATA.md#false-starts`)."""
+        """A person's ruling on one run (`ANALYTICS.md#false-starts`)."""
         cohort_id = _str_arg(args, "cohortId")
         run_id = _str_arg(args, "runId")
         value = args["falseStart"]

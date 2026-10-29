@@ -139,7 +139,7 @@ def parse_tsv(path: Path) -> ParsedTsv:
                     # A header line torn by the crash that stopped the session
                     # is the realistic way to get here, and half a snapshot
                     # that every reader has to defend against is worse than
-                    # none: the ladder below it (`DATA.md#which-profile-decodes-a-run`) still scores the run.
+                    # none: the ladder below it (`ANALYTICS.md#which-profile-decodes-a-run`) still scores the run.
                     decoded = _decode_json(value)
                     if decoded is not None:
                         metadata[key] = decoded

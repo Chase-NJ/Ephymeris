@@ -168,7 +168,7 @@ export function AnimalCard({
           <Unscored run={run} reason={reason} />
         ) : (
           <>
-            {/* Per condition (`DATA.md#per-condition-tally`): how many trials
+            {/* Per condition (`ANALYTICS.md#per-condition-tally`): how many trials
                 of this kind were administered, how many paid out, and — the
                 classification the whole card is for — how the administered ones
                 resolved. */}
@@ -255,8 +255,8 @@ function Unscored({ run, reason }: { run: RunSummary; reason: string }) {
  * Offered, trials, administered — the header every rate below is a fraction
  * of. All three are shown because they are different facts: 200 trials with 90
  * administered is a very different session from 200 with 195 at identical
- * accuracy (`DATA.md#trial-counts`), and 300 *offered* with 200 reaching odor
- * is different again (`DATA.md#engagement-ladder`).
+ * accuracy (`ANALYTICS.md#trial-counts`), and 300 *offered* with 200 reaching odor
+ * is different again (`ANALYTICS.md#engagement-ladder`).
  */
 function Effort({
   outcomes,
@@ -285,7 +285,7 @@ function Effort({
   );
 }
 
-/** The engagement ladder spelled out (`DATA.md#engagement-ladder`) — the two
+/** The engagement ladder spelled out (`ANALYTICS.md#engagement-ladder`) — the two
  *  gaps are different behaviours, and the header line only has room for their
  *  endpoints. */
 function describeEngagement(engagement: TrialEngagement): string {
@@ -312,7 +312,7 @@ const CONDITION_GRID =
  * the card.
  *
  * When the profile declares no reward vocabulary there is no per-condition
- * tally to show (`DATA.md#per-condition-tally`), so the row falls back to the
+ * tally to show (`ANALYTICS.md#per-condition-tally`), so the row falls back to the
  * metric's own scored-trial count and says nothing about outcomes — a dash
  * rather than a zero, because "this task has no notion of a reward" is not
  * "none was earned".

@@ -29,7 +29,8 @@ from a version tag, but it is unsigned.
 | [docs/USER-GUIDE.md](docs/USER-GUIDE.md) | run sessions: setting up a cohort, running and watching a session, results, troubleshooting |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | maintain the app: processes, wire rules, settings, the port state machine, the utility baseline, the session lifecycle, frontend rules, theme, module map |
 | [docs/TASKS.md](docs/TASKS.md) | write firmware or define tasks: the sketch library, `task.json`, task definitions, rig wiring, strobe vocabulary, the `START` line, the derived state machine |
-| [docs/DATA.md](docs/DATA.md) | touch anything written to disk or analysed: file layout, crash safety and recovery, SQLite, backup, the archive walk, metric definitions |
+| [docs/DATA.md](docs/DATA.md) | touch anything written to disk or read back: file layout, crash safety and recovery, SQLite, backup, the archive walk |
+| [analytics/ANALYTICS.md](sidecar/ephymeris_sidecar/analytics/ANALYTICS.md) | want to know how a strobe stream becomes trials, accuracies and errors: the metric definitions, which profile decodes a run, every kind of error, and a worked example. Start here if you are a PI or student checking the science |
 | [docs/RECORDING.md](docs/RECORDING.md) | work on the Intan RHX integration |
 | [docs/PROTOCOL.md](docs/PROTOCOL.md) | need the exact shape of a command, event or error code. **Generated** from `protocol/schema.py`; never edit it by hand |
 | [GLOSSARY.md](GLOSSARY.md) | need the exact meaning of a domain term, or are naming something new |
@@ -197,7 +198,8 @@ The guards that matter most:
 - `test_migrations.py`: pins old schemas as literal fixtures and upgrades them.
 - `test_analytics_infer.py`: inference from the strobe stream scores identically to the declared GRGL
   profile. Extend it before touching either side.
-- `test_analytics_derive.py`: the metric definitions, and the payload's field names.
+- `test_analytics_derive.py`: the metric definitions, the guide's worked example, and the payload's field names.
+- `test_analytics_stream_is_pure.py`: `analytics/stream/` imports no file, database or clock.
 - `test_analytics_scoring.py`: the cache version moves with every input a cached row depends on; its canary is pinned as a literal.
 - `test_taskdef.py`: the default strobe vocabulary against the names the firmware emits, in both directions; `test_strobes.py`: vocabulary edits, the archive scan, and the v13 hash re-key.
 - `test_debug_flash.py`: a Debug Mode flash survives the utility baseline, and Debug scoring matches a session's.

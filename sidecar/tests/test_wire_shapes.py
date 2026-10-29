@@ -245,7 +245,7 @@ async def test_flash_queue_status_matches_schema(fake_serial) -> None:  # noqa: 
 
 
 def test_analytics_derive_payloads_match_schema() -> None:
-    """Every `to_json` in `analytics/derive.py`, run for real and validated.
+    """Every `to_json` in `analytics/stream/`, run for real and validated.
 
     These are the emitters most likely to drift: a field is added to the maths
     and shows up in the payload, and `schema.py` is a separate file that has to
@@ -253,7 +253,7 @@ def test_analytics_derive_payloads_match_schema() -> None:
     wire rather than nested, so it is checked field-by-field against that shape
     instead of by reference.
     """
-    from ephymeris_sidecar.analytics import derive
+    from ephymeris_sidecar.analytics import stream
 
     profile = task_profile.parse_profile(
         {
@@ -286,12 +286,12 @@ def test_analytics_derive_payloads_match_schema() -> None:
     ) * 12
     document = {
         "rat": "remy1",
-        "stop_reason": derive.CLEAN_STOP_REASON,
+        "stop_reason": stream.CLEAN_STOP_REASON,
         "trial_seed": 288577176,
         "ts_data": [[code, index * 1000] for index, code in enumerate(codes)],
     }
 
-    summary = derive.summarize(document, profile)
+    summary = stream.summarize(document, profile)
     payload = summary.to_json()
     assert summary.overall is not None
     assert summary.outcomes is not None
@@ -308,9 +308,9 @@ def test_analytics_derive_payloads_match_schema() -> None:
         assert validate(("ref", name), value) == [], name
 
     for name, value in (
-        ("MetricSeries", derive.series(document, profile)[0].to_json()),
-        ("StrategyPoint", derive.strategy_trail(document, profile)[0].to_json()),
-        ("TrialRecord", derive.trials_of(document, profile)[0].to_json()),
+        ("MetricSeries", stream.series(document, profile)[0].to_json()),
+        ("StrategyPoint", stream.strategy_trail(document, profile)[0].to_json()),
+        ("TrialRecord", stream.trials_of(document, profile)[0].to_json()),
     ):
         assert validate(("ref", name), value) == [], name
 
@@ -326,7 +326,7 @@ def test_analytics_derive_payloads_match_schema() -> None:
             ],
         }
     )
-    thin = derive.summarize(document, bare).to_json()
+    thin = stream.summarize(document, bare).to_json()
     assert thin["outcomes"] is None
     assert thin["engagement"] is None
     assert thin["conditions"] == []

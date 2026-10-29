@@ -57,7 +57,7 @@ import {
  * own pair of lines.
  */
 
-/** Below this many administered trials the point is drawn hollow (`DATA.md#uncertainty`). */
+/** Below this many administered trials the point is drawn hollow (`ANALYTICS.md#uncertainty`). */
 const THIN = 30;
 
 /** The viewBox's y extent — a coordinate space, not a size. */
@@ -147,7 +147,7 @@ function TrendBody({
   );
   // The band between the two lines — the hold-failure rate, drawn as area so
   // it reads as a quantity rather than as a distance to be estimated. Split
-  // wherever either figure is missing, like the lines themselves (`DATA.md#edge-cases`).
+  // wherever either figure is missing, like the lines themselves (`ANALYTICS.md#edge-cases`).
   const gapBands = holdGapBands(points);
 
   const overall = poolOutcomes(summary.runs);

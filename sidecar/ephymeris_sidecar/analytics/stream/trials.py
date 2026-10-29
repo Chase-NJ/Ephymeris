@@ -1,7 +1,8 @@
-"""Live metric computation — `TASKS.md#live-metrics`.
+"""The definition of a trial: hit, miss or excluded — `ANALYTICS.md#trials-hits-misses-and-exclusions`.
 
 This is the actual scientific output, not a UI detail, so the definition is
-followed to the letter:
+followed to the letter. The live runner scores with it during a session and
+every offline figure replays it, so the two cannot disagree:
 
 For each occurrence of `triggerCode`, scan forward for the *next* occurrence of
 `successCode` or `alternateCode`, stopping at the next trial boundary — whichever
@@ -30,7 +31,7 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Iterable
 
-from .profile import LiveMetric, TaskProfile
+from ...tasks.profile import LiveMetric, TaskProfile
 
 
 @dataclass(frozen=True)
@@ -49,7 +50,7 @@ class MetricAccumulator:
     `boundary_codes` are the trial-start markers whose arrival mid-scan means the
     current trial ended without a scored response — the next
     occurrence of `triggerCode` or any other recognized trial-boundary code
-    (`TASKS.md#boundary-codes`); in practice every metric's `triggerCode` (each odor onset) is a boundary, so
+    (`ANALYTICS.md#boundary-codes`); in practice every metric's `triggerCode` (each odor onset) is a boundary, so
     the runner passes the union of all trigger codes in the profile.
     """
 
@@ -80,7 +81,7 @@ class MetricAccumulator:
         """Hits over every counted trial — the whole-session numerator.
 
         With `counted_total` this is whole-session P(hit) exactly, and the
-        window is irrelevant to it. `analytics.derive` uses the pair rather than
+        window is irrelevant to it. `stream.summary` uses the pair rather than
         re-running the stream through a window widened past the session length:
         both give the same number, but only this one gives an integer numerator
         that Wilson can be handed without a round-trip through a float.
@@ -166,3 +167,19 @@ def compute_series(
             if value is not None:
                 series.append(value)
     return series
+
+
+def boundaries_for(profile: TaskProfile | None) -> frozenset[int]:
+    """Every trigger code in the profile — the trial-boundary set.
+
+    **Use this everywhere.** `MetricSet` builds this union for the live run
+    (`MetricSet.__init__`), but `compute_series` defaults to *only* the
+    metric's own trigger. For a profile with more than one metric
+    those differ, and the difference is not cosmetic: a trial where the first
+    odor fires, the animal does not respond, and the second odor fires next is
+    **excluded** live and **mis-scored** offline under the default, because the
+    later response gets attributed to the abandoned trial.
+    """
+    if profile is None:
+        return frozenset()
+    return frozenset(m.trigger_code for m in profile.live_metrics)

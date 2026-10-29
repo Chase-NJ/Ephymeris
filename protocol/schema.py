@@ -1033,7 +1033,7 @@ SHAPES = (
                 "onto two axes without knowing anything about odors.",
             ),
         ),
-        doc="One metric's whole-session result (`DATA.md#derived-metrics`).",
+        doc="One metric's whole-session result (`ANALYTICS.md#how-a-strobe-stream-is-scored`).",
     ),
     Shape(
         "TrialOutcomes",
@@ -1073,7 +1073,7 @@ SHAPES = (
             f("sideLow", nullable(FLOAT)),
             f("sideHigh", nullable(FLOAT)),
         ),
-        doc="What actually happened per trial (`DATA.md#derived-metrics`). Distinct "
+        doc="What actually happened per trial (`ANALYTICS.md#how-a-strobe-stream-is-scored`). Distinct "
         "from the declared metrics, which are reward-*unconditional* — they "
         "score a detected poke whether or not the fluid hold cleared.",
     ),
@@ -1109,7 +1109,7 @@ SHAPES = (
             f("engagedHigh", nullable(FLOAT)),
         ),
         doc="How far each offered trial got before the animal dropped out "
-        "(`DATA.md#derived-metrics`). Delimited on the trial light, not on odor "
+        "(`ANALYTICS.md#how-a-strobe-stream-is-scored`). Delimited on the trial light, not on odor "
         "onset — the firmware only strobes odor-on after the animal has poked "
         "and held, so every other count in a run summary is silently "
         "conditioned on engagement and none of them can measure it. A ladder, "
@@ -1130,7 +1130,7 @@ SHAPES = (
             f("outcomes", Ref("TrialOutcomes")),
         ),
         doc="TrialOutcomes restricted to one declared condition "
-        "(`DATA.md#derived-metrics`), in authored liveMetrics order; the "
+        "(`ANALYTICS.md#how-a-strobe-stream-is-scored`), in authored liveMetrics order; the "
         "entries partition `RunSummary.outcomes` field for field. Answers 'how many trials of this "
         "kind were administered, and how many of those paid out'.",
     ),
@@ -1185,7 +1185,7 @@ SHAPES = (
             f(
                 "falseStart",
                 BOOL,
-                doc="Set aside as a false start (`DATA.md#false-starts`): restarted "
+                doc="Set aside as a false start (`ANALYTICS.md#false-starts`): restarted "
                 "and short, or ruled so by hand. Such a run arrives in "
                 "`AnalyticsSummary.falseStarts`, never in `runs`.",
             ),
@@ -1207,13 +1207,13 @@ SHAPES = (
                 "overall",
                 nullable(Ref("MetricSummary")),
                 doc="Accuracy pooled across every metric — the only single number "
-                "that can tell learning from a side bias (`DATA.md#derived-metrics`).",
+                "that can tell learning from a side bias (`ANALYTICS.md#how-a-strobe-stream-is-scored`).",
             ),
             f(
                 "outcomes",
                 nullable(Ref("TrialOutcomes")),
                 doc="Null when the profile declares no reward vocabulary "
-                "(`DATA.md#derived-metrics`) — "
+                "(`ANALYTICS.md#how-a-strobe-stream-is-scored`) — "
                 "absent rather than zeroed, since 'this task has no notion of a "
                 "reward delivery' is not 'this animal earned nothing'.",
             ),
@@ -1228,7 +1228,7 @@ SHAPES = (
                 "engagement",
                 nullable(Ref("TrialEngagement")),
                 doc="How many trials the box offered and how far each got "
-                "(`DATA.md#derived-metrics`) — the layer above every other count here. Null when "
+                "(`ANALYTICS.md#how-a-strobe-stream-is-scored`) — the layer above every other count here. Null when "
                 "the profile declares no trial light, on the same rule as "
                 "`outcomes`: a zeroed ladder would read as an animal that never "
                 "engaged rather than as a task that can't say.",
@@ -1329,7 +1329,7 @@ SHAPES = (
             f(
                 "falseStarts",
                 ListOf(Ref("RunSummary")),
-                doc="Runs set aside as false starts (`DATA.md#false-starts`). Listed "
+                doc="Runs set aside as false starts (`ANALYTICS.md#false-starts`). Listed "
                 "where runs are listed, muted; counted nowhere.",
             ),
             f("profileGroups", ListOf(Ref("ProfileGroup"))),
@@ -1402,7 +1402,7 @@ SHAPES = (
                 "no-response/aborted trials, which nothing settles.",
             ),
         ),
-        doc="One classified trial (`DATA.md#derived-metrics`) — the same classification "
+        doc="One classified trial (`ANALYTICS.md#how-a-strobe-stream-is-scored`) — the same classification "
         "pass the outcome tallies come from, kept as a sequence instead of "
         "being summed away.",
     ),
@@ -1418,7 +1418,7 @@ SHAPES = (
                 doc="The joint walk through the strategy plane. Always rolling, "
                 "whatever `mode` is — 'what strategy is running right now' is a "
                 "rolling question. Empty when the profile's conditions can't be "
-                "split into two opposing sides (`derive.strategy_axes`). Starts "
+                "split into two opposing sides (`stream.strategy_axes`). Starts "
                 "only once both windows hold enough counted trials, since a "
                 "one-trial proportion pins the walk to a corner. Cannot be "
                 "assembled client-side from `metrics`: those are indexed by each "
@@ -2330,7 +2330,7 @@ SHAPES = (
             f(
                 "falseStart",
                 BOOL,
-                doc="Set aside (`DATA.md#false-starts`): compared with nothing and "
+                doc="Set aside (`ANALYTICS.md#false-starts`): compared with nothing and "
                 "never the previous run of the next one, which is compared with "
                 "the run before this instead.",
             ),
@@ -3276,7 +3276,7 @@ COMMANDS = (
             ),
         ),
         result=obj(f("runId", STR)),
-        doc="A person's ruling on one run (`DATA.md#false-starts`), stored in "
+        doc="A person's ruling on one run (`ANALYTICS.md#false-starts`), stored in "
         "`run_flags`. Broadcasts `logbook.updated` for the run's session, since "
         "what changed is recomputed around it; the client refetches "
         "`analytics.summary`. `BAD_MESSAGE` for a run the cohort does not hold.",
@@ -3295,7 +3295,7 @@ COMMANDS = (
             f("metricIds", ListOf(STR), optional=True),
         ),
         result=Ref("SeriesResult"),
-        doc="Per-run learning-curve data (`DATA.md#derived-metrics`), plus each "
+        doc="Per-run learning-curve data (`ANALYTICS.md#how-a-strobe-stream-is-scored`), plus each "
         "run's strategy-plane `trail` and per-trial `trials` tape, which ride "
         "here because the file is already open and decoded. The x-axis is "
         "the counted-trial index and is implicit.",

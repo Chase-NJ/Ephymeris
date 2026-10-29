@@ -218,7 +218,7 @@ function Empty({ children }: { children: ReactNode }) {
  * Per-cohort reward accuracy across sessions, for the sparklines. One point
  * per session in date order: rewarded over administered trials pooled across
  * that session's runs — **the earned-drop rate, not choice accuracy**
- * (`DATA.md#rewarded-and-response-accuracy`). Rides the app-level analytics
+ * (`ANALYTICS.md#rewarded-and-response-accuracy`). Rides the app-level analytics
  * cache, so it never disagrees with the rig's star temperatures about
  * freshness.
  */

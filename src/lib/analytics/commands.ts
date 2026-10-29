@@ -32,7 +32,7 @@ export async function listSessions(
 }
 
 /**
- * A ruling on one run (`DATA.md#false-starts`): true sets it aside, false
+ * A ruling on one run (`ANALYTICS.md#false-starts`): true sets it aside, false
  * counts it whatever the rule says, null hands it back to the rule.
  */
 export async function setFalseStart(

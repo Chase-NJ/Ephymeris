@@ -1,4 +1,4 @@
-"""Analytics orchestration — `DATA.md#reading-the-archive`, `DATA.md#derived-metrics`.
+"""Analytics orchestration — `DATA.md#reading-the-archive`, `ANALYTICS.md#how-a-strobe-stream-is-scored`.
 
 Where `test_analytics_derive.py` covers the maths, this covers everything
 around it: which profile decodes a run, what happens when a file is missing or
@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 from ephymeris_sidecar.analytics import AnalyticsService, CohortArchive
-from ephymeris_sidecar.analytics import derive, scoring
+from ephymeris_sidecar.analytics import scoring, stream
 from ephymeris_sidecar.analytics.archive import ArchiveChange
 from ephymeris_sidecar.analytics.repository import AnalyticsRepository
 from ephymeris_sidecar.cohorts.db import Database
@@ -145,7 +145,7 @@ class Rig:
         run_id: str | None = None,
         snapshot: bool = True,
         write_file: bool = True,
-        stop_reason: str = derive.CLEAN_STOP_REASON,
+        stop_reason: str = stream.CLEAN_STOP_REASON,
         name: str | None = None,
     ) -> str:
         rid = run_id or f"r-{session_id[:6]}-{animal_id}"
@@ -199,7 +199,7 @@ MISS_1 = [101, 248]
 HIT_3 = [103, 248]
 
 
-# --- the summary (`DATA.md#derived-metrics`) -------------------------------
+# --- the summary (`ANALYTICS.md#how-a-strobe-stream-is-scored`) -------------------------------
 
 
 async def test_summary_scores_every_run(rig: Rig) -> None:
@@ -343,7 +343,7 @@ async def test_profile_groups_report_comparability(rig: Rig) -> None:
     assert group["runCount"] == 2
     assert group["taskName"] == "GRGL 2-Odor Discrimination"
     # The pooled figure is offered first, ahead of the declared metrics — it is
-    # the only one that can tell learning from a side bias (`DATA.md#pooled-accuracy`).
+    # the only one that can tell learning from a side bias (`ANALYTICS.md#pooled-accuracy`).
     assert [m["id"] for m in group["metrics"]] == [
         "__overall__",
         "p_r_odor1",
@@ -362,7 +362,7 @@ async def test_summary_can_be_filtered_to_one_session(rig: Rig) -> None:
     assert {r["sessionId"] for r in payload["runs"]} == {second}
 
 
-# --- which profile decodes a run (`DATA.md#which-profile-decodes-a-run`) ---
+# --- which profile decodes a run (`ANALYTICS.md#which-profile-decodes-a-run`) ---
 
 
 async def test_a_snapshotted_run_decodes_from_the_snapshot(rig: Rig) -> None:
@@ -393,7 +393,7 @@ async def test_a_legacy_run_falls_back_to_the_current_sketch_and_says_so(rig: Ri
 
 
 async def test_a_run_with_no_declaration_left_is_scored_from_its_strobes(rig: Rig) -> None:
-    """The ladder's last rung (`DATA.md#which-profile-decodes-a-run`): a deleted `task.json` used to strand a
+    """The ladder's last rung (`ANALYTICS.md#which-profile-decodes-a-run`): a deleted `task.json` used to strand a
     run at "no-metrics"; the stream itself now scores it, flagged `inferred`
     so the reader knows no declaration survives."""
     session = rig.add_session("1", "2026-07-22")
@@ -410,7 +410,7 @@ async def test_a_run_with_no_declaration_left_is_scored_from_its_strobes(rig: Ri
 async def test_a_stream_with_no_conditions_is_honestly_unavailable(rig: Rig) -> None:
     """Inference is a rung, not a promise — a stream presenting no recognisable
     condition (a utility sketch's log) still ends at `unavailable`, because
-    inventing a condition would be worse than saying nothing (`DATA.md#which-profile-decodes-a-run`)."""
+    inventing a condition would be worse than saying nothing (`ANALYTICS.md#which-profile-decodes-a-run`)."""
     session = rig.add_session("1", "2026-07-22")
     rig.add_run(session, "a1", [222, 224, 226, 233], snapshot=False)
     (rig.sketch / "task.json").unlink()

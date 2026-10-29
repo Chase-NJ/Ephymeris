@@ -637,7 +637,7 @@ class SessionLifecycle:
         (`DATA.md#transactions`). Runs in a worker thread.
 
         The snapshot is the profile that actually decoded this run
-        (`DATA.md#which-profile-decodes-a-run`): a `task.json` lives beside
+        (`ANALYTICS.md#which-profile-decodes-a-run`): a `task.json` lives beside
         its sketch and can be edited or deleted long after a session, so
         without it the run would silently be re-interpreted years later with
         whatever codes are current. One unit, because apart, another writer's

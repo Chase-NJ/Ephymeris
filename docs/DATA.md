@@ -1,14 +1,11 @@
 # Data
 
-Everything that lands on disk, everything in the database, and everything read back out of them: the session folder layout, the per-animal files, crash safety and recovery, the SQLite schema, backup mirroring, the archive walk, the cohort model, and **the derived-metric definitions**.
+Everything that lands on disk, everything in the database, and everything read back out of them: the session folder layout, the per-animal files, crash safety and recovery, the SQLite schema, backup mirroring, the archive walk, and the cohort model. The derived-metric definitions are in [ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md).
 
 Read with [TASKS.md](TASKS.md) (the profile that decodes a run) and [ARCHITECTURE.md](ARCHITECTURE.md#session-lifecycle) (what triggers these writes). Every command named here is specified in [PROTOCOL.md](PROTOCOL.md).
 
 > [!IMPORTANT]
 > **`.tsv` is not an export format.** It is the write-ahead log that makes the crash-durability guarantee real. Every strobe is `flush()`+`fsync()`'d to it the instant it arrives; `.json` and `.mat` are built once, at clean finalization. Read [Crash safety](#crash-safety) before treating `.tsv` as redundant with the other two.
-
-> [!IMPORTANT]
-> **The numbers in [Derived metrics](#derived-metrics) are the scientific output, not a UI detail.** They are what a paper would report. Treat that section as a specification.
 
 ## Contents
 
@@ -63,25 +60,12 @@ Read with [TASKS.md](TASKS.md) (the profile that decodes a run) and [ARCHITECTUR
   - [Database first](#database-first)
   - [The cohort archive](#the-cohort-archive)
   - [Orphan adoption](#orphan-adoption)
-  - [Which profile decodes a run](#which-profile-decodes-a-run)
   - [Caching](#caching)
   - [Never at the expense of a session](#never-at-the-expense-of-a-session)
   - [Pruning](#pruning)
   - [Carrying adoptions forward](#carrying-adoptions-forward)
   - [Tidy records](#tidy-records)
 - [Derived metrics](#derived-metrics)
-  - [Boundary codes](#boundary-codes)
-  - [Two probabilities per metric](#two-probabilities-per-metric)
-  - [Trial counts](#trial-counts)
-  - [Run-level scalars](#run-level-scalars)
-  - [Uncertainty](#uncertainty)
-  - [Edge cases](#edge-cases)
-  - [False starts](#false-starts)
-  - [Pooled accuracy](#pooled-accuracy)
-  - [Rewarded and response accuracy](#rewarded-and-response-accuracy)
-  - [Per-condition tally](#per-condition-tally)
-  - [Engagement ladder](#engagement-ladder)
-  - [Per-trial tape](#per-trial-tape)
 - [Analytics views](#analytics-views)
   - [Pooling across tasks](#pooling-across-tasks)
   - [Session order](#session-order)
@@ -283,7 +267,7 @@ The session's operator and summary are copied too. A copied carry-forward flag i
 
 **Caches follow.** `run_metrics_cache`, adoption and strobe-scan rows take the new path (all but an adoption that joins a run the destination already holds, below) and [carry their freshness keys](#caching): the content is hash-verified identical, so a summary that was right for the original is right for the copy. Copied files are queued for [backup](#backup-mirroring); the mirror is additive, so the old copies stay in the source's mirror folder.
 
-**A run the destination already holds.** One run copied into both cohorts, at different places, is [adopted](#orphan-adoption) by each. A moved adoption whose run identity the destination already holds **joins that row** rather than becoming a second: the held row keeps its id, which its cached scores and any [ruling](#false-starts) are keyed by; the moved row's ruling is carried onto it unless the held row has one of its own; and the moved row goes, with its cached scores. Its file is still copied, so the destination's folder holds two copies of the run, which a [rescan](#orphan-adoption) reads as one.
+**A run the destination already holds.** One run copied into both cohorts, at different places, is [adopted](#orphan-adoption) by each. A moved adoption whose run identity the destination already holds **joins that row** rather than becoming a second: the held row keeps its id, which its cached scores and any [ruling](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#false-starts) are keyed by; the moved row's ruling is carried onto it unless the held row has one of its own; and the moved row goes, with its cached scores. Its file is still copied, so the destination's folder holds two copies of the run, which a [rescan](#orphan-adoption) reads as one.
 
 **Refused**, with nothing touched, when: a session is held or a box runs anywhere in the app (copying competes with the write-ahead log's fsync); either cohort has an open (`configuring`/`running`) session; either data folder is unreachable; the folders are the same or one is inside the other; a destination file exists **with different content**; a run file lies outside the source's folder (left by a data-folder move from before records followed one; a rescan [re-points it](#data-folder)); two moved animals share a name; or the destination is archived. An identical file already at the destination is not a refusal.
 
@@ -384,7 +368,7 @@ A session recovered from files (`adopted:…`, [Orphan adoption](#orphan-adoptio
 A note's **T+ offset** (`offsetMs`) is its `at` minus `clockStartedAt`, derived on every read so a tidy merge or an edited `at` can never leave a stale one. A note whose `at` falls outside `[clockStartedAt, clockEndedAt or now]` — one written the next morning about the session — has no offset rather than a misleading one.
 
 > [!CAUTION]
-> **The session clock is not a run's clock.** Each animal's stream `t = 0` is its own first strobe, which trails its run's `started_at` (stamped before the board handshake, to the second). Placing a note on a run's [trial tape](#per-trial-tape) is therefore approximate to a few seconds, and is drawn as approximate.
+> **The session clock is not a run's clock.** Each animal's stream `t = 0` is its own first strobe, which trails its run's `started_at` (stamped before the board handshake, to the second). Placing a note on a run's [trial tape](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#per-trial-tape) is therefore approximate to a few seconds, and is drawn as approximate.
 
 ### Notes
 
@@ -677,7 +661,7 @@ erDiagram
 | `sessions` | `id`, `cohort_id`, `prefix_id`, `prefix_name`, `session_number`, `date`, `started_at`, `ended_at`, `status`, `folder_path`, `group_runs` (JSON), `duration_minutes`, `recording_json` | No FK on `prefix_id` |
 | `session_animal_runs` | `id`, `session_id`, `animal_id`, `box_number`, `sketch_path`, `file_path`, `started_at`, `ended_at`, `stop_reason`, `profile_hash`, `config_json`, `params_hash` | Cascades from `sessions`; **no FK on `animal_id`** |
 | `task_profiles` | `hash`, `task_name`, `kind`, `profile_json`, `first_seen_at` | **Content-addressed** snapshots: identical profiles store once, and comparability is an indexed equality test |
-| `run_metrics_cache` | `run_id`, `file_path`, `file_mtime_ns`, `file_size`, `profile_hash`, `profile_source`, `scored_profile_hash`, `params_hash`, `config_json`, `codec_version`, `computed_at`, `status`, `detail`, `summary_json` | A pure cache. **No FK on `run_id`** — adopted runs have no run record. `profile_hash` is what *resolution* reached; `scored_profile_hash` what the run was *scored* with ([why both](#which-profile-decodes-a-run)). `codec_version` holds the [cache version](#caching) |
+| `run_metrics_cache` | `run_id`, `file_path`, `file_mtime_ns`, `file_size`, `profile_hash`, `profile_source`, `scored_profile_hash`, `params_hash`, `config_json`, `codec_version`, `computed_at`, `status`, `detail`, `summary_json` | A pure cache. **No FK on `run_id`** — adopted runs have no run record. `profile_hash` is what *resolution* reached; `scored_profile_hash` what the run was *scored* with ([why both](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#which-profile-decodes-a-run)). `codec_version` holds the [cache version](#caching) |
 | `adopted_runs` | `id`, `cohort_id`, `animal_id`, `file_path`, `prefix_name`, `session_number`, `date`, `started_at`, `sketch_name`, `sketch_path`, `adopted_at`, `file_mtime_ns`, `file_size` | Files the archive walk matched to an animal. Deliberately separate from `sessions`/`session_animal_runs` |
 | `session_notes` | `id`, `session_id`, `cohort_id`, `at`, `created_at`, `edited_at`, `deleted_at`, `tag`, `scope_kind`, `animal_id`, `box_number`, `body`, `carry_forward`, `resolved_at`, `resolved_in_session` | [The session log](#notes). Cascades from `sessions` and `cohorts`; **no FK on `animal_id`** (the caution below) or `resolved_in_session` |
 | `session_logs` | `session_id`, `operator`, `summary`, `updated_at` | One per session that has one. Cascades from `sessions` |
@@ -719,7 +703,7 @@ with db.write() as tx:                 # the lock, then BEGIN IMMEDIATE
 - **`db.read()`** holds the lock for reading, with the connection `query_only`, so a read cannot write; one that begins a transaction is rolled back and refused. Inside the thread's own unit it is that unit, so a read sees the unit's own rows.
 - **What a commit announces.** The database hook ([backup](#the-database-copy)) fires once per committed unit that changed a row, under the lock right after `COMMIT`. A unit that rolled back, or changed nothing, announces nothing. `tx.on_commit(fn)` runs `fn` once after the commit, with the lock free.
 
-A finalization snapshots the run's [profile](#which-profile-decodes-a-run) and records the run in one unit. Apart, a rollback by any other writer between the two would leave the run naming a profile hash with no `task_profiles` row. The analytics indexing pass writes nothing until its end: it collects the profiles it scored with and writes them with its cache rows in one unit ([one transaction per job](#never-at-the-expense-of-a-session)), so no cached row names a scored profile hash without its `task_profiles` row, and a pass that changed nothing announces nothing. A [tidy](#tidy-records) is one unit, so a merge the database refuses undoes the ones before it; a [relocate](#data-folder) and a [move](#moving-animals-between-cohorts) write each journal step, and their records with their `committed` step, as units of their own.
+A finalization snapshots the run's [profile](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#which-profile-decodes-a-run) and records the run in one unit. Apart, a rollback by any other writer between the two would leave the run naming a profile hash with no `task_profiles` row. The analytics indexing pass writes nothing until its end: it collects the profiles it scored with and writes them with its cache rows in one unit ([one transaction per job](#never-at-the-expense-of-a-session)), so no cached row names a scored profile hash without its `task_profiles` row, and a pass that changed nothing announces nothing. A [tidy](#tidy-records) is one unit, so a merge the database refuses undoes the ones before it; a [relocate](#data-folder) and a [move](#moving-animals-between-cohorts) write each journal step, and their records with their `committed` step, as units of their own.
 
 ### Changing the schema
 
@@ -735,7 +719,7 @@ A finalization snapshots the run's [profile](#which-profile-decodes-a-run) and r
 - **Startup commits once**, because every commit marks the database dirty for [backup](#the-database-copy).
 - **A newer database still opens**, with a loud error rather than a refusal: every change is additive, and refusing would strand a machine that merely ran an older installer.
 - **A migration may re-key, never reinterpret.** v13 recomputed every stored `profile_hash` once `strobes` left the hash: each `task_profiles` row is re-parsed and re-hashed, and `session_animal_runs.profile_hash`, `run_metrics_cache.profile_hash` and `.scored_profile_hash` follow it. Profiles that differed only in their strobe maps collapse into one row (the earlier `first_seen_at` wins) — they were one task split by a map. Unparseable rows are left as they were.
-- **A migration may repair a cache**, never data: the v8 step deletes `inferred` cache rows that would otherwise never recompute ([below](#which-profile-decodes-a-run)), and the v12 step deletes adopted runs' rows so their recorded parameters are read into the new `config_json` ([What changed](#what-changed)).
+- **A migration may repair a cache**, never data: the v8 step deletes `inferred` cache rows that would otherwise never recompute ([which profile decodes a run](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#which-profile-decodes-a-run)), and the v12 step deletes adopted runs' rows so their recorded parameters are read into the new `config_json` ([What changed](#what-changed)).
 
 > [!TIP]
 > `tests/test_migrations.py` pins old schemas as **literal fixtures**: hand-written ones for v1 to v9, and from v4 on the `SCHEMA` and `INDEXES` each version shipped, copied out of git history into `tests/fixtures/schemas/`. Every one is upgraded and compared with a fresh database, table by table and column by column, so a column missing its migration fails there. **When you bump `SCHEMA_VERSION`, add the version you are leaving** as `vN.sql`, copied from the last commit before the bump. Never import the current schema into a fixture: that tests today's code against itself.
@@ -814,7 +798,7 @@ Mirroring failures surface as `state: "failed"` on `backup.status` with the unde
 
 ## Reading the archive
 
-`analytics/` reads runs back: `reader.py` (walking and reading files), `archive.py` ([the cohort archive](#the-cohort-archive)), `scoring.py` (`RunScorer`: [which profile decodes a run](#which-profile-decodes-a-run), scoring, and the [cache](#caching) and its version), `service.py` (the commands, adoption, pruning, tidy), `repository.py` (the cache and adoptions tables), `derive.py` (the [metrics](#derived-metrics)) and `infer.py` (inference).
+`analytics/` reads runs back, and [ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#the-folder-at-a-glance) maps every file in it. The parts this document covers: `reader.py` (walking and reading files), `archive.py` ([the cohort archive](#the-cohort-archive)), `scoring.py` (`RunScorer`: [which profile decodes a run](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#which-profile-decodes-a-run), scoring, and the [cache](#caching) and its version), `service.py` (the commands, adoption, pruning, tidy) and `repository.py` (the cache and adoptions tables).
 
 ### Database first
 
@@ -829,7 +813,7 @@ So a **walk exists, but only on an explicit user action** — `analytics.rescan`
 - A recovered run counts under the recorded session that owns its folder ([Tidy records](#tidy-records)), else under its synthetic session, and a session's run count includes the recovered runs filed under it.
 - A recovered run whose file a run record also names is left out: [the record wins](#database-first). A box finalizing while a rescan walks leaves exactly that pair, and the next rescan's [prune](#pruning) deletes the adoption. The comparison is of the stored path strings, so the view still opens nothing.
 - A recovered session's clock closes from the metrics cache ([The session clock](#the-session-clock)), and a summary closes it again from what it has just read. A run the summary did not select keeps its cached end, so a summary narrowed to some animals never moves a session's end.
-- [False starts](#false-starts) are judged from the summaries a pass has just scored, or from the cache for a reader that opens no file.
+- [False starts](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#false-starts) are judged from the summaries a pass has just scored, or from the cache for a reader that opens no file.
 
 The view reads the database only, so `sessions.list` and the log never wait on a file or on the lock.
 
@@ -882,59 +866,9 @@ This is the **only** path by which a pre-Ephymeris archive reaches Analytics, an
 > [!WARNING]
 > **The synthetic run id is keyed on the cohort and the run identity, never on the path** (`_orphan_run_id`). Which copy wins can change between scans, so a path-keyed id would mint a second row for the same run and reintroduce the double-counting deduplication prevents. Two cohorts whose folders overlap find the same file at the same path, so without the cohort in the key one cohort's rescan would take the other's row, and the run would leave one cohort's history at every rescan of the other.
 
-**An adopted run keeps the id it was stored under.** A rescan that reads a run its cohort already holds stores it under that row's id, whatever `_orphan_run_id` now gives, because a person's [false-start](#false-starts) ruling and the [cache](#caching) are keyed by it. `store_adopted` never writes over a row another cohort holds: moving a run between cohorts is a [move](#moving-animals-between-cohorts)'s job.
+**An adopted run keeps the id it was stored under.** A rescan that reads a run its cohort already holds stores it under that row's id, whatever `_orphan_run_id` now gives, because a person's [false-start](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#false-starts) ruling and the [cache](#caching) are keyed by it. `store_adopted` never writes over a row another cohort holds: moving a run between cohorts is a [move](#moving-animals-between-cohorts)'s job.
 
 **A missing data folder is reported, not treated as empty.** `analytics.rescan` returns `folderMissing`, and `analytics.summary` emits a `data-folder-missing` warning — otherwise an unplugged drive reads as "this cohort has no data". **An unreadable directory** costs a warning and its own contents, never the cohort.
-
-### Which profile decodes a run
-
-`profileSource` on each run says which declaration decoded it:
-
-| Source | Meaning | Shown as |
-|---|---|---|
-| `snapshot` | The profile the run actually used — this database's snapshot, or **the file's own** | Trusted, unmarked |
-| `sketch-current` | Today's `task.json` for the recorded sketch | Flagged `†`: may have changed since |
-| `inferred` | No declaration resolved; conditions read from the strobes (`analytics/infer.py`) | Flagged `≈`: scored from the strobes alone |
-| `unavailable` | Nothing resolves and the stream shows no recognisable condition (a utility log, an empty file) | Flagged: cannot decode |
-
-The ladder has four rungs:
-
-1. **the database snapshot** (`profile_hash` → `task_profiles`);
-2. **the file's own snapshot** ([embedded profile](#the-embedded-task-profile)), reported as `snapshot`;
-3. **today's `task.json`** for the recorded sketch name — including a saved task whose `legacyNames` claim a historical name;
-4. **inference** from the stream.
-
-Rungs 1 and 3 are *resolution* and run before any file is opened (`RunScorer._resolve_profile`); rungs 2 and 4 need the file open and live in `scoring._settle`. `analytics.summary` (`RunScorer.score`) and `analytics.series` (`RunScorer.decode`) climb the same ladder, so a chart draws the trials the summary counted. A malformed `task.json` or a damaged embedded snapshot degrades to the next rung rather than raising: a file with a broken declaration is still a file full of real strobes. So does a declaration with no `liveMetrics`: a rung is taken only if its profile declares something to score.
-
-```mermaid
-flowchart TD
-    run["A run to score"] --> db{"Rung 1: profile_hash found<br/>in task_profiles?"}
-    db -->|"yes, with liveMetrics"| snapshotDb["snapshot"]
-    db -->|"no"| embedded{"Rung 2: the file embeds<br/>a task_profile?"}
-    embedded -->|"yes, with liveMetrics"| snapshotFile["snapshot"]
-    embedded -->|"no"| current{"Rung 3: today's task.json for the<br/>run's sketch path, name or legacyName?"}
-    current -->|"yes, with liveMetrics"| sketchCurrent["sketch-current †"]
-    current -->|"no"| infer{"Rung 4: the stream shows<br/>a recognisable condition?"}
-    infer -->|"yes"| inferred["inferred ≈"]
-    infer -->|"no"| fallback["What resolution found:<br/>scored as no-metrics, or unavailable"]
-```
-
-Each "no" also covers a rung whose profile exists but declares no `liveMetrics`, with one wrinkle: rung 3 is consulted only when rung 1 found no snapshot at all, so a metric-less database snapshot goes from rung 2 straight to inference.
-
-> [!CAUTION]
-> **The file's snapshot outranks today's `task.json`, deliberately.** Both are "a declaration for this sketch"; only one is the declaration this run used. Ranked the other way, a rig holding a same-named task would score a visiting file against its own edit of it — silently, under a `profileHash` asserting the two are comparable.
-
-> [!IMPORTANT]
-> **The digest a run is *scored* with is not the digest *resolution* reached, and the cache keeps both.** Rungs 2 and 4 are reached after resolution found nothing, so the cache key's `profile_hash` is NULL for them by definition. Storing only that column made such a run report its hash on the pass that computed it and NULL on every cached pass after — silently dropping it out of its own profile group, the strategy plane, the learning curves and the parameter-mismatch check once the cache warmed. `scored_profile_hash` is the second column.
-
-**Why inference is sound, and its limits.** Every behaviour task this lab runs shares one firmware lineage and the append-only strobe registry ([TASKS.md](TASKS.md#strobe-vocabulary)), so a code means the same thing in every file. The stream says which conditions ran (the `ODOR_n_ON`-shaped onsets present) and which answer was correct: `checkResponse()` reaches `FLUID_x` / `WATER_UNPOKE_EARLY_x` only at the *correct* well and `WATER_POKE_ERROR_x` only at the wrong one, so any settled trial names the side; the majority wins across the session. The inferred profile goes through the **same scorer** as a declared one, and `tests/test_analytics_infer.py` pins identical counted/hits/pooled figures against the declared GRGL profile over the same stream — extend that pin before touching either side. Inference cannot know conditions never presented, the operator's labels, or the authored window (it uses `INFERRED_WINDOW`), so the declared path always wins. A condition never answered all session keeps its trial boundary (or other conditions would be mis-scored) with a deterministic, inert orientation.
-
-**What a run ran and what decoded it are separate fields.** `sketchName` is what the file itself recorded (its `sketch`, else the last path segment) and is what every task label prints. `sketchPath` is where *this install* found a `task.json`, legitimately empty for a session recorded on another rig. Showing such runs as "unknown sketch" would claim the record is silent when the file says exactly what it ran; the missing profile costs decoding fidelity, carried by `profileSource`.
-
-**A sketch name is resolved when a run is read, never frozen at adoption.** The stored `sketch_path` is a cache of the lookup. Since the sketch library ships with the app, the failure mode is a sketch dropped from the bundle — which `tests/test_bundled_library_covers_archives.py` guards.
-
-> [!IMPORTANT]
-> **Comparability is the pair `(profileHash, paramsHash)`, not the profile hash alone.** A profile hash covers the declaration, identical across every run of a task however it was tuned: a 10 ms poke hold and a 500 ms one share it. A comparability set holding more than one parameter set gets **one `parameter-mismatch` warning** rather than a split — splitting would fragment a cohort's history the first time someone nudged a timeout, and whether it matters is the reader's call. Runs with no recorded parameters (they ran on firmware constants) are ignored, not treated as their own set.
 
 ### Caching
 
@@ -945,7 +879,7 @@ The cache key (`repository.CacheKey`) is file path, mtime, size, profile hash an
 The version (`scoring.current_version`) covers everything else a row depends on, and moves by itself when any of it changes:
 
 - **`SCORE_VERSION`** (`analytics/scoring.py`), set by hand, in the high bits (`version >> 32`).
-- **The canary**: a hash of what the scoring code answers for a fixed set of runs, one per rung of the [ladder](#which-profile-decodes-a-run) and a few more (`canary_fingerprint`). Each goes through the function a real pass scores with, and every field a row keeps is hashed, keys included. So a change to the maths, the payload's shape, inference, the recorded parameters or the parsing of an embedded profile moves it.
+- **The canary**: a hash of what the scoring code answers for a fixed set of runs, one per rung of the [ladder](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#which-profile-decodes-a-run) and a few more (`canary_fingerprint`). Each goes through the function a real pass scores with, and every field a row keeps is hashed, keys included. So a change to the maths, the payload's shape, inference, the recorded parameters or the parsing of an embedded profile moves it.
 - **This machine's [strobe vocabulary](TASKS.md#strobe-vocabulary)**, read once per pass and handed to inference, so the key and the decode agree.
 
 The canary is scored once per process (about 2 ms); the vocabulary half is hashed on every pass. A version moves for every row at once: the first summary after an upgrade or a vocabulary edit (adding, retiring or reinstating a code) re-reads the cohort.
@@ -959,7 +893,7 @@ The canary is scored once per process (about 2 ms); the vocabulary half is hashe
 > **A key left at the original's is not only a re-read.** An adopted run that misses is [matched to an animal by name](#orphan-adoption) again. If the animal was renamed since adoption, the run turns into an unattributed orphan on every rescan; if its old name now belongs to another animal, the run silently changes animal. Carrying a key that was already stale is wrong the other way: the copy would vouch for a summary of content the file no longer has.
 
 - **Profile resolution is memoized per indexing pass, never across passes**, so an edited `task.json` takes effect on the next summary.
-- **Nothing in the cache depends on `minCountedTrials`.** `lowConfidence` is judged against each request's threshold on every row served (`derive.with_threshold`), hit or miss.
+- **Nothing in the cache depends on `minCountedTrials`.** `lowConfidence` is judged against each request's threshold on every row served (`stream.with_threshold`), hit or miss.
 - **A pass writes once.** The profiles it decoded with and the rows it recomputed go in one [unit of work](#transactions) at its end; `analytics.series` writes nothing.
 - **A reader that opens no file reads only rows of the current version** (`load_cached(…, version=…)`): the [archive](#the-cohort-archive)'s session clocks, its false-start verdicts and the session log's [what changed](#what-changed). Another version's row is one the next summary recomputes; until then the run counts as unread.
 - **Never delete a cache entry because a file vanished** on the read path — mark it stale and keep serving it. The read path cannot tell a deletion from an unplugged drive; only [pruning](#pruning) can. The kept row is re-keyed at the **current** version with no stat: readers that open no file keep seeing it, and the file's return is always a miss.
@@ -1025,203 +959,7 @@ A day that goes wrong leaves two kinds of leftover; **Tidy records** (`sessions.
 
 ## Derived metrics
 
-Everything here is computed from `ts_data`. **There are no trials, accuracies or metrics on disk**; all of it is derived at read time from raw codes plus the profile that decodes them.
-
-`analytics/derive.py` is **pure** — no I/O, no database, no clock — which is what lets a test assert it agrees with the live path over a recorded stream. **Nothing here reimplements scoring**: it replays the stream through `tasks/metrics.py`'s `MetricAccumulator`, the same machinery Mission Control uses ([TASKS.md](TASKS.md#live-metrics)). A run's summary is `RunSummary`; its `status` is `ok`, `no-metrics`, `missing` or `unreadable`.
-
-### Boundary codes
-
-> [!CAUTION]
-> **The offline scan must be given the union of *every* trigger code in the profile, exactly as the live runner does.** `MetricSet` builds that union live, and `derive.boundaries_for` builds it offline — use it. `compute_series` **defaults to only the metric's own trigger** when `boundary_codes` is omitted, and for any profile with more than one metric that differs: a trial where Odor 1 fires, the animal does not respond, and Odor 3 fires next is **excluded** by the live path and **mis-scored** by the default, which attributes the later response to the abandoned trial. Every unanswered trial scores wrongly, silently.
-
-### Two probabilities per metric
-
-| | Definition | Used by |
-|---|---|---|
-| **`pWindow`** | The rolling value at the end of the run, over the authored `windowSize` | Reconciling a run against the last number Mission Control showed |
-| **`pSession`** | `hits / counted` over every trial the same accumulator scored | **Every summary**: strategy plane, cross-session curves, session summary |
-
-Both come from **one replay through one accumulator** (`_summarize_metric`), so they differ *only* in averaging window and cannot disagree on how a trial was classified.
-
-> [!WARNING]
-> **The two diverge sharply over the first `windowSize` trials. They are not interchangeable.** Two panels using different ones under the same axis label is an invisible error. Each view states which it reads.
-
-`pSession` is the summary statistic wherever a summary is shown: less noisy, and the only one with a defensible sample size.
-
-### Trial counts
-
-| Count | Definition |
-|---|---|
-| **`counted`** | Trials scored as hit or miss. A series has one entry per counted trial |
-| **`hits`** | Counted trials scored as hits — carried so pooling stays exact over integers |
-| **`triggered`** | Occurrences of the metric's `trigger_code` — trials presented |
-| **`excluded`** | `triggered − counted`: lazy, invalid and no-response trials |
-
-`excluded` is scientifically meaningful: 200 triggers with 90 counted is a different session from 200 with 195 at the same P(correct). **Surface it.** A session's last trial is usually unresolved when the board ends and correctly lands in `excluded`.
-
-> [!CAUTION]
-> **`MetricValue.n` (and a series' `n`) is the window length, capped at `windowSize` — not a trial count.** Using it as the sample size for an interval on `pSession` is wrong by an order of magnitude. **`counted` is the count.**
-
-### Run-level scalars
-
-- **`totalEvents`** = `len(ts_data)`. Trust `ts_data` over the document's `n_events`; a mismatch means a hand-edited or recovered file.
-- **`durationMs`** = `max − min` of the stream's timestamps — stream-relative, and `max − min` rather than `last − first` so a disordered file can never yield a negative duration.
-- **Wall duration** = `ended_at − started_at` from the run record.
-- **`stopReason`**, and `clean = stopReason == "BF_END_SESSION received"`.
-- **`seed`** = the document's `trial_seed`.
-
-> [!NOTE]
-> **Report both durations and do not reconcile them.** `started_at` is stamped when the runner creates the run; stream `t=0` is the board's own start, after the DTR reset and `READY` handshake.
-
-### Uncertainty
-
-Every probability carries `counted` and a **95% Wilson score interval** (`wilson_interval`). Wilson, not the normal approximation, because this data lives at small *n* **and** at *p* near 1 (a trained animal sits near 0.95) — exactly where the normal interval runs past 1.0. It is a few lines over `math.sqrt`, cheaper than importing `scipy.stats` for it ([dependency policy](ARCHITECTURE.md#dependency-policy)).
-
-**The sidecar never suppresses.** It reports value, count, interval and a `lowConfidence` flag (`counted < minCountedTrials`, default `DEFAULT_MIN_COUNTED` = 10). Suppression is a presentation choice made client-side: a learning curve draws a widening band; a strategy point draws hollow and smaller; a session-summary chip drops to an outline. Keeping the value preserves the difference between *"cut short after three trials"* and *"never happened"*.
-
-### Edge cases
-
-| Case | Rule |
-|---|---|
-| **Zero counted trials** | `null`, **never `0.0`**. Zero percent and "no trials" are opposite claims. No strategy point is placed |
-| **Profile-less sketch** | `no-metrics`, no metrics invented. **The run is still listed** — it has a real duration, event count and stop reason |
-| **Utility-kind profile** | Scored if it declares metrics, but `excludedByDefault` from cohort aggregates |
-| **Board disconnected mid-run** | Finalized with `stop_reason: "board disconnected"`. **Include it**, show the reason; a drop at trial 180 of 200 is good data. Distinct from an `aborted` session, which ran no box and wrote no behavior data |
-| **No file path recorded** | The writer never opened (handshake failed, or the exclusive open collided): `missing` |
-| **Path recorded, file absent** | `missing` — and if the sibling `.tsv` exists, say so: that is the disk-full case [recovery](#crash-recovery) fixes |
-| **Two runs for one (animal, session)** | Real (a restart after a board drop, a same-day prefix+number reuse). Both are runs and both are listed; no view may silently keep whichever came last. A short first run is a [false start](#false-starts): still listed, but counted nowhere |
-
-### False starts
-
-A box is started, something is wrong, it is stopped within a minute and started again. Both runs are real files, but counting the first adds a second strategy point, a second learning curve, a session mean dragged by a run of three trials, and a what-changed that compares the real run with the aborted one and calls it unchanged. So a false start is **set aside, never hidden** (`analytics/false_starts.py`).
-
-**The rule needs both conditions:**
-
-1. **Restarted:** a later run of the same animal exists in the same session. Order is by the start time in each run's file name (`order_key`), because a recorded run stamps UTC and an adopted one a naive local time, and a session can hold both.
-2. **Short:** fewer than `MAX_TRIALS` (10) trials, counted as odor onsets (`TrialOutcomes.trials`, or the live metrics' `triggered` counts summed when the profile cannot tally outcomes).
-
-A run nobody restarted is never a false start, however short; an animal that quit after four trials is data. A run whose trials are unknown, because no profile could score it or the index has not read it yet, is never set aside by the rule: "couldn't tell" fails toward counting.
-
-**A person can overrule it either way.** `analytics.setFalseStart` writes `run_flags`: `true` sets a run aside, `false` counts it whatever the rule says ("restored"), `null` hands it back to the rule. Overrides are keyed by run id, which for an adopted run is the id its cohort holds it under ([Orphan adoption](#orphan-adoption)), so a decision survives a rescan. When a rescan prunes a run's row and adopts the run afresh under a new id — its file refiled, and the row held under its stem-only id or under the id of the cohort a [move](#moving-animals-between-cohorts) brought it from — the ruling moves to the new row (`_earlier_ids`, `store_adopted`). It never moves off an id a row still holds, and a cohort reading a run it already holds never takes another cohort's ruling.
-
-| Where | What a false start does there |
-|---|---|
-| `analytics.summary` | Moved from `runs` to `falseStarts`, so every metric, curve, strategy point, profile group and parameter check ignores it **by construction**. Counted in `counts.falseStarts` and in none of the other counts |
-| Session table, log readout, printed log | Listed below the session's runs, muted, labelled *false start* with why (rule or marked by hand) |
-| What changed | Compared with nothing and nobody's previous run: the run that restarted it is compared with the animal's previous session (`diff.compare` takes the verdicts). Listed under the changes as set aside |
-| The session clock | Unchanged: the time it took is real elapsed time |
-
-The log computes the same verdicts from the analytics cache (`CohortArchive.verdicts`), never from the files, so the two agree once Analytics has read the session.
-
-### Pooled accuracy
-
-Each run also carries **`overall`** (id `__overall__`): correct trials over scored trials, pooled across every condition. **It is every per-run readout's default** — the animal rail and the session rail read it.
-
-> [!IMPORTANT]
-> **A single condition cannot show a side bias.** An animal that pokes right on every trial scores ~1.0 on "P(R | Odor 1)" and ~0.0 on "P(L | Odor 3)", so any readout keyed on one declared metric paints a completely bias-locked animal as one of the best in the cohort. Pooled, it sits at chance, which is the truth. This was found on real output, where a deliberately non-learning animal read 0.72–0.84.
-
-- **Pooled by summing hits and counted**, never by averaging proportions, so a session with 90 trials of one condition and 10 of another is weighted as it ran.
-- **The rate pools only conditions that scored; the counts pool all of them**, so a condition fired twenty times and never answered still appears in `triggered`/`excluded`, and `triggered == counted + excluded` holds on the pooled row.
-- **It is a summary, not a condition**: never a strategy axis, and no within-session series (the conditions interleave and the live path has no pooled accumulator).
-
-### Rewarded and response accuracy
-
-The declared metrics are **reward-unconditional**: `WATER_POKE_L/R` scores the instant the poke is seen, so reaching the correct well and releasing early still scores a hit. Right for a live discrimination readout; not "how often did this animal earn water". So each run also carries `outcomes` (`TrialOutcomes`), classified per trial from the profile's own strobe names:
-
-| Outcome | Recognised by | Meaning |
-|---|---|---|
-| **rewarded** | `FLUID_*` | Fluid delivered |
-| **hold failed** | `WATER_UNPOKE_EARLY_*` | Correct well, released before the hold — no drop |
-| **wrong well** | `WATER_POKE_ERROR_*` | Wrong side |
-| **no response** | administered, none of the above | Sampled, never answered |
-| **aborted** | no `ODOR_UNPOKE` | Odor delivered, left before sampling cleared |
-
-How one trial is classified (`derive._classify_trials`). A trial runs from its onset to the next boundary
-code, and the first outcome code inside it decides; only a trial with none falls through to the sampling
-check:
-
-```mermaid
-flowchart TD
-    onset["Trial opened by an odor onset"] --> outcome{"First outcome code<br/>before the next boundary?"}
-    outcome -->|"FLUID_*"| rewarded["rewarded"]
-    outcome -->|"WATER_UNPOKE_EARLY_*"| holdFailed["hold failed"]
-    outcome -->|"WATER_POKE_ERROR_*"| wrongWell["wrong well"]
-    outcome -->|"none"| sampled{"ODOR_UNPOKE seen?"}
-    sampled -->|"yes"| noResponse["no response"]
-    sampled -->|"no"| aborted["aborted"]
-```
-
-`administered` (odor sampled to completion: every trial but `aborted`) is the denominator:
-
-- **Rewarded accuracy** (`pRewarded`) = `rewarded / administered`. Conservative.
-- **Response accuracy** (`pSide` on the wire) = `(rewarded + holdFailed) / administered` — the correct side was chosen, held or not. **Always ≥ rewarded accuracy; the gap is the consummatory hold-failure rate**, a real behaviour.
-
-Each has its own Wilson interval. Three deliberate choices:
-
-- **Administered, not trials, is the denominator**: an unsampled trial is not evidence about discrimination.
-- **Matched by anchored name, never by code number.** `^FLUID(_|$)` so `STOP_FLUID_G_R` (delivery *ending*) is not a second reward; `^ODOR_UNPOKE$` so `ODOR_UNPOKE_EARLY` cannot satisfy completed sampling.
-- **A task declaring no reward vocabulary reports `outcomes: null`**, not zeros: "no notion of a reward" and "earned nothing" are different claims.
-
-> [!WARNING]
-> Two limits invisible in the numbers:
->
-> - **`trials` counts odor onsets, not trials offered.** The firmware strobes odor-on only after the animal has poked and held, so an ignored trial produces no boundary and appears nowhere, not even as `aborted`. **Every figure here is conditioned on engagement**; the [engagement ladder](#engagement-ladder) measures it.
-> - **A no-go withhold would land in `no response`**: the correct no-go answer looks exactly like a non-response from the strobes. No sketch in this lab runs no-go trials, so nothing is mis-scored today, but a no-go task needs its own bucket first.
-
-### Per-condition tally
-
-`conditions` is the same tally restricted to the trials each declared condition opened. A **condition** is a `liveMetrics` entry; its trials are those its `triggerCode` opened. The pooled figure cannot show a rat at 95% on one odor and 25% on the other.
-
-- **Driven off the profile, never off a task's vocabulary.** Five declared conditions, five entries.
-- **Authored `liveMetrics` order**, so it lines up with the strategy plane.
-- **A partition**: every trial belongs to exactly one condition and the entries sum to `outcomes` field-for-field, because one classification pass produces both.
-- **A condition with no trials is zeroed, not omitted** (its rates stay `null`).
-- **Empty — not `null` — when `outcomes` is `null`.**
-
-### Engagement ladder
-
-Everything above is delimited on odor onset, which the firmware reaches only after the animal has poked and held. So **two animals with identical accuracy, one working every trial and one skipping four fifths, produce identical numbers** everywhere above. `engagement` (`TrialEngagement`) is delimited on the **trial light** instead: `LIGHTS_ON` happens first and unconditionally, before the animal can do anything.
-
-| Rung | Reached when | Meaning |
-|---|---|---|
-| `presented` | `LIGHTS_ON` | The box offered a trial |
-| `poked` | `ODOR_POKE` within that presentation | The animal engaged the odor port |
-| `odorDelivered` | An odor-on code within it | The pre-odor hold cleared and odor was delivered |
-
-**`pEngaged = poked / presented`** (with a Wilson interval) and `pDelivered = odorDelivered / presented`. The gaps are reported as `noPoke` and `pokeAborted`.
-
-The rungs and their gaps. Each gap is the difference between neighbouring rungs, and the last rung is where
-the outcome tally above begins:
-
-```mermaid
-flowchart LR
-    presented["presented<br/>LIGHTS_ON"] -->|"ODOR_POKE"| poked["poked"]
-    poked -->|"odor-on code"| delivered["odorDelivered<br/>= outcomes.trials"]
-    presented -.->|"never poked"| noPoke["noPoke =<br/>presented − poked"]
-    poked -.->|"let go before odor"| pokeAborted["pokeAborted =<br/>poked − odorDelivered"]
-```
-
-- **A ladder, not a partition**: each rung counts presentations reaching that stage, so `presented ≥ poked ≥ odorDelivered` by construction and no gap is negative.
-- **`pokeAborted` is not `outcomes.aborted`**: both let go of the port, but only the latter had smelled anything.
-- **`odorDelivered` should equal `outcomes.trials`** — the same trials counted from opposite ends. The tests assert it.
-- **`null`, never zeroed, when the profile declares no trial light.**
-
-> [!CAUTION]
-> Matched by **anchored** name: `LIGHTS_OFF` is the same word and the opposite edge, and an unanchored match would roughly **double `presented`** while still looking plausible.
-
-### Per-trial tape
-
-The tallies say *how often*; the tape says *when* (streaks, bias episodes, the moment an animal stopped). `analytics.series` returns each run's trials as `TrialRecord {index, triggerCode, outcome, atMs, latencyMs}` in stream order.
-
-- **The tape is the same classification the tallies are summed from** — `_classify_trials` yields it and `_tally` consumes it. A test pins that tallying the tape reproduces `outcomes_of` and grouping it by `triggerCode` reproduces `conditions_of`.
-- `outcome` uses hyphenated wire spellings (`hold-failed`, `no-response`, …).
-- `atMs` is ms from the run's **earliest** timestamp (not first, for `durationMs`'s reason). `latencyMs` is open → settling code; `null` for `no-response`/`aborted`, and nulled rather than negative on a disordered file.
-- Empty, not `null`, when the profile can't express outcomes.
-- Carried on `analytics.series` because the file is already open there; uncached, like the series.
-- **Session-log notes are drawn on it** (`lib/logbook/tapeMarkers.ts`): a note marks every run if it is
-  session-wide, otherwise only its animal's or box's run, and only if it falls within the run (a minute's
-  slack at either end). It sits before the first trial that opened after it — approximate to a few
-  seconds, for [the session clock's](#the-session-clock) reason, and its hover text says so.
+Trials, accuracies, trial outcomes, engagement, false starts, and which profile decodes a run are defined in [ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md), beside the code that computes them.
 
 ## Analytics views
 
@@ -1260,7 +998,7 @@ After a session ends, the landing on Analytics **always refetches, keyed on the 
 Separates *learning* from *picking a side*: one point per run, x = accuracy at one well, y at the other. Top-right is discrimination, the centre is chance, **the anti-diagonal `x + y ≈ 1` is pure side bias**, bottom-left is a reversed contingency.
 
 > [!IMPORTANT]
-> **The axes are SIDES, not conditions** (`derive.strategy_axes`, `view.strategyAxes`, `view.sideAccuracy`). x pools every condition answered at one well, y every condition answered at the other — **over integers** (sum hits, sum counted) — so a four-odor task reads on the same two axes as a two-odor one. Taking `liveMetrics[0]` against `[1]` silently blanked the plane for every task with more than two conditions.
+> **The axes are SIDES, not conditions** (`stream.strategy_axes`, `view.strategyAxes`, `view.sideAccuracy`). x pools every condition answered at one well, y every condition answered at the other — **over integers** (sum hits, sum counted) — so a four-odor task reads on the same two axes as a two-odor one. Taking `liveMetrics[0]` against `[1]` silently blanked the plane for every task with more than two conditions.
 >
 > - **A condition's side comes from its own `successCode` only** (`answer_side_of`), never from `alternateCode`: a no-go metric's alternate means "any port will do", and the fallback prints "left well" for a condition whose answer is to poke nothing. Unprovable → `null` → no axis.
 > - **A withhold condition and `__overall__` never count toward a side.**
@@ -1273,7 +1011,7 @@ Separates *learning* from *picking a side*: one point per run, x = accuracy at o
 ![The cohort's lower panels: the Animals rail with each animal's pooled accuracy sparkline, the Strategy space with one point per animal per session between the corners discriminating, chance, side bias and reversed, its axes labelled right well (up) and left well (right), and Overall accuracy per animal from first session to latest](images/analytics-panels.webp)
 
 *Across sessions the axes are the two wells, whatever the task. Every number in the Animals rail is
-[pooled accuracy](#pooled-accuracy). (This screenshot predates the current layout, which drops the Overall
+[pooled accuracy](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#pooled-accuracy). (This screenshot predates the current layout, which drops the Overall
 accuracy chart and sets the plane beside the accuracy trend — [Analytics views](#analytics-views).)*
 
 **Not a signal-detection ROC.** Hit rate against false-alarm rate needs one metric's `successCode` and another's `alternateCode` to be the same physical response — a fact about the rig that no profile states. The plane as built needs no such inference. Folding conditions onto sides doesn't reintroduce it: each side comes from the metric's own code, through the profile's own `strobes` map.

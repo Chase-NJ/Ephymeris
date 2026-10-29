@@ -36,7 +36,7 @@ export interface RigStellar {
  * A box's temperature is the **mean accuracy of the animals assigned to it**,
  * each animal's own accuracy pooled across *all* of its scored sessions —
  * hits over counted trials of the run-level `overall` metric, the pooled
- * accuracy that can tell learning from a side bias (`DATA.md#pooled-accuracy`).
+ * accuracy that can tell learning from a side bias (`ANALYTICS.md#pooled-accuracy`).
  * Assignment comes from the same summaries, so one fetch per active cohort
  * covers both facts, through the app-level analytics cache the Analytics view
  * shares — browsing the rig after checking a cohort costs nothing extra.

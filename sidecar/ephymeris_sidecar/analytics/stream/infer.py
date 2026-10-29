@@ -1,5 +1,5 @@
 """A scoring profile inferred from the stream itself — the last rung of
-`DATA.md#which-profile-decodes-a-run`.
+`ANALYTICS.md#which-profile-decodes-a-run`.
 
 Every behaviour task this rig has ever run shares one firmware lineage and one
 **append-only strobe registry**: a code has meant the same thing in every file
@@ -21,13 +21,13 @@ What a profile normally supplies, and where inference gets it instead:
   only at the wrong one, so any settled trial names the side. Majority across
   the session's trials, because a hand-edited file can hold anything.
 * **the outcome vocabulary** — the registry itself, in-use and retired names
-  alike, so the outcome tallies (`DATA.md#rewarded-and-response-accuracy`) and
+  alike, so the outcome tallies (`ANALYTICS.md#rewarded-and-response-accuracy`) and
   the engagement ladder read the same names a
   declared profile would have carried.
 
 THE DECLARED PATH ALWAYS WINS. A configured task's `task.json` carries its
 TrialTypes' own declaration — including which conditions exist that the animal
-never met — and inference is only ever the fallback beneath it (`service.py`'s
+never met — and inference is only ever the fallback beneath it (`scoring.py`'s
 ladder). What inference cannot know: conditions the session never presented,
 the operator's labels, and the authored rolling window; it uses the same
 window the generator writes.
@@ -48,9 +48,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from ..rig import registry
-from ..rig.registry import Vocabulary
-from ..tasks.profile import LiveMetric, TaskProfile
+from ...rig import registry
+from ...rig.registry import Vocabulary
+from ...tasks.profile import LiveMetric, TaskProfile
 
 #: The shape of a stimulus onset — `ODOR_3_ON`, a hypothetical `TONE_2_ON`.
 #: The same rule the task editor's picker applies, and for the same reason:

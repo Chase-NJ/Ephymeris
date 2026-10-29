@@ -318,7 +318,7 @@ export function cumulativeOutcomes(
  * per-condition figure cannot tell learning from a side bias: an animal that
  * always pokes right scores ~1.0 on the go-right odor and ~0.0 on the other,
  * and either alone looks like a story. Pooled, that animal sits at chance,
- * which is the truth (`DATA.md#pooled-accuracy`).
+ * which is the truth (`ANALYTICS.md#pooled-accuracy`).
  *
  * Abstentions count against it: a trial the animal declined to work is a
  * trial it did not earn, which is exactly what an at-a-glance health readout

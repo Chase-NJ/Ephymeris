@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
-from ..tasks.metrics import MetricSet
+from ..analytics.stream.trials import MetricSet
 from ..tasks.profile import TaskProfile
 from ..tasks.seed import new_trial_seed
 from ..tasks.start_command import with_trial_seed

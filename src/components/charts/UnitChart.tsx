@@ -178,7 +178,7 @@ export function ribbon(points: BandPoint[], height: number): string {
 /**
  * Split a value list into solid runs, marking a dashed bridge wherever a gap
  * was skipped — so a session that scored nothing shows as a discontinuity
- * rather than a line interpolated through nothing (`DATA.md#edge-cases`).
+ * rather than a line interpolated through nothing (`ANALYTICS.md#edge-cases`).
  */
 export function segmentsWithGaps(points: Array<Point | null>): Segment[] {
   const segments: Segment[] = [];

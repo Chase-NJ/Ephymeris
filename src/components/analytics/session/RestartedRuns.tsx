@@ -12,11 +12,11 @@ import { useSidecar } from "@/lib/ws/context";
 
 /**
  * Animals that ran more than once this session, run by run, and which of
- * those runs are set aside as false starts (`DATA.md#false-starts`).
+ * those runs are set aside as false starts (`ANALYTICS.md#false-starts`).
  *
  * WHERE THE SET-ASIDE RUNS ARE LISTED. The table above holds counted runs
  * only, so a false start is named here, muted, with why — "no view may
- * silently keep whichever came last" (`DATA.md#edge-cases`) is kept by
+ * silently keep whichever came last" (`ANALYTICS.md#edge-cases`) is kept by
  * showing the run that was left out, not by counting it.
  *
  * And where a person rules on one. Here rather than on the table row because

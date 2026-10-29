@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from ..analytics import reader
-from ..analytics.derive import codes_of
+from ..analytics.stream import codes_of
 from ..cohorts.db import Database
 from ..sessions.recovery import STROBE, LEGACY_HEADER, LEGACY_STROBE
 

@@ -24,7 +24,7 @@ import { tagOf } from "@/components/logbook/tags";
  * screen at a time.
  *
  * The tape is the reason the per-trial wire field exists
- * (`DATA.md#per-trial-tape`): streaks, side-bias episodes and the moment an
+ * (`ANALYTICS.md#per-trial-tape`): streaks, side-bias episodes and the moment an
  * animal stopped working are invisible in any aggregate. The other three are
  * the card's own numbers at full size — the trajectory the sparkline
  * compresses, the per-odor composition, and the engagement ladder as a funnel.
@@ -138,7 +138,7 @@ function TapeView({ run, series }: { run: RunSummary; series: RunSeries | null }
 }
 
 /**
- * The session log's notes on the tape (`DATA.md#per-trial-tape`): a hairline at
+ * The session log's notes on the tape (`ANALYTICS.md#per-trial-tape`): a hairline at
  * the first trial after each note that concerns this run, so "cleaned the
  * spout" sits where the tape changes colour. Placement is good to a few
  * seconds (`lib/logbook/tapeMarkers.ts`), and the hover text says ≈.
@@ -352,7 +352,7 @@ function TrajectoryView({ series }: { series: RunSeries | null }) {
     </ChartFrame>
     {/* These are the task's own declared metrics, which score the **choice**
         — the correct well was answered, hold or not
-        (`DATA.md#rewarded-and-response-accuracy`). They are not the
+        (`ANALYTICS.md#rewarded-and-response-accuracy`). They are not the
         reward rate printed on the card, and on an animal that discriminates
         well but doesn't hold the two are far apart, which is exactly when
         someone is most likely to read this line as the wrong quantity. */}
@@ -454,7 +454,7 @@ function OdorRow({
 }
 
 /**
- * The engagement ladder as a funnel (`DATA.md#engagement-ladder`) — the one
+ * The engagement ladder as a funnel (`ANALYTICS.md#engagement-ladder`) — the one
  * view that says whether a low accuracy is a discrimination problem or an
  * animal that never came to the port. Each rung's bar is its count against
  * `presented`, and the gap to the rung above is named, because the two gaps are

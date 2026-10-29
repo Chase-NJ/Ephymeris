@@ -1,5 +1,5 @@
 /**
- * Where a log note falls on one run's trial tape (`DATA.md#per-trial-tape`,
+ * Where a log note falls on one run's trial tape (`ANALYTICS.md#per-trial-tape`,
  * `DATA.md#the-session-clock`). Pure.
  *
  * The tape's axis is trial order, not time, so a note is placed **before the

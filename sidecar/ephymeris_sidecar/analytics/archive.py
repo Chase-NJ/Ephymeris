@@ -34,9 +34,10 @@ from typing import Any, Literal, Protocol
 from ..cohorts import relocate
 from ..sessions.models import Session, SessionAnimalRun
 from ..sessions.tidy import session_key
-from . import false_starts, reader
+from . import reader
 from .repository import AdoptedRun, AnalyticsRepository
 from .scoring import current_version
+from .stream import false_starts
 
 log = logging.getLogger(__name__)
 
@@ -245,7 +246,7 @@ class CohortArchive:
         runs: list[SessionAnimalRun],
         summaries: Mapping[str, dict[str, Any] | None] | None = None,
     ) -> dict[str, false_starts.Verdict]:
-        """Which of `runs` are false starts (`DATA.md#false-starts`), with
+        """Which of `runs` are false starts (`ANALYTICS.md#false-starts`), with
         whatever a person has ruled.
 
         Judged from `summaries` when the caller has just scored the runs, and

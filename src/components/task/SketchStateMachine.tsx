@@ -389,7 +389,7 @@ function ConditionRail({
  * caption strip reads the live state instead of a hover legend; hovering a
  * state still describes it, exactly as the viewer does.
  *
- * Counts are deliberately absent. The recorded figures come from derive.py
+ * Counts are deliberately absent. The recorded figures come from analytics/stream/
  * over a finished run; showing a half-session's partial tallies beside a
  * moving token would invite reading them as the run's result (`topology.ts`).
  */

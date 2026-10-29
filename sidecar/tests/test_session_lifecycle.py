@@ -733,7 +733,7 @@ async def test_a_run_never_names_a_profile_another_writers_rollback_threw_away(
 ) -> None:
     """B14: a finishing run's profile snapshot and its run record land
     together, whatever another writer does meanwhile
-    (`DATA.md#which-profile-decodes-a-run`).
+    (`ANALYTICS.md#which-profile-decodes-a-run`).
 
     The other writer here is the operator adding a prefix whose name is
     taken, which rolls back. It runs at the moment the profile is being

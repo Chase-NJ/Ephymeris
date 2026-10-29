@@ -375,7 +375,7 @@ async def test_adopted_runs_reach_the_summary_and_are_scored(rig: LegacyRig) -> 
     assert run["animalId"] == "a1"
     assert run["metrics"][0]["pSession"] == 0.75
     # Decoded with today's task.json, which is exactly as trustworthy as that
-    # sounds — never reported as a snapshot (`DATA.md#which-profile-decodes-a-run`).
+    # sounds — never reported as a snapshot (`ANALYTICS.md#which-profile-decodes-a-run`).
     assert run["profileSource"] == "sketch-current"
     assert run["boxNumber"] is None, "a filename carries no box number"
     assert validate_command_result("analytics.summary", payload) == []
@@ -462,7 +462,7 @@ async def test_the_files_own_profile_outranks_a_same_named_sketch_here(
 async def test_a_copied_run_reports_the_parameters_its_file_records(
     rig: LegacyRig,
 ) -> None:
-    """Comparability is the PAIR (`DATA.md#which-profile-decodes-a-run`). An adopted run has no row here to
+    """Comparability is the PAIR (`ANALYTICS.md#which-profile-decodes-a-run`). An adopted run has no row here to
     carry `paramsHash`, so without the snapshot naming which of the document's
     fields are parameters, two differently-tuned runs of one task pool
     silently."""
@@ -529,7 +529,7 @@ async def test_a_four_odor_run_from_another_rig_can_be_put_on_the_plane(
     whole path — inference, summarize, the cache, the payload — and lands on
     the two axes as two-and-two rather than as four blanks.
     """
-    from ephymeris_sidecar.analytics import derive
+    from ephymeris_sidecar.analytics import stream
     from ephymeris_sidecar.tasks.profile import parse_profile
 
     rig.library.clear()
@@ -540,13 +540,13 @@ async def test_a_four_odor_run_from_another_rig_can_be_put_on_the_plane(
     # well. A stream of bare pokes leaves every condition unevidenced.
     right = [249, 253]   # WATER_POKE_R then FLUID_R
     left = [248, 252]    # WATER_POKE_L then FLUID_L
-    stream = (
+    strobes = (
         [101, *right] * 8
         + [102, *right] * 8
         + [103, *left] * 8
         + [104, *left] * 8
     )
-    rig.add_legacy_run("remy1", stream, sketch="GRGL 4-Odor")
+    rig.add_legacy_run("remy1", strobes, sketch="GRGL 4-Odor")
     await rig.service.rescan(rig.cohort.id)
 
     payload = await rig.service.summary(rig.cohort.id)
@@ -568,7 +568,7 @@ async def test_a_four_odor_run_from_another_rig_can_be_put_on_the_plane(
 
     # ...which is what the plane actually asks for.
     stored = rig.repo.load_profile(run["profileHash"])
-    axes = derive.strategy_axes(stored)
+    axes = stream.strategy_axes(stored)
     assert axes is not None
     assert len(axes.x_metrics) == 2 and len(axes.y_metrics) == 2
     assert parse_profile is not None  # imported for the fixture's sake
@@ -854,7 +854,7 @@ async def test_a_rescan_keeps_the_id_a_held_adoption_was_stored_under(
     rig: LegacyRig,
 ) -> None:
     """A rescan never re-keys a row its cohort holds: a person's ruling and the
-    cached scores are keyed by that id (`DATA.md#false-starts`). The row has no
+    cached scores are keyed by that id (`ANALYTICS.md#false-starts`). The row has no
     stat, so the rescan reads the file again and rewrites the row."""
     path = rig.add_legacy_run("remy1", HIT_1 * 5)
     held = _stored_adoption(rig, path, with_stat=False)
@@ -869,7 +869,7 @@ async def test_a_ruling_follows_a_stem_keyed_run_re_adopted_from_a_new_place(
     rig: LegacyRig,
 ) -> None:
     """A person's false-start ruling on a run stored under its stem-only id
-    (`DATA.md#false-starts`) survives the run's file moving within the archive.
+    (`ANALYTICS.md#false-starts`) survives the run's file moving within the archive.
     The prune drops the row, since its file is gone; the walk finds the file at
     its new place and adopts it under a new id; and the ruling goes with it
     rather than staying behind on an id no row holds."""
@@ -894,7 +894,7 @@ async def test_a_ruling_follows_a_stem_keyed_run_re_adopted_from_a_new_place(
 async def test_a_ruling_stays_with_the_cohort_whose_row_holds_it(rig: LegacyRig) -> None:
     """A ruling moves only off an id no row holds. While one cohort still holds
     the run under its stem-only id, another cohort adopting the same file does
-    not take that cohort's ruling (`DATA.md#false-starts`)."""
+    not take that cohort's ruling (`ANALYTICS.md#false-starts`)."""
     path = rig.add_legacy_run("remy1", HIT_1 * 5)
     held = _stored_adoption(rig, path, with_stat=True)
     rig.repo.set_false_start(held.id, True)
@@ -916,7 +916,7 @@ async def test_a_ruling_follows_a_moved_run_re_adopted_in_its_new_cohort(
     (`DATA.md#moving-animals-between-cohorts`). When the destination's operator
     refiles its session folder, the prune drops that row and the walk adopts the
     run again under the destination's own id; a person's ruling goes with it
-    (`DATA.md#false-starts`)."""
+    (`ANALYTICS.md#false-starts`)."""
     rig.add_legacy_run("remy1", HIT_1 * 5)
     await rig.service.rescan(rig.cohort.id)
     [adopted] = rig.repo.adopted_for_cohort(rig.cohort.id)
@@ -944,7 +944,7 @@ async def test_a_re_read_takes_no_ruling_off_another_cohorts_pruned_row(
 ) -> None:
     """A ruling follows a run only into a row adopted afresh. A cohort reading
     a run it already holds keeps that row's own standing, and never takes the
-    ruling another cohort's pruned row left (`DATA.md#false-starts`)."""
+    ruling another cohort's pruned row left (`ANALYTICS.md#false-starts`)."""
     ours = rig.add_legacy_run("remy1", HIT_1 * 5)
     held = _stored_adoption(rig, ours, with_stat=True)
     rig.repo.set_false_start(held.id, True)
@@ -1287,7 +1287,7 @@ async def test_an_unresolvable_sketch_with_nothing_to_infer_says_why(
 ) -> None:
     """When the stream ALSO presents no recognisable condition, the run must
     name the sketch it wanted — that is the one thing the operator can act on
-    (`DATA.md#which-profile-decodes-a-run`), and "no metrics" alone offers nothing to fix."""
+    (`ANALYTICS.md#which-profile-decodes-a-run`), and "no metrics" alone offers nothing to fix."""
     rig.add_legacy_run("remy1", [222, 224, 226, 233], sketch="Shape - L")
 
     await rig.service.rescan(rig.cohort.id)
@@ -1354,7 +1354,7 @@ async def test_fallback_decoded_runs_still_label_their_profile_group(
     """A comparability group needs a `taskName` to label itself with, and an
     archive that predates snapshots has *only* fallback decodes — so the
     fallback profile is stored too. Storing it must not promote the run's
-    trust level (`DATA.md#which-profile-decodes-a-run`)."""
+    trust level (`ANALYTICS.md#which-profile-decodes-a-run`)."""
     rig.add_legacy_run("remy1", HIT_1 * 5)
     await rig.service.rescan(rig.cohort.id)
 

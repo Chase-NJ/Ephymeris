@@ -10,8 +10,8 @@ This is the smallest thing that closes the gap, and what it deliberately is NOT
 matters as much as what it is:
 
 * **It scores with `MetricSet` and nothing else.** The rolling P(hit) definition
-  is the lab's scientific output and has three documented traps (`tasks/
-  metrics.py`, `analytics/derive.py`); a second implementation for the bench
+  is the lab's scientific output and has three documented traps
+  (`analytics/stream/`); a second implementation for the bench
   would drift from the one that scores real sessions, and the drift would read
   as one of the two being wrong without saying which. Same class, same
   boundary-code union, fed the same way.
@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 from .ports.handler import STROBE_RE, OutputLine
-from .tasks.metrics import MetricSet
+from .analytics.stream.trials import MetricSet
 from .tasks.profile import TaskProfile
 
 

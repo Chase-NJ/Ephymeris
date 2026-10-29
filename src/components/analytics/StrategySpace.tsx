@@ -215,7 +215,7 @@ function buildPoints(summary: AnalyticsSummary): {
     const x = sideAccuracy(run, "left").p;
     const y = sideAccuracy(run, "right").p;
     // A run that answered nothing at one well has no position on this plane,
-    // and one is not invented for it (`DATA.md#edge-cases`).
+    // and one is not invented for it (`ANALYTICS.md#edge-cases`).
     if (x === null || y === null) {
       skipped += 1;
       continue;

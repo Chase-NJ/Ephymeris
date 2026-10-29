@@ -1,4 +1,4 @@
-"""False starts — `DATA.md#false-starts`.
+"""False starts — `ANALYTICS.md#false-starts`.
 
 A wrong call either way is plausible-looking data: count a false start and a
 session mean is dragged by a three-trial run and what-changed calls the real
@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from ephymeris_sidecar.analytics import false_starts
-from ephymeris_sidecar.analytics.false_starts import RunFacts, classify
+from ephymeris_sidecar.analytics.stream import false_starts
+from ephymeris_sidecar.analytics.stream.false_starts import RunFacts, classify
 from ephymeris_sidecar.cohorts.db import Database
 from ephymeris_sidecar.logbook import diff, mirror
 from tests.test_analytics_service import HIT_1, MISS_1, Rig

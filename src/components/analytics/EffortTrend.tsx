@@ -22,8 +22,8 @@ import {
  *
  * Every accuracy above this panel divides by `administered`, so a flat
  * rewarded line over collapsing trial counts is a very different cohort from
- * the same line over steady ones (`DATA.md#rewarded-and-response-accuracy`) — this is the panel that tells those
- * apart. Each session is one bar: total height is `presented` (`DATA.md#engagement-ladder`), the
+ * the same line over steady ones (`ANALYTICS.md#rewarded-and-response-accuracy`) — this is the panel that tells those
+ * apart. Each session is one bar: total height is `presented` (`ANALYTICS.md#engagement-ladder`), the
  * filled span is `administered`, and the outlined remainder is everything in
  * between — drawn as an absence rather than as another solid category that
  * could be misread as an outcome.
@@ -178,7 +178,7 @@ function EffortBar({
 }
 
 /**
- * The bar's total: trials the boxes offered (`DATA.md#engagement-ladder`).
+ * The bar's total: trials the boxes offered (`ANALYTICS.md#engagement-ladder`).
  *
  * Falls back to `trials` — odor onsets — for a profile that declares no trial
  * light. That undercounts, and knowingly: it is the largest number such a

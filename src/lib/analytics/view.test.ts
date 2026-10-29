@@ -160,7 +160,7 @@ describe("pooledAxis", () => {
 
   it("is null, never zero, when nothing on the axis scored", () => {
     // Zero percent and "no trials" are opposite claims about an animal
-    // (`DATA.md#edge-cases`).
+    // (`ANALYTICS.md#edge-cases`).
     expect(pooledAxis(run, ["nothing"])).toEqual({ p: null, counted: 0 });
   });
 });

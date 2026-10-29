@@ -177,7 +177,7 @@ export function performanceOf(
 ): DocPerformance | null {
   const counted = sessionRunsOf(summary, sessionId);
   // Printed after the counted runs and labelled, as on screen: set aside,
-  // never dropped (`DATA.md#false-starts`).
+  // never dropped (`ANALYTICS.md#false-starts`).
   const setAside = sessionFalseStartsOf(summary, sessionId);
   const runs = [...counted, ...setAside];
   if (runs.length === 0) return null;

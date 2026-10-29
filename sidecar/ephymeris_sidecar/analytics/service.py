@@ -24,7 +24,8 @@ from ..logbook.repository import LogbookRepository
 from ..sessions import tidy as session_tidy
 from ..sessions.models import SessionAnimalRun
 from ..sessions.paths import parse_name_date, parse_name_time, parse_session_folder
-from . import derive, false_starts, reader
+from . import reader, stream
+from .stream import false_starts
 from .archive import RESCAN_WHILE_WRITING, CohortArchive
 from .repository import AdoptedRun, AnalyticsRepository, CachedRun
 from .scoring import RunScorer
@@ -48,7 +49,7 @@ class AnalyticsService:
         broadcast: Callable[[dict[str, Any]], Awaitable[None]],
         *,
         archive: CohortArchive,
-        min_counted: int = derive.DEFAULT_MIN_COUNTED,
+        min_counted: int = stream.DEFAULT_MIN_COUNTED,
         sketch_lookup: Callable[[str], str | None] | None = None,
     ) -> None:
         self._db = db
@@ -115,7 +116,7 @@ class AnalyticsService:
         # the index has read them, which it just did.
         view.close_clocks(scored)
 
-        # False starts (`DATA.md#false-starts`): judged over the same runs the
+        # False starts (`ANALYTICS.md#false-starts`): judged over the same runs the
         # index just scored, with whatever a person has ruled. Set aside, not
         # dropped — they ride in their own list, so no metric below can count
         # one by forgetting to filter it.
@@ -216,7 +217,7 @@ class AnalyticsService:
             **entry.summary,
         }
 
-    # --- false starts (DATA.md#false-starts) -------------------------------
+    # --- false starts (ANALYTICS.md#false-starts) -------------------------------
 
     def set_false_start(self, cohort_id: str, run_id: str, value: bool | None) -> None:
         """Rule on one run of this cohort; None hands it back to the rule.
@@ -282,17 +283,17 @@ class AnalyticsService:
                 "code": decoded.status, "runId": run_id, "message": decoded.detail or "",
             }
         document, profile = decoded.document, decoded.profile
-        metrics = derive.series(document, profile, mode=mode, metric_ids=metric_ids)
+        metrics = stream.series(document, profile, mode=mode, metric_ids=metric_ids)
         # The joint walk rides along with the per-metric series rather than
         # taking a command of its own: the file is already open and already
         # decoded here, and the one panel that wants it is on the same
         # screen as the ones that want the series. It is empty for any
         # profile that doesn't declare exactly two conditions.
-        trail = derive.strategy_trail(document, profile)
+        trail = stream.strategy_trail(document, profile)
         # The per-trial tape rides along for the same reason the trail
         # does: the file is already open and decoded, and the panel that
         # wants it is on the same screen as the ones that want the series.
-        trials = derive.trials_of(document, profile)
+        trials = stream.trials_of(document, profile)
         return {
             "runId": run_id,
             "mode": mode,
@@ -829,7 +830,7 @@ def _profile_groups(
     runs: list[dict[str, Any]], meta: dict[str, dict[str, Any]]
 ) -> list[dict[str, Any]]:
     """Comparability sets. Two runs share axes only if they share a hash
-    (`DATA.md#which-profile-decodes-a-run`)."""
+    (`ANALYTICS.md#which-profile-decodes-a-run`)."""
     counts: dict[str, int] = {}
     metrics: dict[str, list[dict[str, Any]]] = {}
     for run in runs:
@@ -882,7 +883,7 @@ def _parameter_mismatches(
     runs: list[dict[str, Any]], meta: dict[str, dict[str, Any]]
 ) -> list[dict[str, Any]]:
     """Warn where one comparability set holds differently-tuned runs
-    (`DATA.md#which-profile-decodes-a-run`).
+    (`ANALYTICS.md#which-profile-decodes-a-run`).
 
     A profile hash covers the profile *declaration*, which is identical across
     every run of a sketch. Once the timings became operator-set
@@ -1041,7 +1042,7 @@ def _program_name(run: SessionAnimalRun) -> str:
     resolved* — and it is legitimately empty for a file recorded on another
     rig: the archive walk adopts the file, the name lookup finds no sketch by
     that name in this install's library, and the run scores by inference
-    (`DATA.md#which-profile-decodes-a-run`)
+    (`ANALYTICS.md#which-profile-decodes-a-run`)
     with nothing left to name it. Read off the path alone, every such run
     displays as "unknown", which reads as *the record is silent* when in fact
     the file says exactly what it ran.
@@ -1196,7 +1197,7 @@ def _stem_only_run_id(path: Path) -> str:
     A row held under its stem-only id keeps it (`_orphan_run_id`), so it is
     the key of any ruling a person made on that run. When such a row is pruned
     and its run adopted afresh, the ruling moves to the new id (`_earlier_ids`,
-    `DATA.md#false-starts`).
+    `ANALYTICS.md#false-starts`).
     """
     digest = hashlib.sha1(reader.run_identity(path).encode("utf-8")).hexdigest()
     return f"adopted:{digest[:16]}"
@@ -1206,7 +1207,7 @@ def _earlier_ids(
     adoptable: list[AdoptedRun], held: dict[str, str], dropped: dict[str, str]
 ) -> dict[str, list[str]]:
     """The ids a ruling on each freshly adopted run may still sit on
-    (`DATA.md#false-starts`), for `store_adopted` to move it from.
+    (`ANALYTICS.md#false-starts`), for `store_adopted` to move it from.
 
     Only for a run the cohort did not hold: a row read again keeps its own id
     and its own ruling, and never takes one another cohort's pruned row left.

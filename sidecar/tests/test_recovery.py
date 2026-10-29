@@ -249,7 +249,7 @@ def test_a_snapshot_torn_by_the_crash_is_dropped_not_kept_as_text(
 ) -> None:
     """Half a snapshot is worse than none: every reader downstream would have
     to defend against a `task_profile` that is a string. The ladder below it
-    (`DATA.md#which-profile-decodes-a-run`) still scores the run, so dropping loses nothing but the shortcut."""
+    (`ANALYTICS.md#which-profile-decodes-a-run`) still scores the run, so dropping loses nothing but the shortcut."""
     tsv = crash_a_run(tmp_path)
     lines = tsv.read_text(encoding="utf-8").splitlines()
     torn = [

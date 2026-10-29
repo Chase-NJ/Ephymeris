@@ -1,5 +1,5 @@
 /**
- * False starts on the frontend — `DATA.md#false-starts`. The sidecar decides;
+ * False starts on the frontend — `ANALYTICS.md#false-starts`. The sidecar decides;
  * these pin that the client keeps its two lists apart and still names every
  * set-aside run where runs are listed.
  */

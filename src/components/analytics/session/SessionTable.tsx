@@ -38,7 +38,7 @@ import { springSnappy } from "@/lib/motion";
  *
  * **`rewarded` is `pRewarded` — reward delivered, the animal held.** That is
  * deliberately stricter than the app's response accuracy (`pSide`,
- * `DATA.md#rewarded-and-response-accuracy`), which credits a correct well
+ * `ANALYTICS.md#rewarded-and-response-accuracy`), which credits a correct well
  * whether or not the hold cleared. The key says so, because the two look
  * interchangeable and are not.
  *
@@ -260,7 +260,7 @@ function Identity({
  * ramp (`DATA.md#colour-palette`), and under it how many trials were sampled
  * — the denominator, kept beside the rate it qualifies. Below `minCounted`
  * sampled trials the chip drops to an outline: flagged, never suppressed
- * (`DATA.md#uncertainty`). A condition this run's task doesn't declare is a
+ * (`ANALYTICS.md#uncertainty`). A condition this run's task doesn't declare is a
  * dash, never a zero.
  */
 function Cell({
@@ -336,7 +336,7 @@ function Cell({
  * a task profile this install has never seen, and it still says what it ran.
  * What that costs is fidelity of *decoding*, not of identity, so the provenance
  * mark carries it: an inferred run was scored from its own strobes rather than
- * from the task's declaration (`DATA.md#which-profile-decodes-a-run`).
+ * from the task's declaration (`ANALYTICS.md#which-profile-decodes-a-run`).
  */
 function Program({ run, reason }: { run: RunSummary; reason: string | null }) {
   const mark = PROVENANCE[run.profileSource];
@@ -366,7 +366,7 @@ function Program({ run, reason }: { run: RunSummary; reason: string | null }) {
 
 /**
  * How the run was decoded, as one character
- * (`DATA.md#which-profile-decodes-a-run`).
+ * (`ANALYTICS.md#which-profile-decodes-a-run`).
  *
  * A snapshot is the good case and carries no mark — a glyph on every row would
  * say nothing. The other two are worth a mark precisely because they look

@@ -126,7 +126,7 @@ class LogbookService:
             for digest, meta in self._profiles.profile_meta(hashes).items()
         }
 
-        # Set aside before comparing, not after (`DATA.md#false-starts`): the
+        # Set aside before comparing, not after (`ANALYTICS.md#false-starts`): the
         # run after a false start must be compared with the animal's previous
         # SESSION, and dropping the false start's row afterwards would lose
         # that change rather than recover it.

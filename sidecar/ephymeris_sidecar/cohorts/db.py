@@ -50,7 +50,7 @@ DB_FILENAME = "ephymeris.db"
 #: (`DATA.md#carrying-adoptions-forward`) — the stat
 #: an adoption was taken from, so a rescan can skip a file it has already read.
 #: v8 added run_metrics_cache.params_hash and .scored_profile_hash
-#: (`DATA.md#the-embedded-task-profile`, `DATA.md#which-profile-decodes-a-run`)
+#: (`DATA.md#the-embedded-task-profile`, `ANALYTICS.md#which-profile-decodes-a-run`)
 #: — the parameters a run recorded in its own file, and
 #: the profile it was actually scored with when that came from the file rather
 #: than from resolution.
@@ -71,7 +71,7 @@ DB_FILENAME = "ephymeris.db"
 #: v13 re-keyed every stored profile hash (`TASKS.md#profile-and-params-hashes`)
 #: — `profile_hash` stopped covering the `strobes` map once every profile's map
 #: became the machine's whole vocabulary — and added `strobe_scan_cache`
-#: (`TASKS.md#strobe-vocabulary`) and `run_flags` (`DATA.md#false-starts`).
+#: (`TASKS.md#strobe-vocabulary`) and `run_flags` (`ANALYTICS.md#false-starts`).
 #: v14 added former_animals (`DATA.md#former-members`) and animal_moves
 #: (`DATA.md#moving-animals-between-cohorts`) — new tables only, so no
 #: migration, v11's pattern.
@@ -203,7 +203,7 @@ CREATE TABLE IF NOT EXISTS session_animal_runs (
     ended_at    TEXT,
     stop_reason TEXT,
     -- Which Task Profile actually decoded this run
-    -- (DATA.md#which-profile-decodes-a-run). NULL
+    -- (ANALYTICS.md#which-profile-decodes-a-run). NULL
     -- means the run predates snapshotting and must fall back to whatever
     -- task.json currently sits at its sketch_path — which may have changed.
     profile_hash TEXT,
@@ -221,7 +221,7 @@ CREATE TABLE IF NOT EXISTS session_animal_runs (
 );
 
 -- Content-addressed Task Profile snapshots
--- (DATA.md#which-profile-decodes-a-run). Keyed by
+-- (ANALYTICS.md#which-profile-decodes-a-run). Keyed by
 -- a hash of the canonical JSON, so identical profiles across hundreds of runs
 -- store once and comparability is an indexed equality test rather than a blob
 -- comparison.
@@ -284,7 +284,7 @@ CREATE TABLE IF NOT EXISTS strobe_scan_cache (
 );
 
 -- A person's word on one run, overriding the false-start rule
--- (DATA.md#false-starts): 1 = set it aside, 0 = count it whatever the rule
+-- (ANALYTICS.md#false-starts): 1 = set it aside, 0 = count it whatever the rule
 -- says. No row means the rule decides. Keyed by run id, which for an adopted
 -- run is the id its cohort holds it under, so the decision survives a rescan.
 -- No FK, like run_metrics_cache: an adopted run has no run record.
@@ -460,7 +460,7 @@ def add_column(conn: sqlite3.Connection, table: str, column: str, decl: str) -> 
 
 
 def _to_v3(conn: sqlite3.Connection) -> None:
-    """v2 → v3: the Task Profile snapshot link (`DATA.md#which-profile-decodes-a-run`).
+    """v2 → v3: the Task Profile snapshot link (`ANALYTICS.md#which-profile-decodes-a-run`).
 
     `task_profiles` and `run_metrics_cache` are new *tables*, so `SCHEMA`'s
     `CREATE TABLE IF NOT EXISTS` already made them — only the column needs
@@ -502,7 +502,7 @@ def _to_v7(conn: sqlite3.Connection) -> None:
 
 def _to_v8(conn: sqlite3.Connection) -> None:
     """v7 → v8: what a run's own file records
-    (`DATA.md#the-embedded-task-profile`, `DATA.md#which-profile-decodes-a-run`).
+    (`DATA.md#the-embedded-task-profile`, `ANALYTICS.md#which-profile-decodes-a-run`).
 
     Two columns on the derived cache. `params_hash` is pure gain and NULL costs
     nothing — it fills in on the next pass that recomputes a row.

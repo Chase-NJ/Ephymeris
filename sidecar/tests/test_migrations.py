@@ -726,7 +726,7 @@ def write_v7_database(path: Path) -> None:
 
 def test_v7_gains_the_recorded_run_columns(tmp_path: Path) -> None:
     """What a run's own file records (`DATA.md#the-embedded-task-profile`,
-    `DATA.md#which-profile-decodes-a-run`). Two columns in one
+    `ANALYTICS.md#which-profile-decodes-a-run`). Two columns in one
     migration, so both are checked — a half-applied one would leave the second
     raising `OperationalError` on the next indexing pass."""
     path = tmp_path / "ephymeris.db"

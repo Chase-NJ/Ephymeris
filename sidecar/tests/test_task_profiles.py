@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from ephymeris_sidecar.rig.registry import Vocabulary, default_vocabulary_document
-from ephymeris_sidecar.tasks.metrics import MetricSet, compute_series
+from ephymeris_sidecar.analytics.stream import MetricSet, compute_series
 from ephymeris_sidecar.tasks.profile import (
     TaskProfileError,
     build_legacy_name_index,
@@ -383,7 +383,7 @@ def test_a_profile_less_sketch_gets_bare_start() -> None:
     assert build_start_command(parse_profile({"taskName": "Utility"}), {}) == "START"
 
 
-# --- live metric computation, the scientific output (`TASKS.md#live-metrics`) ---
+# --- live metric computation, the scientific output (`ANALYTICS.md#trials-hits-misses-and-exclusions`) ---
 
 # GRGL codes: 101 = Odor 1 on, 103 = Odor 3 on, 249 = water poke R, 248 = water poke L.
 # Metric p_r_odor1: trigger 101, success 249 (went right), alternate 248 (went left).
@@ -452,7 +452,7 @@ def test_two_metrics_score_independently_from_one_stream() -> None:
 
 
 def test_an_odor3_onset_ends_an_unresolved_odor1_trial() -> None:
-    """The union of trigger codes forms the trial boundary set (`TASKS.md#boundary-codes`)."""
+    """The union of trigger codes forms the trial boundary set (`ANALYTICS.md#boundary-codes`)."""
     m = metric()  # p_r_odor1, boundaries = {101, 103}
     boundaries = frozenset({101, 103})
     # 101 (odor1) then 103 (odor3) with no water poke → odor1 trial excluded

@@ -70,7 +70,7 @@ def change_lines(changes: Iterable[dict[str, Any]], names: dict[str, str]) -> li
         box = "recovered" if change["box"] is None else f"box {change['box']}"
         who = f"{names.get(change['animalId'], change['animalId'])} ({box})"
         if change.get("falseStart"):
-            # Listed, not compared (`DATA.md#false-starts`).
+            # Listed, not compared (`ANALYTICS.md#false-starts`).
             how = "marked by hand" if change.get("falseStartSource") == "marked" else "restarted"
             lines.append(f"- **{who}**: false start, set aside ({how})")
             continue

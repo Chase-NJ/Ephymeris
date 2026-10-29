@@ -31,6 +31,7 @@ DOC_FILES = {
     **{p.name: p for p in (DOCS / "adr").glob("*.md")},
     "README.md": REPO_ROOT / "README.md",
     "GLOSSARY.md": REPO_ROOT / "GLOSSARY.md",
+    "ANALYTICS.md": REPO_ROOT / "sidecar" / "ephymeris_sidecar" / "analytics" / "ANALYTICS.md",
 }
 
 #: Documents that no longer exist; a reference to one is a stale citation.

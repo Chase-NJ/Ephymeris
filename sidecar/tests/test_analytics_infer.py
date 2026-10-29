@@ -1,4 +1,4 @@
-"""The inference rung — `analytics/infer.py`, `DATA.md#which-profile-decodes-a-run`.
+"""The inference rung — `analytics/infer.py`, `ANALYTICS.md#which-profile-decodes-a-run`.
 
 The claim under test: a run that resolves NO profile scores the same trials,
 the same way, as it would have under the task's own declaration — because the
@@ -10,7 +10,8 @@ with the declared path over identical data.
 
 from __future__ import annotations
 
-from ephymeris_sidecar.analytics import derive, infer
+from ephymeris_sidecar.analytics import stream
+from ephymeris_sidecar.analytics.stream import infer
 from ephymeris_sidecar.rig import registry
 from ephymeris_sidecar.tasks.profile import parse_profile
 
@@ -56,25 +57,25 @@ def test_sides_are_read_from_fluid_error_and_early_evidence() -> None:
     """Each evidence kind alone must name the side: `FLUID_x` and
     `WATER_UNPOKE_EARLY_x` fire only at the correct well, `WATER_POKE_ERROR_x`
     only at the wrong one."""
-    for stream, correct in (
+    for strobes, correct in (
         (REWARDED_1 * 2, 249),   # fluid on the right
         (WRONG_1 * 2, 249),      # error on the left → right is correct
         (HOLD_FAIL_1 * 2, 249),  # early release at the right well
         (REWARDED_3 * 2, 248),
         (WRONG_3 * 2, 248),
     ):
-        profile = infer.infer_profile(stream)
+        profile = infer.infer_profile(strobes)
         assert profile is not None
-        metric = by_trigger(profile)[stream[0]]
-        assert metric.success_code == correct, stream
+        metric = by_trigger(profile)[strobes[0]]
+        assert metric.success_code == correct, strobes
 
 
 def test_majority_wins_over_a_corrupt_minority() -> None:
     """A hand-edited file can hold anything; one wrong-way vote must not flip
     a session's worth of consistent evidence."""
     # Nine trials say right is correct; one stray FLUID_L says left.
-    stream = REWARDED_1 * 9 + [101, 226, 248, 252]
-    profile = infer.infer_profile(stream)
+    strobes = REWARDED_1 * 9 + [101, 226, 248, 252]
+    profile = infer.infer_profile(strobes)
     assert profile is not None
     assert by_trigger(profile)[101].success_code == 249
 
@@ -85,10 +86,10 @@ def test_a_never_answered_condition_still_delimits_trials() -> None:
     them, or its outcome is stolen by whichever trial answers next."""
     # odor 1 (unanswered), odor 3 opens next trial, THEN a right poke: the poke
     # belongs to the odor-3 trial, not the abandoned odor-1 trial.
-    stream = REWARDED_1 + [101, 226] + [103, 226, 249, 258] + REWARDED_3
-    profile = infer.infer_profile(stream)
+    strobes = REWARDED_1 + [101, 226] + [103, 226, 249, 258] + REWARDED_3
+    profile = infer.infer_profile(strobes)
     assert profile is not None
-    summary = derive.summarize(document(stream), profile)
+    summary = stream.summarize(document(strobes), profile)
     one = next(m for m in summary.metrics if m.triggered == 2)
     assert one.counted == 1, "the abandoned odor-1 trial must be excluded, not mis-scored"
     assert one.excluded == 1
@@ -105,8 +106,8 @@ def test_retired_codes_are_not_conditions() -> None:
     """110–113 are the dummy solenoid clicks 29 real sessions contain. They sit
     in the retired registry — a legacy stream carries them BETWEEN trials, and
     treating one as a condition would shred every real trial's scoring."""
-    stream = REWARDED_1 + [110, 112] + REWARDED_3
-    profile = infer.infer_profile(stream)
+    strobes = REWARDED_1 + [110, 112] + REWARDED_3
+    profile = infer.infer_profile(strobes)
     assert profile is not None
     assert sorted(m.trigger_code for m in profile.live_metrics) == [101, 103]
     # ...but their names still label the raw log.
@@ -141,8 +142,8 @@ def test_inference_scores_exactly_as_the_declared_profile_does() -> None:
     the same pooled accuracy — anything less and the fallback silently changes
     the science for exactly the runs nobody can re-check."""
     doc = document(SESSION)
-    declared = derive.summarize(doc, DECLARED)
-    inferred = derive.summarize(doc, infer.infer_profile(SESSION))
+    declared = stream.summarize(doc, DECLARED)
+    inferred = stream.summarize(doc, infer.infer_profile(SESSION))
 
     assert declared.status == inferred.status == "ok"
     assert declared.overall is not None and inferred.overall is not None
@@ -181,14 +182,14 @@ def test_an_unanswered_condition_orients_deterministically_and_scores_nothing() 
     """No evidence, no pokes — so the arbitrary orientation is provably inert,
     and it must be the SAME arbitrary orientation every pass or the run would
     flip between profile groups on rescan."""
-    stream = REWARDED_1 * 2 + [103, 226] * 3  # odor 3 sampled, never answered
-    first = infer.infer_profile(stream)
-    second = infer.infer_profile(stream)
+    strobes = REWARDED_1 * 2 + [103, 226] * 3  # odor 3 sampled, never answered
+    first = infer.infer_profile(strobes)
+    second = infer.infer_profile(strobes)
     assert first is not None and second is not None
     assert [m.to_json() for m in first.live_metrics] == [
         m.to_json() for m in second.live_metrics
     ]
-    summary = derive.summarize(document(stream), first)
+    summary = stream.summarize(document(strobes), first)
     odor3 = next(m for m in summary.metrics if m.triggered == 3)
     assert odor3.counted == 0 and odor3.p_session is None
 

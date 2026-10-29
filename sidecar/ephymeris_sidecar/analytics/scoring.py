@@ -1,4 +1,4 @@
-"""Scoring a run, and the cache in front of it — `DATA.md#which-profile-decodes-a-run`,
+"""Scoring a run, and the cache in front of it — `ANALYTICS.md#which-profile-decodes-a-run`,
 `DATA.md#caching`.
 
 `RunScorer` owns the profile ladder, the derived-metrics cache and its key. The
@@ -35,7 +35,8 @@ from ..rig.registry import Vocabulary
 from ..sessions.models import SessionAnimalRun
 from ..tasks import profile as task_profile
 from ..tasks.profile import TaskProfile
-from . import derive, infer, reader
+from . import reader, stream
+from .stream import infer
 from .repository import AnalyticsRepository, CachedRun, CacheKey
 
 log = logging.getLogger(__name__)
@@ -74,7 +75,7 @@ SCORE_VERSION = 9
 @dataclass
 class _Resolved:
     """A profile plus how much it can be trusted
-    (`DATA.md#which-profile-decodes-a-run`)."""
+    (`ANALYTICS.md#which-profile-decodes-a-run`)."""
 
     profile: TaskProfile | None
     source: str  # 'snapshot' | 'sketch-current' | 'unavailable'
@@ -152,7 +153,7 @@ class RunScorer:
         #: Resolve a document's `sketch` *name* to a sketch in this install's
         #: library, for adopted orphans whose run record never existed
         #: (`DATA.md#orphan-adoption`). The honest analog of the
-        #: `sketch-current` fallback (`DATA.md#which-profile-decodes-a-run`) —
+        #: `sketch-current` fallback (`ANALYTICS.md#which-profile-decodes-a-run`) —
         #: and exactly as trustworthy, which is to say: marked as such, never
         #: as a snapshot.
         self._sketch_lookup = sketch_lookup
@@ -196,7 +197,7 @@ class RunScorer:
                 # Judged against THIS request's threshold, hit or miss: the
                 # cache holds no threshold (`DATA.md#caching`).
                 out.append(
-                    replace(entry, summary=derive.with_threshold(entry.summary, min_counted))
+                    replace(entry, summary=stream.with_threshold(entry.summary, min_counted))
                 )
             done = start + len(chunk)
             if progress is not None and done - emitted >= PROGRESS_EVERY:
@@ -264,7 +265,7 @@ class RunScorer:
                 profile_source=resolved.source,
                 params_hash=None,
                 config=None,
-                summary=derive.RunSummary(status="missing").to_json(),
+                summary=stream.RunSummary(status="missing").to_json(),
                 key=CacheKey("", None, None, resolved.digest, pass_.version),
             )
 
@@ -300,7 +301,7 @@ class RunScorer:
                 profile_source=resolved.source,
                 params_hash=None,
                 config=None,
-                summary=derive.RunSummary(status="missing", detail=stat.detail).to_json(),
+                summary=stream.RunSummary(status="missing", detail=stat.detail).to_json(),
                 key=CacheKey(run.file_path, None, None, resolved.digest, pass_.version),
             )
 
@@ -331,7 +332,7 @@ class RunScorer:
                 profile_source=resolved.source,
                 params_hash=None,
                 config=None,
-                summary=derive.RunSummary(
+                summary=stream.RunSummary(
                     status="unreadable", detail=result.detail
                 ).to_json(),
                 key=key,
@@ -370,7 +371,7 @@ class RunScorer:
 
     def _resolve_profile(self, run: SessionAnimalRun, pass_: _Pass) -> _Resolved:
         """Snapshot, then today's `task.json`, then nothing
-        (`DATA.md#which-profile-decodes-a-run`).
+        (`ANALYTICS.md#which-profile-decodes-a-run`).
 
         Three states, not two: the fallback itself can fail, because the
         recorded `sketch_path` may have been renamed, moved, or dropped from
@@ -381,7 +382,7 @@ class RunScorer:
         `task.json` read and sha256.
 
         **It is scoped to the pass and must stay that way.** Resolution happens
-        at read time on purpose (`DATA.md#which-profile-decodes-a-run`): a
+        at read time on purpose (`ANALYTICS.md#which-profile-decodes-a-run`): a
         newly saved task,
         or an edited `task.json`, takes effect on the very next summary. A memo that
         outlived the pass would freeze exactly what that rule exists to keep
@@ -397,7 +398,7 @@ class RunScorer:
             resolved, sketch_path = pass_.memo[key]
             # Replay the path the first run of this key resolved to. It is not
             # bookkeeping: `summary` reports `sketchPath` per run
-            # (`DATA.md#which-profile-decodes-a-run`), so
+            # (`ANALYTICS.md#which-profile-decodes-a-run`), so
             # skipping this would leave one run of a group naming its sketch
             # and the rest naming nothing.
             run.sketch_path = sketch_path
@@ -530,7 +531,7 @@ resolved: _Resolved, document: dict[str, Any], pass_: _Pass
         return resolved.profile, resolved.source, resolved.digest
     sketch = document.get("sketch")
     inferred = infer.infer_profile(
-        derive.codes_of(document),
+        stream.codes_of(document),
         sketch_name=sketch if isinstance(sketch, str) and sketch else None,
         vocabulary=pass_.vocabulary,
     )
@@ -551,7 +552,7 @@ def _scored(
     canary fingerprints. One function for both, so the canary cannot measure
     a path the real pass doesn't take."""
     profile, source, digest = _settle(resolved, document, pass_)
-    summary = derive.summarize(document, profile, min_counted=min_counted)
+    summary = stream.summarize(document, profile, min_counted=min_counted)
     payload = summary.to_json()
     detail = summary.detail
     if summary.status == "no-metrics" and not detail and resolved.reason:
@@ -650,7 +651,7 @@ def score_version(canary: str, vocabulary: Vocabulary) -> int:
 def canary_fingerprint() -> str:
     """What this code answers for a fixed set of runs, hashed.
 
-    The runs cover every rung of the ladder (`DATA.md#which-profile-decodes-a-run`)
+    The runs cover every rung of the ladder (`ANALYTICS.md#which-profile-decodes-a-run`)
     — a database snapshot, the file's own snapshot with recorded parameters,
     a damaged one, today's `task.json`, inference with a withheld and an
     unanswered condition, a stream with no condition at all, a utility profile,
@@ -682,7 +683,7 @@ def canary_fingerprint() -> str:
                 resolved,
                 document,
                 CacheKey("", None, None, None, 0),
-                derive.DEFAULT_MIN_COUNTED,
+                stream.DEFAULT_MIN_COUNTED,
                 _Pass(seed, remember=None),
             )
             answers[name] = {
@@ -734,15 +735,15 @@ def _canary_runs(seed: Vocabulary) -> list[tuple[str, _Resolved, dict[str, Any]]
     )
 
     def document(codes: list[int], **extra: Any) -> dict[str, Any]:
-        stream = [code("START_SESSION"), *codes, code("END_SESSION")]
+        strobes = [code("START_SESSION"), *codes, code("END_SESSION")]
         return {
             "rat": "canary",
             "sketch": "Score canary",
-            "stop_reason": derive.CLEAN_STOP_REASON,
+            "stop_reason": stream.CLEAN_STOP_REASON,
             "trial_seed": 7,
             "odor_poke_hold": 300,
-            "n_events": len(stream),
-            "ts_data": [[c, i * 250] for i, c in enumerate(stream)],
+            "n_events": len(strobes),
+            "ts_data": [[c, i * 250] for i, c in enumerate(strobes)],
             **extra,
         }
 

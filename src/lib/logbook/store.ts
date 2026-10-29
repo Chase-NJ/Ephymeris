@@ -30,7 +30,7 @@ export interface LogbookEntry {
   logs: Map<string, SessionLog>;
   changesBySession: Map<string, RunChange[]>;
   /**
-   * Runs set aside as false starts (`DATA.md#false-starts`), per session —
+   * Runs set aside as false starts (`ANALYTICS.md#false-starts`), per session —
    * kept out of `changesBySession` so nothing that counts changes can count
    * one, and named under the list so nothing hides one either.
    */

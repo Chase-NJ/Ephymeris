@@ -378,7 +378,7 @@ def embedded_profile(document: dict[str, Any]) -> TaskProfile | None:
 
     Returns None rather than raising for anything malformed: a file with a
     damaged snapshot is still a file full of real strobes, and the ladder below
-    it (`DATA.md#which-profile-decodes-a-run`) still scores it.
+    it (`ANALYTICS.md#which-profile-decodes-a-run`) still scores it.
     """
     raw = document.get(SNAPSHOT_KEY)
     if not isinstance(raw, dict):

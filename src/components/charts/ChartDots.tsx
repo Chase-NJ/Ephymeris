@@ -20,7 +20,7 @@ export interface Dot {
   /** 0–1, bottom to top — flipped here, like `unitY`. */
   y: number;
   /** Drawn as a ring: the value is real but rests on too little data
-   * (`DATA.md#uncertainty`). */
+   * (`ANALYTICS.md#uncertainty`). */
   hollow?: boolean;
 }
 

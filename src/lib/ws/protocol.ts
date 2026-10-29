@@ -1016,7 +1016,7 @@ export interface DiskSession {
   recorded: boolean;
 }
 
-/** One metric's whole-session result (`DATA.md#derived-metrics`). */
+/** One metric's whole-session result (`ANALYTICS.md#how-a-strobe-stream-is-scored`). */
 export interface MetricSummary {
   id: string;
   label: string;
@@ -1054,9 +1054,9 @@ export interface MetricSummary {
 }
 
 /**
- * What actually happened per trial (`DATA.md#derived-metrics`). Distinct from the declared
- * metrics, which are reward-*unconditional* — they score a detected poke whether or not the fluid
- * hold cleared.
+ * What actually happened per trial (`ANALYTICS.md#how-a-strobe-stream-is-scored`). Distinct from
+ * the declared metrics, which are reward-*unconditional* — they score a detected poke whether or
+ * not the fluid hold cleared.
  */
 export interface TrialOutcomes {
   /** Every trial boundary seen — one per odor onset. */
@@ -1090,11 +1090,11 @@ export interface TrialOutcomes {
 }
 
 /**
- * How far each offered trial got before the animal dropped out (`DATA.md#derived-metrics`).
- * Delimited on the trial light, not on odor onset — the firmware only strobes odor-on after the
- * animal has poked and held, so every other count in a run summary is silently conditioned on
- * engagement and none of them can measure it. A ladder, not a partition: presented >= poked >=
- * odorDelivered by construction.
+ * How far each offered trial got before the animal dropped out
+ * (`ANALYTICS.md#how-a-strobe-stream-is-scored`). Delimited on the trial light, not on odor onset
+ * — the firmware only strobes odor-on after the animal has poked and held, so every other count
+ * in a run summary is silently conditioned on engagement and none of them can measure it. A
+ * ladder, not a partition: presented >= poked >= odorDelivered by construction.
  */
 export interface TrialEngagement {
   /** Every trial the box offered — one per trial light. */
@@ -1126,9 +1126,10 @@ export interface TrialEngagement {
 }
 
 /**
- * TrialOutcomes restricted to one declared condition (`DATA.md#derived-metrics`), in authored
- * liveMetrics order; the entries partition `RunSummary.outcomes` field for field. Answers 'how
- * many trials of this kind were administered, and how many of those paid out'.
+ * TrialOutcomes restricted to one declared condition
+ * (`ANALYTICS.md#how-a-strobe-stream-is-scored`), in authored liveMetrics order; the entries
+ * partition `RunSummary.outcomes` field for field. Answers 'how many trials of this kind were
+ * administered, and how many of those paid out'.
  */
 export interface ConditionOutcomes {
   metricId: string;
@@ -1179,7 +1180,7 @@ export interface RunSummary {
   /** The file is gone but this is its last known-good summary. */
   stale: boolean;
   /**
-   * Set aside as a false start (`DATA.md#false-starts`): restarted and short, or ruled so by
+   * Set aside as a false start (`ANALYTICS.md#false-starts`): restarted and short, or ruled so by
    * hand. Such a run arrives in `AnalyticsSummary.falseStarts`, never in `runs`.
    */
   falseStart: boolean;
@@ -1194,13 +1195,13 @@ export interface RunSummary {
   metrics: MetricSummary[];
   /**
    * Accuracy pooled across every metric — the only single number that can tell learning from a
-   * side bias (`DATA.md#derived-metrics`).
+   * side bias (`ANALYTICS.md#how-a-strobe-stream-is-scored`).
    */
   overall: MetricSummary | null;
   /**
-   * Null when the profile declares no reward vocabulary (`DATA.md#derived-metrics`) — absent
-   * rather than zeroed, since 'this task has no notion of a reward delivery' is not 'this animal
-   * earned nothing'.
+   * Null when the profile declares no reward vocabulary
+   * (`ANALYTICS.md#how-a-strobe-stream-is-scored`) — absent rather than zeroed, since 'this task
+   * has no notion of a reward delivery' is not 'this animal earned nothing'.
    */
   outcomes: TrialOutcomes | null;
   /**
@@ -1209,10 +1210,10 @@ export interface RunSummary {
    */
   conditions: ConditionOutcomes[];
   /**
-   * How many trials the box offered and how far each got (`DATA.md#derived-metrics`) — the layer
-   * above every other count here. Null when the profile declares no trial light, on the same rule
-   * as `outcomes`: a zeroed ladder would read as an animal that never engaged rather than as a
-   * task that can't say.
+   * How many trials the box offered and how far each got
+   * (`ANALYTICS.md#how-a-strobe-stream-is-scored`) — the layer above every other count here. Null
+   * when the profile declares no trial light, on the same rule as `outcomes`: a zeroed ladder
+   * would read as an animal that never engaged rather than as a task that can't say.
    */
   engagement: TrialEngagement | null;
   totalEvents: number;
@@ -1301,8 +1302,8 @@ export interface AnalyticsSummary {
    */
   runs: RunSummary[];
   /**
-   * Runs set aside as false starts (`DATA.md#false-starts`). Listed where runs are listed, muted;
-   * counted nowhere.
+   * Runs set aside as false starts (`ANALYTICS.md#false-starts`). Listed where runs are listed,
+   * muted; counted nowhere.
    */
   falseStarts: RunSummary[];
   profileGroups: ProfileGroup[];
@@ -1342,8 +1343,8 @@ export interface StrategyPoint {
 }
 
 /**
- * One classified trial (`DATA.md#derived-metrics`) — the same classification pass the outcome
- * tallies come from, kept as a sequence instead of being summed away.
+ * One classified trial (`ANALYTICS.md#how-a-strobe-stream-is-scored`) — the same classification
+ * pass the outcome tallies come from, kept as a sequence instead of being summed away.
  */
 export interface TrialRecord {
   /** 0-based position in the stream's trial order. */
@@ -1373,7 +1374,7 @@ export interface RunSeries {
   /**
    * The joint walk through the strategy plane. Always rolling, whatever `mode` is — 'what
    * strategy is running right now' is a rolling question. Empty when the profile's conditions
-   * can't be split into two opposing sides (`derive.strategy_axes`). Starts only once both
+   * can't be split into two opposing sides (`stream.strategy_axes`). Starts only once both
    * windows hold enough counted trials, since a one-trial proportion pins the walk to a corner.
    * Cannot be assembled client-side from `metrics`: those are indexed by each metric's own
    * counted trials, which interleave.
@@ -2185,8 +2186,8 @@ export interface RunChange {
    */
   paramsKnown: boolean;
   /**
-   * Set aside (`DATA.md#false-starts`): compared with nothing and never the previous run of the
-   * next one, which is compared with the run before this instead.
+   * Set aside (`ANALYTICS.md#false-starts`): compared with nothing and never the previous run of
+   * the next one, which is compared with the run before this instead.
    */
   falseStart: boolean;
   /** As `RunSummary.falseStartSource`. */

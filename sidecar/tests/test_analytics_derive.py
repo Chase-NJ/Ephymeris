@@ -1,4 +1,4 @@
-"""Derived metrics — `DATA.md#derived-metrics`.
+"""Derived metrics — `ANALYTICS.md#how-a-strobe-stream-is-scored`.
 
 These numbers are the scientific output, so the tests are written against the
 definition rather than against the implementation. The most important one is
@@ -13,8 +13,8 @@ from collections import Counter
 
 import pytest
 
-from ephymeris_sidecar.analytics import derive
-from ephymeris_sidecar.tasks.metrics import compute_series
+from ephymeris_sidecar.analytics import stream
+from ephymeris_sidecar.analytics.stream import compute_series
 from ephymeris_sidecar.tasks.profile import parse_profile, profile_hash
 
 # The real GRGL profile: odor 1 should be answered right, odor 3 left.
@@ -74,7 +74,7 @@ def document(codes: list[int], **extra) -> dict:
     return {
         "rat": "remy1",
         "sketch": "GRGL_2-Odor",
-        "stop_reason": derive.CLEAN_STOP_REASON,
+        "stop_reason": stream.CLEAN_STOP_REASON,
         "n_events": len(codes),
         "ts_data": [[code, index * 1000] for index, code in enumerate(codes)],
         **extra,
@@ -82,7 +82,7 @@ def document(codes: list[int], **extra) -> dict:
 
 
 # The full GRGL vocabulary, as a real task.json declares it — the outcome
-# tally (`DATA.md#rewarded-and-response-accuracy`) reads these by name, so the names matter as much as the codes.
+# tally (`ANALYTICS.md#rewarded-and-response-accuracy`) reads these by name, so the names matter as much as the codes.
 GRGL_FULL = {
     **GRGL,
     "strobes": {
@@ -117,7 +117,7 @@ NO_RESPONSE_1 = [101, 226]
 #: Odor 1, the animal left the odor port early — never administered.
 ABORTED_1 = [101, 225]
 
-# The presentation layer above all of those (`DATA.md#engagement-ladder`). The firmware strobes the
+# The presentation layer above all of those (`ANALYTICS.md#engagement-ladder`). The firmware strobes the
 # trial light first and unconditionally, then the odor poke, and only reaches an
 # odor-on code once the pre-odor hold has cleared — so these prefix the trial
 # fixtures above rather than replacing them.
@@ -130,12 +130,12 @@ LAZY = [222, 223, 234]
 POKE_BAIL = [222, 224, 225, 234]
 
 
-# --- trial outcomes: rewarded vs side accuracy (`DATA.md#rewarded-and-response-accuracy`) ---
+# --- trial outcomes: rewarded vs side accuracy (`ANALYTICS.md#rewarded-and-response-accuracy`) ---
 
 
 def test_each_outcome_lands_in_its_own_bucket() -> None:
     codes = REWARDED_1 + HOLD_FAIL_1 + WRONG_1 + NO_RESPONSE_1 + ABORTED_1
-    out = derive.outcomes_of(codes, FULL_PROFILE)
+    out = stream.outcomes_of(codes, FULL_PROFILE)
     assert out is not None
     assert (out.rewarded, out.hold_failed, out.wrong_well) == (1, 1, 1)
     assert (out.no_response, out.aborted) == (1, 1)
@@ -147,7 +147,7 @@ def test_each_outcome_lands_in_its_own_bucket() -> None:
 
 def test_side_accuracy_credits_a_hold_failure_and_rewarded_accuracy_does_not() -> None:
     """The whole point of rewarded vs response accuracy: the animal chose right, and earned nothing."""
-    out = derive.outcomes_of(REWARDED_1 + HOLD_FAIL_1, FULL_PROFILE)
+    out = stream.outcomes_of(REWARDED_1 + HOLD_FAIL_1, FULL_PROFILE)
     assert out is not None
     assert out.p_rewarded == 0.5, "a hold failure is not a reward"
     assert out.p_side == 1.0, "but the correct side was chosen both times"
@@ -155,7 +155,7 @@ def test_side_accuracy_credits_a_hold_failure_and_rewarded_accuracy_does_not() -
 
 def test_side_accuracy_is_never_below_rewarded_accuracy() -> None:
     codes = REWARDED_1 * 3 + HOLD_FAIL_1 * 2 + WRONG_1 + NO_RESPONSE_1
-    out = derive.outcomes_of(codes, FULL_PROFILE)
+    out = stream.outcomes_of(codes, FULL_PROFILE)
     assert out is not None
     assert out.p_side is not None and out.p_rewarded is not None
     assert out.p_side >= out.p_rewarded
@@ -167,14 +167,14 @@ def test_the_end_of_delivery_is_not_a_second_reward() -> None:
     An unanchored match would count it, doubling every rewarded trial — and the
     number would still look plausible, which is what makes it worth a test.
     """
-    out = derive.outcomes_of(REWARDED_1, FULL_PROFILE)
+    out = stream.outcomes_of(REWARDED_1, FULL_PROFILE)
     assert out is not None
     assert out.rewarded == 1
 
 
 def test_an_early_odor_unpoke_is_not_a_completed_sample() -> None:
     """`ODOR_UNPOKE_EARLY` is the opposite event to `ODOR_UNPOKE`."""
-    out = derive.outcomes_of(ABORTED_1, FULL_PROFILE)
+    out = stream.outcomes_of(ABORTED_1, FULL_PROFILE)
     assert out is not None
     assert out.administered == 0 and out.aborted == 1
     assert out.p_rewarded is None, "no administered trials is null, never zero"
@@ -183,7 +183,7 @@ def test_an_early_odor_unpoke_is_not_a_completed_sample() -> None:
 def test_an_unanswered_trial_closes_at_the_next_odor() -> None:
     """Same boundary rule the metrics use — otherwise the next trial's reward
     would be attributed to the trial that was abandoned."""
-    out = derive.outcomes_of(NO_RESPONSE_1 + REWARDED_1, FULL_PROFILE)
+    out = stream.outcomes_of(NO_RESPONSE_1 + REWARDED_1, FULL_PROFILE)
     assert out is not None
     assert out.no_response == 1 and out.rewarded == 1
 
@@ -194,12 +194,12 @@ def test_a_profile_without_the_vocabulary_reports_no_outcomes() -> None:
     Absent, not zeroed: "this task has no notion of reward delivery" is a
     different claim from "this animal earned nothing".
     """
-    assert derive.outcomes_of(HIT_1 + HIT_3, PROFILE) is None
-    assert derive.outcomes_of(HIT_1, None) is None
+    assert stream.outcomes_of(HIT_1 + HIT_3, PROFILE) is None
+    assert stream.outcomes_of(HIT_1, None) is None
 
 
 def test_outcomes_ride_along_on_the_summary() -> None:
-    summary = derive.summarize(document(REWARDED_1 + WRONG_1), FULL_PROFILE)
+    summary = stream.summarize(document(REWARDED_1 + WRONG_1), FULL_PROFILE)
     assert summary.outcomes is not None
     payload = summary.to_json()["outcomes"]
     assert payload["rewarded"] == 1 and payload["wrongWell"] == 1
@@ -209,7 +209,7 @@ def test_outcomes_ride_along_on_the_summary() -> None:
 
 
 def test_a_run_whose_profile_lacks_the_vocabulary_has_null_outcomes() -> None:
-    assert derive.summarize(document(HIT_1), PROFILE).to_json()["outcomes"] is None
+    assert stream.summarize(document(HIT_1), PROFILE).to_json()["outcomes"] is None
 
 
 def test_rewarded_accuracy_is_independent_of_the_declared_metrics() -> None:
@@ -218,18 +218,18 @@ def test_rewarded_accuracy_is_independent_of_the_declared_metrics() -> None:
     different questions and must not track each other by construction."""
     # Always goes right: correct on odor 1, wrong on odor 3.
     codes = (REWARDED_1 + [103, 226, 249, 258]) * 5
-    summary = derive.summarize(document(codes), FULL_PROFILE)
+    summary = stream.summarize(document(codes), FULL_PROFILE)
     assert summary.overall is not None and summary.overall.p_session == 0.5
     assert summary.outcomes is not None and summary.outcomes.p_rewarded == 0.5
     # ...and with hold failures on the rewarded half, they diverge.
     codes2 = (HOLD_FAIL_1 + [103, 226, 249, 258]) * 5
-    summary2 = derive.summarize(document(codes2), FULL_PROFILE)
+    summary2 = stream.summarize(document(codes2), FULL_PROFILE)
     assert summary2.overall is not None and summary2.overall.p_session == 0.5
     assert summary2.outcomes is not None and summary2.outcomes.p_rewarded == 0.0
     assert summary2.outcomes.p_side == 0.5
 
 
-# --- the engagement ladder (`DATA.md#engagement-ladder`) -------------------
+# --- the engagement ladder (`ANALYTICS.md#engagement-ladder`) -------------------
 
 
 def test_the_ladder_counts_each_stage_a_presentation_reached() -> None:
@@ -239,7 +239,7 @@ def test_the_ladder_counts_each_stage_a_presentation_reached() -> None:
         + POKE_BAIL               # offered, poked, no odor
         + LAZY + LAZY             # offered, never poked
     )
-    ladder = derive.engagement_of(codes, FULL_PROFILE)
+    ladder = stream.engagement_of(codes, FULL_PROFILE)
     assert ladder is not None
     assert (ladder.presented, ladder.poked, ladder.odor_delivered) == (5, 3, 2)
     assert ladder.p_engaged == 3 / 5
@@ -257,7 +257,7 @@ def test_the_ladder_measures_what_every_other_figure_is_conditioned_on() -> None
     diligent = (ENGAGED + REWARDED_1) * 10
     checked_out = (ENGAGED + REWARDED_1) * 10 + LAZY * 40
 
-    both = [derive.summarize(document(c), FULL_PROFILE) for c in (diligent, checked_out)]
+    both = [stream.summarize(document(c), FULL_PROFILE) for c in (diligent, checked_out)]
     assert both[0].outcomes == both[1].outcomes, "indistinguishable by outcome"
     assert both[0].overall == both[1].overall, "and by accuracy"
 
@@ -271,8 +271,8 @@ def test_a_pre_odor_bail_is_not_the_same_event_as_an_aborted_trial() -> None:
     one way that matters: whether it had smelled anything yet. `ODOR_UNPOKE_EARLY`
     carries the same code in both, so only the presentation window separates
     them."""
-    ladder = derive.engagement_of(POKE_BAIL + ENGAGED + ABORTED_1, FULL_PROFILE)
-    outcomes = derive.outcomes_of(POKE_BAIL + ENGAGED + ABORTED_1, FULL_PROFILE)
+    ladder = stream.engagement_of(POKE_BAIL + ENGAGED + ABORTED_1, FULL_PROFILE)
+    outcomes = stream.outcomes_of(POKE_BAIL + ENGAGED + ABORTED_1, FULL_PROFILE)
     assert ladder is not None and outcomes is not None
 
     assert ladder.poked - ladder.odor_delivered == 1, "bailed before odor"
@@ -292,7 +292,7 @@ def test_the_ladder_is_monotone() -> None:
         [222],                                      # a window nothing closed
         [],
     ):
-        ladder = derive.engagement_of(codes, FULL_PROFILE)
+        ladder = stream.engagement_of(codes, FULL_PROFILE)
         assert ladder is not None
         assert ladder.presented >= ladder.poked >= ladder.odor_delivered
         payload = ladder.to_json()
@@ -302,14 +302,14 @@ def test_the_ladder_is_monotone() -> None:
 def test_odor_delivery_implies_the_poke_that_earned_it() -> None:
     """The firmware cannot reach its odor-on code without a held odor poke, so a
     stream that dropped the poke line must not report a delivery with no poke."""
-    ladder = derive.engagement_of([222, 101, 226, 249], FULL_PROFILE)
+    ladder = stream.engagement_of([222, 101, 226, 249], FULL_PROFILE)
     assert ladder is not None
     assert (ladder.presented, ladder.poked, ladder.odor_delivered) == (1, 1, 1)
 
 
 def test_the_last_presentation_is_counted_even_if_nothing_closed_it() -> None:
     """A board drop truncates the final window. It was still offered."""
-    ladder = derive.engagement_of(ENGAGED + REWARDED_1 + ENGAGED, FULL_PROFILE)
+    ladder = stream.engagement_of(ENGAGED + REWARDED_1 + ENGAGED, FULL_PROFILE)
     assert ladder is not None
     assert (ladder.presented, ladder.poked, ladder.odor_delivered) == (2, 2, 1)
 
@@ -323,7 +323,7 @@ def test_odor_delivered_agrees_with_the_outcome_tally() -> None:
         ENGAGED + REWARDED_1 + ENGAGED + WRONG_1 + LAZY
         + ENGAGED + REWARDED_3 + POKE_BAIL + ENGAGED + ABORTED_3
     )
-    summary = derive.summarize(document(codes), FULL_PROFILE)
+    summary = stream.summarize(document(codes), FULL_PROFILE)
     assert summary.engagement is not None and summary.outcomes is not None
     assert summary.engagement.odor_delivered == summary.outcomes.trials
 
@@ -332,7 +332,7 @@ def test_the_lights_going_off_never_opens_a_presentation() -> None:
     """`LIGHTS_OFF` is the same word and the opposite edge. An unanchored match
     would roughly double `presented` — and the number would still look
     plausible, which is what makes it worth a test."""
-    ladder = derive.engagement_of([222, 224, 101, 226, 249, 233], FULL_PROFILE)
+    ladder = stream.engagement_of([222, 224, 101, 226, 249, 233], FULL_PROFILE)
     assert ladder is not None
     assert ladder.presented == 1
 
@@ -340,17 +340,17 @@ def test_the_lights_going_off_never_opens_a_presentation() -> None:
 def test_a_profile_without_a_trial_light_reports_no_ladder() -> None:
     """Null, not zeroed: a zeroed ladder reads as an animal that never engaged
     rather than as a task that cannot say."""
-    assert derive.engagement_of(ENGAGED + REWARDED_1, PROFILE) is None
-    assert derive.engagement_of(ENGAGED, None) is None
+    assert stream.engagement_of(ENGAGED + REWARDED_1, PROFILE) is None
+    assert stream.engagement_of(ENGAGED, None) is None
     # The light alone is a denominator with no numerator.
     light_only = parse_profile(
         {**GRGL, "strobes": {**GRGL["strobes"], "222": "LIGHTS_ON"}}
     )
-    assert derive.engagement_of(ENGAGED + REWARDED_1, light_only) is None
+    assert stream.engagement_of(ENGAGED + REWARDED_1, light_only) is None
 
 
 def test_the_ladder_rides_along_on_the_summary() -> None:
-    payload = derive.summarize(
+    payload = stream.summarize(
         document(ENGAGED + REWARDED_1 + LAZY + POKE_BAIL), FULL_PROFILE
     ).to_json()["engagement"]
     assert payload["presented"] == 3
@@ -360,17 +360,17 @@ def test_the_ladder_rides_along_on_the_summary() -> None:
     assert payload["pEngaged"] == round(2 / 3, 6)
     assert 0.0 <= payload["engagedLow"] <= payload["pEngaged"] <= payload["engagedHigh"] <= 1.0
     # And null on a profile that can't express it.
-    assert derive.summarize(document(HIT_1), PROFILE).to_json()["engagement"] is None
+    assert stream.summarize(document(HIT_1), PROFILE).to_json()["engagement"] is None
 
 
 def test_a_run_that_offered_nothing_reports_null_rates_not_zero() -> None:
-    ladder = derive.engagement_of([221], FULL_PROFILE)
+    ladder = stream.engagement_of([221], FULL_PROFILE)
     assert ladder is not None
     assert ladder.presented == 0
     assert ladder.p_engaged is None and ladder.p_delivered is None
 
 
-# --- the same tally, per condition (`DATA.md#per-condition-tally`) ---------
+# --- the same tally, per condition (`ANALYTICS.md#per-condition-tally`) ---------
 
 #: Odor 3's mirror of the odor-1 fixtures above — left is the correct well.
 REWARDED_3 = [103, 226, 248, 252, 369]
@@ -384,7 +384,7 @@ def test_conditions_split_the_tally_by_which_odor_opened_the_trial() -> None:
     """The question the session tile asks: how many go-right trials were
     administered, and how many of those actually paid out."""
     codes = REWARDED_1 * 3 + WRONG_1 + REWARDED_3 + WRONG_3 * 2
-    conditions = derive.conditions_of(codes, FULL_PROFILE)
+    conditions = stream.conditions_of(codes, FULL_PROFILE)
     assert [c.metric_id for c in conditions] == ["p_r_odor1", "p_l_odor3"]
 
     odor1, odor3 = (c.outcomes for c in conditions)
@@ -399,8 +399,8 @@ def test_the_conditions_sum_to_the_pooled_tally() -> None:
         REWARDED_1 * 2 + HOLD_FAIL_1 + WRONG_1 + NO_RESPONSE_1 + ABORTED_1
         + REWARDED_3 + HOLD_FAIL_3 * 2 + WRONG_3 + ABORTED_3
     )
-    pooled = derive.outcomes_of(codes, FULL_PROFILE)
-    conditions = derive.conditions_of(codes, FULL_PROFILE)
+    pooled = stream.outcomes_of(codes, FULL_PROFILE)
+    conditions = stream.conditions_of(codes, FULL_PROFILE)
     assert pooled is not None
 
     for attribute in (
@@ -420,7 +420,7 @@ def test_the_conditions_sum_to_the_pooled_tally() -> None:
 def test_a_condition_the_animal_never_saw_is_zeroed_not_missing() -> None:
     """A declared condition with no trials still gets a row — "odor 3 never
     came up" is a fact about the session, not an absent one."""
-    conditions = derive.conditions_of(REWARDED_1 * 3, FULL_PROFILE)
+    conditions = stream.conditions_of(REWARDED_1 * 3, FULL_PROFILE)
     assert len(conditions) == 2
     assert conditions[1].outcomes.trials == 0
     # And a rate over nothing stays None rather than collapsing to 0.0.
@@ -428,22 +428,22 @@ def test_a_condition_the_animal_never_saw_is_zeroed_not_missing() -> None:
 
 
 def test_conditions_are_empty_when_the_vocabulary_cannot_express_an_outcome() -> None:
-    assert derive.conditions_of(HIT_1 + HIT_3, PROFILE) == []
-    assert derive.conditions_of(HIT_1, None) == []
+    assert stream.conditions_of(HIT_1 + HIT_3, PROFILE) == []
+    assert stream.conditions_of(HIT_1, None) == []
 
 
 def test_conditions_ride_along_on_the_summary() -> None:
-    payload = derive.summarize(document(REWARDED_1 + WRONG_3), FULL_PROFILE).to_json()
+    payload = stream.summarize(document(REWARDED_1 + WRONG_3), FULL_PROFILE).to_json()
     assert [c["metricId"] for c in payload["conditions"]] == ["p_r_odor1", "p_l_odor3"]
     assert payload["conditions"][0]["label"] == "P(R | Odor 1)"
     assert payload["conditions"][0]["triggerCode"] == 101
     assert payload["conditions"][0]["outcomes"]["rewarded"] == 1
     assert payload["conditions"][1]["outcomes"]["wrongWell"] == 1
     # Empty, not null, when the profile can't express an outcome at all.
-    assert derive.summarize(document(HIT_1), PROFILE).to_json()["conditions"] == []
+    assert stream.summarize(document(HIT_1), PROFILE).to_json()["conditions"] == []
 
 
-# --- the per-trial tape (`DATA.md#per-trial-tape`) -------------------------
+# --- the per-trial tape (`ANALYTICS.md#per-trial-tape`) -------------------------
 
 
 def test_the_tape_tallied_reproduces_the_outcome_tally() -> None:
@@ -454,9 +454,9 @@ def test_the_tape_tallied_reproduces_the_outcome_tally() -> None:
     alarm for that.
     """
     codes = (REWARDED_1 + HOLD_FAIL_1 + WRONG_1 + NO_RESPONSE_1 + ABORTED_1) * 3
-    tape = derive.trials_of(document(codes), FULL_PROFILE)
+    tape = stream.trials_of(document(codes), FULL_PROFILE)
     tallied = Counter(t.outcome for t in tape)
-    out = derive.outcomes_of(codes, FULL_PROFILE)
+    out = stream.outcomes_of(codes, FULL_PROFILE)
     assert out is not None
     assert tallied["rewarded"] == out.rewarded
     assert tallied["hold_failed"] == out.hold_failed
@@ -468,8 +468,8 @@ def test_the_tape_tallied_reproduces_the_outcome_tally() -> None:
 
 def test_the_tape_grouped_by_trigger_reproduces_the_conditions() -> None:
     codes = REWARDED_1 + WRONG_3 + HOLD_FAIL_1 + NO_RESPONSE_3
-    tape = derive.trials_of(document(codes), FULL_PROFILE)
-    for condition in derive.conditions_of(codes, FULL_PROFILE):
+    tape = stream.trials_of(document(codes), FULL_PROFILE)
+    for condition in stream.conditions_of(codes, FULL_PROFILE):
         own = [t for t in tape if t.trigger_code == condition.trigger_code]
         assert len(own) == condition.outcomes.trials
         assert (
@@ -479,20 +479,20 @@ def test_the_tape_grouped_by_trigger_reproduces_the_conditions() -> None:
 
 
 def test_the_tape_is_in_stream_order_with_contiguous_indices() -> None:
-    tape = derive.trials_of(document(REWARDED_1 + WRONG_1 + ABORTED_1), FULL_PROFILE)
+    tape = stream.trials_of(document(REWARDED_1 + WRONG_1 + ABORTED_1), FULL_PROFILE)
     assert [t.index for t in tape] == [0, 1, 2]
     assert [t.outcome for t in tape] == ["rewarded", "wrong_well", "aborted"]
 
 
 def test_the_tape_is_empty_when_the_vocabulary_cannot_express_an_outcome() -> None:
-    assert derive.trials_of(document(HIT_1 + HIT_3), PROFILE) == []
-    assert derive.trials_of(document(HIT_1), None) == []
+    assert stream.trials_of(document(HIT_1 + HIT_3), PROFILE) == []
+    assert stream.trials_of(document(HIT_1), None) == []
 
 
 def test_tape_times_are_relative_to_the_earliest_timestamp() -> None:
     # 1s spacing from `document`: trial 0 opens at code index 0, trial 1 at
     # index 5 (REWARDED_1 is five codes long).
-    tape = derive.trials_of(document(REWARDED_1 + WRONG_1), FULL_PROFILE)
+    tape = stream.trials_of(document(REWARDED_1 + WRONG_1), FULL_PROFILE)
     assert tape[0].at_ms == 0
     assert tape[1].at_ms == 5000
     # Latency: odor 1 at index 0 settles on FLUID at index 3 → 3s.
@@ -502,20 +502,20 @@ def test_tape_times_are_relative_to_the_earliest_timestamp() -> None:
 
 
 def test_unsettled_trials_carry_no_latency() -> None:
-    tape = derive.trials_of(document(NO_RESPONSE_1 + ABORTED_1), FULL_PROFILE)
+    tape = stream.trials_of(document(NO_RESPONSE_1 + ABORTED_1), FULL_PROFILE)
     assert [t.outcome for t in tape] == ["no_response", "aborted"]
     assert all(t.latency_ms is None for t in tape)
 
 
 def test_a_clockless_file_nulls_times_without_dropping_trials() -> None:
     doc = {"ts_data": [[code] for code in REWARDED_1 + WRONG_1]}
-    tape = derive.trials_of(doc, FULL_PROFILE)
+    tape = stream.trials_of(doc, FULL_PROFILE)
     assert [t.outcome for t in tape] == ["rewarded", "wrong_well"]
     assert all(t.at_ms is None and t.latency_ms is None for t in tape)
 
 
 def test_the_wire_spelling_is_hyphenated() -> None:
-    tape = derive.trials_of(document(HOLD_FAIL_1 + NO_RESPONSE_1), FULL_PROFILE)
+    tape = stream.trials_of(document(HOLD_FAIL_1 + NO_RESPONSE_1), FULL_PROFILE)
     assert [t.to_json()["outcome"] for t in tape] == ["hold-failed", "no-response"]
 
 
@@ -527,7 +527,7 @@ def test_the_trail_pairs_both_conditions_on_one_clock() -> None:
     indexed by each metric's *own* counted trials, which interleave, so index
     k of one is not the same moment as index k of the other."""
     codes = (HIT_1 + HIT_3) * 15
-    trail = derive.strategy_trail(document(codes), PROFILE)
+    trail = stream.strategy_trail(document(codes), PROFILE)
     assert trail, "thirty counted trials should produce a walk"
     # A perfect discriminator sits in the top-right corner the whole way.
     assert all(point.x == 1.0 and point.y == 1.0 for point in trail)
@@ -543,7 +543,7 @@ def test_the_trail_shows_a_bias_becoming_discrimination_within_one_session() -> 
     end-of-session place as one that was steady throughout."""
     biased = (HIT_1 + MISS_3) * 20  # always right: on the bias anti-diagonal
     learned = (HIT_1 + HIT_3) * 20  # discriminating: the corner
-    trail = derive.strategy_trail(document(biased + learned), PROFILE)
+    trail = stream.strategy_trail(document(biased + learned), PROFILE)
     start, end = trail[0], trail[-1]
     assert start.y < 0.25, "the run opens answering the same side regardless"
     assert end.y > 0.75, "and closes discriminating"
@@ -563,8 +563,8 @@ def test_the_trail_needs_two_opposing_SIDES_not_two_conditions() -> None:
     reading. Now any number of conditions folds onto the two sides.
     """
     one_metric = parse_profile({**GRGL, "liveMetrics": [GRGL["liveMetrics"][0]]})
-    assert derive.strategy_trail(document(HIT_1 * 4), one_metric) == []
-    assert derive.strategy_trail(document(HIT_1), None) == []
+    assert stream.strategy_trail(document(HIT_1 * 4), one_metric) == []
+    assert stream.strategy_trail(document(HIT_1), None) == []
 
     # Two conditions that reward the SAME well are not a plane: nothing on
     # these axes could distinguish discriminating from answering one side.
@@ -575,13 +575,13 @@ def test_the_trail_needs_two_opposing_SIDES_not_two_conditions() -> None:
             {**GRGL["liveMetrics"][1], "successCode": 249, "alternateCode": 248},
         ],
     })
-    assert derive.strategy_axes(same_side) is None
-    assert derive.strategy_trail(document((HIT_1 + HIT_3) * 15), same_side) == []
+    assert stream.strategy_axes(same_side) is None
+    assert stream.strategy_trail(document((HIT_1 + HIT_3) * 15), same_side) == []
 
 
 def test_four_conditions_fold_onto_two_sides() -> None:
     four = parse_profile(FOUR_ODOR)
-    axes = derive.strategy_axes(four)
+    axes = stream.strategy_axes(four)
     assert axes is not None
     # x takes the FIRST declared metric's side, so a two-condition task keeps
     # exactly the orientation it has always had and no familiar plot silently
@@ -591,7 +591,7 @@ def test_four_conditions_fold_onto_two_sides() -> None:
     assert axes.y_metrics == ("odor3_l", "odor4_l")
 
     perfect = (HIT_1 + HIT_2 + HIT_3 + HIT_4) * 8
-    trail = derive.strategy_trail(document(perfect), four)
+    trail = stream.strategy_trail(document(perfect), four)
     assert trail, "a four-odor task must produce a walk"
     assert all(p.x == 1.0 and p.y == 1.0 for p in trail)
 
@@ -605,7 +605,7 @@ def test_a_side_pools_over_integers_not_over_proportions() -> None:
     # Pooled over integers that is 20/24 = 0.833; averaged proportions would
     # read 0.5, which is a different animal.
     codes = HIT_1 * 20 + MISS_2 * 4 + (HIT_3 + HIT_4) * 12
-    trail = derive.strategy_trail(document(codes), four)
+    trail = stream.strategy_trail(document(codes), four)
     assert trail
     # Pooled over integers, the right side is 20 of 24. The mean of the two
     # conditions' proportions would be 0.5 — a different animal entirely.
@@ -629,7 +629,7 @@ def test_a_withhold_condition_is_not_an_axis() -> None:
             },
         ],
     })
-    axes = derive.strategy_axes(with_nogo)
+    axes = stream.strategy_axes(with_nogo)
     assert axes is not None
     assert "p_withhold" not in (*axes.x_metrics, *axes.y_metrics)
 
@@ -645,14 +645,14 @@ def test_the_answer_side_is_never_taken_from_the_alternate() -> None:
             GRGL["liveMetrics"][1],
         ],
     })
-    assert derive.answer_side_of(unreadable, unreadable.live_metrics[0]) is None
+    assert stream.answer_side_of(unreadable, unreadable.live_metrics[0]) is None
     # ...and with only one readable side left, there is no plane at all.
-    assert derive.strategy_axes(unreadable) is None
+    assert stream.strategy_axes(unreadable) is None
 
 
 def test_the_trail_starts_only_once_both_conditions_have_scored() -> None:
     """A coordinate and a blank is not a point."""
-    assert derive.strategy_trail(document(HIT_1 * 30), PROFILE) == []
+    assert stream.strategy_trail(document(HIT_1 * 30), PROFILE) == []
 
 
 def test_the_trail_does_not_begin_pinned_to_a_corner() -> None:
@@ -663,10 +663,10 @@ def test_the_trail_does_not_begin_pinned_to_a_corner() -> None:
     which is the failure worth a test rather than the obvious one.
     """
     codes = (HIT_1 + MISS_1 + HIT_3 + MISS_3) * 10
-    trail = derive.strategy_trail(document(codes), PROFILE)
+    trail = stream.strategy_trail(document(codes), PROFILE)
     assert trail
     # Every point rests on a real window, so none of them can be a bare 0/1.
-    assert all(point.n >= derive.DEFAULT_MIN_COUNTED for point in trail)
+    assert all(point.n >= stream.DEFAULT_MIN_COUNTED for point in trail)
     assert 0.0 < trail[0].x < 1.0 and 0.0 < trail[0].y < 1.0
 
 
@@ -675,8 +675,8 @@ def test_the_trail_reports_the_weaker_of_the_two_windows() -> None:
     # Odor 1 fills its window well ahead of odor 3, so odor 3 is the binding
     # constraint on both when the walk starts and on `n` throughout.
     codes = HIT_1 * 25 + (HIT_1 + HIT_3) * 10
-    point = derive.strategy_trail(document(codes), PROFILE)[0]
-    assert point.n == derive.DEFAULT_MIN_COUNTED
+    point = stream.strategy_trail(document(codes), PROFILE)[0]
+    assert point.n == stream.DEFAULT_MIN_COUNTED
     assert point.to_json() == {"trial": 45, "x": 1.0, "y": 1.0, "n": 10}
 
 
@@ -687,15 +687,15 @@ def test_a_window_shorter_than_the_floor_still_produces_a_walk() -> None:
         **GRGL,
         "liveMetrics": [{**m, "windowSize": 4} for m in GRGL["liveMetrics"]],
     })
-    trail = derive.strategy_trail(document((HIT_1 + HIT_3) * 6), short)
+    trail = stream.strategy_trail(document((HIT_1 + HIT_3) * 6), short)
     assert trail and all(point.n == 4 for point in trail)
 
 
-# --- the boundary-code trap (`DATA.md#boundary-codes`) --------------------
+# --- the boundary-code trap (`ANALYTICS.md#boundary-codes`) --------------------
 
 
 def test_boundaries_are_the_union_of_every_trigger() -> None:
-    assert derive.boundaries_for(PROFILE) == frozenset({101, 103})
+    assert stream.boundaries_for(PROFILE) == frozenset({101, 103})
 
 
 def test_an_unanswered_trial_is_excluded_not_mis_scored() -> None:
@@ -709,7 +709,7 @@ def test_an_unanswered_trial_is_excluded_not_mis_scored() -> None:
     codes = [101, 103, 248]
     metric = PROFILE.live_metrics[0]
 
-    correct = compute_series(metric, codes, derive.boundaries_for(PROFILE))
+    correct = compute_series(metric, codes, stream.boundaries_for(PROFILE))
     wrong = compute_series(metric, codes)  # the default: own trigger only
 
     assert correct == [], "the abandoned odor-1 trial must be excluded entirely"
@@ -726,8 +726,8 @@ def test_offline_scoring_equals_the_live_run() -> None:
     codes = (
         HIT_1 + HIT_3 + MISS_1 + HIT_3 + [101, 103, 248] + HIT_1 + MISS_3 + HIT_1
     )
-    summary = derive.summarize(document(codes), PROFILE)
-    live = dict((mid, (value, n)) for mid, value, n in derive.live_equivalent(PROFILE, codes))
+    summary = stream.summarize(document(codes), PROFILE)
+    live = dict((mid, (value, n)) for mid, value, n in stream.live_equivalent(PROFILE, codes))
 
     for metric in summary.metrics:
         live_value, live_n = live[metric.id]
@@ -735,7 +735,7 @@ def test_offline_scoring_equals_the_live_run() -> None:
         assert metric.counted == live_n, f"{metric.id} counted trials drifted from live"
 
 
-# --- two probabilities, never one (`DATA.md#two-probabilities-per-metric`) ---
+# --- two probabilities, never one (`ANALYTICS.md#two-probabilities-per-metric`) ---
 
 
 def test_p_session_and_p_window_differ_when_the_window_is_short() -> None:
@@ -745,7 +745,7 @@ def test_p_session_and_p_window_differ_when_the_window_is_short() -> None:
     )
     # Four wrong, then two right: the last-2 window sees 1.0, the session 0.33.
     codes = MISS_1 * 4 + HIT_1 * 2
-    metric = derive.summarize(document(codes), narrow).metrics[0]
+    metric = stream.summarize(document(codes), narrow).metrics[0]
 
     assert metric.p_window == 1.0
     assert metric.p_session is not None and abs(metric.p_session - 2 / 6) < 1e-9
@@ -754,7 +754,7 @@ def test_p_session_and_p_window_differ_when_the_window_is_short() -> None:
 
 def test_p_session_ignores_the_authored_window_entirely() -> None:
     codes = HIT_1 * 30 + MISS_1 * 30
-    metric = derive.summarize(document(codes), PROFILE).metrics[0]
+    metric = stream.summarize(document(codes), PROFILE).metrics[0]
     assert metric.p_session == 0.5
     # The rolling window (20) sits entirely inside the trailing misses.
     assert metric.p_window == 0.0
@@ -773,7 +773,7 @@ def test_a_side_biased_animal_scores_at_chance_overall() -> None:
     stuck" has to show.
     """
     always_right = ([101, 249] + [103, 249]) * 20
-    summary = derive.summarize(document(always_right), PROFILE)
+    summary = stream.summarize(document(always_right), PROFILE)
     by_id = {m.id: m for m in summary.metrics}
 
     assert by_id["p_r_odor1"].p_session == 1.0, "perfect, read alone"
@@ -786,7 +786,7 @@ def test_overall_pools_trials_rather_than_averaging_proportions() -> None:
     """Weighted by how the session actually ran, not by condition count."""
     # 10 odor-1 trials all correct, 2 odor-3 trials both wrong: 10/12, not 0.5.
     codes = HIT_1 * 10 + MISS_3 * 2
-    summary = derive.summarize(document(codes), PROFILE)
+    summary = stream.summarize(document(codes), PROFILE)
     assert summary.overall is not None
     assert abs(summary.overall.p_session - 10 / 12) < 1e-9
     assert summary.overall.counted == 12
@@ -800,7 +800,7 @@ def test_the_pooled_row_still_counts_a_condition_that_never_scored() -> None:
     animal was never offered them, which is a different and false claim.
     """
     codes = HIT_1 * 10 + [103, 103] * 10  # odor 3 fires 20 times, never answered
-    summary = derive.summarize(document(codes), PROFILE)
+    summary = stream.summarize(document(codes), PROFILE)
     assert summary.overall is not None
 
     assert summary.overall.p_session == 1.0, "only odor 1 scored, and it was perfect"
@@ -813,7 +813,7 @@ def test_the_pooled_row_balances_its_own_trial_counts() -> None:
     """`triggered == counted + excluded` — the identity that makes the pooled
     row readable next to the per-condition rows it sits above."""
     codes = HIT_1 * 4 + MISS_1 + [101, 103, 248] + HIT_3 * 3 + [103, 101, 249]
-    overall = derive.summarize(document(codes), PROFILE).overall
+    overall = stream.summarize(document(codes), PROFILE).overall
     assert overall is not None
     assert overall.triggered == overall.counted + overall.excluded
 
@@ -825,7 +825,7 @@ def test_whole_session_p_is_the_exact_ratio_of_scored_trials() -> None:
     codes = [code for trial in trials for code in trial]
     hits = sum(1 for trial in trials if trial is HIT_1)
 
-    metric = derive.summarize(document(codes), PROFILE).metrics[0]
+    metric = stream.summarize(document(codes), PROFILE).metrics[0]
     assert metric.counted == len(trials)
     assert metric.p_session == hits / len(trials)
     # And the interval is the one for that exact integer numerator, 5 of 7.
@@ -833,25 +833,25 @@ def test_whole_session_p_is_the_exact_ratio_of_scored_trials() -> None:
 
 
 def test_overall_is_absent_when_nothing_scored() -> None:
-    assert derive.summarize(document([101, 101]), PROFILE).overall is None
+    assert stream.summarize(document([101, 101]), PROFILE).overall is None
 
 
 def test_a_profile_less_run_has_no_overall() -> None:
-    assert derive.summarize(document([221, 222]), None).overall is None
+    assert stream.summarize(document([221, 222]), None).overall is None
 
 
-# --- trial counts (`DATA.md#trial-counts`) ---------------------------------
+# --- trial counts (`ANALYTICS.md#trial-counts`) ---------------------------------
 
 
 def test_excluded_counts_the_unanswered_trials() -> None:
     codes = HIT_1 + [101, 103, 248] + HIT_1
-    metric = derive.summarize(document(codes), PROFILE).metrics[0]
+    metric = stream.summarize(document(codes), PROFILE).metrics[0]
     assert metric.triggered == 3
     assert metric.counted == 2
     assert metric.excluded == 1
 
 
-# --- uncertainty (`DATA.md#uncertainty`) -----------------------------------
+# --- uncertainty (`ANALYTICS.md#uncertainty`) -----------------------------------
 
 
 def test_a_wilson_interval_never_leaves_the_unit_range() -> None:
@@ -860,7 +860,7 @@ def test_a_wilson_interval_never_leaves_the_unit_range() -> None:
     Three of three correct is where the normal approximation gives a zero-width
     interval at exactly 1.0, or runs past it.
     """
-    low, high = derive.wilson_interval(3, 3)
+    low, high = stream.wilson_interval(3, 3)
     assert 0.0 <= low < high <= 1.0
     assert low < 1.0, "a 3/3 estimate must not claim certainty"
 
@@ -869,35 +869,35 @@ def test_a_wilson_interval_is_the_95_percent_score_interval() -> None:
     """The literals are SciPy's (`binomtest(k, n).proportion_ci(method="wilson")`)
     and the published values for these cases, so a wrong z or a dropped term
     in the margin fails here rather than redrawing every error bar."""
-    assert derive.wilson_interval(8, 10) == pytest.approx((0.4902, 0.9433), abs=5e-5)
-    assert derive.wilson_interval(3, 3) == pytest.approx((0.4385, 1.0), abs=5e-5)
-    assert derive.wilson_interval(0, 10) == pytest.approx((0.0, 0.2775), abs=5e-5)
+    assert stream.wilson_interval(8, 10) == pytest.approx((0.4902, 0.9433), abs=5e-5)
+    assert stream.wilson_interval(3, 3) == pytest.approx((0.4385, 1.0), abs=5e-5)
+    assert stream.wilson_interval(0, 10) == pytest.approx((0.0, 0.2775), abs=5e-5)
 
 
 def test_wilson_narrows_as_n_grows() -> None:
-    small_low, small_high = derive.wilson_interval(8, 10)
-    large_low, large_high = derive.wilson_interval(800, 1000)
+    small_low, small_high = stream.wilson_interval(8, 10)
+    large_low, large_high = stream.wilson_interval(800, 1000)
     assert (large_high - large_low) < (small_high - small_low)
 
 
 def test_no_interval_without_trials() -> None:
-    assert derive.wilson_interval(0, 0) is None
+    assert stream.wilson_interval(0, 0) is None
 
 
 def test_low_confidence_is_flagged_but_the_value_is_still_reported() -> None:
-    """The sidecar never suppresses — presentation decides (`DATA.md#uncertainty`)."""
-    metric = derive.summarize(document(HIT_1 * 3), PROFILE, min_counted=10).metrics[0]
+    """The sidecar never suppresses — presentation decides (`ANALYTICS.md#uncertainty`)."""
+    metric = stream.summarize(document(HIT_1 * 3), PROFILE, min_counted=10).metrics[0]
     assert metric.low_confidence is True
     assert metric.p_session == 1.0, "the value is reported regardless"
     assert metric.counted == 3
 
 
-# --- edge cases (`DATA.md#edge-cases`) -------------------------------------
+# --- edge cases (`ANALYTICS.md#edge-cases`) -------------------------------------
 
 
 def test_zero_counted_trials_is_null_never_zero() -> None:
     """Zero percent and 'no trials' are opposite claims about an animal."""
-    metric = derive.summarize(document([101, 101, 101]), PROFILE).metrics[0]
+    metric = stream.summarize(document([101, 101, 101]), PROFILE).metrics[0]
     assert metric.p_session is None
     assert metric.p_window is None
     assert metric.counted == 0
@@ -907,7 +907,7 @@ def test_zero_counted_trials_is_null_never_zero() -> None:
 
 def test_a_profile_less_run_is_listed_with_no_metrics() -> None:
     """Still worth listing — it has a real duration, event count and reason."""
-    summary = derive.summarize(document([221, 222, 223]), None)
+    summary = stream.summarize(document([221, 222, 223]), None)
     assert summary.status == "no-metrics"
     assert summary.metrics == []
     assert summary.total_events == 3
@@ -916,14 +916,14 @@ def test_a_profile_less_run_is_listed_with_no_metrics() -> None:
 
 def test_a_utility_profile_is_scored_but_left_out_of_aggregates() -> None:
     utility = parse_profile({**GRGL, "kind": "utility"})
-    summary = derive.summarize(document(HIT_1 * 3), utility)
+    summary = stream.summarize(document(HIT_1 * 3), utility)
     assert summary.status == "ok"
     assert summary.excluded_by_default is True
     assert summary.metrics[0].counted == 3
 
 
 def test_a_board_drop_is_included_and_marked_unclean() -> None:
-    summary = derive.summarize(
+    summary = stream.summarize(
         document(HIT_1 * 20, stop_reason="board disconnected"), PROFILE
     )
     assert summary.status == "ok"
@@ -933,7 +933,7 @@ def test_a_board_drop_is_included_and_marked_unclean() -> None:
 
 
 def test_a_clean_end_is_marked_clean() -> None:
-    assert derive.summarize(document(HIT_1), PROFILE).clean is True
+    assert stream.summarize(document(HIT_1), PROFILE).clean is True
 
 
 def test_malformed_ts_data_rows_are_skipped_not_fatal() -> None:
@@ -942,7 +942,7 @@ def test_malformed_ts_data_rows_are_skipped_not_fatal() -> None:
         "stop_reason": "operator stop",
         "ts_data": [[101, 0], "nonsense", [], [249, 1000], [None, 2000], 42],
     }
-    summary = derive.summarize(doc, PROFILE)
+    summary = stream.summarize(doc, PROFILE)
     assert summary.total_events == 2
     assert summary.metrics[0].counted == 1
 
@@ -951,21 +951,21 @@ def test_duration_is_a_span_and_can_never_come_out_negative() -> None:
     """A concatenated or hand-edited file need not be in arrival order, and
     `last - first` on one of those puts a negative duration on a session tile."""
     doc = {"stop_reason": "operator stop", "ts_data": [[101, 9000], [249, 1000]]}
-    assert derive.summarize(doc, PROFILE).duration_ms == 8000
+    assert stream.summarize(doc, PROFILE).duration_ms == 8000
     # One event is a moment, not a span.
-    assert derive.summarize({"ts_data": [[101, 500]]}, PROFILE).duration_ms is None
+    assert stream.summarize({"ts_data": [[101, 500]]}, PROFILE).duration_ms is None
 
 
 def test_a_document_with_no_ts_data_at_all() -> None:
-    summary = derive.summarize({"stop_reason": "sidecar error"}, PROFILE)
+    summary = stream.summarize({"stop_reason": "sidecar error"}, PROFILE)
     assert summary.total_events == 0
     assert summary.duration_ms is None
     assert summary.metrics[0].p_session is None
 
 
 def test_the_seed_is_carried_when_present() -> None:
-    assert derive.summarize(document(HIT_1, trial_seed=288577176), PROFILE).seed == 288577176
-    assert derive.summarize(document(HIT_1), PROFILE).seed is None
+    assert stream.summarize(document(HIT_1, trial_seed=288577176), PROFILE).seed == 288577176
+    assert stream.summarize(document(HIT_1), PROFILE).seed is None
 
 
 # --- the within-session series --------------------------------------------
@@ -973,7 +973,7 @@ def test_the_seed_is_carried_when_present() -> None:
 
 def test_the_series_has_one_point_per_counted_trial() -> None:
     codes = HIT_1 + MISS_1 + HIT_1 + [101, 103, 248]
-    metrics = derive.series(document(codes), PROFILE)
+    metrics = stream.series(document(codes), PROFILE)
     first = next(m for m in metrics if m.id == "p_r_odor1")
     assert first.values == [1.0, 0.5, 2 / 3]
     assert len(first.counts) == len(first.values)
@@ -984,7 +984,7 @@ def test_series_counts_are_window_lengths_not_cumulative_totals() -> None:
     narrow = parse_profile(
         {**GRGL, "liveMetrics": [{**GRGL["liveMetrics"][0], "windowSize": 3}]}
     )
-    metrics = derive.series(document(HIT_1 * 5), narrow)
+    metrics = stream.series(document(HIT_1 * 5), narrow)
     assert metrics[0].counts == [1, 2, 3, 3, 3]
 
 
@@ -993,19 +993,19 @@ def test_cumulative_mode_widens_the_window() -> None:
     narrow = parse_profile(
         {**GRGL, "liveMetrics": [{**GRGL["liveMetrics"][0], "windowSize": 2}]}
     )
-    rolling = derive.series(document(codes), narrow, mode="rolling")[0]
-    cumulative = derive.series(document(codes), narrow, mode="cumulative")[0]
+    rolling = stream.series(document(codes), narrow, mode="rolling")[0]
+    cumulative = stream.series(document(codes), narrow, mode="cumulative")[0]
     assert rolling.values[-1] == 1.0
     assert abs(cumulative.values[-1] - 2 / 6) < 1e-9
 
 
 def test_series_can_be_filtered_to_one_metric() -> None:
-    metrics = derive.series(document(HIT_1 + HIT_3), PROFILE, metric_ids=["p_l_odor3"])
+    metrics = stream.series(document(HIT_1 + HIT_3), PROFILE, metric_ids=["p_l_odor3"])
     assert [m.id for m in metrics] == ["p_l_odor3"]
 
 
 def test_a_profile_less_run_has_no_series() -> None:
-    assert derive.series(document([221, 222]), None) == []
+    assert stream.series(document([221, 222]), None) == []
 
 
 # --- wire shaping ----------------------------------------------------------
@@ -1014,7 +1014,7 @@ def test_a_profile_less_run_has_no_series() -> None:
 def test_values_are_rounded_on_the_wire() -> None:
     """Six decimals — smaller frames, and no 0.8500000000000001 in a tooltip."""
     codes = HIT_1 * 2 + MISS_1
-    payload = derive.summarize(document(codes), PROFILE).to_json()
+    payload = stream.summarize(document(codes), PROFILE).to_json()
     value = payload["metrics"][0]["pSession"]
     assert value == round(2 / 3, 6)
 
@@ -1042,7 +1042,7 @@ def test_the_payload_shape_is_spelled_out() -> None:
     `test_migrations.py`'s reason — a shape derived from the code under test
     agrees with it by construction and proves nothing.
     """
-    payload = derive.summarize(document((HIT_1 + HIT_3) * 12), FULL_PROFILE).to_json()
+    payload = stream.summarize(document((HIT_1 + HIT_3) * 12), FULL_PROFILE).to_json()
 
     assert sorted(payload) == [
         "clean", "conditions", "detail", "durationMs", "engagement",
@@ -1092,7 +1092,7 @@ def test_an_unevidenced_condition_gets_a_stable_arbitrary_side() -> None:
     splitting every historical run from its future ones to correct an edge that
     real streams do not reach.
     """
-    from ephymeris_sidecar.analytics import infer
+    from ephymeris_sidecar.analytics.stream import infer
 
     # Odor 1 answered right and odor 3 answered left, both with real evidence;
     # odor 4 only ever produced bare pokes.
@@ -1101,9 +1101,61 @@ def test_an_unevidenced_condition_gets_a_stable_arbitrary_side() -> None:
     second = infer.infer_profile(codes, sketch_name="GRGL 3-Odor")
     assert first is not None and second is not None
 
-    sides = [derive.answer_side_of(first, m) for m in first.live_metrics]
+    sides = [stream.answer_side_of(first, m) for m in first.live_metrics]
     # Every condition gets *a* side — the axes are never silently short one.
     assert all(side in ("left", "right") for side in sides), sides
     # And the same one every time, so a rescan cannot move the run's group.
-    assert sides == [derive.answer_side_of(second, m) for m in second.live_metrics]
+    assert sides == [stream.answer_side_of(second, m) for m in second.live_metrics]
     assert profile_hash(first) == profile_hash(second)
+
+
+# --- the guide's worked example (`ANALYTICS.md#a-worked-example`) ------------
+
+
+def test_the_guides_worked_example_scores_as_printed() -> None:
+    """Every figure in the guide's worked-example table, from the same thirty
+    strobes. The guide is what a new reader trusts first; if scoring changes,
+    this fails before the table can go stale.
+
+    Written by name through the vocabulary, as the guide is, and decoded by
+    inference — odor 1 rewarded at the right well and odor 3 at the left is
+    exactly what that stream says.
+    """
+    from ephymeris_sidecar.analytics.stream import infer
+    from ephymeris_sidecar.rig import registry
+
+    vocabulary = registry.vocabulary()
+    presentations = [
+        "LIGHTS_ON ODOR_POKE ODOR_1_ON ODOR_UNPOKE WATER_POKE_R FLUID_R STOP_FLUID_G_R",
+        "LIGHTS_ON ODOR_POKE ODOR_3_ON ODOR_UNPOKE WATER_POKE_L WATER_UNPOKE_EARLY_L",
+        "LIGHTS_ON ODOR_POKE ODOR_1_ON ODOR_UNPOKE WATER_POKE_L WATER_POKE_ERROR_L",
+        "LIGHTS_ON ODOR_POKE ODOR_3_ON ODOR_UNPOKE",
+        "LIGHTS_ON ODOR_POKE ODOR_1_ON ODOR_UNPOKE_EARLY",
+        "LIGHTS_ON LAZY_RAT LIGHTS_OFF",
+    ]
+    codes = [vocabulary.code_of(name) for line in presentations for name in line.split()]
+    assert len(codes) == 30
+    profile = infer.infer_profile(codes, vocabulary=vocabulary)
+    summary = stream.summarize(document(codes), profile)
+
+    odor_1, odor_3 = summary.metrics
+    assert (odor_1.p_session, odor_1.hits, odor_1.counted, odor_1.triggered, odor_1.excluded) == (
+        0.5, 1, 2, 3, 1,
+    )
+    assert (odor_3.p_session, odor_3.hits, odor_3.counted, odor_3.triggered, odor_3.excluded) == (
+        1.0, 1, 1, 2, 1,
+    )
+    overall = summary.overall
+    assert (overall.hits, overall.counted, overall.triggered, overall.excluded) == (2, 3, 5, 2)
+
+    outcomes = summary.outcomes
+    assert (outcomes.rewarded, outcomes.hold_failed, outcomes.wrong_well) == (1, 1, 1)
+    assert (outcomes.no_response, outcomes.aborted, outcomes.administered) == (1, 1, 4)
+    assert (outcomes.p_rewarded, outcomes.p_side) == (0.25, 0.5)
+
+    engagement = summary.engagement
+    assert (engagement.presented, engagement.poked, engagement.odor_delivered) == (6, 5, 5)
+
+    assert [t.outcome for t in stream.trials_of(document(codes), profile)] == [
+        "rewarded", "hold_failed", "wrong_well", "no_response", "aborted",
+    ]

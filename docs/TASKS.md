@@ -1,6 +1,6 @@
 # Tasks
 
-Everything between "a box runs firmware that emits strobes" and "the app draws its trial flow, builds its `START` line, and scores it live". For maintainers and firmware authors. What the recorded values become on disk and in Analytics is [DATA.md](DATA.md); the session flow that sends the line is [ARCHITECTURE.md](ARCHITECTURE.md#session-lifecycle).
+Everything between "a box runs firmware that emits strobes" and "the app draws its trial flow and builds its `START` line". For maintainers and firmware authors. What the recorded values become on disk is [DATA.md](DATA.md); how a strobe stream is scored, live and in Analytics, is [ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md); the session flow that sends the line is [ARCHITECTURE.md](ARCHITECTURE.md#session-lifecycle).
 
 ## Contents
 
@@ -48,10 +48,6 @@ Everything between "a box runs firmware that emits strobes" and "the app draws i
   - [Every declared code is emitted](#every-declared-code-is-emitted)
   - [Port slots](#port-slots)
   - [Onset codes](#onset-codes)
-- [Live metrics](#live-metrics)
-  - [The definition](#the-definition)
-  - [Boundary codes](#boundary-codes)
-  - [Runtime](#runtime)
 - [The START line](#the-start-line)
   - [Three layer merge](#three-layer-merge)
   - [Building the line](#building-the-line)
@@ -344,7 +340,7 @@ Each code is named, and resolved against the vocabulary at load; a name that is 
 > [!IMPORTANT]
 > **`liveMetrics` order is load-bearing**, and the array does double duty: besides scoring, it is the gate that decides which declared odor codes become drawn conditions ([Gates](#gates)). One metric per condition actually presented.
 
-Scoring semantics are in [Live metrics](#live-metrics).
+Scoring semantics are in [ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#trials-hits-misses-and-exclusions).
 
 ### Utility controls and telemetry
 
@@ -695,32 +691,6 @@ A declared code that nothing can emit is a name in every picker that no session 
 > [!CAUTION]
 > **When `TSK114` appears on a task the lab has run, fix the wiring, not the task.** Changing the row changes the code every *future* session records for that bottle, splitting it from the archive. If the bottle has always been recorded under the stored code, set the line's onset code on the Rig tab to match.
 
-## Live metrics
-
-> [!IMPORTANT]
-> This is scientific output, not a UI detail. Implemented in `tasks/metrics.py`; the analysis-side definitions built on it are in [DATA.md](DATA.md#derived-metrics).
-
-### The definition
-
-For each `triggerCode` in an animal's strobe stream, scan forward for the next `successCode` or `alternateCode`, stopping at the next trial-boundary code:
-
-| Found first | Counts as |
-|---|---|
-| `successCode` | **hit** — numerator and denominator |
-| `alternateCode` | **miss** — denominator only ("went to the other side", not "didn't respond") |
-| neither, before a boundary | **excluded** from both |
-
-The metric is response-conditional and reward-unconditional: the firmware strobes the well poke the instant it is detected, before any hold check. The rolling window is the last `windowSize` **counted** trials, so `n` legitimately lags the trial count (`n=14` after 20 triggers means six unanswered trials), and a success or alternate code with no trial open is ignored.
-
-### Boundary codes
-
-> [!CAUTION]
-> **Boundary codes are the easiest thing here to get silently wrong.** `MetricSet` passes every accumulator the **union of every metric's trigger code**, which is how an odor-3 onset closes an unresolved odor-1 trial. `compute_series(metric, stream, boundary_codes=None)` defaults to **only that metric's own trigger**. Pass the union when replaying a stream, or every unanswered trial stays open and is scored by whatever strobe happens to arrive next.
-
-### Runtime
-
-`sessions/runner.py` creates a `MetricSet(profile)` at box start and offers it every strobe, pushing all metric values in each `session.telemetry` event. Debug Mode's Send START scores through the **same** `MetricSet` (`debug_run.py`); don't write a second scorer. `hits_total`/`counted_total` give Analytics an exact integer ratio. A telemetry metric carries `id`, `value` and `n`, never its label: renderers resolve the label from the profile (`useTaskProfiles`, `metricLabels`), or a row reads `p_correct_2`.
-
 ## The START line
 
 ### Three layer merge
@@ -815,7 +785,7 @@ Every behaviour sketch runs one shared `runTrial()`, so the topology is identica
 
 ### The model
 
-`taskGraph(profile)` returns `{nodes, edges, conditions, congruent, usable}`. A node has a `kind` (`state`, `outcome` — coloured to match Analytics' outcome palette — or `abort`), authored `column`/`row` in a 100-wide frame, `governedBy` (config `group` names that tune it), `entryNames` (strobe names that put the live token there), optional `variants` (a collapsed node's conditions) and `settlesToIti`. Edges carry a `kind` and an optional `countKey` naming the `derive.py` count drawn on them.
+`taskGraph(profile)` returns `{nodes, edges, conditions, congruent, usable}`. A node has a `kind` (`state`, `outcome` — coloured to match Analytics' outcome palette — or `abort`), authored `column`/`row` in a 100-wide frame, `governedBy` (config `group` names that tune it), `entryNames` (strobe names that put the live token there), optional `variants` (a collapsed node's conditions) and `settlesToIti`. Edges carry a `kind` and an optional `countKey` naming the `analytics/stream/` count drawn on them.
 
 ### Gates
 
@@ -845,7 +815,7 @@ Outcomes, best to worst, each with exactly one inbound edge (never a condition �
 | Outcome | Gate | From | Note |
 |---|---|---|---|
 | Reward | `FLUID_L` or `FLUID_R` | answer | Settles to ITI on a timer **only** if `WATER_UNPOKE_L/R` are undeclared; otherwise the animal's withdrawal moves the token |
-| Withheld | `WATER_POKE_NONE` **and** scored | window | **No `countKey` on purpose**: `derive.py` has no no-go bucket, and borrowing `noResponse` would double-count |
+| Withheld | `WATER_POKE_NONE` **and** scored | window | **No `countKey` on purpose**: `stream/outcomes.py` has no no-go bucket, and borrowing `noResponse` would double-count |
 | No hold | `WATER_UNPOKE_EARLY_L/R` | answer | |
 | Wrong well | `WATER_POKE_ERROR_L/R` | answer | |
 | No answer | always | window | |

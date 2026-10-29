@@ -224,7 +224,7 @@ const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "bas
 
 /**
  * Every animal's whole history — all tasks, each run at its pooled overall
- * accuracy (`DATA.md#pooled-accuracy`). The sparkline answers "which way is this going", and a
+ * accuracy (`ANALYTICS.md#pooled-accuracy`). The sparkline answers "which way is this going", and a
  * history that silently skipped every session on another task would answer it
  * about a different animal than the one in the room.
  */

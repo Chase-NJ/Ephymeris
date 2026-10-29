@@ -1,6 +1,6 @@
 # Tasks
 
-Everything between "a box runs firmware that emits strobes" and "the app draws its trial flow, builds its `START` line, and scores it live". For maintainers and firmware authors. What the recorded values become on disk and in Analytics is [DATA.md](DATA.md); the session flow that sends the line is [ARCHITECTURE.md](ARCHITECTURE.md#session-lifecycle).
+Everything between "a box runs firmware that emits strobes" and "the app draws its trial flow and builds its `START` line". For maintainers and firmware authors. What the recorded values become on disk is [DATA.md](DATA.md); how a strobe stream is scored, live and in Analytics, is [ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md); the session flow that sends the line is [ARCHITECTURE.md](ARCHITECTURE.md#session-lifecycle).
 
 ## Contents
 
@@ -48,7 +48,6 @@ Everything between "a box runs firmware that emits strobes" and "the app draws i
   - [Every declared code is emitted](#every-declared-code-is-emitted)
   - [Port slots](#port-slots)
   - [Onset codes](#onset-codes)
-- [Live metrics](#live-metrics)
 - [The START line](#the-start-line)
   - [Three layer merge](#three-layer-merge)
   - [Building the line](#building-the-line)
@@ -691,10 +690,6 @@ A declared code that nothing can emit is a name in every picker that no session 
 
 > [!CAUTION]
 > **When `TSK114` appears on a task the lab has run, fix the wiring, not the task.** Changing the row changes the code every *future* session records for that bottle, splitting it from the archive. If the bottle has always been recorded under the stored code, set the line's onset code on the Rig tab to match.
-
-## Live metrics
-
-How a strobe stream is scored, live in Mission Control and afterwards in Analytics, is defined in [ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#trials-hits-misses-and-exclusions).
 
 ## The START line
 

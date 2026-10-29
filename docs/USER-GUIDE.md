@@ -778,7 +778,7 @@ the fraction correct. By default Ephymeris shows **pooled accuracy across condit
 trials counted together. This matters. An animal that always pokes the same side would look perfect on
 one condition and terrible on the other; pooled, it correctly sits at chance (0.5). Some charts also
 separate *rewarded* accuracy (the animal earned the water) from *response* accuracy (it chose the right
-side, even if it let go too early). Full definitions are in [Derived metrics](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#how-a-strobe-stream-is-scored).
+side, even if it let go too early). Full definitions are in [the analytics guide](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#how-a-strobe-stream-is-scored).
 
 ### Restarted runs
 

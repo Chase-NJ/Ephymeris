@@ -65,7 +65,6 @@ Read with [TASKS.md](TASKS.md) (the profile that decodes a run) and [ARCHITECTUR
   - [Pruning](#pruning)
   - [Carrying adoptions forward](#carrying-adoptions-forward)
   - [Tidy records](#tidy-records)
-- [Derived metrics](#derived-metrics)
 - [Analytics views](#analytics-views)
   - [Pooling across tasks](#pooling-across-tasks)
   - [Session order](#session-order)
@@ -956,10 +955,6 @@ A day that goes wrong leaves two kinds of leftover; **Tidy records** (`sessions.
 **Never touched:** the session the runner holds and every record sharing its folder; a `configuring` record from today (it may be under an operator's hands); and any record whose folder is unreachable (the same rule as [pruning](#pruning)). The first two are listed in the preview with the reason.
 
 **A recovered file counts under its recorded session without a tidy.** The rescan adopts a recovered `.json` under a synthetic session; when the database also recorded that session, the adopted run is attributed to the recorded one (the earliest, as a tidy would keep) at read time (`archive._adoption_owners`), for [every reader](#the-cohort-archive), and it counts as data, so its record is never judged empty.
-
-## Derived metrics
-
-Trials, accuracies, trial outcomes, engagement, false starts, and which profile decodes a run are defined in [ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md), beside the code that computes them.
 
 ## Analytics views
 

@@ -203,8 +203,9 @@ The guards that matter most:
 - `test_analytics_scoring.py`: the cache version moves with every input a cached row depends on; its canary is pinned as a literal.
 - `test_taskdef.py`: the default strobe vocabulary against the names the firmware emits, in both directions; `test_strobes.py`: vocabulary edits, the archive scan, and the v13 hash re-key.
 - `test_debug_flash.py`: a Debug Mode flash survives the utility baseline, and Debug scoring matches a session's.
-- `test_flash_queue.py`: one flash at a time rig-wide, whoever asked; a queued restore never takes a port
-  that stopped being `IDLE` while it waited.
+- `test_flash_queue.py`: one compile at a time rig-wide; a session or Debug flash runs alone; restores
+  compile once and upload side by side; one job per box; a hold lets every restore in hand finish; a queued
+  restore never takes a port that stopped being `IDLE` while it waited.
 - `test_writer.py`: kills a child mid-write to prove the `.tsv` crash guarantee.
 - `test_doc_links.py`: every `FILE.md#anchor` cited anywhere in the repo exists.
 

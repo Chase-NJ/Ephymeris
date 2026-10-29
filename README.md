@@ -123,7 +123,7 @@ python -m venv sidecar\.venv; sidecar\.venv\Scripts\pip.exe install -e "sidecar[
 python3 -m venv sidecar/.venv && sidecar/.venv/bin/pip install -e "sidecar[dev]"
 ```
 
-The `dev` extra includes pytest, the gRPC code generator and PyInstaller, so the same venv can build
+The `dev` extra includes pytest (with pytest-xdist), the gRPC code generator and PyInstaller, so the same venv can build
 the installer.
 
 ### Run it
@@ -163,6 +163,7 @@ Run from the repo root unless noted.
 | `npm run gen:protocol` | Regenerate `sidecar/ephymeris_sidecar/protocol.py`, `src/lib/ws/protocol.ts` and `docs/PROTOCOL.md` from `protocol/schema.py` |
 | `npm run package` | Stage installer resources, then build the Windows installer |
 | `pytest` (in `sidecar/`, inside the venv) | The sidecar suite |
+| `pytest -n auto --dist worksteal` (in `sidecar/`) | The same suite across one worker per core, as CI runs it |
 | `pytest tests/test_protocol_contract.py` (in `sidecar/`) | The mirror-drift guard; run it after any wire change |
 | `cargo test` (in `src-tauri/`) | Shell unit tests, such as the handshake parser |
 | `firmware/libraries/BehaviorBox/extras/host_test/run.sh` | Firmware host tests for the shared library; `run_box.sh` tests the box utility |
@@ -180,6 +181,8 @@ assert what a screenshot shows better. There is no linter.
 
 **Sidecar: pytest, `sidecar/tests/`.** `conftest.py` sets `EPHYMERIS_WIRE_VALIDATE=1` for the whole suite,
 so every event and command reply is checked against `protocol/schema.py`; production leaves it off.
+CI runs the suite across workers (pytest-xdist), so a test may share nothing with another: no fixed
+port, no path outside its `tmp_path`, no module state it doesn't restore.
 Test a command handler through the `sidecar` fixture (`tests/live_sidecar.py`): the real `Application`
 behind the real server over a WebSocket, with only the board tool and serial faked. A handler called
 directly skips the wiring in `app.py`, the error mapping and the reply's schema check. Set up and check

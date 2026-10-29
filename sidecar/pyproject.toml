@@ -37,6 +37,8 @@ dependencies = [
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.24",
+    # CI runs the suite across workers (`-n`); a plain `pytest` stays serial.
+    "pytest-xdist>=3",
     # Codegen for the vendored arduino-cli protos (scripts/gen_grpc.py).
     # Build-time only: the generated stubs are committed, like the wire mirrors.
     "grpcio-tools>=1.60",

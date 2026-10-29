@@ -51,7 +51,10 @@ jobs:
           cache: pip
           cache-dependency-path: sidecar/pyproject.toml
       - run: pip install -e "sidecar[dev]"
-      - run: python -m pytest
+      # One worker per hosted-runner vCPU; worksteal keeps the slow RHX and
+      # utility tests from piling onto one worker. --durations shows what
+      # Windows in particular is slow at.
+      - run: python -m pytest -n 4 --dist worksteal --durations=25
         working-directory: sidecar
 
   firmware:

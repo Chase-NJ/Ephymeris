@@ -67,7 +67,7 @@ def avr_random(ctx: int) -> tuple[int, int]:
 
 
 def draw(ctx: int, n: int) -> tuple[int, int]:
-    """Arduino `random(n)`: `random() % n`, and 0 without a draw when n is 0. `interp_draw()`."""
+    """`interp_draw()`: `random() % n` for an unsigned 32-bit n, and 0 without a draw when n is 0."""
     n &= _U32
     if n == 0:
         return 0, ctx

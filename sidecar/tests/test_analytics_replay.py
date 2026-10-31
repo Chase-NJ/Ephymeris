@@ -58,7 +58,7 @@ def test_the_rng_meets_park_and_millers_check_value() -> None:
     assert value == 1043618065
 
 
-def test_a_draw_is_arduinos_random_n() -> None:
+def test_a_draw_is_random_mod_n() -> None:
     # Captured from the C side: interp_draw from seed 42 over n = 1000, 7, 2, 3.
     ctx, got = 42, []
     for n in (1000, 7, 2, 3):

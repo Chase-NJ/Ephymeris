@@ -51,8 +51,8 @@
   A tick that reports no edge and moves nothing changes nothing at all, the RNG
   included, so a replay may jump straight to the next edge or timer.
 
-  Every draw is an integer: interp_draw(rng, n) is Arduino's random(n), that is
-  avr-libc random() % n, over a generator the core carries in its own state.
+  Every draw is an integer: interp_draw(rng, n) is avr-libc random() % n in
+  uint32_t, over a generator the core carries in its own state.
 
 
   THE STATE TABLE (INTERP_VERSION 1)
@@ -233,7 +233,9 @@ static inline uint32_t interp_random(uint32_t *ctx)
   return *ctx % 0x80000000UL;
 }
 
-/*  Arduino's random(n): random() % n, and 0 without a draw when n is 0. */
+/*  interp_random() % n, with n an unsigned uint32_t over the whole range [1, 2^32 - 1],
+    and 0 without a draw when n is 0. Not Arduino's random(n): that takes a signed
+    long, so the two differ for n >= 2^31. Below that they agree. */
 static inline uint32_t interp_draw(uint32_t *ctx, uint32_t n)
 {
   if (n == 0) return 0;

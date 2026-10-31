@@ -72,7 +72,7 @@ int main() {
     assert(interp_draw(&ctx, 1000) == 894UL && interp_draw(&ctx, 7) == 2UL
            && interp_draw(&ctx, 2) == 1UL && interp_draw(&ctx, 3) == 2UL); }
 
-  // --- interp_draw: Arduino's random(n), random() % n; n == 0 draws nothing ---
+  // --- interp_draw: random() % n over an unsigned n; n == 0 draws nothing ---
   { uint32_t ctx = 1;
     assert(interp_draw(&ctx, 1000) == 807UL);          // 16807 % 1000
     assert(interp_draw(&ctx, 0) == 0 && ctx == 16807UL); }

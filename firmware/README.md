@@ -22,6 +22,7 @@ firmware/
         ├── BoxPins.h        the box as built: guarded pin defaults
         ├── BoxStrobes.h     a guard only: strobe codes are generated
         ├── BoxUtility.h     the box utility's logic, driven by a generated table
+        ├── BoxInterp.h      the phase interpreter's pure core (no sketch includes it yet)
         └── extras/host_test/   off-target tests (never compiled by Arduino)
 ```
 
@@ -147,6 +148,7 @@ flowchart LR
 | `BoxPins.h` | The box as built, every pin `#ifndef`-guarded | The generated `TaskPins.h` wins wherever it speaks |
 | `BoxStrobes.h` | Nothing but a guard | Every `BF_*` code comes from the generated `TaskPins.h` ([TASKS.md › Strobe vocabulary](../docs/TASKS.md#strobe-vocabulary)) |
 | `BoxUtility.h` | The box utility: commands, pulses, `STATUS`, the self-test | Knows no box. Reads the generated `UtilityChannels.h` ([TASKS.md › The box utility](../docs/TASKS.md#the-box-utility)) |
+| `BoxInterp.h` | The phase interpreter's pure core: a state table walked one 1 ms tick at a time, and the session RNG | No pin, clock or Arduino header. Its Python port is `analytics/stream/replay.py`, held equal by `run_diff.sh` ([TASKS.md › Compiling and the host tests](../docs/TASKS.md#compiling-and-the-host-tests)) |
 
 A sketch includes the generated headers around the library, and the order matters:
 
@@ -181,6 +183,8 @@ name outputs by their Rig channel name, case-insensitively:
 # Off-target host tests: the strictest type check the firmware gets
 sh firmware/libraries/BehaviorBox/extras/host_test/run.sh       # the library
 sh firmware/libraries/BehaviorBox/extras/host_test/run_box.sh   # the box utility
+sh firmware/libraries/BehaviorBox/extras/host_test/run_interp.sh  # the interpreter core
+sh firmware/libraries/BehaviorBox/extras/host_test/run_diff.sh    # the core against the Python replay
 
 # A real AVR build, from a folder the app generated
 arduino-cli compile --fqbn arduino:avr:mega --warnings all \

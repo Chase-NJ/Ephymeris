@@ -167,7 +167,7 @@ Run from the repo root unless noted.
 | `pytest -n auto --dist worksteal` (in `sidecar/`) | The same suite across one worker per core, as CI runs it |
 | `pytest tests/test_protocol_contract.py` (in `sidecar/`) | The mirror-drift guard; run it after any wire change |
 | `cargo test` (in `src-tauri/`) | Shell unit tests, such as the handshake parser |
-| `firmware/libraries/BehaviorBox/extras/host_test/run.sh` | Firmware host tests for the shared library; `run_box.sh` tests the box utility |
+| `firmware/libraries/BehaviorBox/extras/host_test/run.sh` | Firmware host tests for the shared library; `run_box.sh` tests the box utility; `run_interp.sh` the interpreter core; `run_diff.sh` holds the core equal to the Python replay |
 
 ## Tests
 
@@ -217,6 +217,8 @@ against a live RHX. Everything else in the Intan suite runs against `tests/fake_
 
 **Firmware: host tests** in `firmware/libraries/BehaviorBox/extras/host_test/`. They compile the
 shared library without `-fpermissive`, which makes them the strictest type check the sketches get.
+`run_diff.sh` is the differential test between the C interpreter core and the Python replay
+([Compiling and the host tests](docs/TASKS.md#compiling-and-the-host-tests)).
 
 > [!CAUTION]
 > `arduino-cli compile` hides type errors: the AVR core builds with `-fpermissive -w`, so a wrong

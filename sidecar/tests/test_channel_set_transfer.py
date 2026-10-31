@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import re
 
 import pytest
 
@@ -134,7 +135,8 @@ def test_importing_a_machines_export_makes_the_two_channel_set_hashes_equal(tmp_
 
     assert reply["applied"] is True
     assert hash_in_force() == a_hash
-    assert reply["plan"]["thereHash"] == a_hash
+    assert reply["plan"]["importedHash"] == reply["plan"]["fileHash"] == a_hash
+    assert reply["plan"]["fileHashVersion"] == registry.CHANNEL_SET_HASH_VERSION
     # The vocabulary moved with it: B now strobes A's numbers for A's codes.
     vocab = registry.vocabulary()
     for code_name, entry in exported["vocabulary"]["codes"].items():
@@ -359,7 +361,7 @@ def test_a_channel_order_that_differs_is_a_conflict_naming_each_channel_that_wou
     b.events.clear()
 
     plan = b.plan(exported)
-    assert plan["hereHash"] != plan["thereHash"]
+    assert plan["hereHash"] != plan["importedHash"]
     assert {(c["kind"], c["channel"]) for c in plan["conflicts"]} == {
         ("order", "odor_line_1"), ("order", "odor_line_2"),
     }
@@ -399,7 +401,9 @@ def test_an_export_from_a_build_whose_hash_ignored_order_is_checked_by_that_rule
     b.save()
     plan = b.plan(old)
     assert plan["conflicts"] == []
-    assert plan["thereHash"] == exported["channel_set_hash"], "what this rig will hold"
+    # What this rig would hold, by the current rule -- not what the file says.
+    assert plan["importedHash"] == exported["channel_set_hash"]
+    assert (plan["fileHash"], plan["fileHashVersion"]) == (old["channel_set_hash"], 1)
 
     tampered = copy.deepcopy(old)
     tampered["channel_set"]["channels"]["odor_port"]["debounce_ms"] = 5
@@ -655,3 +659,52 @@ def test_a_retirement_that_fails_to_write_after_the_wiring_landed_is_finished_by
     assert [r["name"] for r in plan["vocabulary"]["retires"]] == ["TRIAL_LIGHT_ON"]
     assert b.import_(exported)["applied"] is True
     assert registry.vocabulary().retired_entry("TRIAL_LIGHT_ON") is not None
+
+
+# --------------------------------------------------------------------------- #
+# What the plan and its refusals say
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("version", [0, -1, None, "2", 2.0, True, [2]])
+def test_a_hash_version_that_is_not_one_is_invalid_never_a_newer_build(tmp_path, version):
+    a = Machine(tmp_path / "a")
+    a.save()
+    exported = a.export()
+    exported["channel_set_hash_version"] = version
+    b = Machine(tmp_path / "b")
+    with pytest.raises(transfer.ChannelSetInvalid) as refused:
+        b.plan(exported)
+    assert "newer" not in str(refused.value)
+    assert "not a channel-set hash version" in str(refused.value)
+
+
+def test_an_order_conflict_counts_positions_among_the_channels_both_sides_have(tmp_path):
+    """A channel only one side has must not shift the count: with `lever`
+    first in the file, the full-list positions of an unmoved channel differ
+    while its place among the shared channels does not, and a moved channel
+    could read "2 here and 2 there"."""
+    a = Machine(tmp_path / "a")
+    a.save()
+    doc = _with_lever_as_cue(a.hardware.load())
+    names = list(doc["channels"])
+    names.remove("lever")
+    i, j = names.index("odor_line_1"), names.index("odor_line_2")
+    names[i], names[j] = names[j], names[i]
+    doc["channels"] = {n: doc["channels"][n] for n in ["lever", *names]}
+    a.save(doc)
+    exported = a.export()
+
+    b = Machine(tmp_path / "b")
+    b.save()
+    conflicts = b.plan(exported)["conflicts"]
+    order = {c["channel"]: c["message"] for c in conflicts if c["kind"] == "order"}
+    assert set(order) == {"odor_line_1", "odor_line_2"}, "lever shifts no one"
+    shared = [n for n in b.hardware.load()["channels"] if n in exported["channel_set"]["channels"]]
+    here = shared.index("odor_line_1") + 1
+    assert order["odor_line_1"].startswith(
+        f"odor_line_1 is shared channel {here} here and {here + 1} in that channel set"
+    )
+    for message in order.values():
+        here_at, there_at = re.search(r"shared channel (\d+) here and (\d+) in", message).groups()
+        assert here_at != there_at

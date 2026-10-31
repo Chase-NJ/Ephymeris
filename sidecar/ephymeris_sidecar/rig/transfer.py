@@ -67,8 +67,15 @@ class ImportPlan:
     """What importing another machine's channel set would do here."""
 
     vocabulary: strobe_store.MergePlan
+    #: This rig's channel-set hash now, by the current rule.
     here_hash: str
-    there_hash: str
+    #: This rig's channel-set hash after a clean import, by the current rule:
+    #: computed here, over the file's channel set. Not the file's own hash,
+    #: which an older build made by an older rule.
+    imported_hash: str
+    #: The hash the file states, and the rule it was made by.
+    file_hash: str
+    file_hash_version: int
     conflicts: list[dict[str, Any]] = field(default_factory=list)
     #: Channels on both sides whose entry differs.
     changed: list[str] = field(default_factory=list)
@@ -91,7 +98,9 @@ class ImportPlan:
             "changed": self.changed,
             "breaks": self.breaks,
             "hereHash": self.here_hash,
-            "thereHash": self.there_hash,
+            "importedHash": self.imported_hash,
+            "fileHash": self.file_hash,
+            "fileHashVersion": self.file_hash_version,
             "identical": self.identical,
         }
 
@@ -181,9 +190,9 @@ def plan_import(wiring: dict[str, Any], vocabulary: dict[str, Any], other: Any) 
     plan = ImportPlan(
         vocabulary=vocab_plan,
         here_hash=_compose(wiring).channel_set.content_hash(),
-        # What this rig will hold after a clean import, by the current rule;
-        # the file's own hash may be by an older one.
-        there_hash=_compose(joined).channel_set.content_hash(),
+        imported_hash=_compose(joined).channel_set.content_hash(),
+        file_hash=stated_hash,
+        file_hash_version=hash_version,
         changed=[n for n in there_channels if n in here_channels and here_channels[n] != there_channels[n]],
     )
     conflicts = plan.conflicts
@@ -268,15 +277,17 @@ def _order_conflicts(here: list[str], there: list[str]) -> list[dict[str, Any]]:
     behind each odor position, with every trial still looking correct."""
     shared_here = [n for n in here if n in there]
     shared_there = [n for n in there if n in here]
+    # Counted among the shared channels only, so a channel one side lacks
+    # shifts no one; a channel listed here differs at that count by definition.
     return [
         _conflict(
             "order",
             name,
-            f"{name} is channel {here.index(name) + 1} here and {there.index(name) + 1} in that "
-            "channel set. Declaration order is the odor index, so the two must list their "
-            "channels in one order.",
+            f"{name} is shared channel {shared_here.index(name) + 1} here and {at + 1} in that "
+            f"channel set, counting only the {len(shared_here)} channels both have. Declaration "
+            "order is the odor index, so the two must list their channels in one order.",
         )
-        for name, mine in zip(shared_there, shared_here)
+        for at, (name, mine) in enumerate(zip(shared_there, shared_here))
         if name != mine
     ]
 
@@ -305,15 +316,30 @@ def _read_export(other: Any) -> tuple[dict[str, Any], dict[str, Any], str, int]:
     stated = other.get("channel_set_hash")
     if not isinstance(channels, dict) or not channels or not isinstance(vocab, dict) or not isinstance(stated, str):
         raise ChannelSetInvalid(f"{not_one} It needs a channel set, a vocabulary and a hash.")
-    # No version: an export made before the hash covered declaration order.
-    hash_version = other.get("channel_set_hash_version", 1)
-    if isinstance(hash_version, bool) or hash_version not in registry.CHANNEL_SET_HASH_VERSIONS:
+    return channels, vocab, stated, _hash_version(other)
+
+
+def _hash_version(other: dict[str, Any]) -> int:
+    """The rule the file's hash was made by. Absent means version 1: an export
+    made before the hash covered declaration order. Only an integer is a
+    version, and only one above every version this build knows means a newer
+    build made the file; anything else is a file that is not an export."""
+    if "channel_set_hash_version" not in other:
+        return 1
+    version = other["channel_set_hash_version"]
+    known = registry.CHANNEL_SET_HASH_VERSIONS
+    if type(version) is not int or version < min(known):
         raise ChannelSetInvalid(
-            f"That file's channel-set hash is version {hash_version!r}, made by a newer build "
-            f"of Ephymeris than this one (which reads versions "
-            f"{', '.join(map(str, registry.CHANNEL_SET_HASH_VERSIONS))}). Update this machine first."
+            f"That file's channel_set_hash_version, {version!r}, is not a channel-set hash "
+            "version. Export it again."
         )
-    return channels, vocab, stated, hash_version
+    if version > max(known):
+        raise ChannelSetInvalid(
+            f"That file's channel-set hash is version {version}, made by a newer build of "
+            f"Ephymeris than this one (which reads versions {', '.join(map(str, known))}). "
+            "Update this machine, then import again."
+        )
+    return version  # the versions run 1..max with no gap
 
 
 def _compose(wiring: dict[str, Any]) -> registry.ChannelMap:

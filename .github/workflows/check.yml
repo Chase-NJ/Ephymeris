@@ -18,6 +18,12 @@ concurrency:
   group: check-${{ github.ref }}
   cancel-in-progress: true
 
+# A cache restore GitHub won't serve (an account egress limit, an outage) waits
+# out the cache library's 10-minute download timeout before the job goes on
+# uncached. Every cache here rebuilds in well under a minute, so give up sooner.
+env:
+  SEGMENT_DOWNLOAD_TIMEOUT_MINS: 1
+
 jobs:
   frontend:
     name: Protocol, typecheck, vitest

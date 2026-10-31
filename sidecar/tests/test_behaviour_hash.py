@@ -209,18 +209,14 @@ def test_a_metric_label_is_left_out():
     assert digest(moved) != digest(with_metric("P(go)"))
 
 
-@pytest.mark.parametrize("edit", [
-    "keep row names", "keep metric labels", "keep config labels", "hash rows as a list",
-])
+@pytest.mark.parametrize("edit", [*sorted(behaviour.UNHASHED), "hash rows as a list"], ids=str)
 def test_the_score_canary_sees_every_part_of_the_projection(monkeypatch, edit):
     """A cached score is served verbatim (`DATA.md#caching`): a change to this
-    projection moves every spine run's scored digest, so it must move the canary."""
+    projection moves every spine run's scored digest, so it must move the canary.
+    Each listed path is put back into the hash in turn, and rows are unkeyed."""
     before = scoring.canary_fingerprint()
-    kept = {"keep row names": ("spine", "rows", "*", "name"),
-            "keep metric labels": ("liveMetrics", "*", "label"),
-            "keep config labels": ("config", "*", "label")}
-    if edit in kept:
-        monkeypatch.setattr(behaviour, "UNHASHED", behaviour.UNHASHED - {kept[edit]})
+    if isinstance(edit, tuple):
+        monkeypatch.setattr(behaviour, "UNHASHED", behaviour.UNHASHED - {edit})
     else:
         monkeypatch.setattr(behaviour, "_keyed_by_id", lambda rows: rows)
     assert scoring.canary_fingerprint() != before

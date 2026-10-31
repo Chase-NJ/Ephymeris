@@ -78,6 +78,7 @@ def make_runner(  # noqa: ANN201
     duration_s=None,  # noqa: ANN001
     boxes=(1,),  # noqa: ANN001
     channel_set_hash: str | None = None,
+    channel_set_hash_version: int | None = None,
 ):
     events: list[dict] = []
     ended: list[tuple] = []
@@ -110,6 +111,7 @@ def make_runner(  # noqa: ANN201
                 config_metadata={"correction_left": 0, "lazy_escalation": True},
                 profile=profile,
                 channel_set_hash=channel_set_hash,
+                channel_set_hash_version=channel_set_hash_version,
             )
             for box in boxes
         ],
@@ -206,17 +208,23 @@ async def test_the_interpreter_the_board_announced_is_recorded_in_the_header(
 async def test_the_channel_set_hash_the_sketch_was_generated_against_is_in_the_header(
     tmp_path: Path, bench: Bench
 ) -> None:
-    runner, _events, _ended = make_runner(tmp_path, bench, channel_set_hash="c0ffee0123456789")
+    runner, _events, _ended = make_runner(
+        tmp_path, bench, channel_set_hash="c0ffee0123456789", channel_set_hash_version=2
+    )
     runner.start_box(1)
     board = await bench.run_handshake(1, seed=5)
     await board.said("101\t0", "246\t10")
 
     text = tsv_text(tmp_path)
     assert "# channel_set_hash: c0ffee0123456789\n" in text
+    # Which rule made it, so a hash that ignored order is never read as one
+    # that covers it (`DATA.md#the-json-document`).
+    assert "# channel_set_hash_version: 2\n" in text
     assert text.index("# channel_set_hash:") < text.index("101\t0")
     await wait_until(lambda: any((tmp_path / "behavior.json").glob("*.json")))
     document = json.loads(next((tmp_path / "behavior.json").glob("*.json")).read_text())
     assert document["channel_set_hash"] == "c0ffee0123456789"
+    assert document["channel_set_hash_version"] == 2
 
 
 async def test_a_board_that_announced_no_interpreter_records_none(tmp_path: Path, bench: Bench) -> None:

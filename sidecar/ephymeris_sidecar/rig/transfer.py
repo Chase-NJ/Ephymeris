@@ -72,8 +72,6 @@ class ImportPlan:
     conflicts: list[dict[str, Any]] = field(default_factory=list)
     #: Channels on both sides whose entry differs.
     changed: list[str] = field(default_factory=list)
-    #: The declaration order differs: the odor index (TASKS.md#order-is-meaning).
-    reordered: bool = False
     #: Saved tasks the import would newly break; set by the caller, who has them.
     breaks: list[dict[str, Any]] = field(default_factory=list)
 
@@ -84,14 +82,13 @@ class ImportPlan:
     @property
     def identical(self) -> bool:
         """Nothing to write: the two machines already agree."""
-        return not (self.conflicts or self.changed or self.reordered or self.changes_vocabulary)
+        return not (self.conflicts or self.changed or self.changes_vocabulary)
 
     def to_json(self) -> dict[str, Any]:
         return {
             "conflicts": self.conflicts,
             "vocabulary": self.vocabulary.to_json(),
             "changed": self.changed,
-            "reordered": self.reordered,
             "breaks": self.breaks,
             "hereHash": self.here_hash,
             "thereHash": self.there_hash,
@@ -101,12 +98,23 @@ class ImportPlan:
 
 @dataclass(frozen=True)
 class Planned:
-    """A plan, and the two documents applying it writes. Both are None when
-    the plan has a conflict; `vocabulary` is also None when it is unchanged."""
+    """A plan, and the documents applying it writes, in the order it writes
+    them: `adds` (the vocabulary with only its new codes), `wiring`, then
+    `vocabulary` (with the retirements too). All are None when the plan has a
+    conflict; a vocabulary step is None when it changes nothing.
+
+    THE ORDER IS WHAT MAKES A FAILURE RECOVERABLE. Each step leaves a wiring
+    and a vocabulary that load together: adding a code breaks no wiring, the
+    new wiring names only codes the adds made live, and only then is a code
+    retired -- one the old wiring may still name. A failure between any two
+    steps leaves a rig that restarts on its own wiring, and importing again
+    finishes the rest.
+    """
 
     plan: ImportPlan
     wiring: dict[str, Any] | None
     vocabulary: dict[str, Any] | None
+    adds: dict[str, Any] | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -134,6 +142,7 @@ def export_document(wiring: dict[str, Any], vocabulary: dict[str, Any]) -> dict[
     return {
         "channel_set_export_version": EXPORT_VERSION,
         "channel_set_hash": chans.channel_set.content_hash(),
+        "channel_set_hash_version": registry.CHANNEL_SET_HASH_VERSION,
         "channel_set": copy.deepcopy(channel_set),
         "vocabulary": strobe_store.export_document(vocabulary),
     }
@@ -155,7 +164,7 @@ def plan_import(wiring: dict[str, Any], vocabulary: dict[str, Any], other: Any) 
     rule), and the hash is not judged over a `rule` or `no_code` conflict,
     which already names the edit.
     """
-    there_channels, there_vocab, stated_hash = _read_export(other)
+    there_channels, there_vocab, stated_hash, hash_version = _read_export(other)
     try:
         vocab_plan = strobe_store.plan_merge(vocabulary, there_vocab)
     except strobe_store.StrobeRefused as exc:
@@ -172,9 +181,10 @@ def plan_import(wiring: dict[str, Any], vocabulary: dict[str, Any], other: Any) 
     plan = ImportPlan(
         vocabulary=vocab_plan,
         here_hash=_compose(wiring).channel_set.content_hash(),
-        there_hash=stated_hash,
+        # What this rig will hold after a clean import, by the current rule;
+        # the file's own hash may be by an older one.
+        there_hash=_compose(joined).channel_set.content_hash(),
         changed=[n for n in there_channels if n in here_channels and here_channels[n] != there_channels[n]],
-        reordered=set(there_channels) == set(here_channels) and list(there_channels) != list(here_channels),
     )
     conflicts = plan.conflicts
     conflicts += [_conflict("vocabulary", None, c["message"]) for c in vocab_plan.conflicts]
@@ -188,6 +198,7 @@ def plan_import(wiring: dict[str, Any], vocabulary: dict[str, Any], other: Any) 
         for name in here_channels
         if name not in there_channels
     ]
+    conflicts += _order_conflicts(list(here_channels), list(there_channels))
     same_channels = set(there_channels) == set(here_channels)
 
     composed = _compose(joined)
@@ -204,11 +215,13 @@ def plan_import(wiring: dict[str, Any], vocabulary: dict[str, Any], other: Any) 
 
     # Judged against the vocabulary the import would leave, less any code in
     # conflict: those are already listed, and a merge cannot be built with them.
-    merged = vocabulary
+    merged = adds = vocabulary
     if vocab_plan.adds or vocab_plan.retires:
+        unconflicted = dataclasses.replace(vocab_plan, conflicts=[])
         try:
-            merged = strobe_store.apply_merge(
-                vocabulary, there_vocab, dataclasses.replace(vocab_plan, conflicts=[])
+            merged = strobe_store.apply_merge(vocabulary, there_vocab, unconflicted)
+            adds = strobe_store.apply_merge(
+                vocabulary, there_vocab, dataclasses.replace(unconflicted, retires=[])
             )
         except strobe_store.StrobeRefused as exc:
             # A code retired there that a port slot here still reports with.
@@ -222,7 +235,10 @@ def plan_import(wiring: dict[str, Any], vocabulary: dict[str, Any], other: Any) 
             _conflict("rule", _channel_at(p["location"]), f"{p['code'] or 'shape'} {p['location']}: {p['message']}")
             for p in rules
         ]
-        if not rules and not uncoded and composed.channel_set.content_hash() != stated_hash:
+        # By the rule the file's hash was made with: an export from a build
+        # whose hash ignored order is checked by that rule, and its order by
+        # the `order` conflicts above.
+        if not rules and not uncoded and composed.channel_set.content_hash(version=hash_version) != stated_hash:
             conflicts.append(_conflict(
                 "hash",
                 None,
@@ -232,7 +248,12 @@ def plan_import(wiring: dict[str, Any], vocabulary: dict[str, Any], other: Any) 
 
     if conflicts:
         return Planned(plan, None, None)
-    return Planned(plan, joined, merged if plan.changes_vocabulary else None)
+    return Planned(
+        plan,
+        joined,
+        merged if plan.changes_vocabulary else None,
+        adds=adds if vocab_plan.adds else None,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -240,12 +261,32 @@ def plan_import(wiring: dict[str, Any], vocabulary: dict[str, Any], other: Any) 
 # --------------------------------------------------------------------------- #
 
 
+def _order_conflicts(here: list[str], there: list[str]) -> list[dict[str, Any]]:
+    """An `order` conflict for every channel both sides have whose place among
+    them differs. Declaration order is the odor index
+    (TASKS.md#order-is-meaning): adopting another order would put another line
+    behind each odor position, with every trial still looking correct."""
+    shared_here = [n for n in here if n in there]
+    shared_there = [n for n in there if n in here]
+    return [
+        _conflict(
+            "order",
+            name,
+            f"{name} is channel {here.index(name) + 1} here and {there.index(name) + 1} in that "
+            "channel set. Declaration order is the odor index, so the two must list their "
+            "channels in one order.",
+        )
+        for name, mine in zip(shared_there, shared_here)
+        if name != mine
+    ]
+
+
 def _conflict(kind: str, channel: str | None, message: str) -> dict[str, Any]:
     """One `ChannelSetConflict`."""
     return {"kind": kind, "channel": channel, "message": message}
 
 
-def _read_export(other: Any) -> tuple[dict[str, Any], dict[str, Any], str]:
+def _read_export(other: Any) -> tuple[dict[str, Any], dict[str, Any], str, int]:
     not_one = "That file is not an exported channel set."
     if not isinstance(other, dict):
         raise ChannelSetInvalid(not_one)
@@ -264,7 +305,15 @@ def _read_export(other: Any) -> tuple[dict[str, Any], dict[str, Any], str]:
     stated = other.get("channel_set_hash")
     if not isinstance(channels, dict) or not channels or not isinstance(vocab, dict) or not isinstance(stated, str):
         raise ChannelSetInvalid(f"{not_one} It needs a channel set, a vocabulary and a hash.")
-    return channels, vocab, stated
+    # No version: an export made before the hash covered declaration order.
+    hash_version = other.get("channel_set_hash_version", 1)
+    if isinstance(hash_version, bool) or hash_version not in registry.CHANNEL_SET_HASH_VERSIONS:
+        raise ChannelSetInvalid(
+            f"That file's channel-set hash is version {hash_version!r}, made by a newer build "
+            f"of Ephymeris than this one (which reads versions "
+            f"{', '.join(map(str, registry.CHANNEL_SET_HASH_VERSIONS))}). Update this machine first."
+        )
+    return channels, vocab, stated, hash_version
 
 
 def _compose(wiring: dict[str, Any]) -> registry.ChannelMap:

@@ -902,13 +902,14 @@ class ChannelSet:
     """
 
     def __init__(self, channels) -> None:  # noqa: ANN001 - an iterable of Channel
-        self._channels = tuple(sorted(channels, key=lambda c: c.name))
+        #: In DECLARATION order, which the hash covers (see `content_hash`).
+        self._channels = tuple(channels)
 
     def edge_codes(self) -> dict[str, tuple[str, str]]:
         """Code name -> (channel, edge), for every edge that has its code."""
         return {code: (c.name, edge) for c in self._channels for edge, code in c.edges}
 
-    def content_hash(self) -> str:
+    def content_hash(self, version: int | None = None) -> str:
         """SHA-256 over what every channel is, truncated.
 
         Labels and rationale are left out (a reworded label must not split two
@@ -916,16 +917,36 @@ class ChannelSet:
         channel set agree on this whatever their pin maps say. Today's `kind`,
         `well`, `port_slot` and `onset_strobe` ride along while they exist,
         because a task still generates from them.
+
+        TWO RULES, AND THE VERSION SAYS WHICH (`CHANNEL_SET_HASH_VERSIONS`).
+        Version 2, the current one, hashes the channels in DECLARATION order:
+        it is the odor index (TASKS.md#order-is-meaning), so two channel sets
+        listing the same lines in another order are not identical. Version 1
+        sorted them by name, ignoring order. Run files and exports carry the
+        version beside the hash, and one that names none was made by version
+        1 -- so an old hash is checked by its own rule, never misread as a
+        file changed after it was written.
         """
+        version = CHANNEL_SET_HASH_VERSION if version is None else version
+        if version not in CHANNEL_SET_HASH_VERSIONS:
+            raise ValueError(f"no channel-set hash version {version!r}")
+        channels = self._channels if version >= 2 else sorted(self._channels, key=lambda c: c.name)
         payload = [
             [
                 c.name, c.kind, c.type, c.role, c.active_level, c.debounce_ms,
                 c.serves, c.well, c.port_slot, c.onset_strobe, dict(c.edges),
             ]
-            for c in self._channels
+            for c in channels
         ]
         canonical = json.dumps(payload, separators=(",", ":"), sort_keys=True)
         return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+
+
+#: The rule `ChannelSet.content_hash` uses now, recorded beside every hash.
+CHANNEL_SET_HASH_VERSION = 2
+#: Every rule a recorded hash can have been made by: 1 ignored declaration
+#: order, 2 covers it. A hash recorded with no version is version 1.
+CHANNEL_SET_HASH_VERSIONS = (1, 2)
 
 
 # --------------------------------------------------------------------------- #

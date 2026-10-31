@@ -367,7 +367,6 @@ def test_a_populated_channel_set_import_plan_matches_schema() -> None:
         conflicts=[{"kind": "not_here", "channel": "lever", "message": "lever …"},
                    {"kind": "hash", "channel": None, "message": "changed"}],
         changed=["fluid_2"],
-        reordered=True,
         breaks=[{"specId": "t1", "label": None, "codes": ["TSK101"]}],
     )
     assert validate(("ref", "ChannelSetImportPlan"), plan.to_json()) == []

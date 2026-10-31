@@ -1807,10 +1807,11 @@ SHAPES = (
                 "channelSetHash",
                 STR,
                 doc="The channel set's hash: what every channel is (type, role, "
-                "edges and their code names), never where it is. Labels and prose "
-                "are excluded, and so is every pin, so two machines sharing one "
-                "channel set agree on it whatever their pin maps "
-                "(`TASKS.md#the-channel-set-and-the-pin-map`).",
+                "edges and their code names) and the order they are declared in, "
+                "never where it is. Labels and prose are excluded, and so is every "
+                "pin, so two machines sharing one channel set agree on it whatever "
+                "their pin maps (`TASKS.md#registry-rules`). Always by the current "
+                "rule, `CHANNEL_SET_HASH_VERSION`.",
             ),
             f(
                 "notices",
@@ -1953,7 +1954,9 @@ SHAPES = (
                 doc="`vocabulary` (one name with two codes, one code with two names, "
                 "or a code this machine cannot issue), `not_here` (a channel the file "
                 "has and this rig lacks, so it has no pin here), `only_here` (a "
-                "channel this rig has and the file lacks), `no_code` (an edge the "
+                "channel this rig has and the file lacks), `order` (a channel both "
+                "have, declared at another position: declaration order is the odor "
+                "index, `TASKS.md#order-is-meaning`), `no_code` (an edge the "
                 "file names no code for), `rule` (a wiring rule RIG101–RIG107 the "
                 "imported channel set breaks here, judged against the merged "
                 "vocabulary), or `hash` (the file changed after it was exported).",
@@ -1983,13 +1986,6 @@ SHAPES = (
                 "changed",
                 ListOf(STR),
                 doc="Channels on both sides whose entry the import replaces.",
-            ),
-            f(
-                "reordered",
-                BOOL,
-                doc="The file declares the channels in another order. Declaration "
-                "order is the odor index (`TASKS.md#order-is-meaning`), so it is "
-                "said out loud.",
             ),
             f(
                 "breaks",
@@ -2886,9 +2882,11 @@ COMMANDS = (
             f(
                 "document",
                 ANY,
-                doc="`{channel_set_export_version, channel_set_hash, channel_set, "
-                "vocabulary}`: the channel set in force, with no pins, and this "
-                "machine's whole vocabulary.",
+                doc="`{channel_set_export_version, channel_set_hash, "
+                "channel_set_hash_version, channel_set, vocabulary}`: the channel "
+                "set in force, with no pins, and this machine's whole vocabulary. "
+                "An import reads a file with no `channel_set_hash_version` as "
+                "version 1, whose hash ignored declaration order.",
             ),
             f("filename", STR, doc="`channel-set-<YYYY-MM-DD>.json`, the save dialog's default."),
         ),

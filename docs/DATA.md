@@ -433,6 +433,7 @@ Each session folder that has a log gets a `notes.md` beside its format folders: 
   "host_seed": 288577176,
   "interp": 1,
   "channel_set_hash": "3f0c9a17b2d4e588",
+  "channel_set_hash_version": 2,
   "n_events": 2392,
   "ts_data": [[221, 0], [222, 1000], [223, 5001], /* … */ [246, 3523555]]
 }
@@ -451,6 +452,7 @@ Each session folder that has a log gets a `notes.md` beside its format folders: 
 | `host_seed` | What the **app** put on the `START` line. Differs from `trial_seed` only if the firmware ignored it |
 | `interp` | The firmware interpreter the board announced as `INTERP=<n>` before `READY` ([TASKS.md](TASKS.md#confirming-the-parameters)). Absent when it announced none. Describes the build, not the tuning, so it is never hashed |
 | `channel_set_hash` | `ChannelSet.content_hash()` of the channel set the run's sketch was generated against ([TASKS.md](TASKS.md#registry-rules)), read at mapping inside the rig definition's read hold: no wiring or vocabulary write lands between it and the end of the session. Always a string, even when every digit is numeric. Describes the rig, not the tuning, so it is never hashed |
+| `channel_set_hash_version` | Which rule made `channel_set_hash` ([TASKS.md](TASKS.md#registry-rules)): 2 covers the channels' declaration order, 1 ignored it. **A run with `channel_set_hash` and no version was recorded by version 1**, so two such hashes agreeing says nothing about the odor table's order |
 | `intan_*` | Present only inside a recording ([RECORDING.md](RECORDING.md#what-is-written)) |
 | `n_events` | `len(ts_data)` |
 | `ts_data` | `[code, timestamp_ms]` pairs exactly as the board sent them — ms since **that animal's own** session start, never re-based to wall clock |
@@ -469,6 +471,7 @@ A live append-only log, not a serialization of the document:
 # sketch: GRGL
 # interp: 1
 # channel_set_hash: 3f0c9a17b2d4e588
+# channel_set_hash_version: 2
 # correction_left: 0
 # task_profile: {"config":[…],"liveMetrics":[…],"strobes":{…},"taskName":"GRGL"}
 221	0

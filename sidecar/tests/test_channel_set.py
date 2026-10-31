@@ -164,6 +164,18 @@ def test_the_channel_set_carries_a_content_hash_over_what_channels_are():
         assert _set_hash(changed) != base, field
 
 
+def test_declaration_order_is_in_the_channel_set_hash():
+    """Declaration order is the odor index (TASKS.md#order-is-meaning), so two
+    channel sets that list the same lines in another order are not identical."""
+    doc = store.default_document()
+    swapped = copy.deepcopy(doc)
+    names = list(swapped["channels"])
+    i, j = names.index("odor_line_1"), names.index("odor_line_2")
+    names[i], names[j] = names[j], names[i]
+    swapped["channels"] = {n: swapped["channels"][n] for n in names}
+    assert _set_hash(swapped) != _set_hash(doc)
+
+
 def test_the_new_fields_never_move_the_pinout_hash():
     doc = store.default_document()
     doc["channels"]["odor_port"].update(role="cue", debounce_ms=5,

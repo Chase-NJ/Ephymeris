@@ -1,5 +1,7 @@
+import { save } from "@tauri-apps/plugin-dialog";
+import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { motion } from "framer-motion";
-import { ArrowRight, Compass, Trash2, Workflow } from "lucide-react";
+import { ArrowRight, Compass, Trash2, Upload, Workflow } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 
@@ -9,11 +11,14 @@ import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
 import { LibraryStatusNote } from "@/components/task/LibraryStatusNote";
 import { NewTaskRow } from "@/components/task/NewTaskRow";
 import { StrobeDoor } from "@/components/task/StrobeDoor";
+import { TaskImportDialog } from "@/components/task/TaskImportDialog";
 import { TaskRow } from "@/components/task/TaskRow";
 import { errorMessage } from "@/lib/cohorts/commands";
+import { SAVE_STEPS, trackExport } from "@/lib/exports/jobs";
 import { CASCADE, RISE, springPanel } from "@/lib/motion";
 import {
   deleteTask,
+  exportTask,
   getTask,
   idFromName,
   listTasks,
@@ -53,6 +58,11 @@ import { EVT } from "@/lib/ws/protocol";
  * task (`uniqueCopyName`) and WITHOUT the source's legacy names: a legacy name
  * resolves to exactly one sketch (`TASKS.md#legacy-names`), so a copy carrying them
  * would silently take over — or lose — the historical runs they decode.
+ *
+ * **Export** on a row and **Import task** in the header move a task to and
+ * from the lab's other machine (`TASKS.md#moving-a-task-between-machines`).
+ * The sidecar writes the file's contents and judges every import; the dialog
+ * renders its plan.
  */
 export function Task() {
   const navigate = useNavigate();
@@ -68,6 +78,7 @@ export function Task() {
   const [tasksLoaded, setTasksLoaded] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<TaskEntry | null>(null);
+  const [importing, setImporting] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -127,6 +138,27 @@ export function Task() {
     [client, navigate, tasks],
   );
 
+  // On the export card like the app's other exports. The sidecar refuses a
+  // task it cannot describe to the other machine, and the card shows why.
+  const doExport = useCallback(
+    (task: TaskEntry) =>
+      trackExport(task.name, "json", [`Fetching ${task.name}`, ...SAVE_STEPS], async (tracker) => {
+        const reply = await exportTask(client, task.id).catch((err: unknown) => {
+          throw new Error(errorMessage(err));
+        });
+        tracker.step(SAVE_STEPS[0]);
+        const path = await save({
+          defaultPath: reply.filename,
+          filters: [{ name: "Task", extensions: ["json"] }],
+        });
+        if (!path) return null;
+        tracker.step(SAVE_STEPS[1]);
+        await writeTextFile(path, `${JSON.stringify(reply.document, null, 2)}\n`);
+        return path;
+      }).catch(() => undefined),
+    [client],
+  );
+
   // Most recently edited first: the task being worked on this week is the one
   // most likely wanted, and "never saved" (null) sinks to the bottom.
   const ordered = useMemo(
@@ -168,7 +200,7 @@ export function Task() {
             <span className="flex size-9 shrink-0 items-center justify-center rounded-md border border-halo bg-nebula">
               <Workflow size={18} strokeWidth={1.75} className="text-pulsar" />
             </span>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <h1 className="font-display text-[22px] text-starlight">Task</h1>
               <p className="font-mono text-[10px] text-static/70">
                 {!tasksLoaded || tasks.length === 0
@@ -191,6 +223,10 @@ export function Task() {
                   )}
               </p>
             </div>
+            <Button variant="ghost" disabled={!connected} onClick={() => setImporting(true)}>
+              <Upload size={13} strokeWidth={1.75} />
+              Import task
+            </Button>
           </div>
           <p className="mt-3 max-w-prose text-[12px] leading-relaxed text-static">
             What the animal does — the trial types, the shaping ramp, and every
@@ -222,6 +258,7 @@ export function Task() {
                     task={task}
                     onOpen={() => navigate(`/task/${task.id}`)}
                     onDuplicate={() => void duplicate(task)}
+                    onExport={() => void doExport(task)}
                     onDelete={() => setPendingDelete(task)}
                   />
                 ))}
@@ -259,6 +296,11 @@ export function Task() {
         </section>
       </motion.div>
 
+      <TaskImportDialog
+        open={importing}
+        onClose={() => setImporting(false)}
+        onImported={() => void refresh()}
+      />
       <DeleteConfirm
         task={pendingDelete}
         onCancel={() => setPendingDelete(null)}

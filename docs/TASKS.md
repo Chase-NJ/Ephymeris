@@ -35,6 +35,7 @@ Everything between "a box runs firmware that emits strobes" and "the app draws i
   - [Rebuilt bundled sketches](#rebuilt-bundled-sketches)
   - [The box utility](#the-box-utility)
   - [Order is meaning](#order-is-meaning)
+  - [Moving a task between machines](#moving-a-task-between-machines)
 - [Spine tasks](#spine-tasks)
   - [What a spine task holds](#what-a-spine-task-holds)
   - [Lowering](#lowering)
@@ -515,7 +516,7 @@ The [rig definition](../GLOSSARY.md#rig-definition) is the rig wiring plus the s
 
 **The in-force values are cached, and a cache never keeps a value composed before a clear.** `set_rig_source` / `set_vocabulary_source` drop the cache and bump a generation; a reader that began composing from the old document returns its value without storing it.
 
-**A write runs end to end, alone.** Every command that rewrites a generated folder is a rig definition write: `hardware.save` and `hardware.reset`, every vocabulary edit, `tasks.save` and `tasks.delete`. Each takes `RigDefinition.writing()` and holds it through judge → store → install → rebuild → rescan → announce, so no second write, reset or task save interleaves with a rebuild.
+**A write runs end to end, alone.** Every command that rewrites a generated folder is a rig definition write: `hardware.save` and `hardware.reset`, every vocabulary edit, `tasks.save`, `tasks.import` and `tasks.delete`. Each takes `RigDefinition.writing()` and holds it through judge → store → install → rebuild → rescan → announce, so no second write, reset or task save interleaves with a rebuild.
 
 **Everything that uses a generated folder holds `RigDefinition.reading()`** for as long as it uses it, including any belief it records about what a board now carries: a flash from the discovery lookup through the record `PortManager.flash` writes and `utility.note_flashed`, a utility restore through that same record, `port.sendStart`, confirm mapping from the first profile read until the rig is held, `tasks.getProfile`, `strobes.usage`, and every rescan outside a write. So a write waits for flashes already in progress (at most one per box, though restores on different boxes run side by side), and a flash, a `START` or a mapping waits for a write. A waiting write goes before readers that arrive after it, so a stream of restores cannot starve a save. Commands that may wait carry long client timeouts (`client.ts`). Reads of the registries alone — `tasks.list`, `tasks.get`, the previews — take nothing. **Analytics is the one reader that takes nothing**: a cold index runs for minutes and would stall every save; it decodes from each run's own profile snapshot first.
 
@@ -566,6 +567,51 @@ Two orderings carry meaning and both are emitted from a single pass so they cann
 
 - **Odor index.** `Odors[i]` is odor line i+1, and the pins are not monotonic past line 6. Use `ChannelMap.declared_of_kind()`, never `of_kind()` (which sorts by pin) — the wrong one swaps lines, drives the wrong valve and announces it with the wrong onset code while every trial looks correct.
 - **Trial-table slot.** Slot i is `kTrials[i]`, is `poolWeights[i]` (wire `PW<i+1>`), and is `rewardTimes[i]` (wire `RW<i+1>`). Reordering the table re-weights a pool task and re-pays every condition, which is why the trial table has no drag handle.
+
+### Moving a task between machines
+
+A task exported on one lab machine imports on the other, where it compiles against that machine's pins and strobes the same codes ([ADR 0003](adr/0003-phase-spine-task-model.md)). The operator exports a task from its row on the Task landing page and imports it with **Import task** there (`tasks.export`, `tasks.import`; rules in `taskdef/transfer.py`).
+
+**The export** is one file:
+
+```json
+{"task_export_version": 1,
+ "channel_set_hash": "3f0c…",
+ "channel_set_hash_version": 2,
+ "channels": {"odor_port": {"kind": "engagement", "type": "digital_in", "role": "port", …}, …},
+ "codes": {"END_SESSION": 246, "ODOR_PORT_ENTER": 117, …},
+ "definition": {…}}
+```
+
+- **`definition`** is the stored `<id>.json`, verbatim. It is never re-serialised through `TaskDefinition`, which drops fields this build does not know, so a newer build's fields reach the other machine whole. An older build stores them and generates without them: update both machines before moving a task, as for a channel set.
+- **`channels`** holds the channels the task names, in this machine's declaration order. These are a trial row's odor, response and reward channels, and every channel a spine row binds (`named_channels`). Each entry holds what the channel is: the fields `ChannelSet.content_hash` covers, with edge and onset code names. It holds no pin, label or rationale.
+- **`codes`** gives this vocabulary's number for each code the task strobes (`codes_used`): each named channel's edge codes and declared onset, a trial row's onset code and its response port's [slot codes](#port-slots), and a spine's structural codes.
+- **`channel_set_hash`** identifies the whole channel set the task was written against. The plan says whether the importing rig has the same one (`sameChannelSet`), but the hash is never a reason to refuse.
+- **Export is refused** in three cases:
+  - the task names a channel this rig lacks, or strobes a code this vocabulary does not hold live (`TASK_TRANSFER_INVALID`). The file could not state that channel or number;
+  - the stored wiring is not in force (`RIG_WIRING_UNLOADED`);
+  - the task is unknown or unreadable (`TASK_NOT_FOUND`).
+
+**The import judges only the channels and codes the task names.** A difference elsewhere in the channel set changes nothing this task compiles or strobes. An import never touches the channel set or the vocabulary. It never adds, edits or reorders a channel, and never adds or renumbers a code: the vocabulary is [append only](#append-only) and lab-wide, and only [the channel-set import](#moving-the-channel-set-between-machines) brings codes over. **Any conflict refuses the whole import, and the plan lists every one** (`TaskImportConflict.kind`):
+
+| Kind | When |
+|---|---|
+| `not_here` | A channel the task names and this rig lacks. It has no pin here |
+| `differs` | A channel the task names whose entry differs: kind, type, role, active level, debounce, the port it serves, well, port slot, onset code or an edge code. The message names each field and both values |
+| `order` | Two channels the task names, declared in the other order, counted among those both sides have as the channel-set import counts them. Declaration order is the [odor index](#order-is-meaning) |
+| `code` | A code the task strobes that the file numbers otherwise than this vocabulary, that is not live here, or that the file does not number. The message names both numbers |
+| `bundled_name` | A sketch that ships with Ephymeris has the task's name |
+| `name_taken` | Another saved task has the name, case-folded. Two tasks with one name share a sketch folder |
+
+**Besides conflicts:**
+
+- **A task saved here under the same id is replaced** (`replaces`). Applying needs `confirm`; without it the import is `TASK_IMPORT_REPLACES`.
+- **An import identical to the stored document writes nothing** (`identical`).
+- **The plan carries the definition's diagnostics on this rig.** As with any save, a task with diagnostics still imports.
+- **A file that is not an export is `TASK_TRANSFER_INVALID`.** That covers another version, no definition, a definition that will not read, or a channel the definition names that the file does not describe.
+- **An import is refused** while the stored wiring did not load or is held, and while a session is set up or a box is running.
+
+**A clean import is one [rig definition write](#the-rig-definition)**, as `tasks.save` is. It plans again inside the write, writes `<id>.json` verbatim (`TaskStore.save_document`), regenerates the task's folder against this rig's pins, rescans and broadcasts `tasks.updated`.
 
 ## Spine tasks
 

@@ -110,6 +110,20 @@ class TaskStore:
         rather than raised: one broken document must not make the whole library
         unlistable, which is the same reasoning `hardware/store.py` applies.
         """
+        document = self.document(task_id)
+        if document is None:
+            return None
+        try:
+            return TaskDefinition.from_json(document)
+        except TaskDefinitionError as exc:
+            log.warning("task definition %s will not parse (%s)", task_id, exc)
+            return None
+
+    def document(self, task_id: str) -> Any | None:
+        """The stored `<id>.json` as JSON, verbatim, or None when there is no
+        such file or it will not read. Never passed through `TaskDefinition`,
+        which drops what this build does not know: a task export carries this
+        (TASKS.md#moving-a-task-between-machines)."""
         path = self.definition_path(task_id)
         if not path.is_file():
             return None
@@ -122,8 +136,8 @@ class TaskStore:
             log.warning("task definition %s is %d bytes, over the limit", task_id, len(raw))
             return None
         try:
-            return TaskDefinition.from_json(json.loads(raw))
-        except (json.JSONDecodeError, TaskDefinitionError) as exc:
+            return json.loads(raw)
+        except json.JSONDecodeError as exc:
             log.warning("task definition %s will not parse (%s)", task_id, exc)
             return None
 
@@ -203,13 +217,28 @@ class TaskStore:
         # stored a moment ago.
         previous = self.get(definition.id)
 
-        self.root.mkdir(parents=True, exist_ok=True)
-        path = self.definition_path(definition.id)
-        path.write_text(
-            json.dumps(definition.to_json(), indent=2) + "\n", encoding="utf-8"
-        )
+        self._write(definition.id, definition.to_json())
         self.regenerate(definition, previous)
         return [d.to_json() for d in validate(definition)]
+
+    def save_document(self, document: dict[str, Any]) -> list[dict[str, Any]]:
+        """`save`, writing `document` itself rather than the model's
+        re-serialisation of it: an imported task keeps every field, those this
+        build's model does not know included
+        (TASKS.md#moving-a-task-between-machines). The folder is generated
+        from the parsed model, as for any save. Raises `TaskDefinitionError`
+        for a document that is not a definition, before writing anything."""
+        definition = TaskDefinition.from_json(document)
+        previous = self.get(definition.id)
+        self._write(definition.id, document)
+        self.regenerate(definition, previous)
+        return [d.to_json() for d in validate(definition)]
+
+    def _write(self, task_id: str, document: dict[str, Any]) -> None:
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.definition_path(task_id).write_text(
+            json.dumps(document, indent=2) + "\n", encoding="utf-8"
+        )
 
     def delete(self, task_id: str) -> bool:
         """Remove the definition and its generated sketch. Idempotent."""

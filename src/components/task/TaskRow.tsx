@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Copy, Trash2, TriangleAlert } from "lucide-react";
+import { Copy, Download, Trash2, TriangleAlert } from "lucide-react";
 
 import { colorForIndex } from "@/lib/analytics/view";
 import type { TaskEntry } from "@/lib/taskdef/types";
@@ -33,11 +33,13 @@ export function TaskRow({
   task,
   onOpen,
   onDuplicate,
+  onExport,
   onDelete,
 }: {
   task: TaskEntry;
   onOpen: () => void;
   onDuplicate: () => void;
+  onExport: () => void;
   onDelete: () => void;
 }) {
   const ready = task.problems === 0;
@@ -121,6 +123,15 @@ export function TaskRow({
           className="rounded-sm p-1.5 text-static opacity-0 transition-opacity hover:text-starlight focus-visible:opacity-100 group-hover:opacity-100"
         >
           <Copy size={13} strokeWidth={1.75} />
+        </button>
+        <button
+          type="button"
+          onClick={onExport}
+          title={`Export ${task.name} for the lab's other computer`}
+          aria-label={`Export ${task.name}`}
+          className="rounded-sm p-1.5 text-static opacity-0 transition-opacity hover:text-starlight focus-visible:opacity-100 group-hover:opacity-100"
+        >
+          <Download size={13} strokeWidth={1.75} />
         </button>
         <button
           type="button"

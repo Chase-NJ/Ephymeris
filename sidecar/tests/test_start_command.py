@@ -141,6 +141,7 @@ def test_a_value_of_the_right_type_is_rendered(typ: str, value: object, token: s
         ("float", float("inf")),  # ... infinity
         ("float", float("nan")),
         ("float", "1e999"),
+        ("float", 10**400),  # too large for a float at all: an OverflowError, not a ValueError
         ("float", True),
         ("bool", "maybe"),  # ... 0
         ("bool", 2),

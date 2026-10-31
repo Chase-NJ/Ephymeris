@@ -12,7 +12,7 @@ the session flow, `tasks.getProfile` and Analytics need no special case at all.
     generate.py  definition + wiring -> .ino, TaskPins.h, TaskTrials.h, task.json
     store.py     <data_dir>/tasks/, and regeneration on a wiring change
 
-The split that matters: what fits on a `START` line stays on the wire, so one
+The split that matters: what fits on a capped `SET` line stays on the wire, so one
 flashed binary serves six boxes tuned differently; everything else — the trial
 table, the pins, the stage COUNT — is compiled in, because it cannot fit and
 because pins have to be constants. See `TASKS.md#two-places-a-value-can-come-from`.

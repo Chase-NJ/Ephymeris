@@ -2505,7 +2505,9 @@ COMMANDS = (
         "is armed, reported as `port.telemetry`. "
         "No `SEED` token and nothing recorded: this is not a run. "
         "`SKETCH_UNKNOWN` for an undiscovered path; `TASK_PROFILE_INVALID` "
-        "when a parameter cannot fit a `SET` line (`TASKS.md#the-length-cap`); "
+        "when a parameter cannot be sent: a value of the wrong type for its "
+        "field (the message names the field) or one too long for a `SET` line "
+        "(`TASKS.md#the-length-cap`); "
         "`PARAMS_MISMATCH`, `PARAMS_CLAMPED` or `FIRMWARE_OUTDATED` when the "
         "board's reply refuses the start, with nothing started; "
         "`SEND_NOT_PASSTHROUGH` unless the port "
@@ -2575,7 +2577,8 @@ COMMANDS = (
         result=_STATE,
         doc="Start one box of the confirmed mapping: open the port (the Mega "
         "DTR-resets), await `READY` (and the `INTERP=<n>` before it), send the "
-        "`SET` lines built at `sessions.confirmMapping` one at a time and hold "
+        "`SET` lines built at `sessions.confirmMapping` (each block opened by "
+        "`BEGIN`) one at a time and hold "
         "the board's `PARAMS <n> <crc32>` and any `CLAMPED <key>` against what "
         "was sent, then send `START SEED=<n>`, capture an optional `SEED`, and "
         "parse strobes (`TASKS.md#confirming-the-parameters`, "
@@ -3077,9 +3080,10 @@ COMMANDS = (
         result=obj(f("ok", BOOL)),
         doc="Load one group's box → animal → sketch mapping into the runner and "
         "build each box's `SET` lines from its sketch's Task Profile and "
-        "`config`. `TASK_PROFILE_INVALID` when one parameter cannot fit a "
-        "`SET` line (`SET_LINE_MAX`) — refused because the board cannot "
-        "report a truncated line "
+        "`config`. `TASK_PROFILE_INVALID` when a parameter cannot be sent, "
+        "naming the box and the reason: a value of the wrong type for its "
+        "field (the board would read `4.9` as 4), or one too long for a "
+        "`SET` line (`SET_LINE_MAX`), which the board could not report "
         "(`TASKS.md#the-length-cap`). `SESSION_INVALID` for a mapping missing "
         "its box, sketch, or an animal of this cohort. From here until the "
         "session lets go the rig is **held**: no baseline restore runs. "
@@ -3932,8 +3936,9 @@ ERRORS = (
     ErrorCode(
         "TASK_PROFILE_INVALID",
         "A sketch's `task.json` exists but is malformed (`detail` carries the "
-        "parse error), or one of a profile's parameters cannot fit a `SET` "
-        "line (`SET_LINE_MAX`).",
+        "parse error), or one of a profile's parameters cannot be sent: a "
+        "value of the wrong type for its field, or one too long for a `SET` "
+        "line (`SET_LINE_MAX`). The message names which.",
     ),
     ErrorCode(
         "PARAMS_MISMATCH",

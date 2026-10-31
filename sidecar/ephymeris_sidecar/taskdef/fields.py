@@ -2,7 +2,7 @@
 
 This is the presentation half of `BehaviorBox.h`'s `TASK_PARAM_LIST`: the same
 wire keys, plus the label, unit, range and prose a form needs to render them.
-The firmware owns which keys the `START` grammar accepts; this owns what an
+The firmware owns which keys the `SET` grammar accepts; this owns what an
 operator is shown when setting one.
 
 WHY IT LIVES HERE AND NOT IN SEVEN `task.json` FILES. It used to be

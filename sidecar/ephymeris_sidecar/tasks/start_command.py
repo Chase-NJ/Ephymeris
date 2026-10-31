@@ -139,9 +139,10 @@ class StartCommand:
             raise StartRefused(
                 ErrCode.PARAMS_CLAMPED,
                 "clamped",
-                f"The board could not hold {named} as chosen (out of the range it "
-                f"can run), so it would not run the value that was chosen. Change "
-                f"the value and start again.",
+                f"The board could not hold {named} exactly as chosen (outside the range "
+                f"it can run, or not a number of the kind the setting takes), so it "
+                f"would not run the value that was chosen. Change the value and start "
+                f"again.",
                 {"keys": keys},
             )
         if reply.count != self.count:
@@ -298,7 +299,7 @@ def _tokens(profile: TaskProfile | None, config: dict[str, Any]) -> list[str]:
             continue
         try:
             rendered = _format_value(field, value)
-        except (ValueError, TypeError) as exc:
+        except (ValueError, TypeError, OverflowError) as exc:
             # Refused, not replaced by the default: a value quietly swapped for
             # another is a run on a setting nobody chose, and the operator is
             # owed the field's name.

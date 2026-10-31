@@ -11,14 +11,14 @@
       emitter, the blocking START reader, the non-blocking STOP poll, and (for
       utility sketches) a non-blocking command reader + a STATUS emitter;
     * TaskParams -- EVERY operator-tunable parameter, and the one declarative
-      list (TASK_PARAM_LIST) from which the START-line parser is generated. The
+      list (TASK_PARAM_LIST) from which the SET/START parser is generated. The
       app fills this from the task profile's task.json, so a parameter is tuned
       per profile and per run instead of being recompiled;
     * the reusable TRIAL primitives (TrialClock, TrialType, TrialWeight +
       generateTrials) and the session POLICY classes (anti-bias selection,
       plain and weighted, the lazy-penalty escalator, per-side correction
       budgets). A trial type carries its own reward volume, overwritten per
-      run from the START line (applyRewardTimes);
+      run from the SET lines (applyRewardTimes);
     * the TRIAL RUNNER -- one loop for every behavior task. A weighted pool and
       live anti-bias selection run the same trial and differ only in which
       policies they hand it, which is why GRGL.ino covers both in ~110 lines.
@@ -118,7 +118,7 @@ struct TrialType
   const int stopFluidCode;  // host code for fluid stop
   /*  Solenoid open time when this type is answered correctly (ms) -- the open
       time IS the delivered volume. The one member that is NOT const: the value
-      compiled here is the profile's default, and the START line overwrites it
+      compiled here is the profile's default, and the SET lines overwrite it
       per run through applyRewardTimes() (wire key RW<slot+1>). It lives on the
       type rather than on the fluid line because two conditions that pay from
       the same line may pay different volumes -- a newly introduced odor is
@@ -170,7 +170,7 @@ inline void generateTrials(const TrialType *trials[], int numTrials, int blockSi
   for (int i = 0; i < poolSize; i++)
     totalWeight += pool[i].weight;
 
-  /* Pool weights are operator-typed now (PW1..PW4 on the START line), and an
+  /* Pool weights are operator-typed now (PW1..PW4 on the SET lines), and an
      all-zero pool would divide by zero below -- on AVR that is a silent wrong
      answer, not a trap. Fall back to equal weights: a uniform pool is a defined
      session, where a hung box mid-shaping is not. */
@@ -491,7 +491,7 @@ inline void flashLight(int duration, int pollMs)
     what a sketch with no generated header still gets.
 
     IT MUST MOVE WITH BOX_STAGE_KEY_LIST BELOW. The count sizes `stage[]`; the
-    key list decides which rows the START parser can reach. A count of 5 with a
+    key list decides which rows the SET parser can reach. A count of 5 with a
     key list of 3 leaves rows 3 and 4 unreachable but allocated -- harmless. The
     reverse silently writes past the end of the array. */
 #ifndef NUM_STAGES
@@ -572,7 +572,7 @@ struct StageStep
     This replaces the old split between SessionConfig (three GUI fields) and
     ShapingTimings (twelve compile-time ones shared by both shaping sketches, so
     that retuning shaping_GR silently retuned shaping_GL too). Each sketch now
-    owns its own instance and the host fills it from the START line, which is
+    owns its own instance and the host fills it from the SET lines, which is
     what makes the values per-sketch, per-run, and recorded with the data.
 
     The in-class defaults are the FULL-TASK values, so a bare "START" with no
@@ -697,7 +697,7 @@ inline bool escalationArmed(const TaskParams &p, int completedTrials)
   return liveStage(p, completedTrials) >= p.lazyEscalationStage;
 }
 
-/*  Which pool slots, which reward slots and which ramp rows the START grammar
+/*  Which pool slots, which reward slots and which ramp rows the SET grammar
     can reach.
 
     GUARDED, and each must agree with its count above -- BOX_MAX_TRIAL_TYPES
@@ -732,7 +732,7 @@ inline bool escalationArmed(const TaskParams &p, int completedTrials)
 
 /*  TASK_PARAM_LIST -- the single declarative list of wire keys.
 
-    Every key the START grammar accepts appears here exactly once, and the parser
+    Every key the SET grammar accepts appears here exactly once, and the parser
     below is generated from it. Adding a parameter means adding one row; there is
     no second place that can fall out of sync.
 
@@ -1220,7 +1220,7 @@ public:
     }
   }
 
-  /*  Adopt the run's tuning from the parsed START line. Necessary because the
+  /*  Adopt the run's tuning from the parsed SET lines. Necessary because the
       selector is a global, constructed long before START arrives; call once,
       after parseStartCommand(), and before the first selectNext(). Safe to call
       on a fresh selector only -- it resizes the ring, so it discards history. */
@@ -1340,7 +1340,7 @@ private:
     drawn in proportion to its pool weight (poolWeights[slot], wire key
     PW<slot+1>), the same numbers a pool task uses. An operator raises a new
     odor's weight and lowers it again as the animal learns, per box, on the
-    START line, with no rebuild.
+    SET lines, with no rebuild.
 
     The overall share of a type is therefore P(its side) x its share WITHIN the
     side. The side draw does not see the weights, so a heavily weighted type
@@ -1362,7 +1362,7 @@ public:
   WeightedAntiBiasSelector(const TrialType *types, int count)
       : AntiBiasSelector(types, count) {}
 
-  /*  Adopt the tuning AND the weights from the parsed START line. Copied rather
+  /*  Adopt the tuning AND the weights from the parsed SET lines. Copied rather
       than pointed at so the selector cannot see a later change to params. */
   void configure(const TaskParams &p)
   {
@@ -1418,7 +1418,7 @@ public:
   AbstentionPenalty(long baseDelay = 6000, long step = 6000, long maxDelay = 30000)
       : _base(baseDelay), _step(step), _max(maxDelay) {}
 
-  /* Adopt the run's tuning + the GUI toggle from the parsed START line. */
+  /* Adopt the run's tuning + the GUI toggle from the parsed SET lines. */
   void configure(const TaskParams &p)
   {
     _base = p.lazyRatDelay;

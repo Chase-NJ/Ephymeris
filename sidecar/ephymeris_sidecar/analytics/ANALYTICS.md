@@ -119,7 +119,13 @@ A go condition has one alternate, the other well. A **no-go condition** has `WAT
 a poke at any port is the wrong answer. A no-go trial is therefore a hit when withheld, a miss when
 answered at any port, and excluded only when nothing resolves it before the next boundary. Alternates
 are `alternateCodes` on the wire, with `alternateCode` repeating the first; a generated and an inferred
-profile list the same ports ([inference](#which-profile-decodes-a-run)).
+profile list the same ports in the same order (port-slot order, [inference](#which-profile-decodes-a-run)).
+
+> [!NOTE]
+> **A run recorded before a no-go metric listed every port re-scores correctly.** Its snapshot holds a
+> single `alternateCode`, so scoring widens any metric whose success code is `WATER_POKE_NONE` and which
+> lists one alternate to every response port (`infer.widen_no_go`, applied in `scoring._settle`). Only the
+> scored copy is widened: the stored snapshot, its `to_json` and its `profile_hash` stay as recorded.
 
 The metric is **response-conditional and reward-unconditional**: the firmware strobes the well poke the
 instant it is detected, before any hold check. The rolling window is the last `windowSize` **counted**

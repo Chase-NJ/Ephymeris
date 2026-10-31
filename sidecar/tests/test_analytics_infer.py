@@ -211,6 +211,11 @@ def test_generated_and_inferred_profiles_score_a_no_go_stream_identically() -> N
     inferred = stream.summarize(doc, infer.infer_profile(NO_GO_SESSION))
 
     assert declared.status == inferred.status == "ok"
+    # The two profiles are the same document, down to the order of the alternates.
+    inferred_profile = infer.infer_profile(NO_GO_SESSION)
+    assert [m.alternate_codes for m in declared_with_a_no_go().live_metrics] == [
+        m.alternate_codes for m in inferred_profile.live_metrics
+    ]
     # Both list conditions in onset order: odor 1, odor 3, odor 5.
     assert len(declared.metrics) == len(inferred.metrics) == 3
     for twin, metric in zip(declared.metrics, inferred.metrics):

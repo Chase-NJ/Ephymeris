@@ -517,7 +517,7 @@ resolved: _Resolved, document: dict[str, Any], pass_: _Pass
         and resolved.profile is not None
         and resolved.profile.live_metrics
     ):
-        return resolved.profile, resolved.source, resolved.digest
+        return _scorable(resolved.profile, pass_), resolved.source, resolved.digest
 
     embedded = task_profile.embedded_profile(document)
     if embedded is not None and embedded.live_metrics:
@@ -525,10 +525,10 @@ resolved: _Resolved, document: dict[str, Any], pass_: _Pass
         # the run was configured from, recorded at the time of the run. It
         # arrived by a different road than the database's copy; when both
         # exist they are the same bytes and the cheaper road is taken above.
-        return embedded, "snapshot", pass_.digest(embedded)
+        return _scorable(embedded, pass_), "snapshot", pass_.digest(embedded)
 
     if resolved.profile is not None and resolved.profile.live_metrics:
-        return resolved.profile, resolved.source, resolved.digest
+        return _scorable(resolved.profile, pass_), resolved.source, resolved.digest
     sketch = document.get("sketch")
     inferred = infer.infer_profile(
         stream.codes_of(document),
@@ -538,6 +538,13 @@ resolved: _Resolved, document: dict[str, Any], pass_: _Pass
     if inferred is None:
         return resolved.profile, resolved.source, resolved.digest
     return inferred, "inferred", pass_.digest(inferred)
+
+
+def _scorable(profile: TaskProfile, pass_: _Pass) -> TaskProfile:
+    """The copy of a declared profile that is scored: a no-go metric widened
+    to every response port (`infer.widen_no_go`). Never the stored profile, or
+    its digest and its snapshot would move."""
+    return infer.widen_no_go(profile, pass_.vocabulary)
 
 
 def _scored(
@@ -764,8 +771,23 @@ def _canary_runs(seed: Vocabulary) -> list[tuple[str, _Resolved, dict[str, Any]]
             {"id": "p_l_odor3", "label": "P(L | Odor 3)", "triggerCode": code("ODOR_3_ON"),
              "successCode": code("WATER_POKE_L"), "alternateCode": code("WATER_POKE_R"),
              "windowSize": 5},
+            # A no-go type misses at every port: the metric with several alternates.
+            {"id": "p_withhold_5", "label": "P(withhold | Odor 5)", "triggerCode": code("ODOR_5_ON"),
+             "successCode": code("WATER_POKE_NONE"),
+             "alternateCodes": [code("WATER_POKE_L"), code("WATER_POKE_R")], "windowSize": 5},
         ],
     }
+    # What a run recorded before that carries: the same no-go metric with ONE
+    # alternate, which scoring widens on read (`infer.widen_no_go`).
+    before_the_fix = task_profile.parse_profile({
+        **declared,
+        "liveMetrics": [
+            *declared["liveMetrics"][:2],
+            {"id": "p_withhold_5", "label": "P(withhold | Odor 5)",
+             "triggerCode": code("ODOR_5_ON"), "successCode": code("WATER_POKE_NONE"),
+             "alternateCode": code("WATER_POKE_R"), "windowSize": 5},
+        ],
+    })
     snapshot = task_profile.parse_profile(declared)
     utility = task_profile.parse_profile({**declared, "kind": "utility"})
     today = task_profile.parse_profile(
@@ -780,6 +802,7 @@ def _canary_runs(seed: Vocabulary) -> list[tuple[str, _Resolved, dict[str, Any]]
     del unclean["trial_seed"]
     return [
         ("database-snapshot", held(snapshot, "snapshot"), document(session)),
+        ("pre-fix-no-go-snapshot", held(before_the_fix, "snapshot"), document(session)),
         ("embedded", nothing, document(session, **{task_profile.SNAPSHOT_KEY: declared})),
         # Not an object at all, so it falls through without a parse warning:
         # this runs on every pass and every archive read.

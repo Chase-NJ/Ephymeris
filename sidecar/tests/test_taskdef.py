@@ -432,7 +432,7 @@ def test_a_no_go_metric_misses_at_every_response_port():
     ])
     metrics = {m.trigger_code: m for m in generate.build_profile(definition).live_metrics}
     assert metrics[105].success_code == 256
-    assert set(metrics[105].alternate_codes) == {248, 249}
+    assert metrics[105].alternate_codes == (248, 249)
     # A go type still has exactly one: the other well.
     assert metrics[101].alternate_codes == (248,)
 

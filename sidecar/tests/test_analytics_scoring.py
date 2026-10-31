@@ -313,7 +313,57 @@ async def test_a_change_to_the_recorded_config_reaches_a_warm_row(
 # --- the one pin (`DATA.md#caching`) ---------------------------------------
 
 #: What today's scoring answers for the canary runs (`scoring.canary_fingerprint`).
-CANARY = "4d7c14c1acde7d499468ac010fd945f280da9e2327437060cccaba597757ca7b"
+CANARY = "5e2ede04597c06f1c2eb8d2981404a48260140167910217718550bf6836fb8d7"
+
+# --- a snapshot recorded before a no-go metric listed every port ------------
+
+
+def _pre_fix_no_go_snapshot() -> dict:
+    """What every no-go run recorded before the fix carries: the miss is ONE
+    port, `alternateCode` alone."""
+    return {
+        "taskName": "Go / no-go",
+        "strobes": {"101": "ODOR_1_ON", "103": "ODOR_3_ON", "105": "ODOR_5_ON",
+                    "248": "WATER_POKE_L", "249": "WATER_POKE_R", "256": "WATER_POKE_NONE"},
+        "liveMetrics": [
+            {"id": "p_correct_1", "label": "P(right well | Go right)", "triggerCode": 101,
+             "successCode": 249, "alternateCode": 248, "windowSize": 20},
+            {"id": "p_correct_2", "label": "P(left well | Go left)", "triggerCode": 103,
+             "successCode": 248, "alternateCode": 249, "windowSize": 20},
+            {"id": "p_withhold_3", "label": "P(withhold | Withhold)", "triggerCode": 105,
+             "successCode": 256, "alternateCode": 249, "windowSize": 20},
+        ],
+    }
+
+
+def test_a_run_recorded_before_the_fix_re_scores_correctly() -> None:
+    """The snapshot is the record of what decoded the run, so it must stay
+    byte for byte what was recorded; the SCORING of a no-go metric widens to
+    every response port on read. Else the run stays at 3/5 with two trials
+    excluded, and its P(withhold) is inflated for good."""
+    from tests.test_analytics_derive import document
+    from tests.test_analytics_infer import NO_GO_SESSION
+
+    snapshot = task_profile.parse_profile(_pre_fix_no_go_snapshot())
+    stored = snapshot.to_json()
+    digest = task_profile.profile_hash(snapshot)
+    seed = scoring._seed_vocabulary()
+
+    entry = scoring._scored(
+        "r1",
+        scoring._Resolved(snapshot, "snapshot", digest),
+        document(NO_GO_SESSION),
+        scoring.CacheKey("", None, None, None, 0),
+        stream.DEFAULT_MIN_COUNTED,
+        scoring._Pass(seed, remember=None),
+    )
+
+    withhold = next(m for m in entry.summary["metrics"] if "withhold" in m["label"])
+    assert (withhold["hits"], withhold["counted"], withhold["excluded"]) == (3, 7, 0)
+    assert entry.profile_hash == digest
+    assert snapshot.to_json() == stored
+    assert [m.alternate_codes for m in snapshot.live_metrics][-1] == (249,)
+
 
 
 def test_the_score_version_pins_every_input() -> None:

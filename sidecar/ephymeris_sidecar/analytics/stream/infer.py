@@ -46,7 +46,7 @@ final trial, which can mis-count at most that one trial.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from ...rig import registry
 from ...rig.registry import Vocabulary
@@ -116,7 +116,7 @@ def infer_profile(
                 label=f"P(withhold | {stimulus})",
                 trigger_code=code,
                 success_code=withhold,
-                alternate_codes=tuple(slot.enter for slot in slots),
+                alternate_codes=_enter_codes(slots),
                 window_size=INFERRED_WINDOW,
             ))
             continue
@@ -229,6 +229,45 @@ def _infer_sides(
         )
         out[condition] = next(s for s in slots if s.number == best)
     return out
+
+
+def _enter_codes(slots: list[_Slot]) -> tuple[int, ...]:
+    """Every response port's enter code, in slot order: the alternates of a
+    no-go metric. The generator (`taskdef/generate.py` `_enter_codes`) writes
+    the same list in the same order, so a declared and an inferred no-go
+    profile are the same document."""
+    return tuple(slot.enter for slot in slots)
+
+
+def widen_no_go(profile: TaskProfile, vocabulary: Vocabulary) -> TaskProfile:
+    """The profile as it is SCORED: a no-go metric that lists one alternate
+    misses at every response port.
+
+    A snapshot recorded before a no-go metric listed every port holds the one
+    `alternateCode`, so a poke at another port matched neither code and the
+    trial dropped out of P(withhold). The snapshot is the record of what
+    decoded the run and must stay byte for byte as recorded, and its
+    `profile_hash` must not move, so the widening is applied to the copy that
+    is scored and never to the stored profile.
+
+    A no-go metric is one whose success code is `WATER_POKE_NONE` in
+    `vocabulary`; a metric that already lists several alternates is left alone.
+    """
+    withhold = _code_of(vocabulary, "WATER_POKE_NONE")
+    slots = _slots(vocabulary)
+    if withhold is None or not slots:
+        return profile
+    every = _enter_codes(slots)
+    widened = False
+    metrics: list[LiveMetric] = []
+    for metric in profile.live_metrics:
+        if metric.success_code == withhold and len(metric.alternate_codes) == 1:
+            codes = tuple(dict.fromkeys((*metric.alternate_codes, *every)))
+            if codes != metric.alternate_codes:
+                metric = replace(metric, alternate_codes=codes)
+                widened = True
+        metrics.append(metric)
+    return replace(profile, live_metrics=metrics) if widened else profile
 
 
 def _slots(vocab: Vocabulary) -> list[_Slot]:

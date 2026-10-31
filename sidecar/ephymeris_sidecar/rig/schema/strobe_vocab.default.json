@@ -96,14 +96,14 @@
       "emitted_on": "entry to the no-engagement penalty",
       "paired_with": "LIGHTS_OFF",
       "pair_order": "LAZY_RAT first",
-      "rationale": "Abstention. No stimulus was presented, so the trial carries no evidence about discrimination and is scored invalid. See BehaviorBox.h:1158-1159."
+      "rationale": "Abstention. No stimulus was presented, so the trial carries no evidence about discrimination and is scored invalid. Strobed by runTrial() when the engagement wait times out."
     },
     "ODOR_POKE": {
       "code": 224,
       "origin": "firmware",
       "since": 1,
       "emitted_on": "entry to the commitment hold",
-      "rationale": "Separates an incidental beam-break from a committed initiation. NOTE: does NOT clear the abstention escalator -- BehaviorBox.h:1171-1174 closed that loophole deliberately."
+      "rationale": "Separates an incidental beam-break from a committed initiation. NOTE: does NOT clear the abstention escalator: runTrial() resets it only after a completed CORRECT trial, a loophole closed deliberately."
     },
     "ODOR_UNPOKE_EARLY": {
       "code": 225,
@@ -112,7 +112,7 @@
       "emitted_on": "entry to the broken-hold penalty",
       "paired_with": "LIGHTS_OFF",
       "pair_order": "ODOR_UNPOKE_EARLY first",
-      "rationale": "A commitment or sampling hold released early. Emitted from two distinct firmware sites (BehaviorBox.h:1181 pre-odor, :1197 sampling) with the same code, so the two are indistinguishable downstream. See open question in docs/spikes/avr-ram.md."
+      "rationale": "A commitment or sampling hold released early. Emitted from two sites in runTrial() (the pre-odor hold and the sampling hold) with the same code, so the code alone does not tell them apart. Downstream they are told apart by whether an odor-on code preceded it (taskGraph in topology.ts; the engagement ladder in analytics/stream/engagement.py)."
     },
     "ODOR_UNPOKE": {
       "code": 226,
@@ -170,7 +170,7 @@
       "origin": "firmware",
       "since": 1,
       "emitted_on": "entry to the response branch node, left channel",
-      "rationale": "Emitted BEFORE correctness is known (BehaviorBox.h:1082 vs :1093). This is why the response branch is its own zero-duration node with the guard on its edges. See docs/decisions.md D3. Doubles as the false-alarm code on go/no-go."
+      "rationale": "Emitted BEFORE correctness is known: checkResponse() strobes the poke, then classifies the well. This is why the response branch is its own zero-duration node with the guard on its edges. Doubles as the false-alarm code on go/no-go."
     },
     "WATER_POKE_R": {
       "code": 249,

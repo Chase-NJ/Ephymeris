@@ -820,7 +820,7 @@ Outcomes, best to worst, each with exactly one inbound edge (never a condition Ã
 | Wrong well | `WATER_POKE_ERROR_L/R` | answer | |
 | No answer | always | window | |
 
-With more than one condition on a fan, edge labels are dropped: one label drawn N times is clutter, and collided with the lower arm.
+With more than one condition on a fan, edge labels are dropped: one label drawn N times around a fan is clutter.
 
 What `taskGraph` returns for the bundled `GRGL/task.json`, with the same labels. Its two conditions are congruent, so they collapse into one "Odor" node; it declares `WATER_POKE_NONE` but no metric scores it, so there is no Withheld outcome. Dashed nodes are aborts:
 

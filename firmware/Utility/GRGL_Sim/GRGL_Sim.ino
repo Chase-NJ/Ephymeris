@@ -81,11 +81,11 @@ checkResponse() in BehaviorBox.h):
                      END_INCORRECT_ITI
 
   Aborted trial (no ODOR_UNPOKE; firmware strobes INVALID_TRIAL too):
-    lazy rat            -> LIGHTS_ON, LIGHTS_OFF, LAZY_RAT, INVALID_TRIAL
-    early odor (pre-vac)-> LIGHTS_ON, ODOR_POKE, LIGHTS_OFF,
-                           ODOR_UNPOKE_EARLY, INVALID_TRIAL   (no odor-on code)
-    early odor (sample) -> LIGHTS_ON, ODOR_POKE, ODOR_x_ON, LIGHTS_OFF,
-                           ODOR_UNPOKE_EARLY, INVALID_TRIAL
+    lazy rat            -> LIGHTS_ON, LAZY_RAT, LIGHTS_OFF, INVALID_TRIAL
+    early odor (pre-vac)-> LIGHTS_ON, ODOR_POKE, ODOR_UNPOKE_EARLY,
+                           LIGHTS_OFF, INVALID_TRIAL   (no odor-on code)
+    early odor (sample) -> LIGHTS_ON, ODOR_POKE, ODOR_x_ON, ODOR_UNPOKE_EARLY,
+                           LIGHTS_OFF, INVALID_TRIAL
 */
 
 #include "TaskPins.h"    // GENERATED: this rig's pins. Must precede BehaviorBox.h.
@@ -428,8 +428,8 @@ void goTrial(bool goRight, int outcome)
 void lazyTrial(int completedTrials)
 {
   emit(BF_LIGHTS_ON, params.odorPortTimeout); // whole poke window elapses, no poke
-  emit(BF_LIGHTS_OFF, 0);
-  emit(BF_LAZY_RAT,
+  emit(BF_LAZY_RAT, 0);
+  emit(BF_LIGHTS_OFF,
        (int)abstention.nextDelay(escalationArmed(params, completedTrials)));
   emit(BF_INVALID_TRIAL, 0);
 }
@@ -440,8 +440,8 @@ void earlyOdorPreVac()
 {
   emit(BF_LIGHTS_ON, APPROACH_TIME);
   emit(BF_ODOR_POKE, partialOdorHold()); // bails before the pre-odor hold completes
-  emit(BF_LIGHTS_OFF, 0);
-  emit(BF_ODOR_UNPOKE_EARLY, params.noPokeHoldTimeout);
+  emit(BF_ODOR_UNPOKE_EARLY, 0);
+  emit(BF_LIGHTS_OFF, params.noPokeHoldTimeout);
   emit(BF_INVALID_TRIAL, 0);
 }
 
@@ -454,8 +454,8 @@ void earlyOdorSampling(bool goRight)
   emit(BF_ODOR_POKE, params.odorPokeHold); // cleared pre-odor hold -> odor on
   emit(goRight ? BF_ODOR_1_ON : BF_ODOR_3_ON,
        partialOdorHold()); // bails during the sample hold
-  emit(BF_LIGHTS_OFF, 0);
-  emit(BF_ODOR_UNPOKE_EARLY, params.noPokeHoldTimeout);
+  emit(BF_ODOR_UNPOKE_EARLY, 0);
+  emit(BF_LIGHTS_OFF, params.noPokeHoldTimeout);
   emit(BF_INVALID_TRIAL, 0);
 }
 

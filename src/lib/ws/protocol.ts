@@ -1704,8 +1704,9 @@ export interface RigProblem {
 export interface RigStatus {
   /**
    * Of the wiring IN FORCE: false ⇒ this rig runs the wiring its build shipped with, which
-   * includes while its stored wiring did not load or is held because nobody saved or confirmed it
-   * on this machine (`notices` says so).
+   * includes while its stored wiring did not load or is held because the record cannot vouch for
+   * it: nobody saved or confirmed it on this machine, or a save after it did not finish
+   * (`notices` says so).
    */
   custom: boolean;
   /** The shipped pinout the wiring in force started as. */
@@ -1727,11 +1728,11 @@ export interface RigStatus {
   channelSetHash: string;
   /**
    * Where the wiring in force and the stored files part ways: stored wiring that did not load, or
-   * that is held because it was not saved or confirmed on this machine (the shipped pins are in
-   * force and every box is refused); a file changed on disk since it was installed; or an older
-   * layout copied in beside `wiring.json`, which is not read. Each says what is in force, what
-   * the editor shows, what is blocked, and what a restart does. About the RIG, never the draft:
-   * they stand through every edit, and do not stop a save, which is how most are cleared.
+   * that is held because the record cannot vouch for it (the shipped pins are in force and every
+   * box is refused); a file changed on disk since it was installed; or an older layout copied in
+   * beside `wiring.json`, which is not read. Each says what is in force, what the editor shows,
+   * what is blocked, and what a restart does. About the RIG, never the draft: they stand through
+   * every edit, and do not stop a save, which is how most are cleared.
    */
   notices: RigProblem[];
   /**
@@ -1754,11 +1755,11 @@ export interface RigStatus {
    */
   canSave: boolean;
   /**
-   * The draft is a stored file that is not in force and was not saved or confirmed on this
-   * machine -- copied in, changed outside the app, not loaded (even once repaired in the editor),
-   * or a pin map not written with its channel set -- so nobody has checked its pins here: offer
-   * the operator a way to confirm them, sent as `confirmedPins`. A restart never confirms them
-   * (`TASKS.md#the-channel-set-and-the-pin-map`).
+   * The draft is a stored file that is not in force and that the record cannot vouch for --
+   * copied in, changed outside the app, not loaded (even once repaired in the editor), a pin map
+   * not written with its channel set, or saved here when a save after it did not finish -- so
+   * nobody has checked its pins here: offer the operator a way to confirm them, sent as
+   * `confirmedPins`. A restart never confirms them (`TASKS.md#the-channel-set-and-the-pin-map`).
    */
   needsPinConfirmation: boolean;
 }

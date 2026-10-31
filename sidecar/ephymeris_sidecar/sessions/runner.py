@@ -56,6 +56,9 @@ class BoxConfig:
     #: generated against, read at mapping inside the rig definition's read
     #: hold (`DATA.md#the-tsv-log`). None when nobody read one (a test).
     channel_set_hash: str | None = None
+    #: The rule that made it (`registry.CHANNEL_SET_HASH_VERSION`), recorded
+    #: beside it so a reader never mistakes one rule's hash for the other's.
+    channel_set_hash_version: int | None = None
 
 
 @dataclass
@@ -322,6 +325,8 @@ class SessionRunner:
             # each edge strobes and what each channel is (ADR 0003). Core, not
             # config: it describes the rig, not the tuning.
             core["channel_set_hash"] = run.config.channel_set_hash
+            if run.config.channel_set_hash_version is not None:
+                core["channel_set_hash_version"] = run.config.channel_set_hash_version
         if self.recording_fields is not None:
             # Which recording this run is inside, and which digital input and
             # headstage port carry it (`RECORDING.md#what-is-written`). Core rather than

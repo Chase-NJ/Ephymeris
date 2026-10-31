@@ -328,7 +328,7 @@ The channel set and the vocabulary as they travel to the other lab machine (`TAS
 
 | Field | Type | Notes |
 |---|---|---|
-| `document` | unknown | `{channel_set_export_version, channel_set_hash, channel_set, vocabulary}`: the channel set in force, with no pins, and this machine's whole vocabulary. |
+| `document` | unknown | `{channel_set_export_version, channel_set_hash, channel_set_hash_version, channel_set, vocabulary}`: the channel set in force, with no pins, and this machine's whole vocabulary. An import reads a file with no `channel_set_hash_version` as version 1, whose hash ignored declaration order. |
 | `filename` | string | `channel-set-<YYYY-MM-DD>.json`, the save dialog's default. |
 
 <a id="cmd-hardware.importchannelset"></a>
@@ -2636,7 +2636,7 @@ One thing wrong with a wiring document, located. Every problem is reported rathe
 | `board` | string |  |
 | `editedAt` | string \| null |  |
 | `pinoutHash` | string | The composed wiring's hash, over the fields that can change a compiled byte. Prose and pin notes are excluded: it answers 'could these two produce different firmware?', so a reworded rationale must not move it. |
-| `channelSetHash` | string | The channel set's hash: what every channel is (type, role, edges and their code names), never where it is. Labels and prose are excluded, and so is every pin, so two machines sharing one channel set agree on it whatever their pin maps (`TASKS.md#the-channel-set-and-the-pin-map`). |
+| `channelSetHash` | string | The channel set's hash: what every channel is (type, role, edges and their code names) and the order they are declared in, never where it is. Labels and prose are excluded, and so is every pin, so two machines sharing one channel set agree on it whatever their pin maps (`TASKS.md#registry-rules`). Always by the current rule, `CHANNEL_SET_HASH_VERSION`. |
 | `notices` | [RigProblem](#shape-rigproblem)[] | Where the wiring in force and the stored files part ways: stored wiring that did not load, or that is held because it was not saved or confirmed on this machine (the shipped pins are in force and every box is refused); a file changed on disk since it was installed; or an older layout copied in beside `wiring.json`, which is not read. Each says what is in force, what the editor shows, what is blocked, and what a restart does. About the RIG, never the draft: they stand through every edit, and do not stop a save, which is how most are cleared. |
 | `canReset` | boolean | Reset would change something: the rig has wiring of its own in force or on disk, or a notice offers Reset as the way out. |
 | `resetReplaces` | string[] | The absolute path of every file Reset would remove, for the dialog that confirms it. Empty when there is none. |

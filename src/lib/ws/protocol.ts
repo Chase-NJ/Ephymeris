@@ -1719,9 +1719,10 @@ export interface RigStatus {
    */
   pinoutHash: string;
   /**
-   * The channel set's hash: what every channel is (type, role, edges and their code names), never
-   * where it is. Labels and prose are excluded, and so is every pin, so two machines sharing one
-   * channel set agree on it whatever their pin maps (`TASKS.md#the-channel-set-and-the-pin-map`).
+   * The channel set's hash: what every channel is (type, role, edges and their code names) and
+   * the order they are declared in, never where it is. Labels and prose are excluded, and so is
+   * every pin, so two machines sharing one channel set agree on it whatever their pin maps
+   * (`TASKS.md#registry-rules`). Always by the current rule, `CHANNEL_SET_HASH_VERSION`.
    */
   channelSetHash: string;
   /**

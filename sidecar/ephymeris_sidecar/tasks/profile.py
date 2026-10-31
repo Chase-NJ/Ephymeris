@@ -65,6 +65,7 @@ CORE_METADATA_KEYS = frozenset(
         # Which channel set the run's sketch was generated against
         # (`DATA.md#the-json-document`): a property of the rig, not the tuning.
         "channel_set_hash",
+        "channel_set_hash_version",
         # The run's own profile snapshot, written after the task fields — a
         # field of this name would be silently replaced by it.
         "task_profile",

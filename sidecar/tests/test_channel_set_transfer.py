@@ -20,6 +20,7 @@ import pytest
 from ephymeris_sidecar.hardware import store
 from ephymeris_sidecar.rig import definition, registry, transfer
 from ephymeris_sidecar.strobes import store as strobe_store
+from ephymeris_sidecar.taskdef import generate
 
 
 @pytest.fixture(autouse=True)
@@ -290,6 +291,7 @@ def test_the_vocabulary_travels_with_the_channel_set(tmp_path):
 
     b = Machine(tmp_path / "b")
     b.save()
+    wiring_before = b.files()[0]
     b.events.clear()
     plan = b.plan(exported)
     assert plan["vocabulary"]["adds"] == [{"name": "LEVER_NOTE", "code": free, "retired": False}]
@@ -297,7 +299,9 @@ def test_the_vocabulary_travels_with_the_channel_set(tmp_path):
 
     assert b.import_(exported)["applied"] is True
     assert registry.vocabulary().code_of("LEVER_NOTE") == free
-    assert b.events == ["strobes.updated", "hardware.updated"]
+    # The channels already agreed, so the wiring is neither rewritten nor announced.
+    assert b.files()[0] == wiring_before
+    assert b.events == ["strobes.updated"]
 
 
 def test_an_identical_import_writes_nothing(tmp_path):
@@ -363,6 +367,61 @@ def test_a_channel_order_that_differs_is_a_conflict_naming_each_channel_that_wou
     with pytest.raises(transfer.ChannelSetImportConflict):
         b.import_(exported, confirm=True)
     assert b.files() == before and b.events == []
+
+    # What the refusal prevents, in the bytes a box is flashed with: adopting
+    # A's order would make Odors[0] line 2's valve while the trial table still
+    # strobes BF_ODOR_1_ON for it.
+    assert _odor_pins(generate.bundled_pins_h("GRGL")).startswith("{22, 24,")
+    adopted = {**b.hardware.load(), "channels": exported["channel_set"]["channels"]}
+    with registry.hypothetical(rig=adopted):
+        assert _odor_pins(generate.bundled_pins_h("GRGL")).startswith("{24, 22,")
+
+
+def _odor_pins(header: str) -> str:
+    line = next(l for l in header.splitlines() if l.startswith("#define BOX_ODOR_PINS"))
+    return line.split(" ", 2)[2]
+
+
+def test_an_export_from_a_build_whose_hash_ignored_order_is_checked_by_that_rule(tmp_path):
+    """Exports and run files made before the hash covered declaration order
+    carry no `channel_set_hash_version`. Such a hash is read as version 1 --
+    the order-blind rule -- and never reported as a file changed after export."""
+    a = Machine(tmp_path / "a")
+    a.save()
+    exported = a.export()
+    assert exported["channel_set_hash_version"] == registry.CHANNEL_SET_HASH_VERSION == 2
+    old = copy.deepcopy(exported)
+    del old["channel_set_hash_version"]
+    old["channel_set_hash"] = registry.channel_set().content_hash(version=1)
+    assert old["channel_set_hash"] != exported["channel_set_hash"]
+
+    b = Machine(tmp_path / "b")
+    b.save()
+    plan = b.plan(old)
+    assert plan["conflicts"] == []
+    assert plan["thereHash"] == exported["channel_set_hash"], "what this rig will hold"
+
+    tampered = copy.deepcopy(old)
+    tampered["channel_set"]["channels"]["odor_port"]["debounce_ms"] = 5
+    assert [c["kind"] for c in b.plan(tampered)["conflicts"]] == ["hash"]
+
+    newer = copy.deepcopy(exported)
+    newer["channel_set_hash_version"] = 3
+    with pytest.raises(transfer.ChannelSetInvalid, match="newer"):
+        b.plan(newer)
+
+
+def test_order_one_hash_ignores_order_and_order_two_covers_it():
+    doc = store.default_document()
+    swapped = copy.deepcopy(doc)
+    names = list(swapped["channels"])
+    i, j = names.index("odor_line_1"), names.index("odor_line_2")
+    names[i], names[j] = names[j], names[i]
+    swapped["channels"] = {n: swapped["channels"][n] for n in names}
+    one, two = (registry.ChannelMap(*registry.split_rig(d)).channel_set for d in (doc, swapped))
+    assert one.content_hash(version=1) == two.content_hash(version=1)
+    assert one.content_hash(version=2) != two.content_hash(version=2)
+    assert one.content_hash() == one.content_hash(version=2)
 
 
 def test_an_import_is_refused_while_a_session_is_set_up(tmp_path):
@@ -522,3 +581,77 @@ def test_a_file_whose_vocabulary_or_channel_set_is_out_of_shape_is_invalid(tmp_p
     bad_channels["channel_set"]["channels"]["vacuum"]["kind"] = "teleporter"
     with pytest.raises(transfer.ChannelSetInvalid, match="channel set"):
         b.plan(bad_channels)
+
+
+# --------------------------------------------------------------------------- #
+# A failed import never leaves a rig it cannot recover by importing again
+# --------------------------------------------------------------------------- #
+
+
+def _a_that_retired_trial_light_on(tmp_path) -> tuple[Machine, dict]:
+    """A retired TRIAL_LIGHT_ON and reissued the light TRIAL_LIGHT_ON_2, so its
+    export retires a code B's own wiring still names."""
+    a = Machine(tmp_path / "a")
+    a.save()
+    _retire_trial_light_on(a)
+    return a, a.export()
+
+
+def test_a_wiring_write_that_fails_after_a_retiring_merge_leaves_a_rig_that_loads(
+    tmp_path, monkeypatch
+):
+    _a, exported = _a_that_retired_trial_light_on(tmp_path)
+    b = Machine(tmp_path / "b")
+    b.save()
+    plan = b.plan(exported)
+    assert plan["vocabulary"]["retires"] == [
+        {"name": "TRIAL_LIGHT_ON", "code": registry.vocabulary().code_of("TRIAL_LIGHT_ON")}
+    ]
+
+    def full_disk(self, doc):
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(store.HardwareStore, "save", full_disk)
+    with pytest.raises(OSError):
+        b.import_(exported)
+    monkeypatch.undo()
+
+    # The retirement waits for the wiring: B's own wiring still names the code.
+    assert "TRIAL_LIGHT_ON" in registry.vocabulary()
+    b.use()  # a restart
+    assert b.definition.wiring_problem() is None
+    assert b.import_(exported)["applied"] is True
+    assert registry.vocabulary().retired_entry("TRIAL_LIGHT_ON") is not None
+    b.use()
+    assert b.definition.wiring_problem() is None
+
+
+def test_a_retirement_that_fails_to_write_after_the_wiring_landed_is_finished_by_importing_again(
+    tmp_path, monkeypatch
+):
+    _a, exported = _a_that_retired_trial_light_on(tmp_path)
+    b = Machine(tmp_path / "b")
+    b.save()
+    real_save = strobe_store.VocabularyStore.save
+    calls = {"n": 0}
+
+    def fail_second(self, doc):
+        calls["n"] += 1
+        if calls["n"] == 2:  # the adds landed; the retirement does not
+            raise OSError("no space left on device")
+        return real_save(self, doc)
+
+    monkeypatch.setattr(strobe_store.VocabularyStore, "save", fail_second)
+    with pytest.raises(OSError):
+        b.import_(exported)
+    monkeypatch.undo()
+
+    assert b.hardware.load()["channels"] == exported["channel_set"]["channels"]
+    assert "TRIAL_LIGHT_ON" in registry.vocabulary()
+    b.use()
+    assert b.definition.wiring_problem() is None
+    plan = b.plan(exported)
+    assert plan["changed"] == [] and plan["vocabulary"]["adds"] == []
+    assert [r["name"] for r in plan["vocabulary"]["retires"]] == ["TRIAL_LIGHT_ON"]
+    assert b.import_(exported)["applied"] is True
+    assert registry.vocabulary().retired_entry("TRIAL_LIGHT_ON") is not None

@@ -379,10 +379,11 @@ async def test_each_box_records_the_channel_set_its_sketch_was_generated_against
     from ephymeris_sidecar.rig import registry
 
     monkeypatch.setattr(
-        registry.ChannelSet, "content_hash", lambda self: "c0ffee0123456789"
+        registry.ChannelSet, "content_hash", lambda self, version=2: "c0ffee0123456789"
     )
     await rig.confirm(rig.session())
     assert {c.channel_set_hash for c in rig.runner.box_configs()} == {"c0ffee0123456789"}
+    assert {c.channel_set_hash_version for c in rig.runner.box_configs()} == {2}
 
 
 async def test_confirming_the_same_mapping_again_is_a_new_confirmation_on_the_wire(rig) -> None:

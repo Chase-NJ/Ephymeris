@@ -43,11 +43,18 @@ class ScriptedSerial:
 
     `feed` queues bytes the board would send; `written` captures what the
     sidecar sent back, so the handshake can be asserted in order.
+
+    The session thread opens the port after `claim_session` returns, so a test
+    must wait for it (`port_opened`). Every open here is late on purpose: a
+    test that reads `instances` straight away then fails on every run, rather
+    than on the one run in many where the thread is slow to start.
     """
 
     instances: list["ScriptedSerial"] = []
+    OPEN_DELAY_S = 0.02
 
     def __init__(self, *_args, **kwargs) -> None:
+        time.sleep(self.OPEN_DELAY_S)
         self.port = kwargs.get("port")
         self.baudrate = kwargs.get("baudrate")
         self.closed = False

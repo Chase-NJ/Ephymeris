@@ -562,11 +562,10 @@ def test_an_unordered_ramp_is_reported():
     ]))
 
 
-def test_a_long_ramp_is_spread_over_set_lines_not_reported():
+def test_a_long_ramp_is_spread_over_set_lines_not_refused():
     """The cap is on each `SET` line, not on the run (`TASKS.md#the-length-cap`):
     forty stages are two hundred tokens, which take several lines and fit."""
     task = a_task(stages=[StageRow(trials=i * 10) for i in range(40)])
-    assert "TSK107" not in codes(task)
     profile = generate.build_profile(task)
     command = build_start_command(profile, {f.metadata_key: f.default for f in profile.config})
     assert len(command.set_lines) > 1

@@ -13,7 +13,6 @@ rather than a warning:
   TSK104  a strobe code that is not declared   -> an unlabelled event in the data
   TSK105  two types sharing an onset code      -> two conditions, one label
   TSK106  a stage schedule that is not ordered -> a row that never engages
-  TSK107  a START line over the cap            -> the firmware truncates in silence
   TSK108  a table with no presentable trial    -> a session that runs nothing
   TSK109  a pool whose weights are all zero    -> a uniform pool, silently
   TSK110  a condition with no name             -> a chart titled after a channel
@@ -42,8 +41,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..rig import registry
-from ..tasks.profile import TaskProfileError
-from ..tasks.start_command import build_start_command
 from . import rows
 from .model import TaskDefinition
 
@@ -72,7 +69,6 @@ def validate(definition: TaskDefinition) -> list[Diagnostic]:
     out.extend(_reward_problems(definition))
     out.extend(_pool_problems(definition))
     out.extend(_stage_problems(definition))
-    out.extend(_line_problems(definition))
     return out
 
 
@@ -386,24 +382,3 @@ def _reward_problems(definition: TaskDefinition) -> list[Diagnostic]:
         for i, trial in enumerate(definition.trials)
         if trial.is_go and trial.reward_time <= 0
     ]
-
-
-def _line_problems(definition: TaskDefinition) -> list[Diagnostic]:
-    """The built `START` line must fit, checked rather than trusted.
-
-    `readLineInto()` truncates an overlong line and drops the rest, and the
-    board cannot report that — the session runs on whichever values happened to
-    fit. So the generator refuses instead, which is the same discipline
-    `build_start_command` already applies (`TASKS.md#the-length-cap`).
-    """
-    from .generate import build_profile  # local: generate imports this module
-
-    try:
-        profile = build_profile(definition)
-        config = {f.metadata_key: f.default for f in profile.config}
-        build_start_command(profile, config)
-    except TaskProfileError as exc:
-        return [Diagnostic("params", str(exc), "TSK107")]
-    except Exception:  # pragma: no cover - a generator crash is not a task fault
-        return []
-    return []

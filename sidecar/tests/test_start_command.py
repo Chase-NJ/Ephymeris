@@ -178,6 +178,26 @@ def test_a_value_the_board_clamped_is_refused_naming_the_key() -> None:
     assert "POL" in str(refused.value) and "BS" in str(refused.value)
 
 
+def test_a_board_with_too_many_clamped_values_to_list_still_refuses() -> None:
+    """`CLAMPED *` is the firmware's name for more keys than it can list."""
+    command = build_start_command(ITI_PRM, {})
+    with pytest.raises(StartRefused) as refused:
+        command.verify(_reply(command, clamped=("*",)))
+    assert refused.value.code == ErrCode.PARAMS_CLAMPED
+    assert "several values" in str(refused.value)
+
+
+def test_a_value_too_wide_for_the_boards_int_is_the_boards_to_report_not_the_hosts_crc() -> None:
+    """The CRC is over the text, so it matches whatever the board makes of the
+    digits: ITI=40000 hashes the same whether the board holds it or wraps it.
+    The board's `CLAMPED ITI` (test_behaviorbox.cpp) is what refuses it."""
+    command = build_start_command(_profile(("ITI", "int", 40000)), {})
+    assert command.crc32 == zlib.crc32(b"ITI=40000")
+    command.verify(_reply(command))  # nothing in the numbers refuses it...
+    with pytest.raises(StartRefused):
+        command.verify(_reply(command, clamped=("ITI",)))  # ...the board's word does
+
+
 def test_a_board_that_never_answers_is_an_older_sketch_and_must_be_reflashed() -> None:
     command = build_start_command(ITI_PRM, {})
     with pytest.raises(StartRefused) as refused:

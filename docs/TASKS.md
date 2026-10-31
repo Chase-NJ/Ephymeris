@@ -443,7 +443,6 @@ A definition stores **channel names and strobe code names, never pins or numbers
 | `TSK104` | A strobe code the vocabulary does not declare | An unlabelled number in the data |
 | **`TSK105`** | **Two trial types on one odor line** (one line declares one onset code) | Two conditions, one label, pooled by every analysis |
 | `TSK106` | A ramp not strictly ascending after row 0 | `liveStage()` scans down, so the row never engages |
-| `TSK107` | A parameter too long for a `SET` line | The firmware truncates in silence |
 | `TSK108` | No presentable trial — a row is presentable exactly when the generator emits it (`taskdef/rows.py`), so go rows with no usable response port, reward line or slot count for nothing; so does a table of only no-go types outside pool, since both anti-bias selectors draw a side first | A session that runs nothing |
 | **`TSK109`** | **All pool weights zero** (pool), or **a side whose go types all weigh zero** (weighted) | The firmware falls back to a uniform draw while the table says otherwise |
 | `TSK110` | A condition with no name | Every readout titles it after whichever channel carried it |
@@ -457,7 +456,7 @@ A definition stores **channel names and strobe code names, never pins or numbers
 
 **Every trial type must be named.** The name is the one thing the trial table cannot derive, and the metric label built from it titles Mission Control's live sparkline, the learning curve and a strategy axis. Two kinds of name meet here and must stay apart: the **rig's channel label** ("sandalwood") belongs to the wiring and never enters the profile; the **row's name** ("Go right") is the condition and does.
 
-A definition with diagnostics **still saves, and still generates a flashable sketch**: a half-finished task must be savable. Nothing refuses to flash it either — the editor says "it will still flash" — so the diagnostics are the operator's warning, not a lock. The exception is `TSK107`, whose line the sidecar refuses to build at mapping ([The length cap](#the-length-cap)). `tasks.save` refuses only a name that collides with a bundled sketch or (case-insensitively) another saved task, because two tasks with one name share a sketch folder and saving one would overwrite the other's firmware.
+A definition with diagnostics **still saves, and still generates a flashable sketch**: a half-finished task must be savable. Nothing refuses to flash it either — the editor says "it will still flash" — so the diagnostics are the operator's warning, not a lock. `tasks.save` refuses only a name that collides with a bundled sketch or (case-insensitively) another saved task, because two tasks with one name share a sketch folder and saving one would overwrite the other's firmware.
 
 ### Saving and regeneration
 
@@ -801,7 +800,7 @@ The mapping step keeps **only the per-box layer**: a row (and its set-up draft) 
 - Tokens are packed greedily into lines shorter than `SET_LINE_MAX`, never split across lines.
 - No profile, or no config fields → one bare `SET`. The board is asked even about an empty block, because a board that never hears a `SET` cannot be told apart from an older sketch.
 
-It is built sidecar-side at `sessions.confirmMapping` (and by `port.sendStart` in Debug Mode, and by the validator for `TSK107`). Only the `START` line is left for the click.
+It is built sidecar-side at `sessions.confirmMapping` (and by `port.sendStart` in Debug Mode). Only the `START` line is left for the click.
 
 ### Confirming the parameters
 
@@ -824,7 +823,10 @@ sequenceDiagram
 ```
 
 - **`PARAMS <n> <crc32>`** is the running total: `n` is how many keys the board has accepted, and `crc32` is the standard CRC-32 (what Python's `zlib.crc32` computes) over the accepted tokens **exactly as received**, joined by single spaces, in the order received. The host computes both over what it sent (`StartCommand.count`, `.crc32`) and acts on the answer to its last line.
-- **`CLAMPED <key>`** is printed before that `PARAMS`, once for each value `clampTaskParams()` would change in the block so far. The board judges a copy, so the block it holds is untouched until `START`; a clamp on an early line that a later line corrects does not appear in the last answer.
+- **`CLAMPED <key>`** is printed before that `PARAMS`, once for each value the board could not hold as sent: one `clampTaskParams()` would change in the block so far, or one outside the 16-bit range of the board's `int` (`BOX_INT_MIN`..`BOX_INT_MAX`, −32768..32767). The second kind matters because the CRC is over the text: `ITI=40000` hashes the same whether the board holds 40000 or wraps it to −25536, so only the board saying it could not hold it stops the run. More wide keys than the audit can name (16) are reported as `CLAMPED *`. The board judges a copy, so the block it holds is untouched until `START`; a clamp on an early line that a later line corrects does not appear in the last answer.
+
+  > [!CAUTION]
+  > **A parameter whose declared `max` is above 32767 can be refused by the board.** GRGL's `task.json` allows `ERR`, `ITI`, `NPH`, `LZD` up to 120000, `NWP`, `LZS`, `S<n>W`, `S<n>O` up to 60000 and `LZM` up to 300000, but the board holds them in a 16-bit `int`. Such a value now refuses the start with `PARAMS_CLAMPED` instead of running wrapped; the form does not yet stop it being typed.
 - **`START SEED=<n>`** is sent only after the answer clears. It carries the seed and nothing else ([SEED](#seed)); the board clamps and applies ramp row 0 then.
 - **`INTERP=<n>`** is printed before `READY` and names the firmware interpreter; this firmware is `1`. The run's `.tsv` header records it as `# interp: <n>` ([DATA.md](DATA.md#the-tsv-log)); a board that announced none leaves the line out.
 
@@ -1000,12 +1002,12 @@ The Task tab answers *what the animal does*; the Rig tab answers *what this box 
 
 `/task/new` and `/task/:taskId` (`routes/TaskEditor.tsx`) is a [telemetry display](ARCHITECTURE.md#telemetry-panels) in one frame: the derived **state machine** front and centre with every **trial type** beneath it, and beside them the **parameter dial** and **trial generation**. The diagram is the fastest check that an edit did what was meant, so it is never off screen. **Every redraw comes from `tasks.preview`**: the diagram is derived from the profile the *current* definition compiles to, and validation needs the wiring, which the frontend does not hold.
 
-- **The header** (`editor/EditorHeader.tsx`): the way back, the task's glyph and name, a **Problems** popover (every diagnostic grouped by where it lives; each one jumps to its row, the dial's Holds stop or the generation panel), the **`START` meter**, the **Details** popover (category, legacy names, notes — `TaskDetailsBody`, opened once on a new task because the category decides the sketch folder), then Revert and Save.
+- **The header** (`editor/EditorHeader.tsx`): the way back, the task's glyph and name, a **Problems** popover (every diagnostic grouped by where it lives; each one jumps to its row, the dial's Holds stop or the generation panel), the **Details** popover (category, legacy names, notes — `TaskDetailsBody`, opened once on a new task because the category decides the sketch folder), then Revert and Save.
 - **One link, read from every end.** A planet, the generation panel or a machine chip lights the states it tunes; hovering a state lights its planet; a trial row or a composition segment lights its condition's tick. A chip or state click opens its home. The machine's own condition list is off here (`conditionRail={false}`): the trial rows are the accessible condition list.
 - **The machine draws itself on** left to right on first sight (a `DrawOn` clip wipe, each state fading in as the wipe reaches it), and a small flat dot rides the rewarded trial from start to ITI (`happyPath`, `spinePath`). The dot is not the live token: it has no ring, and it is hidden under reduced motion and whenever anything is lit.
 - **The machine has a floor and the page bends around it** (`lib/tasks/editorLayout.ts`). It is never drawn narrower than `EDITOR_MIN_W` and never scaled. **Split**: the machine and trial types in the main column, the dial and generation in an aside. **Stacked** — when the aside would squeeze the machine below its floor, as on the app's minimum window — the aside's panels move under the trial types and the page scrolls. Panels carry `layoutId`s, so they travel between homes on a spring, and the drawing's layout width moves in `WIDTH_STEP`s that glide (`useGlidingWidth`).
 
-![The task editor for 4-Odor Discrimination: the START meter and Details at the top, the state machine across the left, four trial types below it (Sandalwood, Orange, Cedar and Lemon, each with its odor line, well, fluid line, reward and weight), the Parameters dial on Session at the top right, and Trial generation set to Weighted below it](images/task-editor.webp)
+![The task editor for 4-Odor Discrimination: Details at the top, the state machine across the left, four trial types below it (Sandalwood, Orange, Cedar and Lemon, each with its odor line, well, fluid line, reward and weight), the Parameters dial on Session at the top right, and Trial generation set to Weighted below it](images/task-editor.webp)
 
 ### Trial types
 
@@ -1031,7 +1033,7 @@ Below sit the groups that are selection policy: **Anti-bias selection**, **Trial
 
 The ramp is the dial's **Holds & shaping** stop (`editor/StageList.tsx`): one compact row per stage — the trial it engages at, odor hold, well hold, response window, odor port window — with the timeline strip once there is more than one stage. Row 0 has no "engages at"; a new row is seeded from the row before it, never from a defaults table, so no stage appears carrying numbers nobody chose. Each added stage costs five tokens, which the parameter block spreads over more `SET` lines; there is no total to exhaust.
 
-<img src="images/task-ramp.webp" alt="The Parameters dial turned to Holds &amp; shaping for 2-Odor Discrimination: a timeline of five stages engaging at trials 0, 15, 30, 50 and 80, and one row per stage with its odor hold, well hold, response window and port window, above the note that each stage costs five START tokens" width="385">
+<img src="images/task-ramp.webp" alt="The Parameters dial turned to Holds &amp; shaping for 2-Odor Discrimination: a timeline of five stages engaging at trials 0, 15, 30, 50 and 80, and one row per stage with its odor hold, well hold, response window and port window, above the note that each stage costs five parameters" width="385">
 
 ### Parameter dial
 

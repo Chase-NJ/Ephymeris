@@ -218,7 +218,7 @@ SHAPES = (
                 "Shell-only — the frontend merges these under the profile's own "
                 "defaults and sends the result as each box's `config` at "
                 "`sessions.confirmMapping`, so there is exactly one place a "
-                "value can enter a `START` line and the sidecar never reads "
+                "value can enter a `SET` line and the sidecar never reads "
                 "these.",
             ),
         ),
@@ -655,7 +655,7 @@ SHAPES = (
         "ConfigField",
         obj(
             f("metadataKey", STR, doc="The `.json`/`.mat` field name the form collects under."),
-            f("wireKey", STR, doc="The `START` command token (`TASKS.md#the-start-line`)."),
+            f("wireKey", STR, doc="The `SET` command token (`TASKS.md#the-start-line`)."),
             f("label", STR),
             f("type", Ref("ConfigFieldType")),
             f("default", ANY),
@@ -2572,9 +2572,16 @@ COMMANDS = (
         args=obj(f("box", INT)),
         result=_STATE,
         doc="Start one box of the confirmed mapping: open the port (the Mega "
-        "DTR-resets), await `READY`, send the `START` line built at "
-        "`sessions.confirmMapping`, capture an optional `SEED`, then parse "
-        "strobes (`ARCHITECTURE.md#session-lifecycle`). Requires `IDLE`. On a "
+        "DTR-resets), await `READY` (and the `INTERP=<n>` before it), send the "
+        "`SET` lines built at `sessions.confirmMapping` one at a time and hold "
+        "the board's `PARAMS <n> <crc32>` and any `CLAMPED <key>` against what "
+        "was sent, then send `START SEED=<n>`, capture an optional `SEED`, and "
+        "parse strobes (`TASKS.md#confirming-the-parameters`, "
+        "`ARCHITECTURE.md#session-lifecycle`). Requires `IDLE`. The reply "
+        "returns at the claim, before the board answers: a start the board's "
+        "answer refuses (`PARAMS_MISMATCH`, `PARAMS_CLAMPED`, "
+        "`FIRMWARE_OUTDATED`) arrives as a `sidecar.error` event for the box, "
+        "with `START` never sent and the port in `ERROR`. On a "
         "recording session RHX recording begins first and an `INTAN_*` "
         "refusal comes before the box starts. Opens the group's run and marks "
         "the session `running` if this is the group's first box. "
@@ -3130,6 +3137,8 @@ COMMANDS = (
         "running must carry its mapped sketch's current build first "
         "(`ARCHITECTURE.md#what-a-board-carries`): otherwise `SESSION_INVALID` "
         "with `detail.boxes` naming each one, before RHX or any box starts. "
+        "A box whose board then refuses its parameters is reported per box as "
+        "`sidecar.error`, as for `port.startSession`. "
         "Broadcasts `session.lifecycle`. Long-running on a recording session; the client "
         "raises its reply timeout.",
     ),
@@ -3196,7 +3205,7 @@ COMMANDS = (
         result=union(Ref("TaskProfile"), obj(f("profile", NULL))),
         doc="Read the `task.json` beside a sketch's `.ino` "
         "(`TASKS.md#task-profile`). A sketch with none returns "
-        "`{profile: null}` — fully supported (bare `START`, raw strobe log). "
+        "`{profile: null}` — fully supported (one bare `SET`, raw strobe log). "
         "`TASK_PROFILE_INVALID` when the file exists but is malformed. Works "
         "the same on a bundled sketch and on one generated from a saved task. "
         "Waits for a rig definition write in progress (`TASKS.md#the-rig-definition`).",
@@ -3227,10 +3236,8 @@ COMMANDS = (
         result=Ref("TaskPreview"),
         doc="Compile an unsaved definition and say what is wrong with it, "
         "writing nothing. The editor calls it as the operator types, so a "
-        "problem lands against the field that caused it; it also carries the "
-        "built `START` line's length, the one budget an operator can exhaust "
-        "without noticing. `TASK_INVALID` only when the document is not a "
-        "definition.",
+        "problem lands against the field that caused it. `TASK_INVALID` only "
+        "when the document is not a definition.",
     ),
     Command(
         "tasks.save",
@@ -3935,9 +3942,10 @@ ERRORS = (
     ),
     ErrorCode(
         "PARAMS_CLAMPED",
-        "A start refused because the board moved a value to bring it inside the "
-        "range it can run (`CLAMPED <key>`); `detail.keys` names them. Nothing "
-        "was started (`TASKS.md#the-start-line`).",
+        "A start refused because the board could not hold a value as sent "
+        "(`CLAMPED <key>`): its clamp would move it, or it is outside the "
+        "board's 16-bit `int`. `detail.keys` names them (`*` for more than it "
+        "can list). Nothing was started (`TASKS.md#confirming-the-parameters`).",
     ),
     ErrorCode(
         "FIRMWARE_OUTDATED",

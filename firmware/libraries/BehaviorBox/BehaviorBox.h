@@ -805,8 +805,57 @@ struct ParamAudit
   uint32_t crc = 0xFFFFFFFFUL; // the running CRC-32, before the final inversion
   int accepted = 0;            // keys parsed; an unknown key is neither counted nor hashed
 
+  /*  Keys whose value does not fit the board's int, which the CRC cannot see:
+      it is over the TEXT, so ITI=40000 hashes the same whether the board holds
+      40000 or wraps it to -25536. They are named (by the key's literal) so the
+      reply can say CLAMPED for them. A key set right on a later line leaves the
+      list. More than fit are not named but still counted in `wideLost`, which
+      makes the reply carry a nameless CLAMPED -- the start is refused either way. */
+  static const int WIDE_MAX = 16;
+  const char *wide[WIDE_MAX];
+  int wideCount = 0;
+  bool wideLost = false;
+
+  void noteWide(const char *key)
+  {
+    if (isWide(key)) return;
+    if (wideCount < WIDE_MAX) wide[wideCount++] = key;
+    else wideLost = true;
+  }
+  void noteFits(const char *key)
+  {
+    for (int i = 0; i < wideCount; i++)
+      if (strcmp(wide[i], key) == 0)
+      {
+        wide[i] = wide[--wideCount];
+        return;
+      }
+  }
+  bool isWide(const char *key) const
+  {
+    for (int i = 0; i < wideCount; i++)
+      if (strcmp(wide[i], key) == 0) return true;
+    return false;
+  }
+
   uint32_t finalCrc() const { return ~crc; } // of nothing: 0, as zlib.crc32(b"")
 };
+
+/*  The range of a TaskParams `int`, as the AVR has it, on every platform. atoi()
+    is a 16-bit parse there and silently wraps; the host test must see the same
+    limit the board has, so it is written down rather than taken from <limits.h>.
+    A value outside it is held at the nearest edge and reported (CLAMPED). */
+#define BOX_INT_MIN (-32768L)
+#define BOX_INT_MAX 32767L
+
+inline int parseIntField(const char *v, bool &fits)
+{
+  long x = strtol(v, NULL, 10);
+  fits = x >= BOX_INT_MIN && x <= BOX_INT_MAX;
+  if (x < BOX_INT_MIN) x = BOX_INT_MIN;
+  if (x > BOX_INT_MAX) x = BOX_INT_MAX;
+  return (int)x;
+}
 
 /*  void crc32Feed(ParamAudit&, const char*, size_t) ->
     Fold bytes into the audit's CRC. The reflected CRC-32 (polynomial 0xEDB88320),
@@ -889,12 +938,14 @@ inline void parseParamTokens(char *line, TaskParams &p, ParamAudit *audit)
     const char *k = tok;
     const char *v = eq + 1;
 
-// atoi() is a 16-bit parse on AVR, which is fine for every int field (the
-// largest, lazyDelayMax, is 30000). SEED is the one value that spans the full
-// 31-bit Park-Miller range, so it -- and only it -- needs strtoul.
-#define P_INT(key, field)   if (strcmp(k, key) == 0) { p.field = atoi(v); if (audit) auditAccept(*audit, k, v); continue; }
+// An int field is a 16-bit int on the board: a value outside BOX_INT_MIN..MAX
+// is held at the edge, not wrapped, and the audit names it so the reply says
+// CLAMPED (a hand-typed START is held the same way, silently). SEED is the one
+// value that spans the full 31-bit Park-Miller range, so it -- and only it --
+// needs strtoul.
+#define P_INT(key, field)   if (strcmp(k, key) == 0) { bool fits; p.field = parseIntField(v, fits); if (audit) { if (fits) audit->noteFits(key); else audit->noteWide(key); auditAccept(*audit, k, v); } continue; }
 #define P_FLOAT(key, field) if (strcmp(k, key) == 0) { p.field = (float)atof(v); if (audit) auditAccept(*audit, k, v); continue; }
-#define P_BOOL(key, field)  if (strcmp(k, key) == 0) { p.field = (atoi(v) != 0); if (audit) auditAccept(*audit, k, v); continue; }
+#define P_BOOL(key, field)  if (strcmp(k, key) == 0) { bool fits; p.field = (parseIntField(v, fits) != 0); if (audit) { if (fits) audit->noteFits(key); else audit->noteWide(key); auditAccept(*audit, k, v); } continue; }
 #define P_ULONG(key, field) if (strcmp(k, key) == 0) { p.field = strtoul(v, NULL, 10); if (audit) auditAccept(*audit, k, v); continue; }
 #define P_STAGE(n)          TASK_STAGE_KEYS(n)
     TASK_PARAM_LIST
@@ -915,17 +966,18 @@ inline bool lineIsCommand(const char *line, const char *verb)
   return strncmp(line, verb, n) == 0 && (line[n] == '\0' || line[n] == ' ');
 }
 
-/*  void reportClamped(const TaskParams& p) ->
-    Print `CLAMPED <KEY>` for every value clampTaskParams() would change in p as
-    it stands. Judged on a COPY, so p keeps what the host sent until START -- the
-    verdict is on the whole block so far, and the last SET line's reply is the
-    one that counts. */
-inline void reportClamped(const TaskParams &p)
+/*  void reportClamped(const TaskParams& p, const ParamAudit& audit) ->
+    Print `CLAMPED <KEY>` for every value the board could not hold as sent: one
+    clampTaskParams() would change in p as it stands, or one too wide for its int
+    (ParamAudit::wide). Judged on a COPY, so p keeps what the host sent until
+    START -- the verdict is on the whole block so far, and the last SET line's
+    reply is the one that counts. Each key is named once. */
+inline void reportClamped(const TaskParams &p, const ParamAudit &audit)
 {
   TaskParams c = p;
   clampTaskParams(c);
   char buf[24];
-#define P_INT(key, field)   if (p.field != c.field) { snprintf(buf, sizeof(buf), "CLAMPED %s", key); Serial.println(buf); }
+#define P_INT(key, field)   if (p.field != c.field || audit.isWide(key)) { snprintf(buf, sizeof(buf), "CLAMPED %s", key); Serial.println(buf); }
 #define P_FLOAT(key, field) P_INT(key, field)
 #define P_BOOL(key, field)  P_INT(key, field)
 #define P_ULONG(key, field) P_INT(key, field)
@@ -936,6 +988,8 @@ inline void reportClamped(const TaskParams &p)
 #undef P_BOOL
 #undef P_ULONG
 #undef P_STAGE
+  if (audit.wideLost)
+    Serial.println("CLAMPED *"); // too many to name, and still not the values sent
 }
 
 /*  void applySetLine(char* line, TaskParams& p, ParamAudit& audit) ->
@@ -951,7 +1005,7 @@ inline void reportClamped(const TaskParams &p)
 inline void applySetLine(char *line, TaskParams &p, ParamAudit &audit)
 {
   parseParamTokens(line, p, &audit);
-  reportClamped(p);
+  reportClamped(p, audit);
   char buf[32];
   snprintf(buf, sizeof(buf), "PARAMS %d %lu", audit.accepted, (unsigned long)audit.finalCrc());
   Serial.println(buf);

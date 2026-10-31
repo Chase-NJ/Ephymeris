@@ -251,7 +251,13 @@ async def test_strobes_push_rolling_telemetry(tmp_path: Path, bench: Bench) -> N
     board = await bench.run_handshake(1)
 
     await board.said("101\t0", "249\t100")  # trigger, then went right → hit
-    await wait_until(lambda: any(e.get("evt") == "session.telemetry" for e in events))
+    # Pushes are scheduled onto the loop one per strobe: wait for the hit's, not the first.
+    await wait_until(
+        lambda: any(
+            e.get("evt") == "session.telemetry" and e["data"]["metrics"][0]["value"] is not None
+            for e in events
+        )
+    )
 
     telemetry = [e for e in events if e.get("evt") == "session.telemetry"]
     last = telemetry[-1]["data"]

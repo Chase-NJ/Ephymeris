@@ -20,7 +20,7 @@ from typing import Any, Callable, Literal
 
 import serial
 
-from ..tasks.start_command import ParamsReply, StartCommand, StartRefused
+from ..tasks.start_command import ParamsExchange, StartCommand, StartRefused
 from .states import (
     ACKNOWLEDGE_FROM,
     CLAIM_FROM,
@@ -48,9 +48,6 @@ SEED_RE = re.compile(r"^SEED\t(\d+)$")
 #: Announced before `READY`: which firmware interpreter the sketch is
 #: (`TASKS.md#the-start-line`).
 INTERP_RE = re.compile(r"^INTERP=(\d+)$")
-#: The board's answer to a `SET` line, and the keys it moved, which precede it.
-PARAMS_RE = re.compile(r"^PARAMS (\d+) (\d+)$")
-CLAMPED_RE = re.compile(r"^CLAMPED (\S+)$")
 READY_TOKEN = "READY"
 
 #: How long to wait for the board's `READY` after opening (it reboots via the
@@ -549,32 +546,20 @@ class PortHandler:
                 shake.interp = int(interp.group(1))
             elif text.upper() == READY_TOKEN:
                 shake.phase = "params"
-                self._send_line(port, shake.command.set_lines[0])
+                self._send_line(port, shake.exchange.first_line)
                 shake.params_deadline = time.monotonic() + SESSION_PARAMS_TIMEOUT_S
             return
 
         if shake.phase == "params":
-            clamped = CLAMPED_RE.match(text)
-            if clamped:
-                shake.clamped.append(clamped.group(1))
-                return
-            params = PARAMS_RE.match(text)
-            if not params:
-                return
-            shake.sent += 1
-            if shake.sent < len(shake.command.set_lines):
-                # One line at a time: the Mega's receive buffer is 64 bytes, and a
-                # second line written before the first is parsed could overrun it.
-                # Keys moved by an earlier line say nothing about the final block.
-                shake.clamped.clear()
-                self._send_line(port, shake.command.set_lines[shake.sent])
+            # One line at a time: the Mega's receive buffer is 64 bytes, and a
+            # second line written before the first is parsed could overrun it.
+            following = shake.exchange.hear(text)
+            if following is not None:
+                self._send_line(port, following)
                 shake.params_deadline = time.monotonic() + SESSION_PARAMS_TIMEOUT_S
-                return
-            shake.command.verify(
-                ParamsReply(int(params.group(1)), int(params.group(2)), tuple(shake.clamped))
-            )
-            self._send_line(port, shake.command.start_line(shake.seed))
-            shake.phase = "seed"
+            elif shake.exchange.done:
+                self._send_line(port, shake.command.start_line(shake.seed))
+                shake.phase = "seed"
             return
 
         if shake.phase == "seed":
@@ -625,28 +610,22 @@ class PortHandler:
         loop. Returns the bytes written for `start_line`.
         """
         answers: queue.Queue[str] = queue.Queue()
+        exchange = ParamsExchange(command)
         with self._pending_lock:
             self._listeners.append(answers.put)
         try:
-            reply: ParamsReply | None = None
-            for set_line in command.set_lines:
-                self.write(set_line)
-                clamped: list[str] = []
-                deadline = time.monotonic() + SESSION_PARAMS_TIMEOUT_S
-                reply = None
-                while reply is None:
-                    try:
-                        text = answers.get(timeout=max(0.0, deadline - time.monotonic()))
-                    except queue.Empty:
-                        command.verify(None)  # nothing answered: always raises
-                        raise AssertionError("verify(None) must refuse")  # pragma: no cover
-                    heard = CLAMPED_RE.match(text)
-                    if heard:
-                        clamped.append(heard.group(1))
-                    params = PARAMS_RE.match(text)
-                    if params:
-                        reply = ParamsReply(int(params.group(1)), int(params.group(2)), tuple(clamped))
-            command.verify(reply)
+            self.write(exchange.first_line)
+            deadline = time.monotonic() + SESSION_PARAMS_TIMEOUT_S
+            while not exchange.done:
+                try:
+                    text = answers.get(timeout=max(0.0, deadline - time.monotonic()))
+                except queue.Empty:
+                    command.verify(None)  # nothing answered: always raises
+                    raise AssertionError("verify(None) must refuse") from None  # pragma: no cover
+                following = exchange.hear(text)
+                if following is not None:
+                    self.write(following)
+                    deadline = time.monotonic() + SESSION_PARAMS_TIMEOUT_S
             return self.write(start_line)
         finally:
             with self._pending_lock:
@@ -785,11 +764,11 @@ class _Handshake:
     phase: str = "ready"
     #: What the board announced before `READY`; None for a board that did not.
     interp: int | None = None
-    #: How many `SET` lines have been answered.
-    sent: int = 0
-    #: `CLAMPED` keys heard since the last line went out.
-    clamped: list[str] = field(default_factory=list)
+    exchange: ParamsExchange = field(init=False)
     params_deadline: float = 0.0
+
+    def __post_init__(self) -> None:
+        self.exchange = ParamsExchange(self.command)
 
 
 def _find_terminator(buf: bytearray) -> tuple[int, int]:

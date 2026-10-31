@@ -16,10 +16,12 @@ sends a bare `SET`, so even an empty block is confirmed.
 
 from __future__ import annotations
 
+import re
 import zlib
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..protocol import ErrCode
 from .profile import ConfigField, TaskProfile, TaskProfileError
 
 #: The wire key carrying the host-drawn trial seed (`TASKS.md#seed`).
@@ -43,10 +45,9 @@ SET_LINE_MAX = 128
 
 _SET_VERB = "SET"
 
-#: `ErrCode` names a refused start carries (`protocol/schema.py`).
-PARAMS_MISMATCH = "PARAMS_MISMATCH"
-PARAMS_CLAMPED = "PARAMS_CLAMPED"
-FIRMWARE_OUTDATED = "FIRMWARE_OUTDATED"
+#: The board's answer to a `SET` line, and the keys it moved, which precede it.
+PARAMS_RE = re.compile(r"^PARAMS (\d+) (\d+)$")
+CLAMPED_RE = re.compile(r"^CLAMPED (\S+)$")
 
 
 class StartRefused(Exception):
@@ -116,24 +117,26 @@ class StartCommand:
         """
         if reply is None:
             raise StartRefused(
-                FIRMWARE_OUTDATED,
+                ErrCode.FIRMWARE_OUTDATED,
                 "no_reply",
                 "The board never confirmed its parameters, so this box carries an "
                 "older sketch. Reflash it, then start again.",
             )
         if reply.clamped:
             keys = list(reply.clamped)
+            # `*` is the board's name for more keys than it can list.
+            named = "several values" if "*" in keys else ", ".join(keys)
             raise StartRefused(
-                PARAMS_CLAMPED,
+                ErrCode.PARAMS_CLAMPED,
                 "clamped",
-                f"The board moved {', '.join(keys)} to bring it inside the range it "
-                f"can run, so it would not run the value that was chosen. Change "
+                f"The board could not hold {named} as chosen (out of the range it "
+                f"can run), so it would not run the value that was chosen. Change "
                 f"the value and start again.",
                 {"keys": keys},
             )
         if reply.count != self.count:
             raise StartRefused(
-                PARAMS_MISMATCH,
+                ErrCode.PARAMS_MISMATCH,
                 "count",
                 f"The board accepted {reply.count} of {self.count} parameters: a key "
                 f"was not recognised by this sketch, or a line was cut short. "
@@ -142,13 +145,57 @@ class StartCommand:
             )
         if reply.crc32 != self.crc32:
             raise StartRefused(
-                PARAMS_MISMATCH,
+                ErrCode.PARAMS_MISMATCH,
                 "crc",
                 "The parameters the board received differ from the ones sent: a line "
                 "was cut or garbled on the way. Start again; if it repeats, check "
                 "the cable.",
                 {"sent": self.crc32, "received": reply.crc32},
             )
+
+
+class ParamsExchange:
+    """The host's half of the `SET` / `PARAMS` conversation, one board line at a time.
+
+    The one home of the rules both a session start and Debug Mode's follow: one
+    `SET` line is out at a time, `CLAMPED` keys are kept only for the line that is
+    outstanding (the board judges the whole block so far, so an earlier line's
+    clamp that a later line corrects is gone), and only the answer to the last
+    line decides. Owns no I/O: feed it what the board printed with `hear`, and
+    send what it hands back.
+    """
+
+    def __init__(self, command: StartCommand) -> None:
+        self._command = command
+        self._answered = 0
+        self._clamped: list[str] = []
+        #: True once the last line's answer has cleared the block.
+        self.done = False
+
+    @property
+    def first_line(self) -> str:
+        return self._command.set_lines[0]
+
+    def hear(self, text: str) -> str | None:
+        """Take one line the board printed. Returns the next `SET` line to send,
+        or None (still waiting, or `done`). Raises `StartRefused` when the last
+        answer refuses the start."""
+        clamped = CLAMPED_RE.match(text)
+        if clamped:
+            self._clamped.append(clamped.group(1))
+            return None
+        params = PARAMS_RE.match(text)
+        if params is None:
+            return None
+        self._answered += 1
+        if self._answered < len(self._command.set_lines):
+            self._clamped.clear()
+            return self._command.set_lines[self._answered]
+        self._command.verify(
+            ParamsReply(int(params.group(1)), int(params.group(2)), tuple(self._clamped))
+        )
+        self.done = True
+        return None
 
 
 def _format_value(field: ConfigField, value: Any) -> str:

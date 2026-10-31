@@ -144,10 +144,10 @@ Opening a task shows everything about it on one screen:
   out, and the bar shows the share of trials each condition would get.
 - **Parameters**, the dial above it: click a planet, use the arrow keys or scroll to turn it, and that
   category's settings appear below. **Holds** is the shaping ramp.
-- At the top: **Problems** (click one to go to it), the **START** meter (keep it out of the red), and
+- At the top: **Problems** (click one to go to it) and
   **Details** (category, older names, notes). Save when done; a task saves even with problems.
 
-![The task editor for 4-Odor Discrimination: the START meter and Details at the top, the state machine across the left, four trial types below it (Sandalwood, Orange, Cedar and Lemon, each with its odor line, well, fluid line, reward and weight), the Parameters dial on Session at the top right, and Trial generation set to Weighted below it](images/task-editor.webp)
+![The task editor for 4-Odor Discrimination: Details at the top, the state machine across the left, four trial types below it (Sandalwood, Orange, Cedar and Lemon, each with its odor line, well, fluid line, reward and weight), the Parameters dial on Session at the top right, and Trial generation set to Weighted below it](images/task-editor.webp)
 
 The **Strobes** tile opens the list of every event a box can report and the number it is recorded as.
 The band across the top shows all the numbers from 0 to 999: purple ones are in use, grey ones are

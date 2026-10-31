@@ -361,6 +361,41 @@ int main() {
     assert(strstr(_serialOut, "CLAMPED") == NULL);
     assert(strncmp(_serialOut, "PARAMS 2 ", 9) == 0); }
 
+  // --- a value the board's int cannot hold is a clamp, not a wrap. The CRC is
+  //     over the text, so it matches whatever the board makes of the digits; the
+  //     only thing that stops ITI=40000 running as -25536 on a 16-bit int is the
+  //     board saying it could not hold it. The limit is the AVR's, on every host.
+  { TaskParams p; ParamAudit a;
+    setLine("SET ITI=40000", p, a);
+    assert(strncmp(_serialOut, "CLAMPED ITI\r\nPARAMS 1 ", 22) == 0);
+    assert(p.standardITI == 32767); }                                 // held, never wrapped
+  { TaskParams p; ParamAudit a;
+    setLine("SET ITI=32767 ERR=-32768", p, a);                        // the edges fit
+    assert(strstr(_serialOut, "CLAMPED") == NULL); }
+  { TaskParams p; ParamAudit a;
+    setLine("SET ITI=32768", p, a);                                   // one past
+    assert(strstr(_serialOut, "CLAMPED ITI") != NULL);
+    setLine("SET ERR=-32769", p, a);                                  // and one below
+    assert(strstr(_serialOut, "CLAMPED ITI") != NULL && strstr(_serialOut, "CLAMPED ERR") != NULL);
+    assert(p.errorDelay == -32768); }
+  { TaskParams p; ParamAudit a;                                       // a later line that sets it right
+    setLine("SET ITI=70000", p, a);                                   // clears it, and nothing else does
+    setLine("SET ITI=4000", p, a);
+    assert(strstr(_serialOut, "CLAMPED") == NULL);
+    assert(p.standardITI == 4000); }
+  { TaskParams p; ParamAudit a;                                       // moved by the clamp AND too wide: once
+    setLine("SET POL=-40000", p, a);
+    const char *first = strstr(_serialOut, "CLAMPED POL");
+    assert(first != NULL && strstr(first + 1, "CLAMPED POL") == NULL); }
+  { TaskParams p; ParamAudit a;                                       // more keys than the audit can name:
+    setLine("SET ERR=99999 ITI=99999 NPH=99999 NWP=99999 PRM=99999 POL=99999", p, a);
+    setLine("SET LZD=99999 LZS=99999 LZM=99999 CL=99999 CR=99999 LZG=99999", p, a);
+    setLine("SET NT=99999 BS=99999 BW=99999 MCS=99999 S0T=99999 S0P=99999", p, a);
+    assert(strstr(_serialOut, "CLAMPED") != NULL); }                  // still refused, whatever it is called
+  { TaskParams p; ParamAudit a;                                       // a flag is not a number to wrap to zero
+    setLine("SET LAZY=65536", p, a);
+    assert(strstr(_serialOut, "CLAMPED LAZY") != NULL); }
+
   { TaskParams p; ParamAudit a;                                       // START SEED=<n> is not a parameter
     setLine("SET ITI=4000", p, a);
     parseStart("START SEED=77", p);

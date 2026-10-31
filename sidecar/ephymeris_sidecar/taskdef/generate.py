@@ -26,7 +26,7 @@ from typing import Any
 
 from ..rig import registry
 from ..tasks import profile as task_profile
-from . import fields
+from . import fields, rows
 from .model import TaskDefinition, TrialTypeDef
 
 #: `TrialType`'s no-go sentinel, mirrored from BehaviorBox.h. A no-go type has
@@ -594,23 +594,17 @@ def task_trials_h(definition: TaskDefinition) -> str:
         "static TrialType kTrials[] = {",
     ]
 
-    # Declaration order, matching BOX_ODOR_PINS above: slot i of that table is
-    # `Odors[i]`, so the two must be built from the same list.
-    emitters = channels.declared_of_kind("emitter")
     for trial in definition.trials:
-        odor_index = next(
-            (i for i, c in enumerate(emitters) if c.name == trial.odor_channel), None
-        )
-        onset = _onset_macro(trial)
-        if odor_index is None or trial.onset_strobe not in vocab:
+        # `resolve_row` is the one place that decides a row is dropped: the
+        # validator's TSK108 asks it too, so the two cannot disagree.
+        row = rows.resolve_row(trial, channels, vocab)
+        if row is None:
             continue
+        odor_index = row.odor_index
+        onset = _onset_macro(trial)
 
         if trial.is_go:
-            port = channels.get(trial.response_channel) if trial.response_channel else None
-            reward_index = _reward_index(channels, trial.reward_channel)
-            slot = vocab.port_slot(port.port_slot) if port and port.port_slot else None
-            if port is None or reward_index is None or not slot:
-                continue
+            port, reward_index, slot = row.port, row.reward_index, row.slot
             well = "rightWell" if port.name == "right_well" else "leftWell"
             fluid_code = f"BF_{slot['reward_code']}"
             stop_code = f"BF_{slot['reward_stop_code']}"
@@ -645,22 +639,6 @@ def task_trials_h(definition: TaskDefinition) -> str:
         "",
     ]
     return "\n".join(lines)
-
-
-def _reward_index(channels, name: str | None) -> int | None:
-    """Position in the DECLARED reward list — the index into `Fluids[]`.
-
-    The same order `BOX_FLUID_PINS` is emitted in, so index and pin describe one
-    line by construction rather than by agreement. Declaration order rather than
-    pin order for the reason `declared_of_kind` gives: these happen to ascend
-    today, and relying on that is how the odor table went wrong.
-    """
-    if name is None:
-        return None
-    for i, channel in enumerate(channels.declared_of_kind("reward")):
-        if channel.name == name:
-            return i
-    return None
 
 
 def _banner(definition: TaskDefinition) -> str:

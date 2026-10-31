@@ -33,7 +33,7 @@
     },
     "emitter": {
       "direction": "out",
-      "doc": "A stimulus actuator. 'Stimulus' is an emitter channel and nothing more, which is why a speaker or LED substitutes for an odor valve with no change to the trial runner."
+      "doc": "A stimulus actuator, driven on the odor line's timetable: raised for the priming delay before the trial light, announced by its onset_strobe once the commitment hold is met, and lowered when sampling ends or the trial aborts, with the vacuum valve routing it to the port."
     },
     "reward": {
       "direction": "out",

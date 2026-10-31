@@ -95,15 +95,15 @@
       "since": 1,
       "emitted_on": "entry to the no-engagement penalty",
       "paired_with": "LIGHTS_OFF",
-      "pair_order": "LIGHTS_OFF first",
-      "rationale": "Abstention. No stimulus was presented, so the trial carries no evidence about discrimination and is scored invalid. See BehaviorBox.h:1158-1159."
+      "pair_order": "LAZY_RAT first",
+      "rationale": "Abstention. No stimulus was presented, so the trial carries no evidence about discrimination and is scored invalid. Strobed by runTrial() when the engagement wait times out."
     },
     "ODOR_POKE": {
       "code": 224,
       "origin": "firmware",
       "since": 1,
       "emitted_on": "entry to the commitment hold",
-      "rationale": "Separates an incidental beam-break from a committed initiation. NOTE: does NOT clear the abstention escalator -- BehaviorBox.h:1171-1174 closed that loophole deliberately."
+      "rationale": "Separates an incidental beam-break from a committed initiation. NOTE: does NOT clear the abstention escalator: runTrial() resets it only after a completed CORRECT trial, a loophole closed deliberately."
     },
     "ODOR_UNPOKE_EARLY": {
       "code": 225,
@@ -111,8 +111,8 @@
       "since": 1,
       "emitted_on": "entry to the broken-hold penalty",
       "paired_with": "LIGHTS_OFF",
-      "pair_order": "LIGHTS_OFF first",
-      "rationale": "A commitment or sampling hold released early. Emitted from two distinct firmware sites (BehaviorBox.h:1181 pre-odor, :1197 sampling) with the same code, so the two are indistinguishable downstream. See open question in docs/spikes/avr-ram.md."
+      "pair_order": "ODOR_UNPOKE_EARLY first",
+      "rationale": "A commitment or sampling hold released early. Emitted from two sites in runTrial() (the pre-odor hold and the sampling hold) with the same code, so the code alone does not tell them apart. Whether an odor-on code preceded it separates them: taskGraph in topology.ts draws two abort nodes from that; the engagement ladder in analytics/stream/engagement.py isolates only the pre-odor release (poked minus odor delivered); a sampling release is counted as TrialOutcomes.aborted."
     },
     "ODOR_UNPOKE": {
       "code": 226,
@@ -121,14 +121,14 @@
       "emitted_on": "entry to the response window, after a complete sample",
       "paired_with": "LIGHTS_OFF",
       "pair_order": "ODOR_UNPOKE first",
-      "rationale": "Withdrawal from the odor port is the sampling/response boundary. The pair order is INVERTED relative to the three abort paths (BehaviorBox.h:1210 then :1213) -- this is why paired strobes are modelled as ordered nodes rather than as a set. See docs/decisions.md D2."
+      "rationale": "Withdrawal from the odor port is the sampling/response boundary. LIGHTS_OFF follows it at once, exactly as it follows each abort path's own code: the behavioural code is first on all four paths (runTrial() in BehaviorBox.h)."
     },
     "LIGHTS_OFF": {
       "code": 233,
       "origin": "firmware",
       "since": 1,
       "emitted_on": "entry to a zero-duration node that clears the trial light",
-      "rationale": "Always co-emitted with a behavioural code, never alone, and its ORDER relative to that partner varies by path. Modelled as its own zero-duration node so the order is authored rather than implicit."
+      "rationale": "Always co-emitted with a behavioural code, never alone, and always second: LAZY_RAT, ODOR_UNPOKE_EARLY (two sites) or ODOR_UNPOKE comes first on every path through runTrial(). Modelled as its own zero-duration node so the order is authored rather than implicit."
     },
     "INVALID_TRIAL": {
       "code": 234,
@@ -149,7 +149,7 @@
       "origin": "firmware",
       "since": 1,
       "emitted_on": "entry to the incorrect terminal",
-      "rationale": "Reached by THREE distinct outcomes -- wrong port, omission, and response-hold failure (BehaviorBox.h:1225) -- so outcome class is NOT recoverable from this code alone. It is recoverable from the preceding strobe, which is exactly why the invariant matters."
+      "rationale": "Reached by every non-correct outcome of checkResponse() -- wrong port, omission, response-hold failure, and a response on a no-go trial -- so outcome class is NOT recoverable from this code alone. It is recoverable from the preceding strobe, which is exactly why the invariant matters."
     },
     "END_SESSION": {
       "code": 246,
@@ -170,7 +170,7 @@
       "origin": "firmware",
       "since": 1,
       "emitted_on": "entry to the response branch node, left channel",
-      "rationale": "Emitted BEFORE correctness is known (BehaviorBox.h:1082 vs :1093). This is why the response branch is its own zero-duration node with the guard on its edges. See docs/decisions.md D3. Doubles as the false-alarm code on go/no-go."
+      "rationale": "Emitted BEFORE correctness is known: checkResponse() strobes the poke, then classifies the well. This is why the response branch is its own zero-duration node with the guard on its edges. Doubles as the false-alarm code on go/no-go."
     },
     "WATER_POKE_R": {
       "code": 249,
@@ -198,7 +198,7 @@
       "origin": "firmware",
       "since": 1,
       "emitted_on": "entry to the left reward PULSE",
-      "rationale": "Emitted before the solenoid opens (BehaviorBox.h:1047). Pulse width is the delivered volume."
+      "rationale": "Emitted before the solenoid opens (deliverReward() in BehaviorBox.h). Pulse width is the delivered volume."
     },
     "FLUID_R": {
       "code": 253,
@@ -212,7 +212,7 @@
       "origin": "firmware",
       "since": 1,
       "emitted_on": "entry to the ITI delay, after leaving the left well",
-      "rationale": "The only place the firmware observes the end of a consummatory bout, which makes it the anchor for consumption-duration measures. Not emitted on a wrong-well answer -- BehaviorBox.h:1108-1113 returns immediately without awaiting withdrawal."
+      "rationale": "The only place the firmware observes the end of a consummatory bout, which makes it the anchor for consumption-duration measures. Not emitted on a wrong-well answer -- checkResponse() returns immediately without awaiting withdrawal."
     },
     "WATER_UNPOKE_R": {
       "code": 255,
@@ -226,7 +226,7 @@
       "origin": "firmware",
       "since": 1,
       "emitted_on": "entry to the correct terminal path on a withhold trial",
-      "rationale": "Correct withholding. Already fully implemented in firmware (BehaviorBox.h:1115-1133) although no shipped sketch instantiates isGo=false today, so go/no-go reuses an existing code rather than needing a new one."
+      "rationale": "Correct withholding. Strobed by the no-go branch of checkResponse() when neither well is poked for nogoWellPoll. A generated trial table can declare no-go types, so go/no-go reuses an existing code rather than needing a new one."
     },
     "WATER_POKE_ERROR_L": {
       "code": 257,
@@ -247,7 +247,7 @@
       "origin": "firmware",
       "since": 1,
       "emitted_on": "entry to the right consumption WAIT_EXIT",
-      "rationale": "Emitted after the solenoid closes (BehaviorBox.h:1051). Modelling it as the entry strobe of the consumption state colocates the actuator close with its strobe -- semantically tidier than the current bracketing, and free."
+      "rationale": "Emitted after the solenoid closes (deliverReward() in BehaviorBox.h). Modelling it as the entry strobe of the consumption state colocates the actuator close with its strobe -- semantically tidier than the current bracketing, and free."
     },
     "STOP_FLUID_G_L": {
       "code": 369,

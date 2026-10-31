@@ -739,8 +739,9 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
    * ODOR_UNPOKE_EARLY is ONE code for TWO firmware edges — releasing before
    * odor delivery, and releasing during sampling. They are distinguishable only
    * by whether an odor-on code preceded them, which is exactly how `stream/engagement.py`
-   * separates them: the engagement ladder's two gaps. Both edges are drawn, and
-   * each takes its count from the matching gap.
+   * separates the pre-odor release (the ladder's `poked - odor_delivered` gap) from
+   * the sampling release (counted as `TrialOutcomes.aborted`). Both edges are
+   * drawn; the model carries no counts.
    */
   if (has("ODOR_UNPOKE_EARLY")) {
     node({
@@ -813,12 +814,13 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
    * and the live token spent that whole stretch on Unpoke.
    *
    * The code is emitted on all four paths through a trial, which is why it
-   * claimed no node before. It can safely claim this one: `liveNodeId` walks
-   * newest-first, and each abort strobes ODOR_UNPOKE_EARLY or LAZY_RAT and then
-   * INVALID_TRIAL straight after its LIGHTS_OFF, so an aborted trial resolves to
-   * `repeat`. The administered path is the only one where LIGHTS_OFF stays the
-   * newest code for any length of time — and that length is the response window
-   * this node names.
+   * claimed no node before. `liveNodeId` walks newest-first, and each abort
+   * strobes ODOR_UNPOKE_EARLY or LAZY_RAT, then its LIGHTS_OFF, then serves its
+   * penalty delay in silence; the sketch loop strobes INVALID_TRIAL only after
+   * that delay. So an aborted trial's token sits on this node, not on its abort
+   * node, for the whole penalty and moves to `repeat` when INVALID_TRIAL arrives.
+   * On the administered path LIGHTS_OFF stays the newest code for the response
+   * window this node names.
    */
   const answerFrom = has("LIGHTS_OFF") ? "lights-off" : "sample";
   if (has("LIGHTS_OFF")) {

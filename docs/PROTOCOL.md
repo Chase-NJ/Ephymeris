@@ -1833,7 +1833,7 @@ One way another machine's channel set disagrees with this one (`TASKS.md#moving-
 
 | Field | Type | Notes |
 |---|---|---|
-| `kind` | string | `vocabulary` (one name with two codes, one code with two names, or a code this machine cannot issue), `not_here` (a channel the file has and this rig lacks, so it has no pin here), `only_here` (a channel this rig has and the file lacks), `no_code` (an edge the file names no code for), `rule` (a wiring rule RIG101–RIG107 the imported channel set breaks here, judged against the merged vocabulary), or `hash` (the file changed after it was exported). |
+| `kind` | string | `vocabulary` (one name with two codes, one code with two names, or a code this machine cannot issue), `not_here` (a channel the file has and this rig lacks, so it has no pin here), `only_here` (a channel this rig has and the file lacks), `order` (a channel both have, declared at another position: declaration order is the odor index, `TASKS.md#order-is-meaning`), `no_code` (an edge the file names no code for), `rule` (a wiring rule RIG101–RIG107 the imported channel set breaks here, judged against the merged vocabulary), or `hash` (the file changed after it was exported). |
 | `channel` | string \| null | The channel it is about, when it is about one. |
 | `message` | string | The difference, in words, naming both sides. |
 
@@ -1847,7 +1847,6 @@ What importing another machine's channel set and vocabulary would do here. The p
 | `conflicts` | [ChannelSetConflict](#shape-channelsetconflict)[] | Every disagreement, not the first. Non-empty means the import is refused whole and nothing is written. |
 | `vocabulary` | [StrobeImportPlan](#shape-strobeimportplan) | The vocabulary half: the codes the import adds and retires here. |
 | `changed` | string[] | Channels on both sides whose entry the import replaces. |
-| `reordered` | boolean | The file declares the channels in another order. Declaration order is the odor index (`TASKS.md#order-is-meaning`), so it is said out loud. |
 | `breaks` | [RigImpact](#shape-rigimpact)[] | Saved tasks the import would newly break. Applying needs `confirm` when non-empty. |
 | `hereHash` | string | This rig's `channelSetHash` now. |
 | `thereHash` | string | The exporting machine's `channelSetHash`: this rig's after a clean import. |

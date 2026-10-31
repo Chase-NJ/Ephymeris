@@ -1833,9 +1833,11 @@ export interface ChannelSetConflict {
   /**
    * `vocabulary` (one name with two codes, one code with two names, or a code this machine cannot
    * issue), `not_here` (a channel the file has and this rig lacks, so it has no pin here),
-   * `only_here` (a channel this rig has and the file lacks), `no_code` (an edge the file names no
-   * code for), `rule` (a wiring rule RIG101–RIG107 the imported channel set breaks here, judged
-   * against the merged vocabulary), or `hash` (the file changed after it was exported).
+   * `only_here` (a channel this rig has and the file lacks), `order` (a channel both have,
+   * declared at another position: declaration order is the odor index,
+   * `TASKS.md#order-is-meaning`), `no_code` (an edge the file names no code for), `rule` (a
+   * wiring rule RIG101–RIG107 the imported channel set breaks here, judged against the merged
+   * vocabulary), or `hash` (the file changed after it was exported).
    */
   kind: string;
   /** The channel it is about, when it is about one. */
@@ -1858,11 +1860,6 @@ export interface ChannelSetImportPlan {
   vocabulary: StrobeImportPlan;
   /** Channels on both sides whose entry the import replaces. */
   changed: string[];
-  /**
-   * The file declares the channels in another order. Declaration order is the odor index
-   * (`TASKS.md#order-is-meaning`), so it is said out loud.
-   */
-  reordered: boolean;
   /** Saved tasks the import would newly break. Applying needs `confirm` when non-empty. */
   breaks: RigImpact[];
   /** This rig's `channelSetHash` now. */

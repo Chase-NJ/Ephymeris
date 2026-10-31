@@ -902,7 +902,8 @@ class ChannelSet:
     """
 
     def __init__(self, channels) -> None:  # noqa: ANN001 - an iterable of Channel
-        self._channels = tuple(sorted(channels, key=lambda c: c.name))
+        #: In DECLARATION order, which the hash covers (see `content_hash`).
+        self._channels = tuple(channels)
 
     def edge_codes(self) -> dict[str, tuple[str, str]]:
         """Code name -> (channel, edge), for every edge that has its code."""
@@ -916,6 +917,12 @@ class ChannelSet:
         channel set agree on this whatever their pin maps say. Today's `kind`,
         `well`, `port_slot` and `onset_strobe` ride along while they exist,
         because a task still generates from them.
+
+        DECLARATION ORDER IS HASHED. It is the odor index
+        (TASKS.md#order-is-meaning): two channel sets listing the same lines in
+        another order put another line behind each odor position, so they are
+        not identical and must not hash as if they were. Nothing stored this
+        hash before it covered order, so no recorded value moved.
         """
         payload = [
             [

@@ -930,6 +930,32 @@ ask the lab manager for the new installer instead.
 | A session from earlier today needs another group | **Start a Session**, pick the cohort, then **Continue today**. See [Continue a session from earlier today](#continue-a-session-from-earlier-today) |
 | The dock shows a session that **Ended unexpectedly** | The app closed during a session. Use **Continue with another group** (same day only), **View in Analytics**, or **Close out**. Then run **Recover** in Analytics |
 | The placement walk says it could not light a box | Go by the number on the box. The walk works without the light |
+| No box will start, flash or light up, and the message says the rig's wiring did not load | See [When the rig's wiring does not load](#when-the-rigs-wiring-does-not-load) |
+
+### When the rig's wiring does not load
+
+Ephymeris keeps the rig's wiring, which pin each channel is on, in one file. If that file is damaged, or
+changed outside the app, Ephymeris uses the pins the box was built with instead. Until the wiring is fixed,
+**no box will start, flash or light up**, so nothing is recorded on the wrong pins.
+
+Open **Rig → Wiring**. A **This rig's wiring** note at the top says what is in force and what the file is
+now. What you do depends on that note:
+
+- **Your wiring is shown, with problems listed.** The file can be read but is out of shape, for example a
+  channel has lost its pin. Fix each problem on the board map or in the inspector, then **Save**. Your
+  wiring is back in force and the boxes can be used again.
+- **The note asks you to check every pin.** The pins came from a file that was not written together with
+  the rest of the wiring, so they may belong to another arrangement. Compare each pin on the board map
+  with the box. Then click **I've checked every pin**, and **Save**. Save stays off until you confirm.
+- **Save is off, and the note says there is no stored wiring to repair.** The file cannot be read at all.
+  Click **Reset**. A dialog names the exact file it will remove. Click **Reset** again to confirm. The
+  shipped wiring is then in force; re-enter any changes your rig had, and **Save**.
+
+If the note says a file was **copied in or changed outside the app**, the boxes still use the wiring
+that was in force, and the board map shows the file's wiring for you to check. It names the file. To use
+that wiring, compare each pin with the box, click **I've checked every pin**, then **Save**. To discard it
+instead, click **Reset**: the shipped wiring is then in force, and you re-enter your rig's changes. Save
+stays off until you confirm, even if you edit the pins.
 
 ## Rules that protect the data
 

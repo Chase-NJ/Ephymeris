@@ -16,16 +16,19 @@ export async function getRig(client: SidecarPort) {
   return client.call(CMD.HARDWARE_GET, {});
 }
 
-export async function previewRig(client: SidecarPort, document: RigDocument) {
-  return client.call(CMD.HARDWARE_PREVIEW, { document });
+/** `confirmedPins` is the operator's own act (`status.needsPinConfirmation`),
+ *  carried with the request; the sidecar enforces it. */
+export async function previewRig(client: SidecarPort, document: RigDocument, confirmedPins = false) {
+  return client.call(CMD.HARDWARE_PREVIEW, { document, confirmedPins });
 }
 
 export async function saveRig(
   client: SidecarPort,
   document: RigDocument,
   confirm: boolean,
+  confirmedPins = false,
 ) {
-  return client.call(CMD.HARDWARE_SAVE, { document, confirm });
+  return client.call(CMD.HARDWARE_SAVE, { document, confirm, confirmedPins });
 }
 
 export async function resetRig(client: SidecarPort) {

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import functools
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -90,6 +91,13 @@ class WiringNotLoaded(Exception):
     in force are the shipped ones, not the rig's
     (`TASKS.md#the-channel-set-and-the-pin-map`). Nothing was started, flashed
     or identified. The message says why."""
+
+
+class WiringSaveBlocked(Exception):
+    """A wiring save the rig's state does not allow yet
+    (`hardware_service.save_blocked`): stored wiring with nothing to repair,
+    which only Reset replaces, or pins from a mismatched pin map not confirmed.
+    Nothing was written. The message says what to do."""
 
 
 class RigInUse(Exception):
@@ -220,6 +228,7 @@ class RigDefinition:
         #: None. Set only by `_install_wiring`, from the same read that chose
         #: the pins in force, so the refusal and the pins never disagree.
         self._unloaded: str | None = None
+        self._in_force: dict[str, Any] | None = None
         self._install_wiring()
         registry.set_vocabulary_source(vocabulary.load)
 
@@ -249,7 +258,9 @@ class RigDefinition:
 
     # -- the writes ---------------------------------------------------------- #
 
-    async def save_wiring(self, document: dict[str, Any], *, confirm: bool) -> dict[str, Any]:
+    async def save_wiring(
+        self, document: dict[str, Any], *, confirm: bool, confirmed_pins: bool = False
+    ) -> dict[str, Any]:
         """Raises `RigInUse`, `WiringWouldBreakTasks` without `confirm`,
         `hardware.store.RigInvalid` for a document that is not one, or
         `StrobeRefused` when its edge codes cannot be issued.
@@ -259,6 +270,11 @@ class RigDefinition:
         them, then one rebuild serves both.
         """
         async with self.writing(WIRING_IN_USE):
+            # First, before any cost is computed or code issued: the rig's own
+            # state, which the editor was told about in `status.canSave`.
+            blocked = await asyncio.to_thread(self.save_blocked, confirmed_pins=confirmed_pins)
+            if blocked:
+                raise WiringSaveBlocked(blocked)
             breaks = await asyncio.to_thread(impact_of, self._tasks, wiring=document)
             if breaks and not confirm:
                 # Not an error the operator cannot pass -- it is the "shown
@@ -266,10 +282,19 @@ class RigDefinition:
                 # does not veto a rewiring; it refuses to let one happen
                 # unnoticed. Nothing is written on this path.
                 raise WiringWouldBreakTasks(breaks)
-            problems = hardware_store.validate(document)
+            problems = hardware_store.save_problems(document)
             if problems:
                 # Before any code is issued: a refused wiring issues nothing.
                 raise hardware_store.RigInvalid(problems)
+            rules = await asyncio.to_thread(hardware_service.problems_for, document)
+            if rules:
+                # The editor holds Save on these too, but this is the guard: a
+                # save that bypassed it would put two channels on one pin in
+                # force and lift a refusal.
+                raise WiringSaveBlocked(
+                    "This wiring has problems a save does not take: "
+                    + "; ".join(f"{p['code'] or 'shape'} {p['location']}: {p['message']}" for p in rules[:5])
+                )
             filled, issued = await asyncio.to_thread(self._issue_edge_codes, document)
             try:
                 stored = await asyncio.to_thread(self._hardware.save, filled)
@@ -285,7 +310,11 @@ class RigDefinition:
             # Install before reporting, or the reply would describe the wiring
             # that was in force a moment ago.
             self._install_wiring()
-            payload = await asyncio.to_thread(hardware_service.saved_payload, self._hardware, stored)
+            payload = await asyncio.to_thread(
+                functools.partial(
+                    hardware_service.saved_payload, self._hardware, stored, in_force=self.in_force()
+                )
+            )
             payload["breaks"] = breaks
             payload["allocations"] = [a.to_json() for a in issued]
             await self._rebuild()
@@ -317,7 +346,7 @@ class RigDefinition:
             await asyncio.to_thread(self._hardware.reset)
             self._install_wiring()
             payload = await asyncio.to_thread(
-                hardware_service.document_payload, self._hardware, in_force=self._unloaded
+                hardware_service.document_payload, self._hardware, in_force=self.in_force()
             )
             await self._rebuild()
             await self._broadcast(event(Evt.HARDWARE_UPDATED, payload["status"]))
@@ -362,6 +391,12 @@ class RigDefinition:
         """
         return self._unloaded
 
+    def save_blocked(self, *, confirmed_pins: bool) -> str | None:
+        """Why the rig's state refuses a wiring save now, or None."""
+        return hardware_service.save_blocked(
+            hardware_service.rig_state(self._hardware, self.in_force()), confirmed_pins=confirmed_pins
+        )
+
     def _install_wiring(self) -> None:
         """Read the stored wiring ONCE and put exactly that in force.
 
@@ -369,8 +404,15 @@ class RigDefinition:
         it composes, and when, cannot drift from what this read decided.
         """
         document, problems = self._hardware.snapshot()
-        self._unloaded = problems[0][1] if problems else None
+        self._in_force = document
+        self._unloaded = hardware_service.unloaded_message(problems[0][1]) if problems else None
         registry.set_rig_source(lambda: copy.deepcopy(document))
+
+    def in_force(self) -> hardware_service.InForce:
+        """The wiring in force -- the stored document installed, or None for
+        the shipped one -- and why stored wiring did not load, if it did not.
+        What `hardware.get` describes."""
+        return hardware_service.InForce(copy.deepcopy(self._in_force), self._unloaded)
 
     def load_vocabulary_strict(self) -> dict[str, Any]:
         """Raises `StrobeRefused("unreadable")` for a document that won't read."""

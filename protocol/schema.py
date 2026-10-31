@@ -1772,7 +1772,7 @@ SHAPES = (
             f(
                 "code",
                 nullable(STR),
-                doc="The wiring rule, when one produced it — RIG101 through RIG106. "
+                doc="The wiring rule, when one produced it — RIG101 through RIG108. "
                 "Null for a schema violation, which has no rule number because it "
                 "is caught before the halves are composed.",
             ),
@@ -1784,8 +1784,14 @@ SHAPES = (
     Shape(
         "RigStatus",
         obj(
-            f("custom", BOOL, doc="False ⇒ this rig runs the wiring its build shipped with."),
-            f("derivedFrom", STR, doc="The shipped pinout this document started as."),
+            f(
+                "custom",
+                BOOL,
+                doc="Of the wiring IN FORCE: false ⇒ this rig runs the wiring its "
+                "build shipped with, which includes while its stored wiring did not "
+                "load (`notices` says so).",
+            ),
+            f("derivedFrom", STR, doc="The shipped pinout the wiring in force started as."),
             f("board", STR),
             f("editedAt", nullable(STR)),
             f(
@@ -1805,18 +1811,72 @@ SHAPES = (
                 "channel set agree on it whatever their pin maps "
                 "(`TASKS.md#the-channel-set-and-the-pin-map`).",
             ),
+            f(
+                "notices",
+                ListOf(Ref("RigProblem")),
+                doc="Where the wiring in force and the stored file part ways: stored "
+                "wiring that did not load (the shipped pins are in force and every "
+                "box is refused), or a file changed on disk since it was installed. "
+                "Each says what is and is not blocked. About the RIG, never the "
+                "draft: they stand through every edit, and do not stop a save, "
+                "which is how one is cleared.",
+            ),
+            f(
+                "canReset",
+                BOOL,
+                doc="Reset would change something: the rig has wiring of its own in "
+                "force or on disk, or a notice offers Reset as the way out.",
+            ),
+            f(
+                "resetReplaces",
+                ListOf(STR),
+                doc="The absolute path of every file Reset would remove, for the "
+                "dialog that confirms it. Empty when there is none.",
+            ),
+            f(
+                "canSave",
+                BOOL,
+                doc="Whether `hardware.save` of THIS draft would be taken: the "
+                "draft the reply describes (the one previewed, or the one served) "
+                "has no problems, differs from the served draft or would clear a "
+                "notice, and the rig's state allows a save. False while stored "
+                "wiring that did not load has nothing to repair (only Reset "
+                "replaces it), and while RIG108 asks for the pins to be "
+                "confirmed. The frontend renders it; it never decides it.",
+            ),
+            f(
+                "needsPinConfirmation",
+                BOOL,
+                doc="The draft is a stored file that is not in force -- copied in, "
+                "changed outside the app, not loaded, or a pin map not written with "
+                "its channel set -- so nobody has checked its pins on this rig: "
+                "offer the operator a way to confirm them, sent as `confirmedPins` "
+                "(`TASKS.md#the-channel-set-and-the-pin-map`).",
+            ),
         ),
     ),
     Shape(
         "RigDocument",
         obj(
-            f("document", ANY, doc="The rig document itself — `{rig_version, channels, pins}`, validated against rig/schema/rig_hardware.v1.json."),
+            f(
+                "document",
+                ANY,
+                doc="The draft the editor opens — `{rig_version, channels, pins}`, "
+                "validated against rig/schema/rig_hardware.v1.json. A stored file "
+                "that is not in force, when there is one (copied in, changed "
+                "outside the app, or not loaded, even broken), so the operator can "
+                "check its pins or repair it; else the wiring in force, or the "
+                "shipped pins when there is nothing stored to show. "
+                "`status.notices` says which.",
+            ),
             f("status", Ref("RigStatus")),
             f("problems", ListOf(Ref("RigProblem"))),
         ),
-        doc="The wiring, plus everything wrong with it. `document` is served even "
+        doc="The draft, plus everything wrong with it. `document` is served even "
         "when `problems` is non-empty: an editor that refused to show a broken "
-        "document would be refusing to show the one that needs fixing.",
+        "document would be refusing to show the one that needs fixing. "
+        "`problems` are the draft's; what is wrong with the rig is "
+        "`status.notices`.",
     ),
     Shape(
         "RigImpact",
@@ -2667,7 +2727,20 @@ COMMANDS = (
     ),
     Command(
         "hardware.preview",
-        args=obj(f("document", ANY)),
+        args=obj(
+            f("document", ANY),
+            f(
+                "confirmedPins",
+                BOOL,
+                optional=True,
+                doc="The operator confirmed every pin of a draft read from a stored "
+                "file that is not in force (`status.needsPinConfirmation`, RIG108): "
+                "copied in, changed outside the app, not loaded, or a pin map not "
+                "written with its channel set. An explicit act, sent with the "
+                "request: the sidecar refuses such a save without it "
+                "(`RIG_SAVE_BLOCKED`), edited or not. Ignored otherwise.",
+            ),
+        ),
         result=Ref("RigSaved"),
         doc="Validate a wiring document and cost it, writing nothing. The "
         "editor calls it as the operator types, so a schema violation or a "
@@ -2688,6 +2761,17 @@ COMMANDS = (
                 "would newly stop a saved task profile generating. True ⇒ write "
                 "anyway. Rewiring a box is the operator's call and the app does "
                 "not veto it — but it must not let it happen unnoticed.",
+            ),
+            f(
+                "confirmedPins",
+                BOOL,
+                optional=True,
+                doc="The operator confirmed every pin of a draft read from a stored "
+                "file that is not in force (`status.needsPinConfirmation`, RIG108): "
+                "copied in, changed outside the app, not loaded, or a pin map not "
+                "written with its channel set. An explicit act, sent with the "
+                "request: the sidecar refuses such a save without it "
+                "(`RIG_SAVE_BLOCKED`), edited or not. Ignored otherwise.",
             ),
         ),
         result=Ref("RigSaved"),
@@ -4004,8 +4088,8 @@ ERRORS = (
     ),
     ErrorCode(
         "RIG_WIRING_UNLOADED",
-        "`port.startSession`, `sessions.startAll`, `sessions.flash` or "
-        "`utility.identify` while the wiring in force is the shipped one because "
+        "`port.startSession`, `sessions.startAll`, `sessions.flash`, `flash.enqueue` "
+        "or `utility.identify` while the wiring in force is the shipped one because "
         "the rig's stored wiring did not load when it was installed (unreadable, "
         "unparseable, out of shape, a channel without a pin, or an older layout "
         "that disagrees with itself). A box started, flashed or identified would "
@@ -4013,6 +4097,16 @@ ERRORS = (
         "problem. Saving the wiring, resetting it, or restarting onto a file that "
         "loads clears it; a file fixed by hand meanwhile does not "
         "(`TASKS.md#the-channel-set-and-the-pin-map`).",
+    ),
+    ErrorCode(
+        "RIG_SAVE_BLOCKED",
+        "`hardware.save` that the rig's state does not allow yet: stored wiring "
+        "that did not load and has nothing to repair (unreadable, unparseable, "
+        "not a JSON object, or a pin map with no channel set), which only "
+        "`hardware.reset` replaces; a draft read from a stored file not in force, "
+        "sent without `confirmedPins`; or a draft with a wiring-rule problem "
+        "(RIG101–RIG107), which the editor holds Save on too. Nothing was written "
+        "and no code was issued (`TASKS.md#the-channel-set-and-the-pin-map`).",
     ),
     ErrorCode(
         "STROBE_INVALID",

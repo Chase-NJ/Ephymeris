@@ -293,6 +293,7 @@ Validate a wiring document and cost it, writing nothing. The editor calls it as 
 | Field | Type | Notes |
 |---|---|---|
 | `document` | unknown |  |
+| `confirmedPins` *(optional)* | boolean | The operator confirmed every pin of a draft read from a stored file that is not in force (`status.needsPinConfirmation`, RIG108): copied in, changed outside the app, not loaded, or a pin map not written with its channel set. An explicit act, sent with the request: the sidecar refuses such a save without it (`RIG_SAVE_BLOCKED`), edited or not. Ignored otherwise. |
 
 **Result:** [RigSaved](#shape-rigsaved)
 
@@ -307,6 +308,7 @@ Validate, then write: a document that fails validation is never written, so the 
 |---|---|---|
 | `document` | unknown |  |
 | `confirm` | boolean | False ⇒ refuse with `RIG_WOULD_BREAK_TASKS` if the change would newly stop a saved task profile generating. True ⇒ write anyway. Rewiring a box is the operator's call and the app does not veto it — but it must not let it happen unnoticed. |
+| `confirmedPins` *(optional)* | boolean | The operator confirmed every pin of a draft read from a stored file that is not in force (`status.needsPinConfirmation`, RIG108): copied in, changed outside the app, not loaded, or a pin map not written with its channel set. An explicit act, sent with the request: the sidecar refuses such a save without it (`RIG_SAVE_BLOCKED`), edited or not. Ignored otherwise. |
 
 **Result:** [RigSaved](#shape-rigsaved)
 
@@ -1557,7 +1559,8 @@ One live view's payload, only while that scope is open (`RECORDING.md#live-windo
 | `RIG_INVALID` | The wiring document is not a wiring document — wrong shape, or too large. NOT a wiring MISTAKE: a document that is well-formed and describes an impossible box is a successful `hardware.preview` reply carrying located problems. |
 | `RIG_IN_USE` | `hardware.save`, `hardware.reset`, `tasks.save` or `tasks.delete` while a session is set up or a box is running. Each regenerates sketch folders a box was or will be flashed from, under a session whose profiles were read from the old ones (`TASKS.md#the-rig-definition`). Also an archive write the rig refuses (`DATA.md#the-cohort-archive`): `cohorts.setDataFolder` moving the contents while a session is set up or a box is running, and `analytics.rescan` or `sessions.recover` while a box is running. |
 | `RIG_WOULD_BREAK_TASKS` | `hardware.save` without `confirm` on a change that would stop a saved task profile generating. `detail.breaks` lists them. Retry with `confirm: true` to proceed — the app does not veto a rewiring, it refuses to let one happen unnoticed. |
-| `RIG_WIRING_UNLOADED` | `port.startSession`, `sessions.startAll`, `sessions.flash` or `utility.identify` while the wiring in force is the shipped one because the rig's stored wiring did not load when it was installed (unreadable, unparseable, out of shape, a channel without a pin, or an older layout that disagrees with itself). A box started, flashed or identified would drive pins the operator never declared. `hardware.get` names the problem. Saving the wiring, resetting it, or restarting onto a file that loads clears it; a file fixed by hand meanwhile does not (`TASKS.md#the-channel-set-and-the-pin-map`). |
+| `RIG_WIRING_UNLOADED` | `port.startSession`, `sessions.startAll`, `sessions.flash`, `flash.enqueue` or `utility.identify` while the wiring in force is the shipped one because the rig's stored wiring did not load when it was installed (unreadable, unparseable, out of shape, a channel without a pin, or an older layout that disagrees with itself). A box started, flashed or identified would drive pins the operator never declared. `hardware.get` names the problem. Saving the wiring, resetting it, or restarting onto a file that loads clears it; a file fixed by hand meanwhile does not (`TASKS.md#the-channel-set-and-the-pin-map`). |
+| `RIG_SAVE_BLOCKED` | `hardware.save` that the rig's state does not allow yet: stored wiring that did not load and has nothing to repair (unreadable, unparseable, not a JSON object, or a pin map with no channel set), which only `hardware.reset` replaces; a draft read from a stored file not in force, sent without `confirmedPins`; or a draft with a wiring-rule problem (RIG101–RIG107), which the editor holds Save on too. Nothing was written and no code was issued (`TASKS.md#the-channel-set-and-the-pin-map`). |
 | `STROBE_INVALID` | A strobe edit the vocabulary cannot take: a malformed or duplicate name, a code that is not free, a blank meaning, an unknown name, or an import file that is not a vocabulary. |
 | `STROBE_REQUIRED` | Retiring or removing a code a response-port slot reports with, or one the shared firmware library names. Never passable with `confirm`. |
 | `STROBE_IN_RECORDED_SESSION` | `strobes.remove` on a code a recorded session contains. Never passable: retire it instead. `detail` carries `count`, `sample` and `scanned`. |
@@ -2523,11 +2526,11 @@ One strobe code a channel-set save issues (`TASKS.md#edge-codes`). Appended to t
 <a id="shape-rigdocument"></a>
 #### RigDocument
 
-The wiring, plus everything wrong with it. `document` is served even when `problems` is non-empty: an editor that refused to show a broken document would be refusing to show the one that needs fixing.
+The draft, plus everything wrong with it. `document` is served even when `problems` is non-empty: an editor that refused to show a broken document would be refusing to show the one that needs fixing. `problems` are the draft's; what is wrong with the rig is `status.notices`.
 
 | Field | Type | Notes |
 |---|---|---|
-| `document` | unknown | The rig document itself — `{rig_version, channels, pins}`, validated against rig/schema/rig_hardware.v1.json. |
+| `document` | unknown | The draft the editor opens — `{rig_version, channels, pins}`, validated against rig/schema/rig_hardware.v1.json. A stored file that is not in force, when there is one (copied in, changed outside the app, or not loaded, even broken), so the operator can check its pins or repair it; else the wiring in force, or the shipped pins when there is nothing stored to show. `status.notices` says which. |
 | `status` | [RigStatus](#shape-rigstatus) |  |
 | `problems` | [RigProblem](#shape-rigproblem)[] |  |
 
@@ -2551,7 +2554,7 @@ One thing wrong with a wiring document, located. Every problem is reported rathe
 |---|---|---|
 | `location` | string | `channels.left_well.kind`, `pins.odor_port`, or a rule's registry file. |
 | `message` | string |  |
-| `code` | string \| null | The wiring rule, when one produced it — RIG101 through RIG106. Null for a schema violation, which has no rule number because it is caught before the halves are composed. |
+| `code` | string \| null | The wiring rule, when one produced it — RIG101 through RIG108. Null for a schema violation, which has no rule number because it is caught before the halves are composed. |
 
 <a id="shape-rigsaved"></a>
 #### RigSaved
@@ -2568,12 +2571,17 @@ One thing wrong with a wiring document, located. Every problem is reported rathe
 
 | Field | Type | Notes |
 |---|---|---|
-| `custom` | boolean | False ⇒ this rig runs the wiring its build shipped with. |
-| `derivedFrom` | string | The shipped pinout this document started as. |
+| `custom` | boolean | Of the wiring IN FORCE: false ⇒ this rig runs the wiring its build shipped with, which includes while its stored wiring did not load (`notices` says so). |
+| `derivedFrom` | string | The shipped pinout the wiring in force started as. |
 | `board` | string |  |
 | `editedAt` | string \| null |  |
 | `pinoutHash` | string | The composed wiring's hash, over the fields that can change a compiled byte. Prose and pin notes are excluded: it answers 'could these two produce different firmware?', so a reworded rationale must not move it. |
 | `channelSetHash` | string | The channel set's hash: what every channel is (type, role, edges and their code names), never where it is. Labels and prose are excluded, and so is every pin, so two machines sharing one channel set agree on it whatever their pin maps (`TASKS.md#the-channel-set-and-the-pin-map`). |
+| `notices` | [RigProblem](#shape-rigproblem)[] | Where the wiring in force and the stored file part ways: stored wiring that did not load (the shipped pins are in force and every box is refused), or a file changed on disk since it was installed. Each says what is and is not blocked. About the RIG, never the draft: they stand through every edit, and do not stop a save, which is how one is cleared. |
+| `canReset` | boolean | Reset would change something: the rig has wiring of its own in force or on disk, or a notice offers Reset as the way out. |
+| `resetReplaces` | string[] | The absolute path of every file Reset would remove, for the dialog that confirms it. Empty when there is none. |
+| `canSave` | boolean | Whether `hardware.save` of THIS draft would be taken: the draft the reply describes (the one previewed, or the one served) has no problems, differs from the served draft or would clear a notice, and the rig's state allows a save. False while stored wiring that did not load has nothing to repair (only Reset replaces it), and while RIG108 asks for the pins to be confirmed. The frontend renders it; it never decides it. |
+| `needsPinConfirmation` | boolean | The draft is a stored file that is not in force -- copied in, changed outside the app, not loaded, or a pin map not written with its channel set -- so nobody has checked its pins on this rig: offer the operator a way to confirm them, sent as `confirmedPins` (`TASKS.md#the-channel-set-and-the-pin-map`). |
 
 <a id="shape-runchange"></a>
 #### RunChange

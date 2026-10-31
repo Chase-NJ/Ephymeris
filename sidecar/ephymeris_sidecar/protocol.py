@@ -208,6 +208,7 @@ class ErrCode:
     RIG_IN_USE: Final = "RIG_IN_USE"
     RIG_WOULD_BREAK_TASKS: Final = "RIG_WOULD_BREAK_TASKS"
     RIG_WIRING_UNLOADED: Final = "RIG_WIRING_UNLOADED"
+    RIG_SAVE_BLOCKED: Final = "RIG_SAVE_BLOCKED"
     STROBE_INVALID: Final = "STROBE_INVALID"
     STROBE_REQUIRED: Final = "STROBE_REQUIRED"
     STROBE_IN_RECORDED_SESSION: Final = "STROBE_IN_RECORDED_SESSION"
@@ -340,7 +341,7 @@ SHAPES: Final[dict[str, Any]] = {
     "PrefixesUpdatedData": ('obj', (('prefixes', ('list', ('ref', 'Prefix')), False),)),
     "SidecarErrorData": ('obj', (('code', 'str', False), ('message', 'str', False), ('detail', 'any', False))),
     "RigProblem": ('obj', (('location', 'str', False), ('message', 'str', False), ('code', ('union', ('str', 'null')), False))),
-    "RigStatus": ('obj', (('custom', 'bool', False), ('derivedFrom', 'str', False), ('board', 'str', False), ('editedAt', ('union', ('str', 'null')), False), ('pinoutHash', 'str', False), ('channelSetHash', 'str', False))),
+    "RigStatus": ('obj', (('custom', 'bool', False), ('derivedFrom', 'str', False), ('board', 'str', False), ('editedAt', ('union', ('str', 'null')), False), ('pinoutHash', 'str', False), ('channelSetHash', 'str', False), ('notices', ('list', ('ref', 'RigProblem')), False), ('canReset', 'bool', False), ('resetReplaces', ('list', 'str'), False), ('canSave', 'bool', False), ('needsPinConfirmation', 'bool', False))),
     "RigDocument": ('obj', (('document', 'any', False), ('status', ('ref', 'RigStatus'), False), ('problems', ('list', ('ref', 'RigProblem')), False))),
     "RigImpact": ('obj', (('specId', 'str', False), ('label', ('union', ('str', 'null')), False), ('codes', ('list', 'str'), False))),
     "RigAllocation": ('obj', (('channel', 'str', False), ('edge', 'str', False), ('name', 'str', False), ('code', 'int', False))),
@@ -399,8 +400,8 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "utility.ensure": ('obj', (('boxes', ('list', 'int'), True), ('force', 'bool', True))),
     "utility.identify": ('obj', (('box', 'int', False), ('on', 'bool', False))),
     "hardware.get": ('obj', ()),
-    "hardware.preview": ('obj', (('document', 'any', False),)),
-    "hardware.save": ('obj', (('document', 'any', False), ('confirm', 'bool', False))),
+    "hardware.preview": ('obj', (('document', 'any', False), ('confirmedPins', 'bool', True))),
+    "hardware.save": ('obj', (('document', 'any', False), ('confirm', 'bool', False), ('confirmedPins', 'bool', True))),
     "hardware.reset": ('obj', ()),
     "strobes.get": ('obj', ()),
     "strobes.usage": ('obj', (('name', 'str', False), ('scan', 'bool', True))),

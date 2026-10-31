@@ -465,6 +465,19 @@ async def test_send_start_needs_an_open_console(rig_definition, task_profile_on_
     assert err.value.code == ErrCode.SEND_NOT_PASSTHROUGH
 
 
+async def test_a_debug_flash_is_refused_while_the_wiring_is_unloaded(rig_definition, monkeypatch) -> None:  # noqa: ANN001
+    """A Debug flash of BOX_Utility built on the shipped pins drives every
+    listed output (`ARCHITECTURE.md#unloaded-wiring-holds-it`)."""
+    app = await make_app(rig_definition)
+    monkeypatch.setattr(
+        app.rig_definition, "wiring_problem", lambda: "wiring.json did not load: it will not parse."
+    )
+    with pytest.raises(Refused) as err:
+        await flash(app, UTILITY_PATH)
+    assert err.value.code == ErrCode.RIG_WIRING_UNLOADED
+    assert app.tool.uploads == []
+
+
 async def test_send_start_refuses_an_undiscovered_sketch(rig_definition, task_profile_on_disk) -> None:  # noqa: ANN001
     app = await make_app(rig_definition)
     app.ports.open_passthrough(1)

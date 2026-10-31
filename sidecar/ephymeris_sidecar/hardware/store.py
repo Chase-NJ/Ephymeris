@@ -24,10 +24,13 @@ committed; the folder fsync after it is best effort, logged if it fails.
 
 STORED WIRING THAT WILL NOT LOAD IS NEVER REPLACED BY THE SHIPPED ONE SILENTLY.
 The registry composes the shipped pinout meanwhile, because the process owns six
-serial ports and must start; but `load_problems` says why, `hardware.get` shows
-it, and no box is started, flashed or identified until the wiring is saved
-again, reset, or the app restarts onto a file that loads
-(`RigDefinition.wiring_problem`, which follows the wiring IN FORCE).
+serial ports and must start; but `load_problems` says why, and no box is
+started, flashed or identified until the wiring is saved again, reset, or the
+app restarts onto a file that loads (`RigDefinition.wiring_problem`, which
+follows the wiring IN FORCE). Meanwhile `hardware.get` serves the stored
+document itself as the editor's draft (`stored_document`), broken, with a
+notice that the shipped pins are in force -- so the operator repairs their own
+wiring and saves it, rather than retyping it over the shipped pins.
 
 TWO OLDER LAYOUTS ARE READ IN PLACE until the next save writes `wiring.json`
 and removes them:
@@ -116,6 +119,20 @@ class _Stored:
     document: dict | None
     #: (location, message) for why it will not load; empty when it loads.
     problems: list[tuple[str, str]]
+    #: Which of `DISK_STATES` the stored wiring is in.
+    state: str = "none"
+
+
+#: What the stored wiring on disk is, as `hardware/service.py` acts on it:
+#:   none          no stored wiring
+#:   loads         it loads
+#:   invalid       it parses but is out of shape (or a channel lacks a pin):
+#:                 there is a document to repair
+#:   mismatched    a two-file pair whose pin map was not written with its
+#:                 channel set: a document whose PINS must be confirmed
+#:   unrepairable  nothing to repair: unreadable, too large, unparseable, not
+#:                 a JSON object, or a pin map with no channel set
+DISK_STATES = ("none", "loads", "invalid", "mismatched", "unrepairable")
 
 
 class HardwareStore:
@@ -161,9 +178,25 @@ class HardwareStore:
         """(location, message) for why stored wiring exists and did not load."""
         return self._stored().problems
 
+    def inspect(self) -> "_Stored":
+        """The stored wiring now, from ONE read: its document (even broken),
+        why it does not load, and which of `DISK_STATES` it is in."""
+        return self._stored()
+
+    def disk_state(self) -> str:
+        """Which of `DISK_STATES` the stored wiring is in now."""
+        return self._stored().state
+
+    def stored_paths(self) -> list[Path]:
+        """Every file Reset would remove now, in the order it removes them --
+        built from `removal_order`, the list Reset itself walks, so what the
+        confirm dialog names and what Reset deletes cannot drift apart."""
+        return [p for p in self.removal_order() if p.is_file()]
+
     def stored_document(self) -> dict | None:
-        """The stored document as parsed, whether or not it loads, so the
-        editor can show the operator the wiring that needs fixing."""
+        """The stored document as parsed, whether or not it loads: the draft
+        `hardware.get` serves while it did not load, so the operator can repair
+        it and save. None when there is none, or it will not even parse."""
         return self._stored().document
 
     def status(self) -> RigStatus:
@@ -182,8 +215,12 @@ class HardwareStore:
         if self.legacy_rig_path.is_file():
             return _checked(RIG_FILENAME, *_read(self.legacy_rig_path))
         if self.pin_map_path.is_file():
-            return _Stored(None, [_unloaded(PIN_MAP_FILENAME, f"it has no {CHANNEL_SET_FILENAME} beside it")])
-        return _Stored(None, [])
+            return _Stored(
+                None,
+                [_unloaded(PIN_MAP_FILENAME, f"it has no {CHANNEL_SET_FILENAME} beside it")],
+                "unrepairable",
+            )
+        return _Stored(None, [], "none")
 
     def _two_file_pair(self) -> _Stored:
         """The two-file layout: `channel_set.json` and `pin_map.json`.
@@ -195,7 +232,7 @@ class HardwareStore:
         """
         channel_set, why = _read(self.channel_set_path)
         if channel_set is None:
-            return _Stored(None, [_unloaded(CHANNEL_SET_FILENAME, why)])
+            return _Stored(None, [_unloaded(CHANNEL_SET_FILENAME, why)], "unrepairable")
         digest = legacy_pair_digest(channel_set)
         candidates = (self.pin_map_path, self.pin_map_path.with_suffix(".json.tmp"))
         for candidate in candidates:
@@ -210,6 +247,7 @@ class HardwareStore:
                 f"it does not belong to {CHANNEL_SET_FILENAME} (they were not written by "
                 "one save), so its pins could put a port under another port's codes",
             )],
+            "mismatched",
         )
 
     # -- writing ----------------------------------------------------------- #
@@ -224,7 +262,7 @@ class HardwareStore:
         be one pass rather than a game of whack-a-mole, which is the same
         argument `ChannelMap.disagreements()` makes.
         """
-        problems = validate(doc) or _unpinned(doc)
+        problems = save_problems(doc)
         if problems:
             raise RigInvalid(problems)
 
@@ -238,8 +276,29 @@ class HardwareStore:
         return stored
 
     def reset(self) -> None:
-        """Back to the shipped pinout. The files go; nothing else does."""
-        self._remove(self._every_layout())
+        """Back to the shipped pinout. The files go; nothing else does.
+
+        LOWEST PRECEDENCE FIRST, and the first file that will not go stops it
+        (raised). `_stored` reads `wiring.json`, then the pair, then `rig.json`;
+        removing them in that order would let a failure part-way put an older
+        wiring back in force with nothing to say so. In this order a failure
+        leaves either the wiring that was in force or a load problem.
+        """
+        for path in self.removal_order():
+            path.unlink(missing_ok=True)
+
+    def removal_order(self) -> tuple[Path, ...]:
+        """Every file Reset removes, lowest precedence first (see `reset`)."""
+        return (
+            self.channel_set_path.with_suffix(".json.tmp"),
+            self.pin_map_path.with_suffix(".json.tmp"),
+            self.legacy_rig_path.with_suffix(".json.tmp"),
+            self.legacy_rig_path,
+            self.pin_map_path,
+            self.channel_set_path,
+            self.path.with_name(self.path.name + ".part"),
+            self.path,
+        )
 
     def _older_layouts(self) -> tuple[Path, ...]:
         return (
@@ -250,9 +309,6 @@ class HardwareStore:
             self.pin_map_path.with_suffix(".json.tmp"),
             self.legacy_rig_path.with_suffix(".json.tmp"),
         )
-
-    def _every_layout(self) -> tuple[Path, ...]:
-        return (self.path, self.path.with_name(self.path.name + ".part"), *self._older_layouts())
 
     def _documents(self) -> tuple[Path, ...]:
         """The files that hold wiring; temporary files never do on their own."""
@@ -300,29 +356,32 @@ def legacy_pair_digest(channel_set: dict) -> str:
 
 
 def _unloaded(location: str, why: str | None) -> tuple[str, str]:
-    message = (
-        f"{location} did not load: {why or 'it could not be read'}. This rig is not "
-        "using it, so no box can start or be flashed until its wiring is saved "
-        "again or reset."
-    )
-    return location, message
+    """What is wrong with the FILE, and nothing about its consequence: that
+    depends on what is in force, which `hardware/service.py` says."""
+    return location, f"{location} did not load: {why or 'it could not be read'}."
 
 
 def _checked(location: str, doc: dict | None, why: str | None) -> _Stored:
     """A stored document that read, checked against the schema before it may
     be composed -- a hand edit can break its shape as easily as its JSON."""
     if doc is None:
-        return _Stored(None, [_unloaded(location, why)])
+        return _Stored(None, [_unloaded(location, why)], "unrepairable")
     doc = upgrade(doc)
     try:
         import jsonschema  # noqa: F401
     except ImportError:  # pragma: no cover - the dependency fence: compose as before
-        return _Stored(doc, [])
+        return _Stored(doc, [], "loads")
     shape = validate(doc) or _unpinned(doc)
     if shape:
         where, what = shape[0]
-        return _Stored(doc, [_unloaded(location, f"{where}: {what}")])
-    return _Stored(doc, [])
+        return _Stored(doc, [_unloaded(location, f"{where}: {what}")], "invalid")
+    return _Stored(doc, [], "loads")
+
+
+def save_problems(doc: Any) -> list[tuple[str, str]]:
+    """Why `save` would refuse this document: its shape, then a channel with
+    no pin. Checked by the rig definition before it issues any edge code."""
+    return validate(doc) or (_unpinned(doc) if isinstance(doc, dict) else [])
 
 
 def _unpinned(doc: dict) -> list[tuple[str, str]]:

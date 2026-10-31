@@ -190,6 +190,7 @@ export const ERR = {
   RIG_IN_USE: "RIG_IN_USE",
   RIG_WOULD_BREAK_TASKS: "RIG_WOULD_BREAK_TASKS",
   RIG_WIRING_UNLOADED: "RIG_WIRING_UNLOADED",
+  RIG_SAVE_BLOCKED: "RIG_SAVE_BLOCKED",
   STROBE_INVALID: "STROBE_INVALID",
   STROBE_REQUIRED: "STROBE_REQUIRED",
   STROBE_IN_RECORDED_SESSION: "STROBE_IN_RECORDED_SESSION",
@@ -1690,16 +1691,19 @@ export interface RigProblem {
   location: string;
   message: string;
   /**
-   * The wiring rule, when one produced it — RIG101 through RIG106. Null for a schema violation,
+   * The wiring rule, when one produced it — RIG101 through RIG108. Null for a schema violation,
    * which has no rule number because it is caught before the halves are composed.
    */
   code: string | null;
 }
 
 export interface RigStatus {
-  /** False ⇒ this rig runs the wiring its build shipped with. */
+  /**
+   * Of the wiring IN FORCE: false ⇒ this rig runs the wiring its build shipped with, which
+   * includes while its stored wiring did not load (`notices` says so).
+   */
   custom: boolean;
-  /** The shipped pinout this document started as. */
+  /** The shipped pinout the wiring in force started as. */
   derivedFrom: string;
   board: string;
   editedAt: string | null;
@@ -1715,17 +1719,52 @@ export interface RigStatus {
    * channel set agree on it whatever their pin maps (`TASKS.md#the-channel-set-and-the-pin-map`).
    */
   channelSetHash: string;
+  /**
+   * Where the wiring in force and the stored file part ways: stored wiring that did not load (the
+   * shipped pins are in force and every box is refused), or a file changed on disk since it was
+   * installed. Each says what is and is not blocked. About the RIG, never the draft: they stand
+   * through every edit, and do not stop a save, which is how one is cleared.
+   */
+  notices: RigProblem[];
+  /**
+   * Reset would change something: the rig has wiring of its own in force or on disk, or a notice
+   * offers Reset as the way out.
+   */
+  canReset: boolean;
+  /**
+   * The absolute path of every file Reset would remove, for the dialog that confirms it. Empty
+   * when there is none.
+   */
+  resetReplaces: string[];
+  /**
+   * Whether `hardware.save` of THIS draft would be taken: the draft the reply describes (the one
+   * previewed, or the one served) has no problems, differs from the served draft or would clear a
+   * notice, and the rig's state allows a save. False while stored wiring that did not load has
+   * nothing to repair (only Reset replaces it), and while RIG108 asks for the pins to be
+   * confirmed. The frontend renders it; it never decides it.
+   */
+  canSave: boolean;
+  /**
+   * The draft is a stored file that is not in force -- copied in, changed outside the app, not
+   * loaded, or a pin map not written with its channel set -- so nobody has checked its pins on
+   * this rig: offer the operator a way to confirm them, sent as `confirmedPins`
+   * (`TASKS.md#the-channel-set-and-the-pin-map`).
+   */
+  needsPinConfirmation: boolean;
 }
 
 /**
- * The wiring, plus everything wrong with it. `document` is served even when `problems` is
+ * The draft, plus everything wrong with it. `document` is served even when `problems` is
  * non-empty: an editor that refused to show a broken document would be refusing to show the one
- * that needs fixing.
+ * that needs fixing. `problems` are the draft's; what is wrong with the rig is `status.notices`.
  */
 export interface RigDocument {
   /**
-   * The rig document itself — `{rig_version, channels, pins}`, validated against
-   * rig/schema/rig_hardware.v1.json.
+   * The draft the editor opens — `{rig_version, channels, pins}`, validated against
+   * rig/schema/rig_hardware.v1.json. A stored file that is not in force, when there is one
+   * (copied in, changed outside the app, or not loaded, even broken), so the operator can check
+   * its pins or repair it; else the wiring in force, or the shipped pins when there is nothing
+   * stored to show. `status.notices` says which.
    */
   document: unknown;
   status: RigStatus;
@@ -2268,8 +2307,8 @@ export interface CommandArgsMap {
   "utility.ensure": { boxes?: number[]; force?: boolean };
   "utility.identify": { box: number; on: boolean };
   "hardware.get": Record<string, never>;
-  "hardware.preview": { document: unknown };
-  "hardware.save": { document: unknown; confirm: boolean };
+  "hardware.preview": { document: unknown; confirmedPins?: boolean };
+  "hardware.save": { document: unknown; confirm: boolean; confirmedPins?: boolean };
   "hardware.reset": Record<string, never>;
   "strobes.get": Record<string, never>;
   "strobes.usage": { name: string; scan?: boolean };

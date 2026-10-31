@@ -717,6 +717,10 @@ class Application:
             raise CommandError(ErrCode.BAD_MESSAGE, "`boxes` must name at least one box")
         path = args["sketchPath"]
         baud = args.get("baud")
+        if (problem := self.rig_definition.wiring_problem()) is not None:
+            # Every sketch here is built on the pins in force, the shipped ones
+            # meanwhile (`ARCHITECTURE.md#unloaded-wiring-holds-it`).
+            raise rig_definition.WiringNotLoaded(problem)
         # Only a discovered sketch is flashable (`TASKS.md#sketch-library`) —
         # enforced here, not just by the picker only listing discovered
         # sketches, and again when the job runs.
@@ -1140,7 +1144,7 @@ class Application:
         return await asyncio.to_thread(
             hardware_service.document_payload,
             self.hardware_store,
-            in_force=self.rig_definition.wiring_problem(),
+            in_force=self.rig_definition.in_force(),
         )
 
     async def _hardware_preview(self, args: Args) -> dict[str, Any]:
@@ -1148,7 +1152,13 @@ class Application:
 
         def preview() -> dict[str, Any]:
             breaks = rig_definition.impact_of(self.task_store, wiring=document)
-            return hardware_service.preview_payload(self.hardware_store, document, breaks)
+            return hardware_service.preview_payload(
+                self.hardware_store,
+                document,
+                breaks,
+                in_force=self.rig_definition.in_force(),
+                confirmed_pins=bool(args.get("confirmedPins")),
+            )
 
         async with self._preview_gate:
             return await asyncio.to_thread(preview)
@@ -1158,7 +1168,9 @@ class Application:
         # EVERY GENERATED SKETCH IS STALE once this lands -- the rebuild inside
         # the write is what makes "a pin change applies to everything" true
         # rather than a claim.
-        return await self.rig_definition.save_wiring(document, confirm=args["confirm"])
+        return await self.rig_definition.save_wiring(
+            document, confirm=args["confirm"], confirmed_pins=bool(args.get("confirmedPins"))
+        )
 
     async def _hardware_reset(self, _args: Args) -> dict[str, Any]:
         # A wiring change like any other -- see `_hardware_save`.

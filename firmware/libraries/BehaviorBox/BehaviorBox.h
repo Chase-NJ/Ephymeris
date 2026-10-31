@@ -56,6 +56,7 @@
 #define BEHAVIOR_BOX_H
 
 #include <Arduino.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -736,7 +737,7 @@ inline bool escalationArmed(const TaskParams &p, int completedTrials)
     no second place that can fall out of sync.
 
     Expand it by defining P_INT / P_FLOAT / P_BOOL / P_ULONG / P_STAGE first.
-    Keys are short on purpose: the whole line has to fit START_LINE_MAX, and a
+    Keys are short on purpose: each SET line has to fit SET_LINE_MAX, and a
     fully-declared eased task sends close to fifty of them. */
 #define TASK_PARAM_LIST                     \
   P_INT("ERR", errorDelay)                  \
@@ -773,15 +774,64 @@ inline bool escalationArmed(const TaskParams &p, int completedTrials)
   P_INT("S" #n "W", stage[n].fluidWellPoll) \
   P_INT("S" #n "O", stage[n].odorPortTimeout)
 
-/*  The START line buffer, terminator included (docs/TASKS.md#the-length-cap),
+/*  The SET line buffer, terminator included (docs/TASKS.md#the-length-cap),
     mirrored by the host's build_start_command
     (sidecar/ephymeris_sidecar/tasks/start_command.py). Nothing shares it between
-    sketch and sidecar, so the two constants must be changed together. A sketch
-    declares char cmd[START_LINE_MAX], so the longest line read whole is
-    START_LINE_MAX - 1 characters; readLineInto() truncates a longer one SILENTLY
-    -- a lost token is not an error the board can see, it just runs on the wrong
-    value. */
-#define START_LINE_MAX 640
+    sketch and sidecar, so the two constants must be changed together; a sidecar
+    test fails when they differ. A sketch declares char cmd[SET_LINE_MAX], so the
+    longest line read whole is SET_LINE_MAX - 1 characters; readLineInto()
+    truncates a longer one SILENTLY. The host never builds one, and if a line were
+    cut anyway the board's PARAMS reply (CRC over the tokens that arrived) would
+    disagree with the host's and the start would be refused.
+
+    The cap is per LINE, not per run: the host spreads the parameter block over as
+    many SET lines as it takes. START carries only SEED=<n> and fits easily. */
+#define SET_LINE_MAX 128
+
+/*  Which firmware interpreter this build is, announced as `INTERP=<n>` before
+    READY and recorded in the run's file, so a recorded session says what ran it
+    (docs/TASKS.md#the-start-line). The trial runner in this header is
+    interpreter 1. */
+#define BOX_INTERP 1
+
+/*  The running audit of what the SET lines delivered: how many keys the board
+    accepted, and the CRC-32 of those tokens exactly as received, joined by single
+    spaces, in the order received. The host computes the same two numbers over
+    what it sent (zlib.crc32) and refuses the start when they differ -- which
+    catches a truncated line, a key this firmware does not parse and a garbled
+    byte alike, none of which the board could otherwise report. */
+struct ParamAudit
+{
+  uint32_t crc = 0xFFFFFFFFUL; // the running CRC-32, before the final inversion
+  int accepted = 0;            // keys parsed; an unknown key is neither counted nor hashed
+
+  uint32_t finalCrc() const { return ~crc; } // of nothing: 0, as zlib.crc32(b"")
+};
+
+/*  void crc32Feed(ParamAudit&, const char*, size_t) ->
+    Fold bytes into the audit's CRC. The reflected CRC-32 (polynomial 0xEDB88320),
+    one bit at a time: a table would cost 1 KB of RAM to save time nobody needs
+    during a parameter block of a few hundred bytes. */
+inline void crc32Feed(ParamAudit &a, const char *s, size_t n)
+{
+  for (size_t i = 0; i < n; i++)
+  {
+    a.crc ^= (uint8_t)s[i];
+    for (int bit = 0; bit < 8; bit++)
+      a.crc = (a.crc >> 1) ^ (0xEDB88320UL & (0UL - (a.crc & 1UL)));
+  }
+}
+
+/*  Count one accepted token and hash it as the host wrote it. */
+inline void auditAccept(ParamAudit &a, const char *key, const char *value)
+{
+  if (a.accepted > 0)
+    crc32Feed(a, " ", 1);
+  crc32Feed(a, key, strlen(key));
+  crc32Feed(a, "=", 1);
+  crc32Feed(a, value, strlen(value));
+  a.accepted++;
+}
 
 /*  void clampTaskParams(TaskParams&) ->
     Hold every field to a range the trial runner can survive. This matters more
@@ -811,26 +861,30 @@ inline void clampTaskParams(TaskParams &p)
     if (p.rewardTimes[i] < 0) p.rewardTimes[i] = -1;
 }
 
-/*  void parseStartCommand(char* line, TaskParams& p) ->
-    Parse a START line into p. Grammar (mirrors the app's start-command builder):
+/*  void parseParamTokens(char* line, TaskParams& p, ParamAudit* audit) ->
+    The grammar both SET and START share:
 
-        START <KEY>=<value> <KEY>=<value> ...
+        <VERB> <KEY>=<value> <KEY>=<value> ...
 
     Order-independent; unknown keys ignored; any missing key keeps p's current
-    value, so a bare "START" reproduces the sketch's compiled-in behavior and an
-    older host talking to newer firmware still runs.
+    value. A bare word (the verb itself) is skipped. When `audit` is given, every
+    token that names a key is counted and hashed as written (ParamAudit); an
+    unknown key is not.
 
     PARSES IN PLACE. It used to strncpy into a private 96-byte buffer, which gave
     the line TWO independent caps -- the caller's and this one's -- either of
     which could silently drop a token. `line` is the caller's own buffer and is
-    modified (strtok); it must be at least the length of the line it holds. */
-inline void parseStartCommand(char *line, TaskParams &p)
+    modified (strtok); it must be at least the length of the line it holds.
+
+    Clamping is NOT done here: a clamp judged on a partial block would move
+    values the next SET line is about to set. */
+inline void parseParamTokens(char *line, TaskParams &p, ParamAudit *audit)
 {
   for (char *tok = strtok(line, " "); tok != NULL; tok = strtok(NULL, " "))
   {
     char *eq = strchr(tok, '=');
     if (eq == NULL)
-      continue; // the leading "START" token, and any bare word
+      continue; // the leading verb, and any bare word
     *eq = '\0';
     const char *k = tok;
     const char *v = eq + 1;
@@ -838,10 +892,10 @@ inline void parseStartCommand(char *line, TaskParams &p)
 // atoi() is a 16-bit parse on AVR, which is fine for every int field (the
 // largest, lazyDelayMax, is 30000). SEED is the one value that spans the full
 // 31-bit Park-Miller range, so it -- and only it -- needs strtoul.
-#define P_INT(key, field)   if (strcmp(k, key) == 0) { p.field = atoi(v); continue; }
-#define P_FLOAT(key, field) if (strcmp(k, key) == 0) { p.field = (float)atof(v); continue; }
-#define P_BOOL(key, field)  if (strcmp(k, key) == 0) { p.field = (atoi(v) != 0); continue; }
-#define P_ULONG(key, field) if (strcmp(k, key) == 0) { p.field = strtoul(v, NULL, 10); continue; }
+#define P_INT(key, field)   if (strcmp(k, key) == 0) { p.field = atoi(v); if (audit) auditAccept(*audit, k, v); continue; }
+#define P_FLOAT(key, field) if (strcmp(k, key) == 0) { p.field = (float)atof(v); if (audit) auditAccept(*audit, k, v); continue; }
+#define P_BOOL(key, field)  if (strcmp(k, key) == 0) { p.field = (atoi(v) != 0); if (audit) auditAccept(*audit, k, v); continue; }
+#define P_ULONG(key, field) if (strcmp(k, key) == 0) { p.field = strtoul(v, NULL, 10); if (audit) auditAccept(*audit, k, v); continue; }
 #define P_STAGE(n)          TASK_STAGE_KEYS(n)
     TASK_PARAM_LIST
 #undef P_INT
@@ -850,8 +904,80 @@ inline void parseStartCommand(char *line, TaskParams &p)
 #undef P_ULONG
 #undef P_STAGE
   }
+}
+
+/*  bool lineIsCommand(const char* line, const char* verb) ->
+    Whether `line` is exactly the verb, or the verb then a space. "SETUP" is not
+    a SET and "STARTED" is not a START. */
+inline bool lineIsCommand(const char *line, const char *verb)
+{
+  size_t n = strlen(verb);
+  return strncmp(line, verb, n) == 0 && (line[n] == '\0' || line[n] == ' ');
+}
+
+/*  void reportClamped(const TaskParams& p) ->
+    Print `CLAMPED <KEY>` for every value clampTaskParams() would change in p as
+    it stands. Judged on a COPY, so p keeps what the host sent until START -- the
+    verdict is on the whole block so far, and the last SET line's reply is the
+    one that counts. */
+inline void reportClamped(const TaskParams &p)
+{
+  TaskParams c = p;
+  clampTaskParams(c);
+  char buf[24];
+#define P_INT(key, field)   if (p.field != c.field) { snprintf(buf, sizeof(buf), "CLAMPED %s", key); Serial.println(buf); }
+#define P_FLOAT(key, field) P_INT(key, field)
+#define P_BOOL(key, field)  P_INT(key, field)
+#define P_ULONG(key, field) P_INT(key, field)
+#define P_STAGE(n)          TASK_STAGE_KEYS(n)
+  TASK_PARAM_LIST
+#undef P_INT
+#undef P_FLOAT
+#undef P_BOOL
+#undef P_ULONG
+#undef P_STAGE
+}
+
+/*  void applySetLine(char* line, TaskParams& p, ParamAudit& audit) ->
+    Take one `SET <KEY>=<value> ...` line into p and answer it:
+
+        CLAMPED <KEY>           once for each value the clamp would change
+        PARAMS <n> <crc32>      keys accepted so far, CRC-32 of their tokens
+
+    The reply is the RUNNING total over every SET line so far, so the host reads
+    the answer to its last line. The host holds `n` and the CRC against what it
+    sent, and treats any CLAMPED line as a refusal. Nothing is clamped in p yet:
+    parseStartCommand() does that once, at START. */
+inline void applySetLine(char *line, TaskParams &p, ParamAudit &audit)
+{
+  parseParamTokens(line, p, &audit);
+  reportClamped(p);
+  char buf[32];
+  snprintf(buf, sizeof(buf), "PARAMS %d %lu", audit.accepted, (unsigned long)audit.finalCrc());
+  Serial.println(buf);
+}
+
+/*  void parseStartCommand(char* line, TaskParams& p) ->
+    Take a START line into p, then hold p to ranges the runner can survive and
+    apply ramp row 0. The app's START carries only SEED=<n>: the parameters
+    arrived on SET lines. A hand-typed `START CL=2 ...` still carries its own, and
+    a bare "START" keeps every default, so a console session still works. */
+inline void parseStartCommand(char *line, TaskParams &p)
+{
+  parseParamTokens(line, p, NULL);
   clampTaskParams(p);
   applyStage(p, 0); // the live holds must reflect row 0 before trial 1 runs
+}
+
+/*  void announceReady() ->
+    The handshake's opening line: `INTERP=<n>` then `READY`. In this order so the
+    host has the interpreter before it is told it may send anything. */
+inline void announceReady()
+{
+  char buf[16];
+  snprintf(buf, sizeof(buf), "INTERP=%d", BOX_INTERP);
+  Serial.println(buf);
+  Serial.println("READY");
 }
 
 /*  void applyRewardTimes(const TaskParams&, TrialType*, int) ->

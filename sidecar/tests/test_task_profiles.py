@@ -17,7 +17,7 @@ from ephymeris_sidecar.tasks.profile import (
     parse_profile,
     profile_hash,
 )
-from ephymeris_sidecar.tasks.start_command import START_LINE_MAX, build_start_command
+from ephymeris_sidecar.tasks.start_command import build_start_command
 
 # The exact task.json the user supplied for GRGL_2-Odor.
 GRGL = {
@@ -342,10 +342,11 @@ def test_telemetry_match_defaults_to_STATUS() -> None:
     assert profile.telemetry.match == "STATUS"
 
 
-def test_a_utility_profile_gets_a_bare_start_command() -> None:
-    # Utility sketches aren't scored tasks; the builder still yields bare START
-    # if one is ever sent (they're driven via passthrough, not startSession).
-    assert build_start_command(parse_profile(PRIME_LINES), {}) == "START"
+def test_a_utility_profile_gets_a_bare_set_command() -> None:
+    # Utility sketches aren't scored tasks; the builder still yields an empty
+    # block (one bare SET) if one is ever sent (they're driven via passthrough,
+    # not startSession).
+    assert build_start_command(parse_profile(PRIME_LINES), {}).set_lines == ("SET",)
 
 
 # --- START command builder (`TASKS.md#building-the-line`) ----------------
@@ -355,32 +356,31 @@ def test_start_command_uses_wire_keys_and_defaults() -> None:
     profile = parse_profile(GRGL)
     # No overrides → every field falls back to its declared default.
     cmd = build_start_command(profile, {})
-    assert cmd == "START CL=0 CR=0 LAZY=1"
+    assert cmd.set_lines == ("SET CL=0 CR=0 LAZY=1",)
 
 
 def test_start_command_applies_overrides_by_metadata_key() -> None:
     profile = parse_profile(GRGL)
     cmd = build_start_command(profile, {"correction_left": 5, "lazy_escalation": False})
-    assert cmd == "START CL=5 CR=0 LAZY=0"
+    assert cmd.set_lines == ("SET CL=5 CR=0 LAZY=0",)
 
 
 def test_bools_render_as_one_and_zero_not_true_false() -> None:
     profile = parse_profile(GRGL)
-    assert "LAZY=1" in build_start_command(profile, {"lazy_escalation": True})
-    assert "LAZY=0" in build_start_command(profile, {"lazy_escalation": False})
+    assert "LAZY=1" in build_start_command(profile, {"lazy_escalation": True}).tokens
+    assert "LAZY=0" in build_start_command(profile, {"lazy_escalation": False}).tokens
 
 
 def test_unknown_config_keys_are_ignored() -> None:
     """`TASKS.md#building-the-line` — stale UI state can't leak unknown tokens onto the wire."""
     profile = parse_profile(GRGL)
     cmd = build_start_command(profile, {"correction_left": 3, "not_a_field": 99})
-    assert "not_a_field" not in cmd
-    assert "99" not in cmd
+    assert cmd.tokens == ("CL=3", "CR=0", "LAZY=1")
 
 
-def test_a_profile_less_sketch_gets_bare_start() -> None:
-    assert build_start_command(None, {}) == "START"
-    assert build_start_command(parse_profile({"taskName": "Utility"}), {}) == "START"
+def test_a_profile_less_sketch_gets_a_bare_set() -> None:
+    assert build_start_command(None, {}).set_lines == ("SET",)
+    assert build_start_command(parse_profile({"taskName": "Utility"}), {}).set_lines == ("SET",)
 
 
 # --- live metric computation, the scientific output (`ANALYTICS.md#trials-hits-misses-and-exclusions`) ---
@@ -678,120 +678,10 @@ def test_a_string_default_cannot_contain_whitespace() -> None:
         parse_profile({"taskName": "T", "config": [_field(type="string", default="two words")]})
 
 
-# --- the START line length cap (`TASKS.md#the-length-cap`) ----------------
-
-
-def _wide_profile(n: int) -> dict:
-    """A profile with `n` int fields, each rendering a ~10-character token."""
-    return {"taskName": "Wide", "config": [
-        {"metadataKey": f"field_{i}", "wireKey": f"W{i:03d}", "label": "x", "type": "int", "default": 20000}
-        for i in range(n)
-    ]}
-
-
-def test_a_realistically_wide_profile_fits() -> None:
-    """The lab's widest real profile is ~48 fields. That has to fit with the
-    seed token still to come, or the feature doesn't ship."""
-    cmd = build_start_command(parse_profile(_wide_profile(48)), {})
-    assert len(cmd) < START_LINE_MAX
-
-
-def test_an_over_declared_profile_is_refused_rather_than_truncated() -> None:
-    """The firmware CANNOT report this: readLineInto() truncates an overlong
-    line and drops the rest, so the session would run on whichever parameters
-    happened to fit. Refusing to build the line is the only place it is visible."""
-    with pytest.raises(TaskProfileError, match="over the firmware"):
-        build_start_command(parse_profile(_wide_profile(200)), {})
-
-
-def test_the_cap_reserves_room_for_the_seed_appended_later() -> None:
-    """The seed is drawn at the start click, minutes after the config half of
-    the line is settled, so the budget has to account for a token that does not
-    exist yet -- a line that fits alone but not with SEED is still too long."""
-    from ephymeris_sidecar.tasks.start_command import with_trial_seed
-
-    for n in range(56, 64):
-        profile = parse_profile(_wide_profile(n))
-        try:
-            cmd = build_start_command(profile, {})
-        except TaskProfileError:
-            continue
-        assert len(with_trial_seed(cmd, 2**31 - 2)) < START_LINE_MAX
-
-
-def _profile_whose_seeded_line_is(length: int) -> dict:
-    """A one-field profile whose line, with the widest seed `seed.py` draws
-    appended, is exactly `length` characters: `START X=aaa… SEED=…`."""
-    from ephymeris_sidecar.tasks.start_command import with_trial_seed
-
-    value_len = length - len(with_trial_seed("START X=", 2**31 - 2))
-    return {"taskName": "Edge", "config": [
-        {"metadataKey": "x", "wireKey": "X", "label": "x", "type": "string", "default": "a" * value_len}
-    ]}
-
-
-@pytest.mark.parametrize("length", [START_LINE_MAX, START_LINE_MAX + 1])
-def test_a_line_the_firmware_buffer_cannot_hold_whole_is_refused(length: int) -> None:
-    """`readLineInto(cmd, sizeof cmd)` keeps one byte of `char cmd[START_LINE_MAX]`
-    for the terminator, so a line of exactly START_LINE_MAX characters loses its
-    last one -- the seed's last digit. The board then runs a different seed and
-    the seed check blames old firmware. The host must refuse it."""
-    profile = parse_profile(_profile_whose_seeded_line_is(length))
-    with pytest.raises(TaskProfileError, match="over the firmware"):
-        build_start_command(profile, {})
-
-
-def test_the_longest_line_the_firmware_holds_whole_is_built() -> None:
-    """One under the buffer size is the longest line `readLineInto` keeps whole
-    (the firmware host test pins that side), so it must still be accepted."""
-    from ephymeris_sidecar.tasks.start_command import with_trial_seed
-
-    cmd = build_start_command(parse_profile(_profile_whose_seeded_line_is(START_LINE_MAX - 1)), {})
-    assert len(with_trial_seed(cmd, 2**31 - 2)) == START_LINE_MAX - 1
-
-
 def test_a_value_with_whitespace_falls_back_to_the_default() -> None:
     """A string value the operator typed a space into can't ride the wire; the
     builder already degrades to the sketch's own default rather than emitting
     a token the firmware would misparse."""
     profile = parse_profile({"taskName": "T", "config": [
         {"metadataKey": "mode", "wireKey": "MD", "label": "Mode", "type": "string", "default": "fast"}]})
-    assert build_start_command(profile, {"mode": "not fast"}) == "START MD=fast"
-
-
-def test_the_start_line_cap_matches_the_firmware():
-    """Two files, one value (`TASKS.md#the-length-cap`). Were they ever to
-    disagree upward, the firmware would truncate a line the host had
-    accepted, and the run would start on whichever values happened to fit."""
-    import re
-    from pathlib import Path
-
-    from ephymeris_sidecar.tasks.start_command import START_LINE_MAX
-
-    header = (
-        Path(__file__).resolve().parents[2]
-        / "firmware" / "libraries" / "BehaviorBox" / "BehaviorBox.h"
-    )
-    match = re.search(r"^#define START_LINE_MAX (\d+)", header.read_text(encoding="utf-8"), re.M)
-    assert match is not None, "BehaviorBox.h no longer defines START_LINE_MAX"
-    assert int(match.group(1)) == START_LINE_MAX
-
-
-def test_the_firmware_parses_the_start_line_the_app_builds_for_grgl():
-    """`TASKS.md#the-start-line` — the firmware host test parses a pasted copy
-    of GRGL's line, which proves nothing once the copy is stale: a key the app
-    sends and the firmware does not know runs the session on the compiled-in
-    value, in silence. Rebuild it here so a stale copy fails."""
-    import re
-    from pathlib import Path
-
-    from ephymeris_sidecar.tasks.start_command import with_trial_seed
-
-    firmware = Path(__file__).resolve().parents[2] / "firmware"
-    test_cpp = firmware / "libraries" / "BehaviorBox" / "extras" / "host_test" / "test_behaviorbox.cpp"
-    block = test_cpp.read_text(encoding="utf-8").split("THE CROSS-REPO CHECK", 1)[1]
-    call = block[block.index("snprintf(") : block.index(");")]
-    pasted = "".join(re.findall(r'"([^"]*)"', call))
-
-    profile = load_profile(firmware / "Olfactory Behavior" / "GRGL")
-    assert with_trial_seed(build_start_command(profile, {}), 2147483646) == pasted
+    assert build_start_command(profile, {"mode": "not fast"}).tokens == ("MD=fast",)

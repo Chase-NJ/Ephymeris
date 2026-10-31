@@ -59,6 +59,9 @@ CORE_METADATA_KEYS = frozenset(
         "ts_data",
         "trial_seed",
         "host_seed",
+        # Which firmware interpreter ran the session, announced before READY
+        # (`TASKS.md#the-start-line`): a property of the build, not the tuning.
+        "interp",
         # The run's own profile snapshot, written after the task fields — a
         # field of this name would be silently replaced by it.
         "task_profile",

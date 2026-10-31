@@ -27,11 +27,7 @@ from ephymeris_sidecar.taskdef.model import (
     TrialTypeDef,
 )
 from ephymeris_sidecar.taskdef.validate import validate
-from ephymeris_sidecar.tasks.start_command import (
-    START_LINE_MAX,
-    build_start_command,
-    with_trial_seed,
-)
+from ephymeris_sidecar.tasks.start_command import SET_LINE_MAX, build_start_command
 
 
 @pytest.fixture(autouse=True)
@@ -144,15 +140,15 @@ def test_every_preset_validates_and_generates_against_the_shipped_wiring():
         assert profile.config and profile.strobes and profile.live_metrics
 
 
-def test_every_preset_fits_the_start_line():
-    """Checked rather than trusted: `readLineInto()` truncates in silence, so an
-    over-declared profile runs on whichever values happened to fit."""
+def test_every_preset_fits_the_set_lines():
+    """Checked rather than trusted: `readLineInto()` truncates in silence, so a
+    parameter too long for a `SET` line would reach the board cut."""
     for preset in presets.PRESETS:
         definition = presets.instantiate(preset["id"], preset["id"])
         profile = generate.build_profile(definition)
         config = {f.metadata_key: f.default for f in profile.config}
-        line = with_trial_seed(build_start_command(profile, config), 2147483646)
-        assert len(line) < START_LINE_MAX, (preset["id"], len(line))
+        command = build_start_command(profile, config)
+        assert all(len(line) < SET_LINE_MAX for line in command.set_lines), preset["id"]
 
 
 def test_a_preset_is_a_starting_point_not_a_task():
@@ -566,10 +562,14 @@ def test_an_unordered_ramp_is_reported():
     ]))
 
 
-def test_an_over_long_start_line_is_reported():
-    """The firmware cannot report this: `readLineInto()` truncates and drops the
-    rest, so the session runs on whichever values fit."""
-    assert "TSK107" in codes(a_task(stages=[StageRow(trials=i * 10) for i in range(40)]))
+def test_a_long_ramp_is_spread_over_set_lines_not_reported():
+    """The cap is on each `SET` line, not on the run (`TASKS.md#the-length-cap`):
+    forty stages are two hundred tokens, which take several lines and fit."""
+    task = a_task(stages=[StageRow(trials=i * 10) for i in range(40)])
+    assert "TSK107" not in codes(task)
+    profile = generate.build_profile(task)
+    command = build_start_command(profile, {f.metadata_key: f.default for f in profile.config})
+    assert len(command.set_lines) > 1
 
 
 def test_a_table_with_no_presentable_trial_is_reported():

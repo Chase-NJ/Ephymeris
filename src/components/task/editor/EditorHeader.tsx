@@ -111,8 +111,6 @@ export function EditorHeader({
           </Popover>
         )}
 
-        <StartMeter startLine={session.startLine} />
-
         <Popover
           open={detailsOpen}
           onOpenChange={onDetailsOpen}
@@ -160,44 +158,6 @@ export function EditorHeader({
         <p className="w-full text-[11px] text-status-error">{session.actionError}</p>
       )}
     </header>
-  );
-}
-
-/**
- * The `START` line's length against its cap.
- *
- * NOT DECORATION, AND NEVER HIDDEN. The cap is the one budget an operator can
- * exhaust without noticing: the firmware truncates an overlong line in silence
- * and runs on whichever values happened to fit. Each stage costs five tokens,
- * so the number is worth watching while the ramp grows (`TASKS.md#the-start-line`).
- */
-export function StartMeter({ startLine }: { startLine: { length: number; max: number } | null }) {
-  if (!startLine) return null;
-  const used = startLine.length / startLine.max;
-  const over = startLine.length - startLine.max;
-  const tone = used > 0.9 ? "var(--color-status-error)" : "var(--color-pulsar)";
-  return (
-    <span
-      title={`The START line is ${startLine.length} of ${startLine.max} bytes. Over the cap, the firmware truncates it without saying so.`}
-      className="flex items-center gap-1.5 font-mono text-[10px] text-static/80"
-    >
-      <span className="tracking-[0.14em] text-static/60 uppercase">start</span>
-      <span className="h-1 w-14 overflow-hidden rounded-full bg-halo/70">
-        <motion.span
-          className="block h-full rounded-full"
-          initial={false}
-          animate={{ width: `${Math.min(100, used * 100)}%`, backgroundColor: tone }}
-        />
-      </span>
-      <span className="tabular-nums" style={over > 0 ? { color: "var(--color-status-error)" } : undefined}>
-        {startLine.length}/{startLine.max}
-      </span>
-      {over > 0 && (
-        <span style={{ color: "var(--color-status-error)" }}>
-          over by {over} — the firmware truncates in silence
-        </span>
-      )}
-    </span>
   );
 }
 

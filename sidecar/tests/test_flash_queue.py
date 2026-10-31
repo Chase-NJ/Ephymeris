@@ -21,6 +21,7 @@ from ephymeris_sidecar.ports.manager import FQBN, PortManager
 from ephymeris_sidecar.ports.states import PortState
 from ephymeris_sidecar.protocol import Evt
 from ephymeris_sidecar.settings import SidecarSettings
+from ephymeris_sidecar.tasks.start_command import build_start_command
 from ephymeris_sidecar.utility import UtilityBaseline
 
 from .test_utility import (  # noqa: F401 - fake_serial is an autouse fixture
@@ -195,8 +196,9 @@ def run_a_session(rig: Rig, box: int):  # noqa: ANN201
     """Hold a box `IN_SESSION`, the state a session or Debug flash waits on.
     Returns the claim, whose `release` ends it."""
     return rig.ports.claim_session(
-        box, "START", on_ready=lambda _seed: None, on_strobe=lambda _code, _ts: None,
-        on_lost=lambda _reason: None,
+        box, build_start_command(None, {}), 1,
+        on_ready=lambda _seed, _interp: None, on_strobe=lambda _code, _ts: None,
+        on_lost=lambda _reason: None, on_refused=lambda _refused: None,
     )
 
 

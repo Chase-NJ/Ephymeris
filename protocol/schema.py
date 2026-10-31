@@ -1947,19 +1947,6 @@ SHAPES = (
         "TaskPreview",
         obj(
             f("diagnostics", ListOf(Ref("TaskDiagnostic"))),
-            f(
-                "startLineLength",
-                INT,
-                doc="Bytes the built START line would occupy, seed included.",
-            ),
-            f(
-                "startLineMax",
-                INT,
-                doc="The firmware's cap, so the editor can show headroom without "
-                "hardcoding it. At or over it is TSK107 and a refused generation — "
-                "`readLineInto()` truncates in silence, so this is checked "
-                "rather than trusted.",
-            ),
             f("profile", Ref("TaskProfile"), doc="What this definition compiles to."),
             f(
                 "catalogueDefaults",
@@ -2504,15 +2491,22 @@ COMMANDS = (
             f("sketchPath", STR, doc="The sketch believed to be on the board; its Task Profile shapes the line."),
             f("config", MapOf(ANY), optional=True, doc="Keyed by `metadataKey`, exactly as in a session mapping."),
         ),
-        result=obj(f("command", STR, doc="The line as sent, for the console's record."), f("bytesWritten", INT)),
-        doc="Debug Mode's **Send START**: builds the `START` line from the "
+        result=obj(
+            f("command", STR, doc="The `START` line as sent, for the console's record."),
+            f("bytesWritten", INT, doc="Of the `START` line alone."),
+        ),
+        doc="Debug Mode's **Send START**: builds the parameter block from the "
         "named sketch's Task Profile exactly as `sessions.confirmMapping` does "
-        "(a sketch with no profile gets a bare `START`) and writes it to the "
-        "open console, then arms live scoring, reported as `port.telemetry`. "
+        "(a sketch with no profile gets a bare `SET`), sends it as `SET` lines "
+        "and holds the board's `PARAMS` reply against what was sent. Only a "
+        "confirmed block is followed by a bare `START`, and then live scoring "
+        "is armed, reported as `port.telemetry`. "
         "No `SEED` token and nothing recorded: this is not a run. "
         "`SKETCH_UNKNOWN` for an undiscovered path; `TASK_PROFILE_INVALID` "
-        "when the line would reach the firmware's `START_LINE_MAX` "
-        "(`TASKS.md#the-start-line`); `SEND_NOT_PASSTHROUGH` unless the port "
+        "when a parameter cannot fit a `SET` line (`TASKS.md#the-length-cap`); "
+        "`PARAMS_MISMATCH`, `PARAMS_CLAMPED` or `FIRMWARE_OUTDATED` when the "
+        "board's reply refuses the start, with nothing started; "
+        "`SEND_NOT_PASSTHROUGH` unless the port "
         "is in `PASSTHROUGH`. To end the run, send `STOP` with `port.send` and "
         "wait for `port.telemetry.running` to go false — the board ends it. "
         "Waits for a rig definition write in progress (`TASKS.md#the-rig-definition`).",
@@ -3073,11 +3067,11 @@ COMMANDS = (
         args=obj(f("sessionId", STR), f("groupId", STR), f("boxes", ListOf(Ref("SessionBoxMapping")))),
         result=obj(f("ok", BOOL)),
         doc="Load one group's box → animal → sketch mapping into the runner and "
-        "build each box's `START` line from its sketch's Task Profile and "
-        "`config`. `TASK_PROFILE_INVALID` when a line would reach "
-        "`START_LINE_MAX` — refused because the board cannot report a "
-        "truncated `START` and would run on whichever values fit "
-        "(`TASKS.md#the-start-line`). `SESSION_INVALID` for a mapping missing "
+        "build each box's `SET` lines from its sketch's Task Profile and "
+        "`config`. `TASK_PROFILE_INVALID` when one parameter cannot fit a "
+        "`SET` line (`SET_LINE_MAX`) — refused because the board cannot "
+        "report a truncated line "
+        "(`TASKS.md#the-length-cap`). `SESSION_INVALID` for a mapping missing "
         "its box, sketch, or an animal of this cohort. From here until the "
         "session lets go the rig is **held**: no baseline restore runs. "
         "Broadcasts `session.lifecycle`. "
@@ -3807,7 +3801,10 @@ EVENTS = (
         doc="A failure with no command to attribute it to. Emitted by the "
         "session runner when a mid-session `.tsv` write fails (disk full, "
         "permissions) with `code: \"INTERNAL\"`, a message naming the box, and "
-        "`detail: {box}` (`DATA.md#crash-safety`).",
+        "`detail: {box}` (`DATA.md#crash-safety`); and when a box's start is "
+        "refused after its click, with `PARAMS_MISMATCH`, `PARAMS_CLAMPED` or "
+        "`FIRMWARE_OUTDATED`, the reason in words, and `detail: {box, reason}` "
+        "(`ARCHITECTURE.md#entering-in_session`).",
     ),
     Event(
         "tasks.updated",
@@ -3926,8 +3923,27 @@ ERRORS = (
     ErrorCode(
         "TASK_PROFILE_INVALID",
         "A sketch's `task.json` exists but is malformed (`detail` carries the "
-        "parse error), or a profile's `START` line would reach "
-        "`START_LINE_MAX`.",
+        "parse error), or one of a profile's parameters cannot fit a `SET` "
+        "line (`SET_LINE_MAX`).",
+    ),
+    ErrorCode(
+        "PARAMS_MISMATCH",
+        "A start refused because the board's `PARAMS <n> <crc32>` reply does "
+        "not match the parameters the host sent: `detail.reason` is `count` "
+        "(the board did not parse every key) or `crc` (a line arrived cut or "
+        "garbled). Nothing was started (`TASKS.md#the-start-line`).",
+    ),
+    ErrorCode(
+        "PARAMS_CLAMPED",
+        "A start refused because the board moved a value to bring it inside the "
+        "range it can run (`CLAMPED <key>`); `detail.keys` names them. Nothing "
+        "was started (`TASKS.md#the-start-line`).",
+    ),
+    ErrorCode(
+        "FIRMWARE_OUTDATED",
+        "A start refused because the board never answered the `SET` lines with "
+        "`PARAMS`: it carries a sketch older than this app. Reflash it. "
+        "Nothing was started (`TASKS.md#the-start-line`).",
     ),
     ErrorCode(
         "BACKUP_UNAVAILABLE",

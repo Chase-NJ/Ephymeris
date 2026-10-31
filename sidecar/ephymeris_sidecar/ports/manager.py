@@ -29,6 +29,7 @@ import serial
 
 from ..boards.tool import BoardTool, DetectedBoard
 from ..settings import BOX_COUNT, SidecarSettings
+from ..tasks.start_command import StartCommand, StartRefused
 from .handler import DEFAULT_LINE_ENDING, OpenSerial, OutputLine, PortHandler, SessionClaim
 from .states import IDLE_ONLY, IDLE_OR_CONSOLE, IllegalTransition, PortState
 
@@ -237,6 +238,13 @@ class PortManager:
     def send(self, box: int, text: str, line_ending: str = DEFAULT_LINE_ENDING) -> int:
         return self.handler(box).write(text, line_ending)
 
+    def send_start(self, box: int, command: StartCommand, start_line: str = "START") -> int:
+        """Debug Mode's start on an open console: `command`'s `SET` lines, each
+        confirmed by the board, then `start_line` (`TASKS.md#the-start-line`).
+        Blocks, so call it from a worker thread. `StartRefused` when the board
+        does not confirm the block; nothing is started."""
+        return self.handler(box).send_start(command, start_line)
+
     def acknowledge_error(self, box: int) -> PortState:
         return self.handler(box).acknowledge_error()
 
@@ -341,11 +349,13 @@ class PortManager:
     def claim_session(
         self,
         box: int,
-        start_command: str,
+        command: StartCommand,
+        seed: int,
         *,
-        on_ready: Callable[[int | None], None],
+        on_ready: Callable[[int | None, int | None], None],
         on_strobe: Callable[[int, int], None],
         on_lost: Callable[[str], None],
+        on_refused: Callable[[StartRefused], None],
     ) -> SessionClaim:
         """Enter `IN_SESSION` on one box and hand back the run's hold on it
         (`ARCHITECTURE.md#entering-in_session`).
@@ -358,7 +368,14 @@ class PortManager:
         """
         address = self.resolve_address(box)
         return self.handler(box).claim_session(
-            address, self._settings.default_baud, start_command, on_ready, on_strobe, on_lost
+            address,
+            self._settings.default_baud,
+            command,
+            seed,
+            on_ready,
+            on_strobe,
+            on_lost,
+            on_refused,
         )
 
     def _conclude(

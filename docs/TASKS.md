@@ -1,6 +1,6 @@
 # Tasks
 
-Everything between "a box runs firmware that emits strobes" and "the app draws its trial flow and builds its `START` line". For maintainers and firmware authors. What the recorded values become on disk is [DATA.md](DATA.md); how a strobe stream is scored, live and in Analytics, is [ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md); the session flow that sends the line is [ARCHITECTURE.md](ARCHITECTURE.md#session-lifecycle).
+Everything between "a box runs firmware that emits strobes" and "the app draws its trial flow and builds its `SET` lines". For maintainers and firmware authors. What the recorded values become on disk is [DATA.md](DATA.md); how a strobe stream is scored, live and in Analytics, is [ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md); the session flow that sends the line is [ARCHITECTURE.md](ARCHITECTURE.md#session-lifecycle).
 
 ## Contents
 
@@ -52,6 +52,7 @@ Everything between "a box runs firmware that emits strobes" and "the app draws i
 - [The START line](#the-start-line)
   - [Three layer merge](#three-layer-merge)
   - [Building the line](#building-the-line)
+  - [Confirming the parameters](#confirming-the-parameters)
   - [The length cap](#the-length-cap)
   - [SEED](#seed)
 - [Profile and params hashes](#profile-and-params-hashes)
@@ -68,7 +69,7 @@ Everything between "a box runs firmware that emits strobes" and "the app draws i
   - [Editor](#editor)
   - [Trial types](#trial-types)
   - [Trial generation](#trial-generation)
-  - [Ramp and START meter](#ramp-and-start-meter)
+  - [Ramp](#ramp)
   - [Parameter dial](#parameter-dial)
 - [Writing a new sketch](#writing-a-new-sketch)
   - [Authoring steps](#authoring-steps)
@@ -93,7 +94,7 @@ Everything an experiment varies reaches the firmware one of two ways. Which way 
 | | Arrives at | Carries | Changing it costs |
 |---|---|---|---|
 | **Generated headers** (`TaskPins.h`, `TaskTrials.h`) | compile time | channel→pin map, the strobe vocabulary, the trial table, how many ramp stages and trial types exist, which selector runs | a rebuild and reflash |
-| **The `START` line** | run time | every timing, hold, window, penalty, per-condition reward volume (`RW<n>`), pool weight (`PW<n>`), anti-bias clamp and stage threshold | one serial line |
+| **`SET` lines** | run time | every timing, hold, window, penalty, per-condition reward volume (`RW<n>`), pool weight (`PW<n>`), anti-bias clamp and stage threshold | a few serial lines, confirmed by the board before `START` |
 
 The two roads to the board. The left one runs once per save or rewiring; the right one runs at every start:
 
@@ -105,14 +106,14 @@ flowchart LR
         generator --> headers["TaskPins.h<br/>TaskTrials.h"]
         headers --> binary["Flashed binary"]
     end
-    subgraph runTime["Run time: one serial line"]
-        values["Merged parameter values"] --> line["START line"]
+    subgraph runTime["Run time: SET lines, confirmed"]
+        values["Merged parameter values"] --> line["SET lines"]
     end
     binary --> board["Mega2560"]
     line --> board
 ```
 
-The dividing line is [`START_LINE_MAX`](#the-length-cap): a trial table and a pin map do not fit on the line, and pins must be compile-time constants anyway. Everything that fits stays on the wire, which is what lets **one flashed binary serve six boxes tuned differently** — the per-box overrides at mapping would otherwise mean six compiles.
+The dividing line is what a capped `SET` line can carry ([`SET_LINE_MAX`](#the-length-cap)): a trial table and a pin map do not fit, and pins must be compile-time constants anyway. Everything that fits stays on the wire, which is what lets **one flashed binary serve six boxes tuned differently** — the per-box overrides at mapping would otherwise mean six compiles.
 
 ### The three bundled sketches
 
@@ -155,7 +156,7 @@ A key list shorter than its count only leaves slots unreachable; a longer one co
 
 ### Reward volume on the trial type
 
-`TrialType::rewardTime` is the one non-const member. The compiled value is the profile's default, and `applyRewardTimes()` overwrites it from the `START` line (`RW<slot+1>`) before the first trial, so `deliverReward()` never consults `TaskParams` for it. The table is therefore `static TrialType kTrials[]`, not `const`.
+`TrialType::rewardTime` is the one non-const member. The compiled value is the profile's default, and `applyRewardTimes()` overwrites it from the `SET` lines (`RW<slot+1>`) before the first trial, so `deliverReward()` never consults `TaskParams` for it. The table is therefore `static TrialType kTrials[]`, not `const`.
 
 ### Selection modes
 
@@ -264,7 +265,7 @@ Skip reasons, each reported with its path:
 |---|---|---|---|
 | `taskName` | non-empty string | **required** | Display name |
 | `kind` | `"behavior"` \| `"utility"` | `"behavior"` | Anything else raises |
-| `config` | array | `[]` | Fields for the form, the `START` line and the session file |
+| `config` | array | `[]` | Fields for the form, the `SET` lines and the session file |
 | `strobes` | object, integer-string keys → names | — | **Ignored** in a sketch's `task.json`: filled from the [strobe vocabulary](#strobe-vocabulary) at load. Kept verbatim in a session snapshot |
 | `liveMetrics` | array | `[]` | Rolling P metrics, and the gate on the diagram's condition rows |
 | `controls` | array | `[]` | Utility profiles: Debug Mode widgets |
@@ -442,7 +443,7 @@ A definition stores **channel names and strobe code names, never pins or numbers
 | `TSK104` | A strobe code the vocabulary does not declare | An unlabelled number in the data |
 | **`TSK105`** | **Two trial types on one odor line** (one line declares one onset code) | Two conditions, one label, pooled by every analysis |
 | `TSK106` | A ramp not strictly ascending after row 0 | `liveStage()` scans down, so the row never engages |
-| `TSK107` | A `START` line over the cap | The firmware truncates in silence |
+| `TSK107` | A parameter too long for a `SET` line | The firmware truncates in silence |
 | `TSK108` | No presentable trial — a row is presentable exactly when the generator emits it (`taskdef/rows.py`), so go rows with no usable response port, reward line or slot count for nothing; so does a table of only no-go types outside pool, since both anti-bias selectors draw a side first | A session that runs nothing |
 | **`TSK109`** | **All pool weights zero** (pool), or **a side whose go types all weigh zero** (weighted) | The firmware falls back to a uniform draw while the table says otherwise |
 | `TSK110` | A condition with no name | Every readout titles it after whichever channel carried it |
@@ -771,15 +772,15 @@ That covers a channel set reset to the shipped one, a channel deleted and added 
 | Per-box override | the session's box mapping | this animal, this run |
 
 For each field the profile declares, the most specific layer that has a value wins. From there the line is
-built sidecar-side, and only the seed is added at the click:
+built sidecar-side as `SET` lines, and only the seed, on `START`, is left for the click:
 
 ```mermaid
 flowchart LR
     profileDefault["Profile default<br/>task.json"] --> merge["defaultConfig<br/>src/lib/sessions/types.ts"]
     rigDefault["Rig default<br/>settings.taskDefaults"] --> merge
     override["Per-box override<br/>mapping step"] --> merge
-    merge -->|"sessions.confirmMapping"| build["build_start_command<br/>checked against START_LINE_MAX"]
-    build -->|"Start: with_trial_seed"| line["START … SEED=n<br/>to the board"]
+    merge -->|"sessions.confirmMapping"| build["build_start_command<br/>SET lines, each under SET_LINE_MAX"]
+    build -->|"Start: SET lines, PARAMS checked"| line["START SEED=n<br/>to the board"]
 ```
 
 They merge in that order in exactly one place, `defaultConfig` in `src/lib/sessions/types.ts`. **It iterates the profile's fields, not the stored objects**, so a value for a field the sketch no longer declares cannot reach the wire. `taskDefaults` is keyed by sketch folder name (what the session file records as `sketch`) and stores only divergences; it has no editor, and entries keyed by a sketch that no longer exists are inert. The session file records the merged values flat, plus `config_json`/`params_hash` on the run — a reader never needs to know which layer a number came from.
@@ -791,33 +792,73 @@ The mapping step keeps **only the per-box layer**: a row (and its set-up draft) 
 
 ### Building the line
 
-`build_start_command(profile, config)` in `tasks/start_command.py`: `START <wireKey>=<value> <wireKey>=<value> …`, space-separated, order-independent, matching the firmware parser (unknown keys ignored, missing keys keep the compiled default).
+`build_start_command(profile, config)` in `tasks/start_command.py` returns a `StartCommand`: the run's parameters as tokens, `<wireKey>=<value>`, packed into `SET <token> <token> …` lines. Tokens are order-independent to the firmware parser (unknown keys are not parsed, missing keys keep the compiled default) but the order is kept, because the board's CRC is over the tokens in the order it received them.
 
 - `config` is keyed by `metadataKey`; tokens follow the profile's `config` order.
 - A missing key uses the field's default; an undeclared key is ignored, so stale UI state cannot leak.
 - An unrenderable value falls back to the default; if that fails too, the token is dropped.
 - `bool` → `1`/`0`; `int` → integer; `float` → trimmed; `string` → verbatim (whitespace raises).
-- No profile, or no config fields → bare `START`.
+- Tokens are packed greedily into lines shorter than `SET_LINE_MAX`, never split across lines.
+- No profile, or no config fields → one bare `SET`. The board is asked even about an empty block, because a board that never hears a `SET` cannot be told apart from an older sketch.
 
-It is built sidecar-side at `sessions.confirmMapping` (and by `port.sendStart` in Debug Mode, and by the validator for `TSK107`).
+It is built sidecar-side at `sessions.confirmMapping` (and by `port.sendStart` in Debug Mode, and by the validator for `TSK107`). Only the `START` line is left for the click.
+
+### Confirming the parameters
+
+Before a run starts, the board proves it holds exactly what the host meant it to. The host sends each `SET` line alone and waits for the board's answer before the next, because the Mega's receive buffer is 64 bytes.
+
+```mermaid
+sequenceDiagram
+    participant Host as Sidecar
+    participant Board as Mega2560
+    Board-->>Host: INTERP=1
+    Board-->>Host: READY
+    loop each SET line, one at a time
+        Host->>Board: SET KEY=value …
+        Board-->>Host: CLAMPED KEY (for each value its clamp would move)
+        Board-->>Host: PARAMS n crc32
+    end
+    Note over Host: n and crc32 of the last answer must equal the host's own, with no CLAMPED
+    Host->>Board: START SEED=n
+    Board-->>Host: SEED n
+```
+
+- **`PARAMS <n> <crc32>`** is the running total: `n` is how many keys the board has accepted, and `crc32` is the standard CRC-32 (what Python's `zlib.crc32` computes) over the accepted tokens **exactly as received**, joined by single spaces, in the order received. The host computes both over what it sent (`StartCommand.count`, `.crc32`) and acts on the answer to its last line.
+- **`CLAMPED <key>`** is printed before that `PARAMS`, once for each value `clampTaskParams()` would change in the block so far. The board judges a copy, so the block it holds is untouched until `START`; a clamp on an early line that a later line corrects does not appear in the last answer.
+- **`START SEED=<n>`** is sent only after the answer clears. It carries the seed and nothing else ([SEED](#seed)); the board clamps and applies ramp row 0 then.
+- **`INTERP=<n>`** is printed before `READY` and names the firmware interpreter; this firmware is `1`. The run's `.tsv` header records it as `# interp: <n>` ([DATA.md](DATA.md#the-tsv-log)); a board that announced none leaves the line out.
+
+The start is refused, with nothing started and the port in `ERROR` until acknowledged, on any of:
+
+| Error code | `detail.reason` | What it caught |
+|---|---|---|
+| `PARAMS_MISMATCH` | `count` | The board accepted fewer keys than were sent: a key this sketch does not parse. A line cut inside a key lands here too, since the stub is no key |
+| `PARAMS_MISMATCH` | `crc` | The same count but different bytes: a line cut inside a value, or garbled in transit |
+| `PARAMS_CLAMPED` | `clamped` | The board would not run a value as chosen; `detail.keys` names them |
+| `FIRMWARE_OUTDATED` | `no_reply` | No `PARAMS` within `SESSION_PARAMS_TIMEOUT_S`: the sketch predates `SET`, and the message says to reflash |
+
+At a session start the refusal arrives as `sidecar.error` for that box (the click had already returned) and the run ends with `stop_reason: "start refused: <reason>"`; from Debug Mode it is the reply to `port.sendStart`. In Debug Mode the confirmed block is followed by a bare `START`: a hand-run task takes no seed and records nothing.
+
+> [!CAUTION]
+> **A bare `START` still starts a board.** A hand-typed console session keeps working, and runs on the compiled-in defaults without any confirmation. The app never sends one: a run it starts has either been confirmed or refused.
 
 ### The length cap
 
 > [!CAUTION]
-> **The cap is checked rather than trusted, because the firmware cannot report the failure.** `readLineInto()` truncates an overlong line and drops the rest, so an over-declared profile would run on whichever values happened to fit. `build_start_command` raises instead, naming the length and the limit. `START_LINE_MAX` lives in **two files** — `tasks/start_command.py` and `firmware/libraries/BehaviorBox/BehaviorBox.h` — and `tests/test_task_profiles.py` fails when they disagree.
+> **The cap is checked rather than trusted, because the firmware cannot report the failure.** `readLineInto()` truncates an overlong line and drops the rest. The host therefore never builds a `SET` line that long: `build_start_command` raises, naming the parameter and the limit, when a single token cannot fit. And were a line cut anyway, the board's `PARAMS` would disagree with the host's and [the start would be refused](#confirming-the-parameters). `SET_LINE_MAX` lives in **two files** — `tasks/start_command.py` and `firmware/libraries/BehaviorBox/BehaviorBox.h` — and `tests/test_start_command.py` fails when they disagree.
 
-`START_LINE_MAX` is the firmware's line **buffer**, terminator included: a sketch reads into `char cmd[START_LINE_MAX]`, so the longest line it keeps whole is `START_LINE_MAX - 1` characters, and the host refuses a line of `START_LINE_MAX` or more. A line of exactly `START_LINE_MAX` would lose its last character, which is the seed's last digit. The firmware host test pins what `readLineInto()` keeps; `tests/test_task_profiles.py` pins the host at both edges.
+`SET_LINE_MAX` is the firmware's line **buffer**, terminator included: a sketch reads into `char cmd[SET_LINE_MAX]`, so the longest line it keeps whole is `SET_LINE_MAX - 1` characters, and the host refuses a token that would make a line of `SET_LINE_MAX` or more. The firmware host test pins what `readLineInto()` keeps; `tests/test_start_command.py` pins the host at both edges.
 
-The budget reserves room for the `SEED` token (`_SEED_TOKEN_BUDGET`), because the config half of the line is built at mapping, minutes before the seed is drawn. A `TaskProfileError` here becomes `TASK_PROFILE_INVALID` with the box, and **the mapping is refused**. A profile that fails to *parse* at mapping is instead treated as profile-less (bare `START`).
+The cap is on each line, not on the run: a profile with many fields is spread over more lines. Only one parameter too long for a line is refused, as `TASK_PROFILE_INVALID` with the box, and **the mapping is refused**. A profile that fails to *parse* at mapping is instead treated as profile-less (one bare `SET`).
 
 ### SEED
 
 `SEED` is a reserved wire key no profile may claim.
 
-- **Host → board:** `with_trial_seed` appends `SEED=<n>` at the instant the operator starts **that box** (`tasks/seed.py`). Drawn per box at start, not at mapping, which would give every box in a group the same value and survive Stop → Start. A board that predates the convention ignores the unknown key and seeds itself.
+- **Host → board:** `StartCommand.start_line` puts `SEED=<n>` on the `START` line at the instant the operator starts **that box** (`tasks/seed.py`), once the parameters are confirmed. Drawn per box at start, not at mapping, which would give every box in a group the same value and survive Stop → Start.
 - **Board → host:** a `SEED\t<n>` line right after `START` is captured as `trial_seed`.
 
-The host draws it because the board cannot: opening the port pulls DTR and resets the Mega, so `micros()` at `START` measures only boot time plus a round-trip — a few hundred reachable seeds. The host uses the OS CSPRNG, held to `[1, 2^31 - 2]` (`randomSeed(0)` is a no-op; avr-libc's `random()` state space ends at `2^31 - 2`). Both values are recorded: `host_seed` is what was sent, `trial_seed` what the board reports running on. They differ only on a box still carrying a self-seeding sketch, and the sidecar warns when they do.
+The host draws it because the board cannot: opening the port pulls DTR and resets the Mega, so `micros()` at `START` measures only boot time plus a round-trip — a few hundred reachable seeds. The host uses the OS CSPRNG, held to `[1, 2^31 - 2]` (`randomSeed(0)` is a no-op; avr-libc's `random()` state space ends at `2^31 - 2`). Both values are recorded: `host_seed` is what was sent, `trial_seed` what the board reports running on. They differ only if a board ignored `SEED=` and seeded itself, and the sidecar warns when they do.
 
 ## Profile and params hashes
 
@@ -986,9 +1027,9 @@ Below sit the groups that are selection policy: **Anti-bias selection**, **Trial
 
 <img src="images/task-generation.webp" alt="The Trial generation panel set to Weighted: the mode switch, the hint and its facts, the composition strip split into right and left halves by row weight, Trial pool folded as not used in weighted, and the Correction trials and Anti-bias selection fields" width="360">
 
-### Ramp and START meter
+### Ramp
 
-The ramp is the dial's **Holds & shaping** stop (`editor/StageList.tsx`): one compact row per stage — the trial it engages at, odor hold, well hold, response window, odor port window — with the timeline strip once there is more than one stage. Row 0 has no "engages at"; a new row is seeded from the row before it, never from a defaults table, so no stage appears carrying numbers nobody chose. The header's **`START` meter** shows the built line's length against `START_LINE_MAX` and is never hidden: that cap is the one budget an operator can exhaust without noticing, each added stage costs five tokens, and over the cap the meter says the firmware truncates in silence.
+The ramp is the dial's **Holds & shaping** stop (`editor/StageList.tsx`): one compact row per stage — the trial it engages at, odor hold, well hold, response window, odor port window — with the timeline strip once there is more than one stage. Row 0 has no "engages at"; a new row is seeded from the row before it, never from a defaults table, so no stage appears carrying numbers nobody chose. Each added stage costs five tokens, which the parameter block spreads over more `SET` lines; there is no total to exhaust.
 
 <img src="images/task-ramp.webp" alt="The Parameters dial turned to Holds &amp; shaping for 2-Odor Discrimination: a timeline of five stages engaging at trials 0, 15, 30, 50 and 80, and one row per stage with its odor hold, well hold, response window and port window, above the note that each stage costs five START tokens" width="385">
 
@@ -1017,7 +1058,7 @@ For a firmware author adding a sketch to the bundle with its own hand-written `t
 ### Authoring steps
 
 1. **Write the sketch in `firmware/`**, inside a category folder, with `<Name>/<Name>.ino`. `#include "TaskPins.h"` before `<BehaviorBox.h>` (and ship a `TaskPins.h` that declares nothing) so the app rebuilds it against each rig's wiring and vocabulary — a `BehaviorBox` sketch without it does not compile. A name must not collide with a saved task.
-2. **Minimum profile:** `{ "taskName": "My Task" }`. This alone gives a bare `START`, no form, a raw log and no diagram.
+2. **Minimum profile:** `{ "taskName": "My Task" }`. This alone gives one bare `SET`, no form, a raw log and no diagram.
 3. **Emit only codes the vocabulary holds.** Add any new one on the Strobes page first ([Editing the vocabulary](#editing-the-vocabulary)), then emit `BF_<NAME>`. Don't declare `strobes` in `task.json`; the vocabulary fills it. Which names the vocabulary holds unlocks each part of the diagram ([Nodes and outcomes](#nodes-and-outcomes)); `END_SESSION` is what lets the runner finalize cleanly.
 4. **Declare every operator-tunable parameter** in `config`, with `wireKey`s that `TASK_PARAM_LIST` parses, a `metadataKey` you want in the data file, a `group` from `GROUP_ORDER` (unknown groups sort last), and ramped values **per stage**. Mind the [length cap](#the-length-cap).
 5. **Declare `liveMetrics`**, one per presented condition, naming its codes. A metric whose `trigger` is an `ODOR_<n>_ON` code is what draws that condition; one scoring `WATER_POKE_NONE` draws the withhold arm.
@@ -1044,7 +1085,8 @@ For a firmware author adding a sketch to the bundle with its own hand-written `t
 | Console shows `Strobe <n>` | The firmware emitted a raw number the vocabulary never issued |
 | `#error "No strobe codes…"` | Built bare — compile the folder the app generated |
 | Compile error naming a `BF_` code | The code is retired or was never added; reinstate or add it on the Strobes page |
-| Mapping refused, `TASK_PROFILE_INVALID` | `START` line over the cap |
+| Mapping refused, `TASK_PROFILE_INVALID` | A parameter too long for a `SET` line |
+| Start refused, `PARAMS_MISMATCH`, `PARAMS_CLAMPED` or `FIRMWARE_OUTDATED` | The board's answer to the `SET` lines ([confirming the parameters](#confirming-the-parameters)) |
 | A value ignored by the board | `wireKey` not parsed by `TASK_PARAM_LIST` |
 | A value reverts mid-session | A ramped value declared once instead of per stage |
 | Analytics splits the sketch's history | Something in `to_json` changed ([hashes](#profile-and-params-hashes)) |
@@ -1056,9 +1098,9 @@ All raise `TaskProfileError`, surfaced as `TASK_PROFILE_INVALID` ([PROTOCOL.md](
 
 - **Parse:** a non-object root; missing `taskName`; unknown `kind`; malformed `config` (missing keys, unknown type, reserved `SEED`, a core-field collision, duplicates, a default of the wrong type, whitespace in a string default, non-string `group`/`unit`/`help`, non-numeric `min`/`max`/`step`, `min > max`); non-object `strobes` or a non-integer key (snapshots only); a `liveMetrics` entry missing a required key, or naming a code that is not live; malformed `controls` or `telemetry`; `identify` missing a half; `legacyNames` not a list of strings.
 - **Load:** unreadable or invalid JSON (`couldn't read task.json: …`). A missing file is not an error.
-- **Build:** the `START` line plus the seed budget at or over `START_LINE_MAX` ([the length cap](#the-length-cap)).
+- **Build:** a single parameter that makes a `SET` line at or over `SET_LINE_MAX` ([the length cap](#the-length-cap)).
 
-`tasks.getProfile` returns the error with `sketchPath`. At `sessions.confirmMapping` and `port.sendStart` a profile that fails to parse is downgraded to profile-less (bare `START`); only the length case refuses. `build_legacy_name_index` skips a broken profile so it cannot hide every other sketch's legacy names.
+`tasks.getProfile` returns the error with `sketchPath`. At `sessions.confirmMapping` and `port.sendStart` a profile that fails to parse is downgraded to profile-less (one bare `SET`); only the length case refuses. `build_legacy_name_index` skips a broken profile so it cannot hide every other sketch's legacy names.
 
 ### What degrades silently
 

@@ -563,7 +563,7 @@ stateDiagram-v2
     PASSTHROUGH --> ERROR: board vanished
     FLASHING --> ERROR: flash failed or console would not reopen
     RESETTING --> ERROR: reset failed or console would not reopen
-    IN_SESSION --> ERROR: open failed, board dropped, or no READY
+    IN_SESSION --> ERROR: open failed, board dropped, no READY, or a refused start
     ERROR --> IDLE: port.error.ack
 ```
 
@@ -900,9 +900,10 @@ asked to light a box.
 
 ### Running a task from Debug Mode
 
-- **Send START** sends `port.sendStart`. The **sidecar** builds the line with `build_start_command` — the
-  one place that knows the wire keys and the line cap — from the same merged values a session uses
-  ([TASKS.md](TASKS.md#the-start-line)), and arms `debug_run.py`, which feeds the box's `port.output`
+- **Send START** sends `port.sendStart`. The **sidecar** builds the `SET` lines with `build_start_command` — the
+  one place that knows the wire keys and the line cap — from the same merged values a session uses, sends them
+  and holds the board's `PARAMS` against what it sent, then sends a bare `START`
+  ([TASKS.md](TASKS.md#confirming-the-parameters)), and arms `debug_run.py`, which feeds the box's `port.output`
   strobes to **the same `MetricSet` a session uses** and pushes `port.telemetry` into the per-box slot
   `session.telemetry` fills. Debug Mode therefore mounts Mission Control's `MetricStrip` and `LivePanels`
   unchanged. Don't write a second scorer; `test_debug_flash.py` pins the two to identical output.
@@ -1133,13 +1134,19 @@ Per box (`ports/handler.py`, `sessions/runner.py`):
    time limit only once it holds one: a port that refuses (`ERROR` from an earlier start, say) raises
    before anything is recorded, and leaves nothing for End to stop.
 2. Open the port, which pulls DTR and resets the Mega.
-3. Wait `SESSION_READY_TIMEOUT_S` for `READY`, else `ERROR`.
-4. Send the built `START … SEED=<n>`. **The seed is drawn at the click**, not at mapping, or every box in a
-   group would share it and it would survive a Stop/Start ([TASKS.md](TASKS.md#the-start-line)).
-5. Watch `SESSION_SEED_WINDOW_S` for an optional `SEED\t<value>`; a strobe also ends the window.
-6. Strict parsing: a data line is exactly `^\d{1,3}\t\d+$` (`STROBE_RE`). Anything else goes to scrollback
+3. Wait `SESSION_READY_TIMEOUT_S` for `READY`, else `ERROR`. An `INTERP=<n>` line before it names the
+   firmware interpreter and is kept for the file header.
+4. Send the built `SET` lines one at a time, waiting up to `SESSION_PARAMS_TIMEOUT_S` for each `PARAMS` answer,
+   and hold the last answer against what was sent ([TASKS.md](TASKS.md#confirming-the-parameters)). A mismatch,
+   a `CLAMPED` key or silence refuses the start: `START` is never sent, the box is told why in a
+   `sidecar.error` (`PARAMS_MISMATCH`, `PARAMS_CLAMPED`, `FIRMWARE_OUTDATED`), the run ends with
+   `stop_reason: "start refused: <reason>"` and the port goes `ERROR`.
+5. Send `START SEED=<n>`. **The seed is drawn at the click**, not at mapping, or every box in a
+   group would share it and it would survive a Stop/Start ([TASKS.md](TASKS.md#seed)).
+6. Watch `SESSION_SEED_WINDOW_S` for an optional `SEED\t<value>`; a strobe also ends the window.
+7. Strict parsing: a data line is exactly `^\d{1,3}\t\d+$` (`STROBE_RE`). Anything else goes to scrollback
    — a profile-less sketch's raw log — and is never data.
-7. Each strobe is appended and fsync'd to the animal's `.tsv`, then fed to the rolling metrics
+8. Each strobe is appended and fsync'd to the animal's `.tsv`, then fed to the rolling metrics
    ([DATA.md](DATA.md#crash-safety)).
 
 Writer I/O stays on the port's session thread; anything touching the socket or state machine is scheduled
@@ -1154,7 +1161,7 @@ The claim is the run's only handle on its port (`SessionClaim`, `ports/handler.p
 | `on_lost(reason)` | Given at claim time; runs on the loop when the port leaves `IN_SESSION` for `ERROR`, at most once, never after `release` ([Board drop](#board-drop)) |
 
 The same sequence for one box. The file is opened only once the handshake resolves — on a `SEED` line,
-the first strobe, or the end of the seed window — so its header can carry the seed:
+the first strobe, or the end of the seed window — so its header can carry the seed and the interpreter:
 
 ```mermaid
 sequenceDiagram
@@ -1165,14 +1172,19 @@ sequenceDiagram
     participant File as Animal .tsv
     UI->>Runner: sessions.startAll or port.startSession
     Runner->>Runner: draw the host seed
-    Runner->>Port: claim_session with START … SEED=n
+    Runner->>Port: claim_session with the SET lines and the seed
     Port->>Port: IDLE → IN_SESSION, or raise
     Port-->>Runner: SessionClaim
     Runner->>Runner: record the run, arm the time limit
     Port->>Board: open the port, DTR resets the Mega
-    Board-->>Port: READY
+    Board-->>Port: INTERP=n, then READY
     Note over Port,Board: no READY within SESSION_READY_TIMEOUT_S → ERROR
-    Port->>Board: START … SEED=n
+    loop each SET line
+        Port->>Board: SET KEY=value …
+        Board-->>Port: PARAMS n crc32 (CLAMPED KEY first, if any)
+    end
+    Note over Port,Board: a mismatch, a CLAMPED key or silence → refused, ERROR, no START
+    Port->>Board: START SEED=n
     opt within SESSION_SEED_WINDOW_S
         Board-->>Port: SEED and its value
     end
@@ -1240,6 +1252,7 @@ flowchart TD
 | `"BF_END_SESSION received"` | `CLEAN_STOP_REASON` (`sessions/runner.py`): the board ended the run — trial cap, `STOP`, or time limit |
 | `"operator stop"` | End Session or Switch Group force-finalized a box that hadn't ended itself within the wait. A box's own Stop never produces it: the board answers `STOP` with its end strobe |
 | `"board disconnected"` | The port dropped mid-session |
+| `"start refused: <reason>"` | The board's answer to the parameter block refused the start (`count`, `crc`, `clamped`, `no_reply`); no file was written ([TASKS.md](TASKS.md#confirming-the-parameters)) |
 | `"sidecar error: <cause>"` | The session files couldn't be opened |
 | `"recovered after crash"` | `RECOVERED_STOP_REASON`, from [crash recovery](DATA.md#crash-recovery) |
 

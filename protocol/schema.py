@@ -1944,6 +1944,75 @@ SHAPES = (
             ),
         ),
     ),
+    Shape(
+        "ChannelSetConflict",
+        obj(
+            f(
+                "kind",
+                STR,
+                doc="`vocabulary` (one name with two codes, one code with two names, "
+                "or a code this machine cannot issue), `not_here` (a channel the file "
+                "has and this rig lacks, so it has no pin here), `only_here` (a "
+                "channel this rig has and the file lacks), `no_code` (an edge the "
+                "file names no code for), `rule` (a wiring rule RIG101–RIG107 the "
+                "imported channel set breaks here, judged against the merged "
+                "vocabulary), or `hash` (the file changed after it was exported).",
+            ),
+            f("channel", nullable(STR), doc="The channel it is about, when it is about one."),
+            f("message", STR, doc="The difference, in words, naming both sides."),
+        ),
+        doc="One way another machine's channel set disagrees with this one "
+        "(`TASKS.md#moving-the-channel-set-between-machines`). Any one refuses "
+        "the whole import.",
+    ),
+    Shape(
+        "ChannelSetImportPlan",
+        obj(
+            f(
+                "conflicts",
+                ListOf(Ref("ChannelSetConflict")),
+                doc="Every disagreement, not the first. Non-empty means the import "
+                "is refused whole and nothing is written.",
+            ),
+            f(
+                "vocabulary",
+                Ref("StrobeImportPlan"),
+                doc="The vocabulary half: the codes the import adds and retires here.",
+            ),
+            f(
+                "changed",
+                ListOf(STR),
+                doc="Channels on both sides whose entry the import replaces.",
+            ),
+            f(
+                "reordered",
+                BOOL,
+                doc="The file declares the channels in another order. Declaration "
+                "order is the odor index (`TASKS.md#order-is-meaning`), so it is "
+                "said out loud.",
+            ),
+            f(
+                "breaks",
+                ListOf(Ref("RigImpact")),
+                doc="Saved tasks the import would newly break. Applying needs "
+                "`confirm` when non-empty.",
+            ),
+            f("hereHash", STR, doc="This rig's `channelSetHash` now."),
+            f(
+                "thereHash",
+                STR,
+                doc="The exporting machine's `channelSetHash`: this rig's after a "
+                "clean import.",
+            ),
+            f(
+                "identical",
+                BOOL,
+                doc="The two machines already agree: applying writes nothing.",
+            ),
+        ),
+        doc="What importing another machine's channel set and vocabulary would "
+        "do here. The pin map is never imported.",
+    ),
     # --------------------------------------------------------------- task profiles
     #
     # A task profile is the operator's task: the trial table, how the next trial
@@ -2810,6 +2879,54 @@ COMMANDS = (
         "A rig definition write: it waits for flashes already in progress, and "
         "everything that reads a generated folder waits for it "
         "(`TASKS.md#the-rig-definition`).",
+    ),
+    Command(
+        "hardware.exportChannelSet",
+        result=obj(
+            f(
+                "document",
+                ANY,
+                doc="`{channel_set_export_version, channel_set_hash, channel_set, "
+                "vocabulary}`: the channel set in force, with no pins, and this "
+                "machine's whole vocabulary.",
+            ),
+            f("filename", STR),
+        ),
+        doc="The channel set and the vocabulary as they travel to the other lab "
+        "machine (`TASKS.md#moving-the-channel-set-between-machines`). "
+        "`CHANNEL_SET_INVALID` while an edge has no code yet (save the wiring "
+        "first); `RIG_WIRING_UNLOADED` while the stored wiring did not load; "
+        "`STROBE_VOCABULARY_UNREADABLE` while the vocabulary will not read.",
+    ),
+    Command(
+        "hardware.importChannelSet",
+        args=obj(
+            f("document", ANY, doc="Another machine's `hardware.exportChannelSet` document."),
+            f("apply", BOOL, doc="False ⇒ plan only, write nothing."),
+            f(
+                "confirm",
+                BOOL,
+                optional=True,
+                doc="As `hardware.save`'s: needed to apply a plan with `breaks`.",
+            ),
+        ),
+        result=obj(
+            f("plan", Ref("ChannelSetImportPlan")),
+            f(
+                "applied",
+                BOOL,
+                doc="Something was written. False for a plan, and for an identical import.",
+            ),
+        ),
+        doc="Make this machine's channel set and vocabulary the other machine's, "
+        "keeping this machine's pins. One rig definition write: the vocabulary "
+        "union, then the wiring, then one rebuild, broadcasting "
+        "`strobes.updated` (when the vocabulary changed) and `hardware.updated`. "
+        "`CHANNEL_SET_IMPORT_CONFLICT` applying a plan with conflicts "
+        "(`detail.conflicts`); `CHANNEL_SET_INVALID` for a file that is not an "
+        "export; `RIG_WOULD_BREAK_TASKS` without `confirm`; `RIG_IN_USE`, "
+        "`RIG_WIRING_UNLOADED` and `RIG_SAVE_BLOCKED` as for `hardware.save`. "
+        "Nothing is written on any of them.",
     ),
     # ------------------------------------------------------- strobe vocabulary
     #
@@ -4120,6 +4237,19 @@ ERRORS = (
         "sent without `confirmedPins`; or a draft with a wiring-rule problem "
         "(RIG101–RIG107), which the editor holds Save on too. Nothing was written "
         "and no code was issued (`TASKS.md#the-channel-set-and-the-pin-map`).",
+    ),
+    ErrorCode(
+        "CHANNEL_SET_INVALID",
+        "`hardware.importChannelSet` with a file that is not an exported channel "
+        "set (another version, no vocabulary, a channel set out of shape), or "
+        "`hardware.exportChannelSet` while an edge has no code yet. Nothing was "
+        "written.",
+    ),
+    ErrorCode(
+        "CHANNEL_SET_IMPORT_CONFLICT",
+        "`hardware.importChannelSet` applied with a plan that has conflicts. "
+        "Nothing was written; `detail.conflicts` lists every one "
+        "(`ChannelSetConflict`).",
     ),
     ErrorCode(
         "STROBE_INVALID",

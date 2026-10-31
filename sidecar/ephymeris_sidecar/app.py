@@ -262,6 +262,8 @@ class Application:
         self.server.register(Cmd.HARDWARE_PREVIEW, self._hardware_preview)
         self.server.register(Cmd.HARDWARE_SAVE, self._hardware_save)
         self.server.register(Cmd.HARDWARE_RESET, self._hardware_reset)
+        self.server.register(Cmd.HARDWARE_EXPORT_CHANNEL_SET, self._hardware_export_channel_set)
+        self.server.register(Cmd.HARDWARE_IMPORT_CHANNEL_SET, self._hardware_import_channel_set)
 
         self.server.register(Cmd.INTAN_STATUS, self._intan_status)
         self.server.register(Cmd.INTAN_CONNECT, self._intan_connect)
@@ -1176,6 +1178,15 @@ class Application:
     async def _hardware_reset(self, _args: Args) -> dict[str, Any]:
         # A wiring change like any other -- see `_hardware_save`.
         return await self.rig_definition.reset_wiring()
+
+    async def _hardware_export_channel_set(self, _args: Args) -> dict[str, Any]:
+        return await asyncio.to_thread(self.rig_definition.export_channel_set)
+
+    async def _hardware_import_channel_set(self, args: Args) -> dict[str, Any]:
+        # A rig definition write when applied (`TASKS.md#moving-the-channel-set-between-machines`).
+        return await self.rig_definition.import_channel_set(
+            args["document"], apply=args["apply"], confirm=bool(args.get("confirm"))
+        )
 
     def _rig_document_arg(self, args: Args) -> dict[str, Any]:
         """`RIG_INVALID` is for a document that is not a document.

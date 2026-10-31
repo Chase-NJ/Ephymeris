@@ -1,15 +1,24 @@
+import { save } from "@tauri-apps/plugin-dialog";
+import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { motion } from "framer-motion";
-import { ArrowLeft, CircuitBoard, ListOrdered } from "lucide-react";
+import { ArrowLeft, CircuitBoard, Download, ListOrdered, Upload } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router";
 
 import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
+import { ChannelSetImportDialog } from "@/components/hardware/ChannelSetImportDialog";
 import { KindStrip } from "@/components/hardware/KindStrip";
 import { Button } from "@/components/common/controls";
 import { PinTable } from "@/components/hardware/PinTable";
 import { RigWiringEditor } from "@/components/hardware/RigWiringEditor";
+import { errorMessage } from "@/lib/cohorts/commands";
+import { SAVE_STEPS, trackExport } from "@/lib/exports/jobs";
+import { exportChannelSet } from "@/lib/hardware/commands";
 import { useRig } from "@/lib/hardware/useRig";
 import { springPanel } from "@/lib/motion";
+import { useSidecar } from "@/lib/ws/context";
+
+const FETCHING = "Fetching the channel set";
 
 /**
  * Rig wiring — the channel→pin map, on its own page (`TASKS.md#the-wiring-page`).
@@ -29,8 +38,29 @@ import { springPanel } from "@/lib/motion";
  */
 export function RigWiring() {
   const navigate = useNavigate();
+  const { client } = useSidecar();
   const rig = useRig();
   const [selected, setSelected] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
+
+  // The channel set and vocabulary for the other lab machine
+  // (`TASKS.md#moving-the-channel-set-between-machines`), on the export card
+  // like the app's other exports. The sidecar refuses one it cannot honour.
+  const doExport = () =>
+    trackExport("Channel set", "json", [FETCHING, ...SAVE_STEPS], async (tracker) => {
+      const reply = await exportChannelSet(client).catch((err: unknown) => {
+        throw new Error(errorMessage(err));
+      });
+      tracker.step(SAVE_STEPS[0]);
+      const path = await save({
+        defaultPath: reply.filename,
+        filters: [{ name: "Channel set", extensions: ["json"] }],
+      });
+      if (!path) return null;
+      tracker.step(SAVE_STEPS[1]);
+      await writeTextFile(path, `${JSON.stringify(reply.document, null, 2)}\n`);
+      return path;
+    }).catch(() => undefined);
 
   const doc = rig.doc;
   const channelCount = doc ? Object.keys(doc.channels).length : 0;
@@ -72,6 +102,15 @@ export function RigWiring() {
                 against
               </p>
             </div>
+            {/* The channel set travels; the pins never do. */}
+            <Button variant="ghost" disabled={doc === null} onClick={() => setImporting(true)}>
+              <Upload size={13} strokeWidth={1.75} />
+              Import channel set
+            </Button>
+            <Button variant="ghost" disabled={doc === null} onClick={() => void doExport()}>
+              <Download size={13} strokeWidth={1.75} />
+              Export channel set
+            </Button>
           </div>
 
           {/* The same strip the landing's door carries, so the door and the
@@ -117,6 +156,7 @@ export function RigWiring() {
           )}
         </section>
       </motion.div>
+      <ChannelSetImportDialog open={importing} onClose={() => setImporting(false)} />
     </div>
   );
 }

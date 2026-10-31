@@ -370,6 +370,21 @@ async def test_confirming_a_mapping_holds_the_session_and_the_rig(rig) -> None:
     assert rig.events[-1]["evt"] == "session.lifecycle"
 
 
+async def test_each_box_records_the_channel_set_its_sketch_was_generated_against(
+    rig, monkeypatch
+) -> None:
+    """Read inside the hold on the rig definition: no write lands between it
+    and the end of the session, so it is the channel set the folders were
+    generated from (`DATA.md#the-tsv-log`)."""
+    from ephymeris_sidecar.rig import registry
+
+    monkeypatch.setattr(
+        registry.ChannelSet, "content_hash", lambda self: "c0ffee0123456789"
+    )
+    await rig.confirm(rig.session())
+    assert {c.channel_set_hash for c in rig.runner.box_configs()} == {"c0ffee0123456789"}
+
+
 async def test_confirming_the_same_mapping_again_is_a_new_confirmation_on_the_wire(rig) -> None:
     """Two identical re-confirms are told apart by the payload itself.
 

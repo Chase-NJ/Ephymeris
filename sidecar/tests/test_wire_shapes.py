@@ -352,6 +352,27 @@ def test_analytics_derive_payloads_match_schema() -> None:
     assert thin["conditions"] == []
 
 
+def test_a_populated_channel_set_import_plan_matches_schema() -> None:
+    from ephymeris_sidecar.rig.transfer import ImportPlan
+    from ephymeris_sidecar.strobes.store import MergePlan
+
+    plan = ImportPlan(
+        vocabulary=MergePlan(
+            adds=[{"name": "LEVER_ON", "code": 400, "retired": False}],
+            retires=[{"name": "OLD_ON", "code": 300}],
+            only_here=["DOOR_NOTE"],
+        ),
+        here_hash="aaaa",
+        there_hash="bbbb",
+        conflicts=[{"kind": "not_here", "channel": "lever", "message": "lever …"},
+                   {"kind": "hash", "channel": None, "message": "changed"}],
+        changed=["fluid_2"],
+        reordered=True,
+        breaks=[{"specId": "t1", "label": None, "codes": ["TSK101"]}],
+    )
+    assert validate(("ref", "ChannelSetImportPlan"), plan.to_json()) == []
+
+
 def test_hardware_payloads_match_schema() -> None:
     line = OutputLine(dir="rx", text="READY", ts=1721600000.1)
     assert validate(("ref", "OutputLine"), line.to_json()) == []

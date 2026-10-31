@@ -21,13 +21,14 @@ import functools
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Any
 
 from ..hardware import service as hardware_service
 from ..hardware import store as hardware_store
 from ..protocol import Evt, event
 from ..strobes import store as strobe_store
-from . import allocation, registry
+from . import allocation, registry, transfer
 
 log = logging.getLogger(__name__)
 
@@ -360,6 +361,98 @@ class RigDefinition:
             await self._rebuild()
             await self._broadcast(event(Evt.HARDWARE_UPDATED, payload["status"]))
         return payload
+
+    # -- moving the channel set between machines ----------------------------- #
+    #
+    # TASKS.md#moving-the-channel-set-between-machines. The rules are
+    # `transfer.py`'s and pure; what is here is the order of the one write.
+
+    def export_channel_set(self) -> dict[str, Any]:
+        """This rig's channel set and vocabulary, as `hardware.exportChannelSet`
+        sends them. Refused while the stored wiring did not load: the channel
+        set in force is then the shipped one, not this rig's."""
+        if self._unloaded:
+            raise WiringNotLoaded(self._unloaded)
+        wiring = self._wiring_in_force()
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        return {
+            "document": transfer.export_document(wiring, self.load_vocabulary_strict()),
+            "filename": f"channel-set-{stamp}.json",
+        }
+
+    async def import_channel_set(
+        self, other: Any, *, apply: bool, confirm: bool = False
+    ) -> dict[str, Any]:
+        """The plan for importing `other`; written too when `apply`.
+
+        One rig definition write: plan again inside it, then the vocabulary
+        (only if it changes), then `wiring.json`, then one rebuild. The
+        vocabulary goes first so the wiring never names a code it lacks; if
+        the wiring then fails to write, the union stays (append only, and every
+        code it added is one the lab holds under the same number), the rebuild
+        a vocabulary edit owes still runs, and the error is raised.
+
+        Raises `transfer.ChannelSetRefused` (a conflict, or not an export),
+        `WiringWouldBreakTasks` without `confirm`, `WiringNotLoaded`,
+        `WiringSaveBlocked` or `RigInUse`. Nothing is written on any of them.
+        """
+        if not apply:
+            planned = await asyncio.to_thread(self._plan_import, other)
+            return {"plan": planned.plan.to_json(), "applied": False}
+        async with self.writing(WIRING_IN_USE):
+            planned = await asyncio.to_thread(self._plan_import, other)
+            plan = planned.plan
+            if plan.conflicts:
+                raise transfer.refusal(plan)
+            if plan.breaks and not confirm:
+                raise WiringWouldBreakTasks(plan.breaks)
+            if plan.identical:
+                return {"plan": plan.to_json(), "applied": False}
+            if planned.vocabulary is not None:
+                await asyncio.to_thread(self._vocabulary.save, planned.vocabulary)
+                registry.set_vocabulary_source(self._vocabulary.load)
+            try:
+                await asyncio.to_thread(self._hardware.save, planned.wiring)
+            except BaseException:
+                if planned.vocabulary is not None:
+                    await self._rebuild()
+                    vocabulary = await asyncio.to_thread(self.vocabulary_payload)
+                    await self._broadcast(event(Evt.STROBES_UPDATED, vocabulary))
+                raise
+            self._install_wiring()
+            status = await asyncio.to_thread(
+                functools.partial(
+                    hardware_service.document_payload, self._hardware, in_force=self.in_force()
+                )
+            )
+            await self._rebuild()
+            if planned.vocabulary is not None:
+                vocabulary = await asyncio.to_thread(self.vocabulary_payload)
+                await self._broadcast(event(Evt.STROBES_UPDATED, vocabulary))
+            await self._broadcast(event(Evt.HARDWARE_UPDATED, status["status"]))
+        return {"plan": plan.to_json(), "applied": True}
+
+    def _plan_import(self, other: Any) -> transfer.Planned:
+        """Against the wiring and the vocabulary in force, and refused while
+        the rig's state refuses a save: an import over the shipped pins, or over
+        a stored file whose pins nobody has confirmed, would put either in force
+        unseen."""
+        if self._unloaded:
+            raise WiringNotLoaded(self._unloaded)
+        blocked = self.save_blocked(confirmed_pins=False)
+        if blocked:
+            raise WiringSaveBlocked(blocked)
+        planned = transfer.plan_import(self._wiring_in_force(), self.load_vocabulary_strict(), other)
+        if planned.wiring is not None:
+            planned.plan.breaks = impact_of(
+                self._tasks, wiring=planned.wiring, vocabulary=planned.vocabulary
+            )
+        return planned
+
+    def _wiring_in_force(self) -> dict[str, Any]:
+        """The stored wiring in force, or the shipped one as a document."""
+        document = self.in_force().document
+        return document if document is not None else hardware_store.default_document()
 
     async def edit_vocabulary(
         self,

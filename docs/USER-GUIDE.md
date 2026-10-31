@@ -116,6 +116,11 @@ in the sidebar and the Dashboard sky; drag a box to a different star to move it.
 baseline**, a chip per box says whether it is **Ready** on the resting program. That program is built
 from the rig's wiring, so there is nothing to choose.
 
+On **Rig → Wiring**, **Export channel set** and **Import channel set** keep the lab's two computers recording
+the same events under the same codes. After the channels change on one computer, export there and import
+on the other. The pins stay each computer's own. If the two disagree anywhere, the import is refused and
+lists every difference. Fix each one first, then import again.
+
 ![The Rig tab: the Boxes table with label, bound board, handshake and Test button for each of six boxes, and below it the Utility baseline section showing BOX_Utility and a Ready chip for every box](images/rig.webp)
 
 **Cohorts.** Your groups of animals, drawn as planets. Click one to open it, or click the small disc

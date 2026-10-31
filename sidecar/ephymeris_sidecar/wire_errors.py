@@ -48,6 +48,7 @@ from .sessions.lifecycle import (
     StopRefused,
 )
 from .sessions.models import PrefixNameTaken, SessionNotFound
+from .rig.transfer import ChannelSetRefused
 from .strobes.store import StrobeRefused
 from .taskdef.model import TaskDefinitionError
 from .tasks.profile import TaskProfileError
@@ -154,6 +155,15 @@ _STROBE_CODES = {
 }
 
 
+def _channel_set_refused(exc: ChannelSetRefused, _args: Args) -> CommandError:
+    code = (
+        ErrCode.CHANNEL_SET_IMPORT_CONFLICT
+        if exc.reason == "import_conflict"
+        else ErrCode.CHANNEL_SET_INVALID
+    )
+    return CommandError(code, str(exc), exc.detail or None)
+
+
 def _strobe_refused(exc: StrobeRefused, _args: Args) -> CommandError:
     code = _STROBE_CODES.get(exc.reason, ErrCode.STROBE_INVALID)
     return CommandError(code, str(exc), exc.detail or None)
@@ -221,6 +231,7 @@ ERRORS: ErrorTable = [
         {"problems": [{"location": loc, "message": msg} for loc, msg in e.problems]},
     )),
     (StrobeRefused, _strobe_refused),
+    (ChannelSetRefused, _channel_set_refused),
     (TaskDefinitionError, _fixed(ErrCode.TASK_INVALID)),
     (TaskProfileError, _task_profile),
     # --- recording (RECORDING.md) ---

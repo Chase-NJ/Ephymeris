@@ -68,6 +68,7 @@ const CALL_TIMEOUT_OVERRIDES: Readonly<Record<string, number>> = {
   // Flashes themselves return once queued (`ARCHITECTURE.md#the-flash-queue`).
   [CMD.HARDWARE_SAVE]: 600_000,
   [CMD.HARDWARE_RESET]: 600_000,
+  [CMD.HARDWARE_IMPORT_CHANNEL_SET]: 600_000,
   [CMD.TASKS_SAVE]: 600_000,
   [CMD.TASKS_DELETE]: 600_000,
   [CMD.STROBES_ADD]: 600_000,

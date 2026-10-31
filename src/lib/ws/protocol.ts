@@ -42,6 +42,8 @@ export const CMD = {
   HARDWARE_PREVIEW: "hardware.preview",
   HARDWARE_SAVE: "hardware.save",
   HARDWARE_RESET: "hardware.reset",
+  HARDWARE_EXPORT_CHANNEL_SET: "hardware.exportChannelSet",
+  HARDWARE_IMPORT_CHANNEL_SET: "hardware.importChannelSet",
 
   // Strobe vocabulary
   STROBES_GET: "strobes.get",
@@ -191,6 +193,8 @@ export const ERR = {
   RIG_WOULD_BREAK_TASKS: "RIG_WOULD_BREAK_TASKS",
   RIG_WIRING_UNLOADED: "RIG_WIRING_UNLOADED",
   RIG_SAVE_BLOCKED: "RIG_SAVE_BLOCKED",
+  CHANNEL_SET_INVALID: "CHANNEL_SET_INVALID",
+  CHANNEL_SET_IMPORT_CONFLICT: "CHANNEL_SET_IMPORT_CONFLICT",
   STROBE_INVALID: "STROBE_INVALID",
   STROBE_REQUIRED: "STROBE_REQUIRED",
   STROBE_IN_RECORDED_SESSION: "STROBE_IN_RECORDED_SESSION",
@@ -1821,6 +1825,54 @@ export interface RigSaved {
   allocations: RigAllocation[];
 }
 
+/**
+ * One way another machine's channel set disagrees with this one
+ * (`TASKS.md#moving-the-channel-set-between-machines`). Any one refuses the whole import.
+ */
+export interface ChannelSetConflict {
+  /**
+   * `vocabulary` (one name with two codes, one code with two names, or a code this machine cannot
+   * issue), `not_here` (a channel the file has and this rig lacks, so it has no pin here),
+   * `only_here` (a channel this rig has and the file lacks), `no_code` (an edge the file names no
+   * code for), `rule` (a wiring rule RIG101–RIG107 the imported channel set breaks here, judged
+   * against the merged vocabulary), or `hash` (the file changed after it was exported).
+   */
+  kind: string;
+  /** The channel it is about, when it is about one. */
+  channel: string | null;
+  /** The difference, in words, naming both sides. */
+  message: string;
+}
+
+/**
+ * What importing another machine's channel set and vocabulary would do here. The pin map is never
+ * imported.
+ */
+export interface ChannelSetImportPlan {
+  /**
+   * Every disagreement, not the first. Non-empty means the import is refused whole and nothing is
+   * written.
+   */
+  conflicts: ChannelSetConflict[];
+  /** The vocabulary half: the codes the import adds and retires here. */
+  vocabulary: StrobeImportPlan;
+  /** Channels on both sides whose entry the import replaces. */
+  changed: string[];
+  /**
+   * The file declares the channels in another order. Declaration order is the odor index
+   * (`TASKS.md#order-is-meaning`), so it is said out loud.
+   */
+  reordered: boolean;
+  /** Saved tasks the import would newly break. Applying needs `confirm` when non-empty. */
+  breaks: RigImpact[];
+  /** This rig's `channelSetHash` now. */
+  hereHash: string;
+  /** The exporting machine's `channelSetHash`: this rig's after a clean import. */
+  thereHash: string;
+  /** The two machines already agree: applying writes nothing. */
+  identical: boolean;
+}
+
 export interface TaskDiagnostic {
   /** `trials[1].rewardChannel`, `stages[2].trials`. */
   location: string;
@@ -2315,6 +2367,8 @@ export interface CommandArgsMap {
   "hardware.preview": { document: unknown; confirmedPins?: boolean };
   "hardware.save": { document: unknown; confirm: boolean; confirmedPins?: boolean };
   "hardware.reset": Record<string, never>;
+  "hardware.exportChannelSet": Record<string, never>;
+  "hardware.importChannelSet": { document: unknown; apply: boolean; confirm?: boolean };
   "strobes.get": Record<string, never>;
   "strobes.usage": { name: string; scan?: boolean };
   "strobes.add": { name: string; code: number; rationale: string; emittedOn?: string };
@@ -2405,6 +2459,8 @@ export interface CommandResultMap {
   "hardware.preview": RigSaved;
   "hardware.save": RigSaved;
   "hardware.reset": RigDocument;
+  "hardware.exportChannelSet": { document: unknown; filename: string };
+  "hardware.importChannelSet": { plan: ChannelSetImportPlan; applied: boolean };
   "strobes.get": StrobeVocabulary;
   "strobes.usage": StrobeUsage;
   "strobes.add": StrobeVocabulary;

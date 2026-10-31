@@ -2154,7 +2154,8 @@ The three bundled-sketch-library states (`TASKS.md#sketch-library`). There is no
 | `label` | string |  |
 | `triggerCode` | number |  |
 | `successCode` | number |  |
-| `alternateCode` | number |  |
+| `alternateCode` | number | The first (often the only) code that scores a miss. |
+| `alternateCodes` *(optional)* | number[] | Every code that scores a miss, present only when there are several: a no-go type is wrong at any response port (`ANALYTICS.md#trials-hits-misses-and-exclusions`). `alternateCode` repeats the first. |
 | `windowSize` | number |  |
 
 <a id="shape-logbookcohort"></a>

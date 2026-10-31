@@ -109,14 +109,14 @@ def infer_profile(
         chosen = sides.get(code)
         if chosen == "withhold" and withhold is not None and slots:
             # The wrongness of an answered no-go doesn't depend on which port
-            # answered it, so any enter code closes the trial — the same
-            # arrangement the generator writes for a declared no-go type.
+            # answered it, so EVERY enter code closes the trial as a miss — the
+            # same arrangement the generator writes for a declared no-go type.
             metrics.append(LiveMetric(
                 id=f"inferred_{code}",
                 label=f"P(withhold | {stimulus})",
                 trigger_code=code,
                 success_code=withhold,
-                alternate_code=slots[0].enter,
+                alternate_codes=tuple(slot.enter for slot in slots),
                 window_size=INFERRED_WINDOW,
             ))
             continue
@@ -129,7 +129,7 @@ def infer_profile(
             label=f"P({correct.label} | {stimulus})",
             trigger_code=code,
             success_code=correct.enter,
-            alternate_code=other.enter,
+            alternate_codes=(other.enter,),
             window_size=INFERRED_WINDOW,
         ))
 

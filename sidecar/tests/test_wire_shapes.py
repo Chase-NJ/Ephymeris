@@ -144,6 +144,20 @@ def test_group_proposal_matches_schema() -> None:
     assert validate(("ref", "GroupProposal"), rejected.to_json()) == []
 
 
+def test_a_metric_with_several_alternates_matches_schema() -> None:
+    profile = task_profile.parse_profile(
+        {
+            "taskName": "Go / no-go",
+            "strobes": {"105": "ODOR_5_ON", "256": "WATER_POKE_NONE"},
+            "liveMetrics": [
+                {"id": "p_withhold_1", "label": "P(withhold | Odor 5)", "triggerCode": 105,
+                 "successCode": 256, "alternateCodes": [248, 249], "windowSize": 20}
+            ],
+        }
+    )
+    assert validate(("ref", "TaskProfile"), profile.to_json()) == []
+
+
 def test_task_profile_payloads_match_schema() -> None:
     behavior = task_profile.parse_profile(
         {

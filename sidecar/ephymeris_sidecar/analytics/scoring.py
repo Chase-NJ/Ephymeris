@@ -730,6 +730,9 @@ def _canary_runs(seed: Vocabulary) -> list[tuple[str, _Resolved, dict[str, Any]]
         + trial("ODOR_3_ON", "WATER_POKE_L", "FLUID_L", "STOP_FLUID_G_L") * 5
         + trial("ODOR_3_ON", "WATER_POKE_R", "WATER_POKE_ERROR_R") * 3
         + trial("ODOR_5_ON", "WATER_POKE_NONE") * 2
+        # A no-go answered at either port: a miss at both, never excluded.
+        + trial("ODOR_5_ON", "WATER_POKE_L")
+        + trial("ODOR_5_ON", "WATER_POKE_R")
         + [code("LIGHTS_ON"), code("ODOR_POKE"), code("ODOR_7_ON"), code("ODOR_UNPOKE_EARLY")] * 2
         + [code("LIGHTS_ON"), code("LAZY_RAT"), code("LIGHTS_OFF")]
     )

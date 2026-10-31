@@ -749,7 +749,14 @@ export interface LiveMetric {
   label: string;
   triggerCode: number;
   successCode: number;
+  /** The first (often the only) code that scores a miss. */
   alternateCode: number;
+  /**
+   * Every code that scores a miss, present only when there are several: a no-go type is wrong at
+   * any response port (`ANALYTICS.md#trials-hits-misses-and-exclusions`). `alternateCode` repeats
+   * the first.
+   */
+  alternateCodes?: number[];
   windowSize: number;
 }
 

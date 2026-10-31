@@ -136,11 +136,23 @@ class LiveMetric:
     label: str
     trigger_code: int
     success_code: int
-    alternate_code: int
+    #: Every code that scores a miss, in declared order and never empty. A go
+    #: type has one (the other well); a no-go type has one per response port,
+    #: because it is wrong at any of them (`ANALYTICS.md#trials-hits-misses-and-exclusions`).
+    alternate_codes: tuple[int, ...]
     window_size: int
 
+    def __post_init__(self) -> None:
+        if not self.alternate_codes:
+            raise ValueError("a metric needs at least one alternate code")
+
+    @property
+    def alternate_code(self) -> int:
+        """The first alternate: the only one a single-alternate metric has."""
+        return self.alternate_codes[0]
+
     def to_json(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "id": self.id,
             "label": self.label,
             "triggerCode": self.trigger_code,
@@ -148,6 +160,12 @@ class LiveMetric:
             "alternateCode": self.alternate_code,
             "windowSize": self.window_size,
         }
+        # Only a metric with several writes the list, so every single-alternate
+        # profile serializes (and hashes) exactly as it did before the list
+        # existed, and a reader that knows only `alternateCode` still parses.
+        if len(self.alternate_codes) > 1:
+            payload["alternateCodes"] = list(self.alternate_codes)
+        return payload
 
 
 @dataclass(frozen=True)
@@ -695,13 +713,36 @@ def _parse_metrics(raw: Any, vocabulary: Vocabulary | None = None) -> list[LiveM
                     label=str(entry.get("label") or entry["id"]),
                     trigger_code=_metric_code(entry, "trigger", vocabulary),
                     success_code=_metric_code(entry, "success", vocabulary),
-                    alternate_code=_metric_code(entry, "alternate", vocabulary),
+                    alternate_codes=_metric_alternates(entry, vocabulary),
                     window_size=int(entry.get("windowSize", 20)),
                 )
             )
         except (KeyError, ValueError, TypeError) as exc:
             raise TaskProfileError(f"liveMetrics entry is malformed: {exc}") from exc
     return metrics
+
+
+def _metric_alternates(entry: dict[str, Any], vocabulary: Vocabulary | None) -> tuple[int, ...]:
+    """A metric's miss codes: one or several, in any of the spellings.
+
+    `alternate` is a name or a list of names; `alternateCodes` a list of
+    numbers; `alternateCode` the single number every recorded snapshot carries.
+    A list wins over the single key so a snapshot written with both (the
+    first code repeated for older readers) reads back whole.
+    """
+    names = entry.get("alternate")
+    if isinstance(names, list):
+        codes = tuple(_metric_code({"alternate": name}, "alternate", vocabulary) for name in names)
+    elif names is None and "alternateCodes" in entry:
+        listed = entry["alternateCodes"]
+        if not isinstance(listed, list):
+            raise TypeError("alternateCodes must be a list")
+        codes = tuple(int(code) for code in listed)
+    else:
+        codes = (_metric_code(entry, "alternate", vocabulary),)
+    if not codes:
+        raise ValueError("a metric needs at least one alternate code")
+    return tuple(dict.fromkeys(codes))
 
 
 def _metric_code(entry: dict[str, Any], role: str, vocabulary: Vocabulary | None) -> int:

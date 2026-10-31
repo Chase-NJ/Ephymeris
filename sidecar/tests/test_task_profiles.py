@@ -405,6 +405,71 @@ def test_a_miss_is_a_response_at_the_other_well() -> None:
     assert compute_series(m, [101, 248]) == [0.0]
 
 
+# A no-go metric: trigger 105, success 256 (withheld), and a miss at EITHER port.
+NO_GO = {
+    **GRGL,
+    "strobes": {**GRGL["strobes"], "105": "ODOR_5_ON", "256": "WATER_POKE_NONE"},
+    "liveMetrics": [{
+        "id": "p_withhold_1", "label": "P(withhold | Odor 5)",
+        "triggerCode": 105, "successCode": 256, "alternateCodes": [248, 249],
+        "windowSize": 20,
+    }],
+}
+
+
+def test_a_poke_at_any_alternate_is_a_miss() -> None:
+    m = metric(NO_GO)
+    # withheld (hit), left (miss), right (miss): every answered trial counts.
+    assert compute_series(m, [105, 256, 105, 248, 105, 249]) == [1.0, 0.5, 1 / 3]
+
+
+def test_a_metric_names_its_alternates_in_every_spelling() -> None:
+    """A list of names, a list of numbers, the single name and the single number
+    every recorded snapshot carries all read to the same metric."""
+    vocabulary = Vocabulary(default_vocabulary_document())
+    entry = {"id": "m", "label": "m", "windowSize": 20}
+    named_many = parse_profile({
+        "taskName": "T", "liveMetrics": [{
+            **entry, "trigger": "ODOR_5_ON", "success": "WATER_POKE_NONE",
+            "alternate": ["WATER_POKE_L", "WATER_POKE_R"]}],
+    }, vocabulary)
+    numbered_many = parse_profile(NO_GO)
+    assert named_many.live_metrics[0].alternate_codes == (248, 249)
+    assert numbered_many.live_metrics[0].alternate_codes == (248, 249)
+    assert named_many.live_metrics[0].to_json() == {
+        "id": "m", "label": "m", "triggerCode": 105, "successCode": 256,
+        "alternateCode": 248, "alternateCodes": [248, 249], "windowSize": 20,
+    }
+
+    named_one = parse_profile({
+        "taskName": "T", "liveMetrics": [{
+            **entry, "trigger": "ODOR_1_ON", "success": "WATER_POKE_R", "alternate": "WATER_POKE_L"}],
+    }, vocabulary)
+    assert named_one.live_metrics[0].alternate_codes == (248,)
+
+
+def test_a_single_alternate_serializes_exactly_as_it_always_did() -> None:
+    """Every recorded snapshot and stored hash carries `alternateCode` alone."""
+    out = parse_profile(GRGL).live_metrics[0].to_json()
+    assert out == {
+        "id": "p_r_odor1", "label": "P(R | Odor 1)", "triggerCode": 101,
+        "successCode": 249, "alternateCode": 248, "windowSize": 20,
+    }
+
+
+def test_several_alternates_survive_a_round_trip_and_still_show_the_first() -> None:
+    profile = parse_profile(NO_GO)
+    out = profile.live_metrics[0].to_json()
+    assert out["alternateCodes"] == [248, 249]
+    assert out["alternateCode"] == 248  # a reader that knows only the old key
+    assert parse_profile(json.loads(json.dumps(profile.to_json()))).to_json() == profile.to_json()
+
+
+def test_a_metric_with_no_alternate_is_refused() -> None:
+    with pytest.raises(TaskProfileError):
+        parse_profile({**NO_GO, "liveMetrics": [{**NO_GO["liveMetrics"][0], "alternateCodes": []}]})
+
+
 def test_a_no_response_trial_is_excluded_entirely() -> None:
     m = metric()
     # 101 → odor off, stream ends with no water poke → excluded, no data point.

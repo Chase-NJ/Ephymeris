@@ -326,14 +326,14 @@ Mission Control's strobe console, `liveTrials.ts`'s `vocabFrom` and the [state m
   "trigger": "ODOR_1_ON", "success": "WATER_POKE_R", "alternate": "WATER_POKE_L", "windowSize": 20 }
 ```
 
-Each code is named, and resolved against the vocabulary at load; a name that is not a live code raises. The numeric keys (`triggerCode`, `successCode`, `alternateCode`) still parse, because every recorded snapshot carries them, and `to_json` always writes numbers — so the two spellings of one metric hash the same.
+Each code is named, and resolved against the vocabulary at load; a name that is not a live code raises. The numeric keys (`triggerCode`, `successCode`, `alternateCode`) still parse, because every recorded snapshot carries them, and `to_json` always writes numbers — so the two spellings of one metric hash the same. A metric with a single alternate writes `alternateCode` alone; one with several also writes `alternateCodes`.
 
 | Key | Required | Notes |
 |---|:---:|---|
 | `id` | yes | A stable identifier only. A generated profile numbers them (`p_correct_1`), which names no condition |
 | `trigger` (or `triggerCode`) | yes | Opens a trial for this metric |
 | `success` (or `successCode`) | yes | Scores a hit |
-| `alternate` (or `alternateCode`) | yes | Scores a miss (still in the denominator) |
+| `alternate` (or `alternateCode`) | yes | Scores a miss (still in the denominator). A name, or a list of names when several codes miss: a no-go type misses at every response port. `alternateCodes` is the numeric list; `alternateCode` repeats its first |
 | `label` | | What every readout titles the metric with. Falls back to `id`; a generated profile builds it from the trial type's required name |
 | `windowSize` | | Default 20, matching the firmware's anti-bias `biasWindow` default |
 

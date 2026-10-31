@@ -60,37 +60,40 @@ export function ConstellationTile({
       label="Constellation"
       status={<ConstellationFact name={chosen?.name ?? null} bound={bound} health={health} />}
     >
-      <div className="px-4 py-3.5">
-        <p className="pb-2 text-[12px] leading-relaxed text-static">
-          How the status display draws your boxes — the widget at the foot of the
-          sidebar and the Dashboard&rsquo;s sky. Pure presentation: nothing here
-          changes how the rig is wired.
-        </p>
-        {chosen ? (
-          // The board sits on its own inset so the drag surface reads as a
-          // surface — a chart in a tile, not stars loose on the glass.
-          <div className="surface-inset rounded-md px-4 pb-2 pt-3">
-            <div className="mx-auto max-w-[460px]">
-              <ConstellationBoard
-                constellation={chosen}
-                slots={constellationSlots}
-                boxes={bound}
-                labels={labels}
-                health={health}
-                onSlotsChange={(next) => onChange({ constellationSlots: next })}
-              />
-            </div>
-            <p className="mt-1 text-center font-mono text-[10px] text-static/70">
-              {chosen.name} — drag a box to a different star to rearrange
+      {/* Board beside picker, not above it: stacked, the two filled a screen
+          and pushed the rest of the Rig tab below the fold for a choice made
+          once. The board keeps a fixed height so any sky fits the same box. */}
+      <div className="grid grid-cols-[220px_minmax(0,1fr)] gap-4 px-4 py-3">
+        {/* The board sits on its own inset so the drag surface reads as a
+            surface — a chart in a tile, not stars loose on the glass. */}
+        <div className="surface-inset flex flex-col rounded-md px-2 pb-1.5 pt-2">
+          {chosen ? (
+            <>
+              <div className="h-[132px]">
+                <ConstellationBoard
+                  constellation={chosen}
+                  slots={constellationSlots}
+                  boxes={bound}
+                  labels={labels}
+                  health={health}
+                  onSlotsChange={(next) => onChange({ constellationSlots: next })}
+                />
+              </div>
+              <p className="mt-1 text-center font-mono text-[10px] text-static/70">
+                drag a box to another star
+              </p>
+            </>
+          ) : (
+            <p className="m-auto px-2 text-center text-[11px] leading-relaxed text-static">
+              No constellation yet — the status display uses the plain layout.
             </p>
-          </div>
-        ) : (
-          <p className="pb-2 text-[12px] leading-relaxed text-static">
-            No constellation chosen yet — the status display uses the plain
-            layout. Pick one below.
+          )}
+        </div>
+        <div className="min-w-0">
+          <p className="pb-2 text-[12px] leading-snug text-static">
+            How the sidebar widget and the Dashboard&rsquo;s sky draw your
+            boxes. Presentation only — nothing here changes the wiring.
           </p>
-        )}
-        <div className="mt-3">
           <ConstellationPicker
             selected={constellation}
             boxCount={bound.length}

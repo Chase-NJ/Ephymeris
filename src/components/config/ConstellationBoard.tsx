@@ -129,7 +129,7 @@ export function ConstellationBoard({
     <svg
       ref={svgRef}
       viewBox={viewBox}
-      className="w-full select-none"
+      className="h-full w-full select-none"
       style={{ touchAction: "none" }}
       preserveAspectRatio="xMidYMid meet"
       role="img"

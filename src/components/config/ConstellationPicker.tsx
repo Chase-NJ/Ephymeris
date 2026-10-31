@@ -21,7 +21,7 @@ import { springSnappy } from "@/lib/motion";
 function ZodiacThumb({ constellation }: { constellation: ZodiacConstellation }) {
   const { viewBox, scale } = frameFor(constellation.stars);
   return (
-    <svg viewBox={viewBox} className="w-full" preserveAspectRatio="xMidYMid meet" aria-hidden>
+    <svg viewBox={viewBox} className="h-6 w-full" preserveAspectRatio="xMidYMid meet" aria-hidden>
       {constellation.edges.map(([a, b]) => {
         const from = constellation.stars[a]!;
         const to = constellation.stars[b]!;
@@ -56,9 +56,9 @@ export function ConstellationPicker({
   onSelect: (id: string) => void;
 }) {
   return (
-    // Six across on anything wider than a phone: twelve signs in two rows, a
-    // choice made once, not a gallery to browse.
-    <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-6">
+    // Six across: twelve signs in two short rows, a choice made once, not a
+    // gallery to browse.
+    <div className="grid grid-cols-6 gap-1.5">
       {ZODIAC.map((c) => {
         const tooSmall = c.stars.length < boxCount;
         const active = selected === c.id;
@@ -75,7 +75,7 @@ export function ConstellationPicker({
                 ? `${c.name} has ${c.stars.length} stars — needs at least ${boxCount}`
                 : c.name
             }
-            className={`rounded-md border px-1.5 pb-1 pt-1.5 text-left transition-colors ${
+            className={`rounded-md border px-1.5 pb-0.5 pt-1 text-left transition-colors ${
               active
                 ? "border-pulsar bg-pulsar/12"
                 : "border-halo bg-nebula hover:border-static/40"

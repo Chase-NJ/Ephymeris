@@ -524,14 +524,12 @@ def _fail_replacing(monkeypatch, target_name: str) -> None:
     monkeypatch.setattr(store.os, "replace", replace)
 
 
-@pytest.mark.parametrize("step", ["write", "fsync", "replace", "directory"])
+@pytest.mark.parametrize("step", ["write", "fsync", "replace"])
 def test_a_failure_at_any_write_step_never_leaves_a_torn_or_lost_wiring(tmp_path, monkeypatch, step):
     s = store.HardwareStore(tmp_path)
     s.save(store.default_document())
     before = s.load()
     new = _swapped_ports()
-    fsyncs = {"n": 0}
-
     if step == "write":
         def boom(fd, data):
             raise OSError("disk full")
@@ -540,31 +538,40 @@ def test_a_failure_at_any_write_step_never_leaves_a_torn_or_lost_wiring(tmp_path
         def boom(fd):
             raise OSError("fsync failed")
         monkeypatch.setattr(store.os, "fsync", boom)
-    elif step == "replace":
-        _fail_replacing(monkeypatch, store.WIRING_FILENAME)
     else:
-        real_fsync = store.os.fsync
+        _fail_replacing(monkeypatch, store.WIRING_FILENAME)
 
-        def boom(fd):
-            fsyncs["n"] += 1
-            if fsyncs["n"] == 2:  # the file's fsync passes; the directory's fails
-                raise OSError("directory fsync failed")
-            return real_fsync(fd)
-        monkeypatch.setattr(store.os, "fsync", boom)
-
-    if step == "directory" and store.os.name == "nt":
-        pytest.skip("Windows cannot fsync a directory")
     with pytest.raises(OSError):
         s.save(new)
     monkeypatch.undo()
 
     after = s.load()
     assert s.load_problems() == []
-    whole = [(after["channels"], after["pins"])]
-    assert whole[0] in [(before["channels"], before["pins"]), (new["channels"], new["pins"])]
-    if step != "directory":
-        assert (after["channels"], after["pins"]) == (before["channels"], before["pins"])
+    assert (after["channels"], after["pins"]) == (before["channels"], before["pins"])
     assert not list(s.root.glob("*.part")), "a failed save leaves nothing staged behind"
+
+
+@pytest.mark.skipif(store.os.name == "nt", reason="Windows cannot fsync a directory")
+def test_a_folder_fsync_failure_after_the_rename_still_commits_the_save(tmp_path, monkeypatch, caplog):
+    """Once the rename lands the new file IS the wiring; reporting the save as
+    failed would leave `hardware.get` showing wiring that is not in force."""
+    rig = Rig(tmp_path)
+    rig.save(store.default_document())
+    real, calls = store.os.fsync, {"n": 0}
+
+    def fsync(fd):
+        calls["n"] += 1
+        if calls["n"] == 2:  # the file's passes; the folder's fails
+            raise OSError("folder fsync failed")
+        return real(fd)
+
+    monkeypatch.setattr(store.os, "fsync", fsync)
+    rig.save(_swapped_ports())
+    monkeypatch.undo()
+
+    assert registry.channels().get("left_well").index == 3
+    assert rig.definition.wiring_problem() is None
+    assert "folder fsync failed" in caplog.text
 
 
 def test_a_save_fsyncs_the_file_and_the_folder(tmp_path, monkeypatch):
@@ -629,14 +636,70 @@ def test_stored_wiring_that_will_not_load_is_a_problem_never_the_shipped_pins(tm
     rig = Rig(tmp_path)
     rig.save(_swapped_ports())
     rig.hardware.path.write_text(damage(rig.hardware.path.read_text(encoding="utf-8")), encoding="utf-8")
-    registry.set_rig_source(rig.hardware.load)
+    rig = Rig(tmp_path)  # a restart onto it: the refusal follows the wiring in force
 
+    assert registry.channels().content_hash() == SHIPPED_PINOUT_HASH
     assert rig.hardware.load() is None
     problem = rig.definition.wiring_problem()
     assert problem and "did not load" in problem
     payload = service.document_payload(rig.hardware)
     assert payload["problems"][0]["location"] == store.WIRING_FILENAME
     assert payload["status"]["custom"] is True, "Reset must stay reachable"
+
+
+def test_a_file_fixed_by_hand_never_lifts_the_refusal_while_the_shipped_pins_are_in_force(tmp_path):
+    """The refusal follows the wiring IN FORCE, read once when it was installed
+    -- never a fresh read of a file the registry has not composed."""
+    first = Rig(tmp_path)
+    first.save(_swapped_ports())
+    text = first.hardware.path.read_text(encoding="utf-8")
+    first.hardware.path.write_text(text[: len(text) // 2], encoding="utf-8")
+
+    rig = Rig(tmp_path)  # a restart onto the damaged file
+    assert rig.definition.wiring_problem()
+    assert registry.channels().content_hash() == SHIPPED_PINOUT_HASH
+
+    rig.hardware.path.write_text(text, encoding="utf-8")  # fixed, or copied in, by hand
+    assert rig.hardware.load_problems() == []
+    assert rig.definition.wiring_problem(), "the shipped pins are still the ones in force"
+    assert registry.channels().content_hash() == SHIPPED_PINOUT_HASH
+    payload = service.document_payload(rig.hardware, in_force=rig.definition.wiring_problem())
+    assert any(p["location"] == store.WIRING_FILENAME for p in payload["problems"])
+
+    rig.save(rig.hardware.load())  # only a save (or a restart) puts it in force
+    assert rig.definition.wiring_problem() is None
+    assert registry.channels().get("left_well").index == 3
+
+
+def test_a_wiring_that_loads_is_in_force_even_if_the_file_is_damaged_later(tmp_path):
+    rig = Rig(tmp_path)
+    rig.save(_swapped_ports())
+    rig.hardware.path.write_text("{ damaged", encoding="utf-8")
+    assert rig.definition.wiring_problem() is None
+    assert registry.channels().get("left_well").index == 3
+
+
+@pytest.mark.parametrize("section", ["pins", "channels"])
+def test_a_channel_without_a_pin_is_a_load_problem_and_never_saved(tmp_path, section):
+    s = store.HardwareStore(tmp_path)
+    s.save(store.default_document())
+    doc = json.loads(s.path.read_text(encoding="utf-8"))
+    doc[section].pop("odor_port")
+    s.path.write_text(json.dumps(doc), encoding="utf-8")
+    assert s.load() is None
+    assert "odor_port" in s.load_problems()[0][1]
+    with pytest.raises(store.RigInvalid):
+        s.save(doc)
+
+
+def test_a_stray_temp_file_alone_is_no_wiring(tmp_path):
+    s = store.HardwareStore(tmp_path)
+    s.root.mkdir(parents=True)
+    s.pin_map_path.with_suffix(".json.tmp").write_text("{}", encoding="utf-8")
+    s.path.with_name(s.path.name + ".part").write_text("{", encoding="utf-8")
+    assert not s.exists()
+    assert s.status().custom is False
+    assert s.load_problems() == []
 
 
 def test_a_parseable_but_broken_wiring_is_what_hardware_get_shows(tmp_path):

@@ -16,6 +16,7 @@ here and nowhere else:
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -82,6 +83,13 @@ def impact_of(
         if gained:
             out.append({"specId": entry["id"], "label": entry.get("label"), "codes": gained})
     return out
+
+
+class WiringNotLoaded(Exception):
+    """The rig's stored wiring did not load when it was installed, so the pins
+    in force are the shipped ones, not the rig's
+    (`TASKS.md#the-channel-set-and-the-pin-map`). Nothing was started, flashed
+    or identified. The message says why."""
 
 
 class RigInUse(Exception):
@@ -208,7 +216,11 @@ class RigDefinition:
         self._after_rebuild = after_rebuild
         self._broadcast = broadcast
         self._lock = _ReadWriteLock()
-        registry.set_rig_source(hardware.load)
+        #: Why the stored wiring did not load when it was last installed, or
+        #: None. Set only by `_install_wiring`, from the same read that chose
+        #: the pins in force, so the refusal and the pins never disagree.
+        self._unloaded: str | None = None
+        self._install_wiring()
         registry.set_vocabulary_source(vocabulary.load)
 
     # -- the lock ------------------------------------------------------------ #
@@ -272,7 +284,7 @@ class RigDefinition:
                 raise
             # Install before reporting, or the reply would describe the wiring
             # that was in force a moment ago.
-            registry.set_rig_source(self._hardware.load)
+            self._install_wiring()
             payload = await asyncio.to_thread(hardware_service.saved_payload, self._hardware, stored)
             payload["breaks"] = breaks
             payload["allocations"] = [a.to_json() for a in issued]
@@ -303,8 +315,10 @@ class RigDefinition:
     async def reset_wiring(self) -> dict[str, Any]:
         async with self.writing(WIRING_IN_USE):
             await asyncio.to_thread(self._hardware.reset)
-            registry.set_rig_source(self._hardware.load)
-            payload = await asyncio.to_thread(hardware_service.document_payload, self._hardware)
+            self._install_wiring()
+            payload = await asyncio.to_thread(
+                hardware_service.document_payload, self._hardware, in_force=self._unloaded
+            )
             await self._rebuild()
             await self._broadcast(event(Evt.HARDWARE_UPDATED, payload["status"]))
         return payload
@@ -336,11 +350,27 @@ class RigDefinition:
     # -- reads that need no lock --------------------------------------------- #
 
     def wiring_problem(self) -> str | None:
-        """Why the rig's stored wiring did not load, or None while it is in
-        force (or the rig has none). The session lifecycle asks this before it
-        starts or flashes a box: meanwhile the shipped pins are composed."""
-        problems = self._hardware.load_problems()
-        return problems[0][1] if problems else None
+        """Why the rig's stored wiring did not load when it was installed, or
+        None while the rig's own wiring (or none) is in force.
+
+        THE WIRING IN FORCE, NEVER A FRESH READ. The registry composes from the
+        document `_install_wiring` read, until the next install: a save, a
+        reset or a restart. A file fixed or copied in by hand meanwhile changes
+        no pin, so it must not lift the refusal either -- that is how a box
+        once started on the shipped pins with every check passing. The session
+        lifecycle and the utility baseline ask this before they drive a box.
+        """
+        return self._unloaded
+
+    def _install_wiring(self) -> None:
+        """Read the stored wiring ONCE and put exactly that in force.
+
+        The registry gets a snapshot rather than a reader of the file, so what
+        it composes, and when, cannot drift from what this read decided.
+        """
+        document, problems = self._hardware.snapshot()
+        self._unloaded = problems[0][1] if problems else None
+        registry.set_rig_source(lambda: copy.deepcopy(document))
 
     def load_vocabulary_strict(self) -> dict[str, Any]:
         """Raises `StrobeRefused("unreadable")` for a document that won't read."""

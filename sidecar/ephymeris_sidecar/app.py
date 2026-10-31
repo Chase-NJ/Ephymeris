@@ -387,6 +387,7 @@ class Application:
             discovery=lambda: self.sketches.current,
             broadcast=self.server.broadcast,
             flashes=self.flashes,
+            wiring_problem=self.rig_definition.wiring_problem,
         )
         self.runner = SessionRunner(
             loop=loop,
@@ -1150,7 +1151,11 @@ class Application:
     # (`TASKS.md#the-rig-definition`).
 
     async def _hardware_get(self, _args: Args) -> dict[str, Any]:
-        return await asyncio.to_thread(hardware_service.document_payload, self.hardware_store)
+        return await asyncio.to_thread(
+            hardware_service.document_payload,
+            self.hardware_store,
+            in_force=self.rig_definition.wiring_problem(),
+        )
 
     async def _hardware_preview(self, args: Args) -> dict[str, Any]:
         document = self._rig_document_arg(args)

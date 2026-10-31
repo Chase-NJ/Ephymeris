@@ -114,8 +114,14 @@ class UtilityBaseline:
         is_utility: Callable[[Any], bool] | None = None,
         *,
         flashes: FlashQueue,
+        wiring_problem: Callable[[], str | None] = lambda: None,
     ) -> None:
         self._loop = loop
+        #: `RigDefinition.wiring_problem`. While the stored wiring did not
+        #: load, the utility is built on the SHIPPED pins: its setup drives
+        #: every listed output and identify lights the shipped cue pin. So no
+        #: restore flashes and identify refuses (ARCHITECTURE.md#hardware-utility-baseline).
+        self._wiring_problem = wiring_problem
         self._ports = ports
         self._discovery = discovery
         self._broadcast = broadcast
@@ -303,6 +309,10 @@ class UtilityBaseline:
         if self._held:
             state.state, state.detail = "held", "a session mapping owns this box"
             return None
+        if (problem := self._wiring_problem()) is not None:
+            # Before `force`: Reflash boxes must not drive the shipped pins either.
+            state.state, state.detail = "held", problem
+            return None
         if state.failed and not force:
             return None
 
@@ -381,6 +391,10 @@ class UtilityBaseline:
         continue because a bulb didn't light is worse than one that tells the
         operator the box number.
         """
+        if (problem := self._wiring_problem()) is not None:
+            from .rig.definition import WiringNotLoaded
+
+            raise WiringNotLoaded(problem)
         entry = self._sketch_entry()
         if entry is None:
             raise UtilityUnavailable(self._unavailable_reason() or "no utility sketch configured")

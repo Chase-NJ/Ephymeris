@@ -22,7 +22,7 @@ from ephymeris_sidecar.ports.flashing import FlashQueue
 from ephymeris_sidecar.ports.manager import FQBN, PortManager
 from ephymeris_sidecar.ports.states import PortState
 from ephymeris_sidecar.rig import registry
-from ephymeris_sidecar.rig.definition import RigDefinition
+from ephymeris_sidecar.rig.definition import RigDefinition, WiringNotLoaded
 from ephymeris_sidecar.settings import SidecarSettings
 from ephymeris_sidecar.strobes.store import VocabularyStore
 from ephymeris_sidecar.taskdef.store import TaskStore
@@ -151,6 +151,7 @@ async def make_baseline(
     profile: TaskProfile | None = UTILITY_PROFILE,
     sketch_path: str | None = UTILITY_PATH,
     reading=nullcontext,  # noqa: ANN001
+    wiring_problem=lambda: None,  # noqa: ANN001
 ) -> tuple[UtilityBaseline, PortManager, FakeTool, list[dict]]:
     tool = FakeTool()
     manager = PortManager(
@@ -191,6 +192,7 @@ async def make_baseline(
         # the way the real predicate would find it.
         is_utility=lambda sketch: sketch_path is not None and sketch.path == sketch_path,
         flashes=flashes,
+        wiring_problem=wiring_problem,
     )
     baseline.update_settings(settings)
     #: The queue this test built for it, which `settle` waits on.
@@ -288,6 +290,27 @@ async def test_a_rig_definition_write_waits_for_a_restore_then_gets_its_own(rig_
     await settle(baseline)
     assert tool.uploads == [UTILITY_PATH, UTILITY_PATH]
     assert box_state(baseline)["state"] == "ready"
+
+
+async def test_unloaded_wiring_holds_every_restore_and_identify() -> None:
+    """The utility built meanwhile is on the SHIPPED pins: its setup drives
+    every listed output, and identify lights whatever the shipped cue pin is
+    (`ARCHITECTURE.md#hardware-utility-baseline`)."""
+    problem: dict[str, str | None] = {"now": "wiring.json did not load: it will not parse."}
+    baseline, _manager, tool, _ = await make_baseline(wiring_problem=lambda: problem["now"])
+
+    baseline.ensure(force=True)
+    await settle(baseline)
+    assert tool.uploads == []
+    assert box_state(baseline)["state"] == "held"
+    assert "did not load" in box_state(baseline)["detail"]
+    with pytest.raises(WiringNotLoaded):
+        await baseline.identify(1, True)
+
+    problem["now"] = None
+    baseline.ensure()
+    await settle(baseline)
+    assert tool.uploads == [UTILITY_PATH]
 
 
 async def test_force_reflashes_a_ready_box() -> None:

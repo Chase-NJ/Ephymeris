@@ -27,6 +27,7 @@ from ..cohorts.db import NestedWrite, TransactionAborted
 from ..ports.flashing import FlashJob, FlashQueue
 from ..ports.manager import CarriedSketch, sketch_fingerprint
 from ..protocol import Evt, event
+from ..rig.definition import WiringNotLoaded
 from ..tasks import profile as task_profile
 from ..tasks.start_command import build_start_command
 from .models import GroupRun, Session, SessionAnimalRun, SessionNotFound
@@ -61,12 +62,6 @@ class SketchNotCarried(SessionRefused):
     def __init__(self, message: str, boxes: list[int]) -> None:
         super().__init__(message)
         self.boxes = boxes
-
-
-class WiringNotLoaded(SessionRefused):
-    """The rig's stored wiring did not load, so the pins in force are the
-    shipped ones, not the rig's (`TASKS.md#the-channel-set-and-the-pin-map`).
-    Nothing was started or flashed."""
 
 
 class BoxesNotMapped(SessionRefused):

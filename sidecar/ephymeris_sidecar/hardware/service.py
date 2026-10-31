@@ -24,7 +24,7 @@ from typing import Any
 from . import store
 
 
-def document_payload(rig: store.HardwareStore) -> dict[str, Any]:
+def document_payload(rig: store.HardwareStore, *, in_force: str | None = None) -> dict[str, Any]:
     """`RigDocument`: the wiring, plus everything wrong with it.
 
     An unedited rig gets the SHIPPED pinout as an editable document rather than
@@ -38,6 +38,18 @@ def document_payload(rig: store.HardwareStore) -> dict[str, Any]:
     stored = [
         {"location": loc, "message": msg, "code": None} for loc, msg in rig.load_problems()
     ]
+    if in_force and not stored:
+        # The file loads NOW, but the wiring in force is still the one that
+        # did not (`RigDefinition.wiring_problem`): a file changed by hand is
+        # not read until the wiring is saved, reset or the app restarts.
+        stored = [{
+            "location": store.WIRING_FILENAME,
+            "message": (
+                f"{in_force} The file has changed on disk since, and is not in force "
+                "until it is saved or reset, or Ephymeris restarts."
+            ),
+            "code": None,
+        }]
     return {
         "document": doc,
         "status": _status(rig, doc),

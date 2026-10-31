@@ -31,7 +31,7 @@ from .ports.handler import PortBusy
 from .ports.manager import BoardNotDetected, PortNotBound
 from .ports.states import IllegalTransition
 from .protocol import ErrCode
-from .rig.definition import RigInUse, VocabularyInUse, WiringWouldBreakTasks
+from .rig.definition import RigInUse, VocabularyInUse, WiringNotLoaded, WiringWouldBreakTasks
 from .server import Args, CommandError, ErrorTable, resolve_error
 from .sessions.lifecycle import (
     BoxesNotMapped,
@@ -39,7 +39,6 @@ from .sessions.lifecycle import (
     MappingRefused,
     SessionRefused,
     SketchNotCarried,
-    WiringNotLoaded,
     StopRefused,
 )
 from .sessions.models import PrefixNameTaken, SessionNotFound

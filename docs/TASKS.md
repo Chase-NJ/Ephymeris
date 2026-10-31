@@ -574,22 +574,21 @@ The editor and the wire see the same **one document**, `{rig_version, channels, 
 > **The two documents are saved as one file, in one step, and stored wiring that will not load never runs.**
 >
 > - **Why one file.** Two files can be torn by a failure between their writes. A new channel set read against old pins can put a swapped port under the other port's codes: every poke is then recorded under the wrong family, with no error anywhere.
-> - **How a save writes it.** It writes `wiring.json.part`, fsyncs it, renames it over the old file and fsyncs the folder. A failure at any step leaves the previous file whole.
-> - **When stored wiring will not load** (unreadable, unparseable, out of shape, or an older layout that disagrees with itself):
+> - **How a save writes it.** It writes `wiring.json.part`, fsyncs it and renames it over the old file. A failure up to the rename leaves the previous file whole. Once the rename lands the save is committed and its wiring is installed; the folder fsync that follows is best effort, and a failure there is logged as a warning.
+> - **When stored wiring will not load** (unreadable, unparseable, out of shape, a channel without a pin, or an older layout that disagrees with itself):
 >   - the registry composes the shipped pinout, so the sidecar still starts;
 >   - the startup log says the stored wiring failed to load;
 >   - `hardware.get` shows the problem first, with the stored document when it parses;
->   - `sessions.startAll`, `port.startSession` and `sessions.flash` refuse with `RIG_WIRING_UNLOADED`.
->
->   This lasts until the wiring is saved again or reset (`RigDefinition.wiring_problem`).
+>   - `sessions.startAll`, `port.startSession`, `sessions.flash` and `utility.identify` refuse with `RIG_WIRING_UNLOADED`, and the utility baseline flashes no box ([ARCHITECTURE.md](ARCHITECTURE.md#hardware-utility-baseline)).
+> - **The refusal follows the wiring in force, never a fresh read of the file.** `RigDefinition` reads the stored wiring once, when it installs it (at startup, and after every save and reset), and the registry composes from exactly that read (`_install_wiring`). A file fixed or copied in by hand changes no pin, so it lifts nothing: only a save, a reset, or a restart onto a file that loads puts wiring in force.
 > - **No `edited_at` in any digest or hash.** Identical wiring copied from another machine compares equal.
 
 **Older layouts are read in place, and the next save writes `wiring.json` and removes them:**
 
 - `rig.json`: the same document under its old name.
-- `channel_set.json` + `pin_map.json`: the pair written between #123 and the one-file layout. The pin map named its channel set by a digest, and a pair whose digests disagree is a load problem, never a guess.
+- `channel_set.json` + `pin_map.json`: the two documents in two files. The pin map names its channel set by a digest, and a pair whose digests disagree is a load problem, never a guess.
 
-`wiring.json` wins over both, so a save stopped before its cleanup still has the new wiring in force.
+`wiring.json` wins over both, so a save stopped before its cleanup still has its wiring in force. A stray temporary file (`*.part`, `*.json.tmp`) on its own is no wiring at all.
 
 Channel kinds are `engagement` (exactly one), `response`, `emitter`, `reward`, `cue`, `vacuum` and `sync` (at most one).
 

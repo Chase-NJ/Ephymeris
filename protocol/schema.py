@@ -2650,7 +2650,7 @@ COMMANDS = (
     # defaulting to a working value — right for a directory path, catastrophic
     # for a pin number, which has no safe default and fails by firing the wrong
     # valve. So the wiring is a sidecar-owned DOCUMENT instead
-    # (`<data_dir>/hardware/rig.json`): validated on the way in, refused when it
+    # (`<data_dir>/hardware/wiring.json`): validated on the way in, refused when it
     # is the wrong shape, and every problem located on the field that caused it.
     Command(
         "hardware.get",
@@ -3973,12 +3973,14 @@ ERRORS = (
     ),
     ErrorCode(
         "RIG_WIRING_UNLOADED",
-        "`port.startSession`, `sessions.startAll` or `sessions.flash` while the "
-        "rig's stored wiring did not load (unreadable, unparseable, out of shape, "
-        "or an older layout that disagrees with itself). The shipped pins are in "
-        "force meanwhile, so a box started or flashed would drive pins the "
-        "operator never declared. `hardware.get` names the problem; saving the "
-        "wiring again or resetting it clears it "
+        "`port.startSession`, `sessions.startAll`, `sessions.flash` or "
+        "`utility.identify` while the wiring in force is the shipped one because "
+        "the rig's stored wiring did not load when it was installed (unreadable, "
+        "unparseable, out of shape, a channel without a pin, or an older layout "
+        "that disagrees with itself). A box started, flashed or identified would "
+        "drive pins the operator never declared. `hardware.get` names the "
+        "problem. Saving the wiring, resetting it, or restarting onto a file that "
+        "loads clears it; a file fixed by hand meanwhile does not "
         "(`TASKS.md#the-channel-set-and-the-pin-map`).",
     ),
     ErrorCode(

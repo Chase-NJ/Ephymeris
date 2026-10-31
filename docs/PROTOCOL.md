@@ -328,7 +328,7 @@ The channel set and the vocabulary as they travel to the other lab machine (`TAS
 
 | Field | Type | Notes |
 |---|---|---|
-| `document` | unknown | `{channel_set_export_version, channel_set_hash, channel_set, vocabulary}`: the channel set in force, with no pins, and this machine's whole vocabulary. |
+| `document` | unknown | `{channel_set_export_version, channel_set_hash, channel_set_hash_version, channel_set, vocabulary}`: the channel set in force, with no pins, and this machine's whole vocabulary. An import reads a file with no `channel_set_hash_version` as version 1, whose hash ignored declaration order. |
 | `filename` | string | `channel-set-<YYYY-MM-DD>.json`, the save dialog's default. |
 
 <a id="cmd-hardware.importchannelset"></a>
@@ -1833,7 +1833,7 @@ One way another machine's channel set disagrees with this one (`TASKS.md#moving-
 
 | Field | Type | Notes |
 |---|---|---|
-| `kind` | string | `vocabulary` (one name with two codes, one code with two names, or a code this machine cannot issue), `not_here` (a channel the file has and this rig lacks, so it has no pin here), `only_here` (a channel this rig has and the file lacks), `no_code` (an edge the file names no code for), `rule` (a wiring rule RIG101–RIG107 the imported channel set breaks here, judged against the merged vocabulary), or `hash` (the file changed after it was exported). |
+| `kind` | string | `vocabulary` (one name with two codes, one code with two names, or a code this machine cannot issue), `not_here` (a channel the file has and this rig lacks, so it has no pin here), `only_here` (a channel this rig has and the file lacks), `order` (a channel both have, declared at another position: declaration order is the odor index, `TASKS.md#order-is-meaning`), `no_code` (an edge the file names no code for), `rule` (a wiring rule RIG101–RIG107 the imported channel set breaks here, judged against the merged vocabulary), or `hash` (the file changed after it was exported). |
 | `channel` | string \| null | The channel it is about, when it is about one. |
 | `message` | string | The difference, in words, naming both sides. |
 
@@ -1847,7 +1847,6 @@ What importing another machine's channel set and vocabulary would do here. The p
 | `conflicts` | [ChannelSetConflict](#shape-channelsetconflict)[] | Every disagreement, not the first. Non-empty means the import is refused whole and nothing is written. |
 | `vocabulary` | [StrobeImportPlan](#shape-strobeimportplan) | The vocabulary half: the codes the import adds and retires here. |
 | `changed` | string[] | Channels on both sides whose entry the import replaces. |
-| `reordered` | boolean | The file declares the channels in another order. Declaration order is the odor index (`TASKS.md#order-is-meaning`), so it is said out loud. |
 | `breaks` | [RigImpact](#shape-rigimpact)[] | Saved tasks the import would newly break. Applying needs `confirm` when non-empty. |
 | `hereHash` | string | This rig's `channelSetHash` now. |
 | `thereHash` | string | The exporting machine's `channelSetHash`: this rig's after a clean import. |
@@ -2637,7 +2636,7 @@ One thing wrong with a wiring document, located. Every problem is reported rathe
 | `board` | string |  |
 | `editedAt` | string \| null |  |
 | `pinoutHash` | string | The composed wiring's hash, over the fields that can change a compiled byte. Prose and pin notes are excluded: it answers 'could these two produce different firmware?', so a reworded rationale must not move it. |
-| `channelSetHash` | string | The channel set's hash: what every channel is (type, role, edges and their code names), never where it is. Labels and prose are excluded, and so is every pin, so two machines sharing one channel set agree on it whatever their pin maps (`TASKS.md#the-channel-set-and-the-pin-map`). |
+| `channelSetHash` | string | The channel set's hash: what every channel is (type, role, edges and their code names) and the order they are declared in, never where it is. Labels and prose are excluded, and so is every pin, so two machines sharing one channel set agree on it whatever their pin maps (`TASKS.md#registry-rules`). Always by the current rule, `CHANNEL_SET_HASH_VERSION`. |
 | `notices` | [RigProblem](#shape-rigproblem)[] | Where the wiring in force and the stored files part ways: stored wiring that did not load, or that is held because it was not saved or confirmed on this machine (the shipped pins are in force and every box is refused); a file changed on disk since it was installed; or an older layout copied in beside `wiring.json`, which is not read. Each says what is in force, what the editor shows, what is blocked, and what a restart does. About the RIG, never the draft: they stand through every edit, and do not stop a save, which is how most are cleared. |
 | `canReset` | boolean | Reset would change something: the rig has wiring of its own in force or on disk, or a notice offers Reset as the way out. |
 | `resetReplaces` | string[] | The absolute path of every file Reset would remove, for the dialog that confirms it. Empty when there is none. |

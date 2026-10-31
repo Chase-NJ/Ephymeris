@@ -392,12 +392,15 @@ class RigDefinition:
     ) -> dict[str, Any]:
         """The plan for importing `other`; written too when `apply`.
 
-        One rig definition write: plan again inside it, then the vocabulary
-        (only if it changes), then `wiring.json`, then one rebuild. The
-        vocabulary goes first so the wiring never names a code it lacks; if
-        the wiring then fails to write, the union stays (append only, and every
-        code it added is one the lab holds under the same number), the rebuild
-        a vocabulary edit owes still runs, and the error is raised.
+        One rig definition write: plan again inside it, then three steps --
+        the vocabulary's new codes, `wiring.json`, then the vocabulary's
+        retirements (`transfer.Planned` says why in that order) -- then one
+        rebuild. Each step is skipped when it changes nothing. A failure at
+        any step leaves a wiring and a vocabulary that load together, so the
+        rig restarts on its own wiring and importing again finishes the rest:
+        what landed stays (append only, and every added code is one the lab
+        holds under the same number), the rebuild owed for it still runs,
+        and the error is raised.
 
         Raises `transfer.ChannelSetImportConflict`, `transfer.ChannelSetInvalid`,
         `WiringWouldBreakTasks` without `confirm`, `WiringNotLoaded`,
@@ -415,25 +418,35 @@ class RigDefinition:
                 raise WiringWouldBreakTasks(plan.breaks)
             if plan.identical:
                 return {"plan": plan.to_json(), "applied": False}
-            vocabulary_changed = planned.vocabulary is not None
-            if vocabulary_changed:
-                await asyncio.to_thread(self._vocabulary.save, planned.vocabulary)
-                registry.set_vocabulary_source(self._vocabulary.load)
+            vocabulary_changed = wiring_changed = False
             try:
-                await asyncio.to_thread(self._hardware.save, planned.wiring)
-            except BaseException:
-                if vocabulary_changed:
-                    await self._rebuild_announcing_vocabulary()
-                raise
-            self._install_wiring()
-            status = await asyncio.to_thread(
-                functools.partial(
-                    hardware_service.document_payload, self._hardware, in_force=self.in_force()
-                )
-            )
-            await self._rebuild_announcing_vocabulary(vocabulary_changed)
-            await self._broadcast(event(Evt.HARDWARE_UPDATED, status["status"]))
+                if planned.adds is not None:
+                    await self._install_vocabulary(planned.adds)
+                    vocabulary_changed = True
+                if plan.changed:
+                    await asyncio.to_thread(self._hardware.save, planned.wiring)
+                    self._install_wiring()
+                    wiring_changed = True
+                if planned.vocabulary is not None and plan.vocabulary.retires:
+                    await self._install_vocabulary(planned.vocabulary)
+                    vocabulary_changed = True
+            finally:
+                # On success and on a failure part-way alike: whatever landed
+                # is compiled into every generated folder before anything else.
+                if vocabulary_changed or wiring_changed:
+                    await self._rebuild_announcing_vocabulary(vocabulary_changed)
+                if wiring_changed:
+                    status = await asyncio.to_thread(
+                        functools.partial(
+                            hardware_service.document_payload, self._hardware, in_force=self.in_force()
+                        )
+                    )
+                    await self._broadcast(event(Evt.HARDWARE_UPDATED, status["status"]))
         return {"plan": plan.to_json(), "applied": True}
+
+    async def _install_vocabulary(self, document: dict[str, Any]) -> None:
+        await asyncio.to_thread(self._vocabulary.save, document)
+        registry.set_vocabulary_source(self._vocabulary.load)
 
     async def _rebuild_announcing_vocabulary(self, announce: bool = True) -> None:
         """The one rebuild, then `strobes.updated` when the vocabulary changed."""

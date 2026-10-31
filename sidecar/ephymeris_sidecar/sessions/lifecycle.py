@@ -339,6 +339,7 @@ class SessionLifecycle:
                             config_metadata=dict(entry.config),
                             profile=profile,
                             channel_set_hash=channel_set_hash,
+                            channel_set_hash_version=registry.CHANNEL_SET_HASH_VERSION,
                         )
                     )
 

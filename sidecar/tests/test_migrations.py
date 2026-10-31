@@ -70,7 +70,9 @@ def write_v1_database(path: Path, *, version: int = 1) -> None:
     """A real v1 file with a cohort in it, so migrations have data to preserve."""
     conn = sqlite3.connect(path)
     try:
-        conn.executescript(SCHEMA_V1)
+        # One transaction, as `Database.connect` builds one: per-statement commits
+        # each flush the disk, which is most of the suite's time on Windows.
+        conn.executescript("BEGIN;\n" + SCHEMA_V1)
         conn.execute(
             "INSERT INTO cohorts (id, name, data_folder, created_at, updated_at)"
             " VALUES ('c1', 'Batch A', '/data/Batch A', 'then', 'then')",
@@ -92,7 +94,7 @@ def write_shipped_database(path: Path, version: int) -> None:
     schema it shipped (`fixtures/schemas/`, copied out of git history)."""
     conn = sqlite3.connect(path)
     try:
-        conn.executescript((SHIPPED / f"v{version}.sql").read_text(encoding="utf-8"))
+        conn.executescript("BEGIN;\n" + (SHIPPED / f"v{version}.sql").read_text(encoding="utf-8"))
         conn.execute(f"PRAGMA user_version = {version}")
         conn.commit()
     finally:
@@ -267,6 +269,28 @@ def test_an_already_current_database_does_not_run_migrations(
     db.connect()
     db.close()
     assert ran == []
+
+
+def test_a_failed_migration_leaves_the_database_as_it_was(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Startup is one transaction: the tables SCHEMA adds, every migration and
+    the indexes commit together or not at all, so a migration that fails
+    leaves the file at its old version with nothing half-applied."""
+    path = tmp_path / "ephymeris.db"
+    write_v1_database(path)
+    before = tables(path)
+
+    def fail(conn: sqlite3.Connection) -> None:
+        raise RuntimeError("migration failed")
+
+    monkeypatch.setitem(MIGRATIONS, SCHEMA_VERSION, fail)
+
+    with pytest.raises(RuntimeError, match="migration failed"):
+        Database(path).connect()
+
+    assert user_version(path) == 1
+    assert tables(path) == before
 
 
 def test_add_column_is_idempotent(tmp_path: Path) -> None:

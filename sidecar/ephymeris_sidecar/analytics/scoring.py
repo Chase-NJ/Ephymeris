@@ -22,6 +22,7 @@ anything. What the canary cannot reach is listed at `SCORE_VERSION`
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import json
 import logging
@@ -66,10 +67,16 @@ INDEX_CHUNK = 32
 #: For anything else, prefer adding a canary case that shows the change
 #: (`_canary_runs`): it keeps the next such change honest too.
 #:
+#: Version 10: a no-go metric is scored at every response port, under any
+#: vocabulary. The canary's seed vocabulary cannot reach a retired
+#: `WATER_POKE_NONE` or a slot with an unresolved code, and rows cached at 9
+#: under such a vocabulary kept the inflated P(withhold); the canary now has
+#: a case for each, and the bump re-reads those rows.
+#:
 #: **"The numbers didn't move" is not an exemption.** A cached row is served
 #: verbatim, so a field added to the payload without a version change goes
 #: missing from every warm row.
-SCORE_VERSION = 9
+SCORE_VERSION = 10
 
 
 @dataclass
@@ -683,7 +690,7 @@ def canary_fingerprint() -> str:
         answers: dict[str, Any] = {"canary": {"error": type(exc).__name__}}
     else:
         answers = {}
-    for name, resolved, document in runs:
+    for name, resolved, document, vocabulary in runs:
         try:
             entry = _scored(
                 name,
@@ -691,7 +698,7 @@ def canary_fingerprint() -> str:
                 document,
                 CacheKey("", None, None, None, 0),
                 stream.DEFAULT_MIN_COUNTED,
-                _Pass(seed, remember=None),
+                _Pass(vocabulary, remember=None),
             )
             answers[name] = {
                 "status": entry.status,
@@ -722,8 +729,12 @@ def _seed_vocabulary() -> Vocabulary:
         return _seed
 
 
-def _canary_runs(seed: Vocabulary) -> list[tuple[str, _Resolved, dict[str, Any]]]:
-    """The canary: (name, what resolution found, the document) per case."""
+def _canary_runs(
+    seed: Vocabulary,
+) -> list[tuple[str, _Resolved, dict[str, Any], Vocabulary]]:
+    """The canary: (name, what resolution found, the document, the vocabulary
+    it is scored under) per case. Most cases use the seed; the vocabulary is
+    part of the case so one can show what scoring does under another."""
     code = seed.code_of
 
     def trial(onset: str, *answer: str) -> list[int]:
@@ -798,19 +809,41 @@ def _canary_runs(seed: Vocabulary) -> list[tuple[str, _Resolved, dict[str, Any]]
     def held(profile: TaskProfile, source: str) -> _Resolved:
         return _Resolved(profile, source, task_profile.profile_hash(profile))
 
+    # Vocabularies the seed cannot show: the withhold code retired (as the
+    # Strobes page can), and a port slot whose error code resolves to nothing.
+    raw = registry.default_vocabulary_document()
+    retired_doc = copy.deepcopy(raw)
+    gone = retired_doc["codes"].pop("WATER_POKE_NONE")
+    retired_doc["retired"]["WATER_POKE_NONE"] = {"code": gone["code"], "rationale": "canary"}
+    damaged_doc = copy.deepcopy(raw)
+    damaged_doc["port_slots"]["1"]["error_code"] = "NO_SUCH_CODE"
+    retired_none = Vocabulary(retired_doc)
+    damaged_slot = Vocabulary(damaged_doc)
+
     unclean = document(session[: len(session) // 2], stop_reason="host stopped")
     del unclean["trial_seed"]
     return [
-        ("database-snapshot", held(snapshot, "snapshot"), document(session)),
-        ("pre-fix-no-go-snapshot", held(before_the_fix, "snapshot"), document(session)),
-        ("embedded", nothing, document(session, **{task_profile.SNAPSHOT_KEY: declared})),
-        # Not an object at all, so it falls through without a parse warning:
-        # this runs on every pass and every archive read.
-        ("embedded-damaged", nothing, document(session, **{task_profile.SNAPSHOT_KEY: "torn"})),
-        ("sketch-current", held(today, "sketch-current"), document(session)),
-        ("inferred", nothing, document(session)),
-        ("no-condition", nothing, document([code("WATER_POKE_R")] * 3)),
-        ("utility", held(utility, "snapshot"), document(session)),
-        ("short", held(snapshot, "snapshot"), document(session[:12])),
-        ("unclean", held(snapshot, "snapshot"), unclean),
+        (name, resolved, doc, seed)
+        for name, resolved, doc in [
+            ("database-snapshot", held(snapshot, "snapshot"), document(session)),
+            ("pre-fix-no-go-snapshot", held(before_the_fix, "snapshot"), document(session)),
+            ("embedded", nothing, document(session, **{task_profile.SNAPSHOT_KEY: declared})),
+            # Not an object at all, so it falls through without a parse warning:
+            # this runs on every pass and every archive read.
+            ("embedded-damaged", nothing,
+             document(session, **{task_profile.SNAPSHOT_KEY: "torn"})),
+            ("sketch-current", held(today, "sketch-current"), document(session)),
+            ("inferred", nothing, document(session)),
+            ("no-condition", nothing, document([code("WATER_POKE_R")] * 3)),
+            ("utility", held(utility, "snapshot"), document(session)),
+            ("short", held(snapshot, "snapshot"), document(session[:12])),
+            ("unclean", held(snapshot, "snapshot"), unclean),
+        ]
+    ] + [
+        # The same single-alternate no-go snapshot, scored under a vocabulary
+        # the seed cannot show. Each must still count a poke at either port.
+        ("pre-fix-no-go-retired-withhold", held(before_the_fix, "snapshot"),
+         document(session), retired_none),
+        ("pre-fix-no-go-damaged-slot", held(before_the_fix, "snapshot"),
+         document(session), damaged_slot),
     ]

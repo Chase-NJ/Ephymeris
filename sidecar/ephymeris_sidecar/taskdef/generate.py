@@ -320,7 +320,7 @@ def _live_metrics(definition, channels, vocab) -> list[dict[str, Any]]:
 def _enter_codes(channels, vocab) -> list[str]:
     """The enter code of every response port, in port-slot order.
 
-    The order inference writes (`analytics/stream/infer.py` `_enter_codes`), so
+    The order inference writes (`analytics/stream/infer.py` `no_go_alternates`), so
     a declared and an inferred no-go metric are the same document.
     """
     found: dict[int, str] = {}

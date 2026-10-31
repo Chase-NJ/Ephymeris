@@ -341,7 +341,7 @@ def answer_side_of(profile: TaskProfile | None, metric: LiveMetric) -> str | Non
     > **From `success_code` and nothing else.** The tempting fallback — try
     > `alternate_code` when the success code is not a well — is wrong in a way
     > that prints a confident lie: a no-go metric's alternates are *every
-    > response port* (the generator's `_enter_codes`, `infer.py`'s slots), so
+    > response port* (the generator's `_enter_codes`, `infer.no_go_alternates`), so
     > the fallback answers "left well" for a condition whose correct answer
     > is to poke nothing. `None` is the honest result whenever the profile
     > cannot prove one, and every consumer treats it as "this condition has no axis" rather than filling it in.

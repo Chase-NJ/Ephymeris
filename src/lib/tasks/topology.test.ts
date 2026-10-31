@@ -88,7 +88,7 @@ describe("correctWellOf", () => {
   it("NEVER answers a no-go condition with a well", () => {
     /*
      * THE ONE THAT WOULD PRINT A LIE. A no-go type's alternates are every
-     * response port (the generator's `_enter_codes`, `infer.py`'s slots) — so a
+     * response port (the generator's `_enter_codes`, `infer.no_go_alternates`) — so a
      * `successCode → alternateCode` fallback renders "Odor 4 → left well" for a condition whose correct
      * answer is to poke nothing. This pins the whole path, not just the helper:
      * the withhold condition's alternate here IS a well.

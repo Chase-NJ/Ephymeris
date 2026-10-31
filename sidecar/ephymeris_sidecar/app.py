@@ -470,9 +470,10 @@ class Application:
         problem = self.rig_definition.wiring_problem()
         if problem:
             # Never "the shipped pinout": the registry composes it meanwhile, but
-            # the rig's own wiring is what failed, and no box may start until it
-            # is fixed (`TASKS.md#the-channel-set-and-the-pin-map`).
-            log.error("wiring: the stored rig wiring failed to load. %s", problem)
+            # the rig's own wiring is what failed to load or is held, and no box
+            # may start until it is saved or reset
+            # (`TASKS.md#the-channel-set-and-the-pin-map`).
+            log.error("wiring: the stored rig wiring is not in force. %s", problem)
             return
         status = self.hardware_store.status()
         wiring = (

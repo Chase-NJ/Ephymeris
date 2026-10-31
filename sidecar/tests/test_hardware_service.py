@@ -67,7 +67,8 @@ def test_a_broken_document_is_still_served(rig_store):
 
     payload = service.document_payload(rig_store)
     assert payload["document"]["pins"]["trial_light"]["index"] == 200
-    assert [p["code"] for p in payload["problems"]] == ["RIG102"]
+    # Never in force: a RIG102 file is a draft to repair, and its pins to confirm.
+    assert [p["code"] for p in payload["problems"]] == ["RIG108", "RIG102"]
 
 
 # --------------------------------------------------------------------------- #

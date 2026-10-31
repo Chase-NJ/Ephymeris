@@ -68,6 +68,29 @@ export function servedView(
   return !dirty && !confirmedPins ? baseline : null;
 }
 
+/**
+ * What a landed save leaves. The saved draft IS the served draft now, so the
+ * save reply is both what the editor shows and the baseline Revert and
+ * `servedView` return to -- at once, not after the `hardware.updated` reload.
+ * Keeping the pre-save baseline's answer put the old RIG108 and `canSave`
+ * back up the moment the draft compared clean. The confirmation was spent on
+ * the save, so none is pending; `issued` is what the save issued.
+ */
+export function afterSave(reply: PreviewReply & { status: RigStatus }): {
+  view: RigView;
+  baseline: RigView;
+  confirmedPins: false;
+  issued: RigAllocation[];
+} {
+  const baseline: RigView = { status: reply.status, problems: reply.problems, breaks: [], allocations: [] };
+  return {
+    view: { ...baseline, breaks: reply.breaks },
+    baseline,
+    confirmedPins: false,
+    issued: reply.allocations,
+  };
+}
+
 /** The sidecar decides; a refusal that names Reset always leaves it usable. */
 export function canReset(status: RigStatus | null, saving: boolean): boolean {
   return !saving && status?.canReset === true;

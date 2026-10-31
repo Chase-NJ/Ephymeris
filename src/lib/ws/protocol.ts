@@ -1700,7 +1700,8 @@ export interface RigProblem {
 export interface RigStatus {
   /**
    * Of the wiring IN FORCE: false ⇒ this rig runs the wiring its build shipped with, which
-   * includes while its stored wiring did not load (`notices` says so).
+   * includes while its stored wiring did not load or is held because nobody saved or confirmed it
+   * on this machine (`notices` says so).
    */
   custom: boolean;
   /** The shipped pinout the wiring in force started as. */
@@ -1720,10 +1721,12 @@ export interface RigStatus {
    */
   channelSetHash: string;
   /**
-   * Where the wiring in force and the stored file part ways: stored wiring that did not load (the
-   * shipped pins are in force and every box is refused), or a file changed on disk since it was
-   * installed. Each says what is and is not blocked. About the RIG, never the draft: they stand
-   * through every edit, and do not stop a save, which is how one is cleared.
+   * Where the wiring in force and the stored files part ways: stored wiring that did not load, or
+   * that is held because it was not saved or confirmed on this machine (the shipped pins are in
+   * force and every box is refused); a file changed on disk since it was installed; or an older
+   * layout copied in beside `wiring.json`, which is not read. Each says what is in force, what
+   * the editor shows, what is blocked, and what a restart does. About the RIG, never the draft:
+   * they stand through every edit, and do not stop a save, which is how most are cleared.
    */
   notices: RigProblem[];
   /**
@@ -1739,15 +1742,17 @@ export interface RigStatus {
   /**
    * Whether `hardware.save` of THIS draft would be taken: the draft the reply describes (the one
    * previewed, or the one served) has no problems, differs from the served draft or would clear a
-   * notice, and the rig's state allows a save. False while stored wiring that did not load has
-   * nothing to repair (only Reset replaces it), and while RIG108 asks for the pins to be
-   * confirmed. The frontend renders it; it never decides it.
+   * notice (a copy beside `wiring.json` is not cleared by a save), and the rig's state allows a
+   * save. False while stored wiring that did not load has nothing to repair (only Reset replaces
+   * it), and while RIG108 asks for the pins to be confirmed. The frontend renders it; it never
+   * decides it.
    */
   canSave: boolean;
   /**
-   * The draft is a stored file that is not in force -- copied in, changed outside the app, not
-   * loaded, or a pin map not written with its channel set -- so nobody has checked its pins on
-   * this rig: offer the operator a way to confirm them, sent as `confirmedPins`
+   * The draft is a stored file that is not in force and was not saved or confirmed on this
+   * machine -- copied in, changed outside the app, not loaded (even once repaired in the editor),
+   * or a pin map not written with its channel set -- so nobody has checked its pins here: offer
+   * the operator a way to confirm them, sent as `confirmedPins`. A restart never confirms them
    * (`TASKS.md#the-channel-set-and-the-pin-map`).
    */
   needsPinConfirmation: boolean;
@@ -1761,8 +1766,8 @@ export interface RigStatus {
 export interface RigDocument {
   /**
    * The draft the editor opens — `{rig_version, channels, pins}`, validated against
-   * rig/schema/rig_hardware.v1.json. A stored file that is not in force, when there is one
-   * (copied in, changed outside the app, or not loaded, even broken), so the operator can check
+   * rig/schema/rig_hardware.v1.json. A stored file that is not in force, when there is one (held,
+   * copied in, changed outside the app, or not loaded, even broken), so the operator can check
    * its pins or repair it; else the wiring in force, or the shipped pins when there is nothing
    * stored to show. `status.notices` says which.
    */

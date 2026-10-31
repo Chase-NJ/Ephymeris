@@ -471,10 +471,12 @@ A wiring change, from the Rig tab's save to the rescan, is all one [rig definiti
 flowchart TD
     save["hardware.save"] --> inuse{"Session set up<br/>or a box running?"}
     inuse -->|yes| busy["RIG_IN_USE<br/>nothing written"]
-    inuse -->|no| impact{"Would it newly break<br/>a saved task?"}
+    inuse -->|no| check{"Pins confirmed if asked,<br/>schema, RIG101–RIG107?"}
+    check -->|"pins unconfirmed, or a rule broken"| blocked["RIG_SAVE_BLOCKED<br/>nothing written"]
+    check -->|"not a rig document"| invalid["RIG_INVALID<br/>nothing written"]
+    check -->|"yes"| impact{"Would it newly break<br/>a saved task?"}
     impact -->|"yes, without confirm"| refuse["RIG_WOULD_BREAK_TASKS<br/>nothing written"]
-    impact -->|"no, or confirm: true"| write["Check the schema, issue edge codes,<br/>write wiring.json in one step"]
-    write -->|"not a rig document"| invalid["RIG_INVALID<br/>nothing written"]
+    impact -->|"no, or confirm: true"| write["Issue edge codes, record the digest,<br/>write wiring.json in one step"]
     reset["hardware.reset"] --> inuse
     write -->|"written"| install["set_rig_source:<br/>ChannelMap cache cleared"]
     install --> rebuild["RigDefinition._rebuild"]
@@ -563,6 +565,7 @@ The rig's description of itself lives in `sidecar/ephymeris_sidecar/rig/` and `h
 | `rig/schema/channels.v1.json` | **What a channel means**: `kind`, `well`, `port_slot`, `onset_strobe`, and the channel-set fields | shipped |
 | `rig/hardware/<pinout>.json` (selected by `_default.json`; `$EPHYMERIS_PINOUT` for tests) | **Where it is** on this box generation: a literal transcription of the firmware pinout | shipped |
 | `<data_dir>/hardware/wiring.json` | This rig's own wiring, as two documents in one file: **the channel set** (`channels`: what each channel is, no pins, the half meant to be the same on both lab machines) and **the pin map** (`pins`, `board`, `pin_range`: where each channel is on this box, never leaving the machine) | operator |
+| `<data_dir>/wiring-confirmed.json` | The content digests of the wiring saved, or confirmed, on this machine: what may be put in force (see the caution below) | sidecar |
 
 A second box generation is a one-file pinout swap, *provided the channel names are the same*. Resolving by name is what makes that work.
 
@@ -571,33 +574,40 @@ The operator's pair **replaces** the shipped pair rather than merging with it. A
 The editor and the wire see the same **one document**, `{rig_version, channels, pins, …}`. In code, `hardware/store.py`'s `split` and `join` turn it into the two documents and back.
 
 > [!CAUTION]
-> **The two documents are saved as one file, in one step, and stored wiring that will not load never runs.**
+> **The two documents are saved as one file, in one step, and stored wiring that will not load, or that nobody saved or confirmed on this machine, never runs.**
 >
 > - **Why one file.** Two files can be torn by a failure between their writes. A new channel set read against old pins can put a swapped port under the other port's codes: every poke is then recorded under the wrong family, with no error anywhere.
 > - **How a save writes it.** It writes `wiring.json.part`, fsyncs it and renames it over the old file. A failure up to the rename leaves the previous file whole. Once the rename lands the save is committed and its wiring is installed; the folder fsync that follows is best effort, and a failure there is logged as a warning.
-> - **When stored wiring will not load** (unreadable, unparseable, out of shape, a channel without a pin, or an older layout that disagrees with itself):
+> - **Only wiring saved here is put in force.** `<data_dir>/wiring-confirmed.json` records the content digest of the wiring last saved on this machine; a save with `confirmedPins` is how a confirmation lands, so it is recorded the same way. Stored wiring that passes every check but whose digest is not recorded is **held**: copied in (as `wiring.json`, `rig.json` or the two-file pair), edited by hand, or fixed by hand after a failed load. Held wiring is treated like wiring that did not load, below, and RIG108 asks for its pins.
+>   - **A restart never confirms anything.** Held wiring stays held at every start until it is confirmed and saved; a restart lifts a refusal only onto the wiring last saved here.
+>   - **The record sits outside `hardware/`**, so copying that folder from the other lab machine never brings its confirmation along.
+>   - **The digest covers content only**, without `edited_at`, taken over the file as stored and never after `upgrade`: a release that fills one more default must not hold every untouched file.
+>   - **It is written with the save, in an order no crash can turn into trusting or losing a wiring** (`HardwareStore.save`): record the new digest beside the old ones, write `wiring.json`, remove the older layouts it replaced, then record the new digest alone. Reset records nothing *before* it removes a file, so a Reset that stops part-way holds what it left.
+>   - **No record yet** (an upgrade from a build without one, or a fresh install): the first start records the stored wiring if it passes every check, since that is the wiring the build before would have put in force, and writes the file even when it is empty (`HardwareStore.record_at_first_start`). A normal upgrade asks nothing; wiring copied in after it is held. **Only a start does this, never a read**: a record lost while the app runs reads as nothing recorded, so a file copied in after it stays held. A record that will not read is never "no record": everything is held until saved.
+> - **When stored wiring will not load** (unreadable, unparseable, out of shape, a channel without a pin, a wiring rule broken (RIG101–RIG107, checked at load as a save checks them), or an older layout that disagrees with itself), **or is held**:
 >   - the registry composes the shipped pinout, so the sidecar still starts;
 >   - the startup log says the stored wiring failed to load;
 >   - `hardware.get` serves the stored document itself as the editor's draft, so it can be repaired and saved. What the draft is depends on what the file is now:
->     - **out of shape** (or a channel without a pin): the broken document, to repair;
->     - **a file that loads now**: that file;
+>     - **out of shape** (or a channel without a pin, or a rule broken): the broken document, to repair, then its pins confirmed;
+>     - **held**, or **a file that loads now**: that file;
 >     - **a two-file pair whose pin map was not written with its channel set**: the joined document;
->     - **unreadable, unparseable, not a JSON object, or a pin map alone**: the shipped pins. There is nothing to repair, so Save is off (`RIG_SAVE_BLOCKED`), and Reset is offered with a dialog naming every file it removes (`status.resetReplaces`).
+>     - **unreadable, unparseable, not a JSON object, or one half of the pair alone**: the shipped pins. There is nothing to repair, so Save is off (`RIG_SAVE_BLOCKED`), and Reset is offered with a dialog naming every file it removes (`status.resetReplaces`).
 >
->     One notice says the shipped pins are in force and what that blocks; the next describes the file as it is now;
+>     One notice says the shipped pins are in force, why, and what that blocks; the next describes the file as it is now and what the editor shows;
 >   - `sessions.startAll`, `port.startSession`, `sessions.flash`, `flash.enqueue` (Debug Mode) and `utility.identify` refuse with `RIG_WIRING_UNLOADED`, and the utility baseline flashes no box ([ARCHITECTURE.md](ARCHITECTURE.md#unloaded-wiring-holds-it)).
-> - **The refusal follows the wiring in force, never a fresh read of the file.** `RigDefinition` reads the stored wiring once, when it installs it (at startup, and after every save and reset), and the registry composes from exactly that read (`_install_wiring`). A file fixed or copied in by hand changes no pin, so it lifts nothing: only a save, a reset, or a restart onto a file that loads puts wiring in force.
-> - **The status describes the wiring in force, never the file.** `status.custom` is false while the shipped pins are in force. `status.notices` say where the wiring in force and the file part ways: it did not load, or it was copied in, edited, corrupted or deleted by hand. Each says whether boxes run or are refused, and what a restart would do.
-> - **A stored file that is not in force is never put in force unseen.** This covers a file copied in from another machine (as `wiring.json`, `rig.json` or the two-file pair, over the shipped pins or over the rig's own), a file changed outside the app, and any stored wiring served after a failed load.
->   - It is served as the draft, its notice names the actual files, and the draft carries RIG108 until the operator confirms every pin.
->   - The confirmation is an explicit act sent as `confirmedPins`. Without it, `hardware.save` is `RIG_SAVE_BLOCKED`, edited or not; with it, the save puts that wiring in force.
->   - Until then boxes run the wiring in force.
+> - **The refusal follows the wiring in force, never a fresh read of the file.** `RigDefinition` reads the stored wiring once, when it installs it (at startup, and after every save and reset), and the registry composes from exactly that read (`_install_wiring`). A file fixed or copied in by hand changes no pin, so it lifts nothing: only a save, a reset, or a restart onto the wiring last saved here puts wiring in force.
+> - **The status describes the wiring in force, never the file.** `status.custom` is false while the shipped pins are in force. `status.notices` say where the wiring in force and the files part ways: it did not load, it is held, or it was copied in, edited, corrupted or deleted by hand while the app ran. Each says what is in force, whether boxes run or are refused, **what the editor shows**, and what a restart would do. What the editor shows is one decision (`hardware/service.py`'s `_served`), and every notice's sentence about it comes from that decision, so no notice claims the editor shows the wiring in force when it does not.
+> - **A stored file that is not in force is never put in force unseen.** This covers a file copied in from another machine (as `wiring.json`, `rig.json` or the two-file pair, over the shipped pins or over the rig's own), a file changed outside the app, and any stored wiring served after a failed load, including one repaired in the editor.
+>   - It is served as the draft, its notice names the actual files, and the draft carries RIG108 until the operator confirms every pin. A file put back exactly as it was last saved here needs no confirming.
+>   - The confirmation is an explicit act sent as `confirmedPins`. Without it, `hardware.save` is `RIG_SAVE_BLOCKED`, edited or not; with it, the save puts that wiring in force and records it, so later restarts keep it.
+>   - Until then boxes run the wiring in force, and after a restart none runs.
+> - **A copy beside the layout read is shown, never deleted silently.** An older layout beside `wiring.json` (or `rig.json` beside the pair) is not read. If its digest is recorded (or, for files a save could not remove, each file's own) it is the app's own leftover, and the next save removes it. Otherwise a notice names it as not saved here, no save removes it, and Reset does.
 > - **Notices are the rig's, `problems` are the draft's.** Every preview replaces `problems`, while the notices stand through every edit. While stored wiring is in force, healthy and the same as the file, the draft is that wiring.
 > - **The sidecar decides Save (`status.canSave`), and the editor renders it.** A draft may be saved when it has no problems, the rig's state allows a save, and it either differs from the served draft or would clear a notice. Every `hardware.get`, `hardware.preview` and `hardware.save` reply carries the answer for the draft it describes.
 >   - The editor holds Save while a preview is in flight.
 >   - When an edit is undone back to the served draft, the editor shows the served draft's own answer again; no preview describes that draft.
-> - **A save validates the whole document before it issues any edge code**: its shape, a pin for every channel, and every wiring rule (RIG101–RIG107, refused as `RIG_SAVE_BLOCKED`). So a refused save never touches the vocabulary, and the editor's own hold on Save is never the only guard.
-> - **Reset removes the lowest-precedence file first and `wiring.json` last, and stops at the first file it cannot remove.** A partial reset therefore leaves either the wiring that was in force or a load problem, never an older wiring in force. Its confirm dialog lists `status.resetReplaces`, built from the same list Reset walks (`HardwareStore.removal_order`), so a staged pin map holding the pins in force is named too.
+> - **A save validates the whole document before it costs it or issues any edge code**: its shape, a pin for every channel, and every wiring rule (RIG101–RIG107, refused as `RIG_SAVE_BLOCKED`). So a draft that is going to be refused never asks the operator to accept the tasks it would break, a refused save never touches the vocabulary, and the editor's own hold on Save is never the only guard.
+> - **Reset forgets the record first, then removes the lowest-precedence file first and `wiring.json` last, and stops at the first file it cannot remove.** A partial reset therefore leaves either the wiring that was in force or a load problem, never an older wiring in force, and a restart holds whatever it left. Its confirm dialog lists `status.resetReplaces`, built from the same list Reset walks (`HardwareStore.removal_order`), so a staged pin map holding the pins in force is named too.
 > - **No `edited_at` in any digest or hash.** Identical wiring copied from another machine compares equal.
 
 **Older layouts are read in place, and the next save writes `wiring.json` and removes them:**
@@ -605,7 +615,7 @@ The editor and the wire see the same **one document**, `{rig_version, channels, 
 - `rig.json`: the same document under its old name.
 - `channel_set.json` + `pin_map.json`: the two documents in two files. The pin map names its channel set by a digest, and a pair whose digests disagree is a load problem, never a guess.
 
-`wiring.json` wins over both, so a save stopped before its cleanup still has its wiring in force. A stray temporary file (`*.part`, `*.json.tmp`) on its own is no wiring at all.
+`wiring.json` wins over both, and the pair over `rig.json`, so a save stopped before its cleanup still has its wiring in force. A layout beside the one read is a copy the app shows and never deletes silently (see the caution above). A stray temporary file (`*.part`, `*.json.tmp`) on its own is no wiring at all.
 
 Channel kinds are `engagement` (exactly one), `response`, `emitter`, `reward`, `cue`, `vacuum` and `sync` (at most one).
 
@@ -676,7 +686,7 @@ A well-formed document describing an impossible box is a successful reply carryi
 | `RIG105` | More than one `sync` channel |
 | `RIG106` | An odor line with no onset code, one that is not a live onset code, two lines on one code, or an onset on a channel that is not an emitter ([Onset codes](#onset-codes)) |
 | `RIG107` | A type that contradicts the kind's direction, an active level or debounce on an output, an edge the type does not have, an edge code that is not live, or one code on two edges ([Edge codes](#edge-codes)) |
-| `RIG108` | A draft read from a stored file that is not in force (copied in, changed outside the app, not loaded, or a pin map not written with its channel set), its pins not yet confirmed by the operator ([The channel set and the pin map](#the-channel-set-and-the-pin-map)) |
+| `RIG108` | A draft read from a stored file that is not in force and was not saved or confirmed on this machine (copied in, changed outside the app, not loaded even once repaired, or a pin map not written with its channel set), its pins not yet confirmed by the operator ([The channel set and the pin map](#the-channel-set-and-the-pin-map)) |
 
 ### The sync channel
 

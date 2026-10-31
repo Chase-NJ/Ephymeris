@@ -287,7 +287,7 @@ export function RigWiringEditor({
               <Callout
                 title="This rig's wiring"
                 tone="warning"
-                why="About the wiring in force, not this draft: no edit clears these. Saving a draft without problems, or Reset, does."
+                why="About the wiring in force and the files on disk, not this draft: no edit clears these. Saving a draft without problems, or Reset, does; a file beside the wiring file goes only with Reset."
               >
                 {notices.map((n, i) => (
                   <p key={i} className="text-[11px] leading-relaxed">

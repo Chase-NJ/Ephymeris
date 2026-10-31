@@ -6,7 +6,7 @@ import { useSidecar } from "@/lib/ws/context";
 import { EVT } from "@/lib/ws/protocol";
 
 import { getRig, previewRig, resetRig, saveRig } from "./commands";
-import { applyPreview, servedView } from "./rigView";
+import { afterSave, applyPreview, servedView } from "./rigView";
 import type { RigAllocation, RigDocument, RigImpact, RigProblem, RigStatus } from "./types";
 
 /**
@@ -194,12 +194,16 @@ export function useRig(): RigSession {
       setActionError(null);
       try {
         const reply = await saveRig(client, doc, confirm, confirmedPins);
+        const next = afterSave(reply);
         setBaseline(doc);
-        setStatus(reply.status);
-        setProblems(reply.problems);
-        setBreaks(reply.breaks);
-        setAllocations([]);
-        setIssued(reply.allocations);
+        setBaselineStatus(next.baseline.status);
+        setBaselineProblems(next.baseline.problems);
+        setConfirmedPins(next.confirmedPins);
+        setStatus(next.view.status);
+        setProblems(next.view.problems);
+        setBreaks(next.view.breaks);
+        setAllocations(next.view.allocations);
+        setIssued(next.issued);
         return true;
       } catch (err) {
         // A refusal carries the tasks it would break in `detail`. Surfacing it

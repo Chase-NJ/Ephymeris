@@ -251,12 +251,17 @@ def _trial_problems(definition, channels, vocab) -> list[Diagnostic]:
 
     if definition.trials and presentable == 0:
         only_nogo = all(not trial.is_go for trial in definition.trials)
+        # Advice has to work: Pool presents a no-go row only if the generator
+        # keeps it, and one on an unknown odor line would still run nothing.
+        pool_would_present = only_nogo and any(
+            rows.resolve_row(trial, channels, vocab) for trial in definition.trials
+        )
         out.append(Diagnostic(
             "trials",
             "every trial type here is no-go, and only Pool selection presents a "
             "no-go type — anti-bias draws a side first, and a withhold has none. "
             "Switch to Pool, or add a go type."
-            if only_nogo and definition.selection_mode != "pool"
+            if pool_would_present and definition.selection_mode != "pool"
             else "no trial type in this table can actually be presented, so a "
             "session would run nothing.",
             "TSK108",

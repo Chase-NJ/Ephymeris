@@ -268,8 +268,11 @@ def _live_metrics(definition, channels, vocab) -> list[dict[str, Any]]:
     """
     out: list[dict[str, Any]] = []
     for i, trial in enumerate(definition.trials):
+        # A row the trial table drops is a row that never runs, so it gets no
+        # metric and, through it, no arm in the state-machine drawing.
+        row = rows.resolve_row(trial, channels, vocab)
         onset = vocab.get(trial.onset_strobe)
-        if onset is None:
+        if row is None or onset is None:
             continue
         # The operator's name for the condition, which TSK110 requires them to
         # give: it is what titles the sparkline, the learning curve and the
@@ -295,10 +298,7 @@ def _live_metrics(definition, channels, vocab) -> list[dict[str, Any]]:
             })
             continue
 
-        port = channels.get(trial.response_channel) if trial.response_channel else None
-        slot = vocab.port_slot(port.port_slot) if port and port.port_slot else None
-        if not slot:
-            continue
+        port, slot = row.port, row.slot
         success = vocab.get(slot["enter_code"])
         alternate = _other_enter_code(channels, vocab, port.name)
         if success is None or alternate is None:

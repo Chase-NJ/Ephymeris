@@ -2504,6 +2504,18 @@ A code a recorded session contains and nothing may emit any more. Reserved forev
 | `seenIn` *(optional)* | string |  |
 | `retiredAt` *(optional)* | string | ISO-8601 UTC; absent on codes retired before the app recorded it. |
 
+<a id="shape-rigallocation"></a>
+#### RigAllocation
+
+One strobe code a channel-set save issues (`TASKS.md#edge-codes`). Appended to the vocabulary inside the same rig definition write as the wiring, never renumbered after.
+
+| Field | Type | Notes |
+|---|---|---|
+| `channel` | string | The channel whose edge gets the code. |
+| `edge` | string | The edge the code announces: `enter`/`exit` on an input, `on`/`off` on an output. |
+| `name` | string | The code's name, `<CHANNEL>_<EDGE>`, with a numeric suffix when that name was ever issued to something else. Never derived again: a renamed channel keeps it. |
+| `code` | number | The vocabulary number it is issued, the lowest free one. |
+
 <a id="shape-rigdocument"></a>
 #### RigDocument
 
@@ -2545,6 +2557,7 @@ One thing wrong with a wiring document, located. Every problem is reported rathe
 | `status` | [RigStatus](#shape-rigstatus) |  |
 | `problems` | [RigProblem](#shape-rigproblem)[] |  |
 | `breaks` | [RigImpact](#shape-rigimpact)[] | Task profiles that generate today and would not after this change. Non-empty does NOT mean the save was refused — see the command. |
+| `allocations` | [RigAllocation](#shape-rigallocation)[] | The edge codes this document needs and the channel set does not yet name: what a save WOULD issue, from `hardware.preview`, and what it DID issue, from `hardware.save`. Empty when every edge already has its code. |
 
 <a id="shape-rigstatus"></a>
 #### RigStatus
@@ -2556,6 +2569,7 @@ One thing wrong with a wiring document, located. Every problem is reported rathe
 | `board` | string |  |
 | `editedAt` | string \| null |  |
 | `pinoutHash` | string | The composed wiring's hash, over the fields that can change a compiled byte. Prose and pin notes are excluded: it answers 'could these two produce different firmware?', so a reworded rationale must not move it. |
+| `channelSetHash` | string | The channel set's hash: what every channel is (type, role, edges and their code names), never where it is. Labels and prose are excluded, and so is every pin, so two machines sharing one channel set agree on it whatever their pin maps (`TASKS.md#the-channel-set-and-the-pin-map`). |
 
 <a id="shape-runchange"></a>
 #### RunChange

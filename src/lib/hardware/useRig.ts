@@ -6,7 +6,7 @@ import { useSidecar } from "@/lib/ws/context";
 import { EVT } from "@/lib/ws/protocol";
 
 import { getRig, previewRig, resetRig, saveRig } from "./commands";
-import type { RigDocument, RigImpact, RigProblem, RigStatus } from "./types";
+import type { RigAllocation, RigDocument, RigImpact, RigProblem, RigStatus } from "./types";
 
 /**
  * One rig-wiring editing session.
@@ -16,7 +16,7 @@ import type { RigDocument, RigImpact, RigProblem, RigStatus } from "./types";
  * both forced by what a wiring document is.
  *
  * VALIDATION IS A ROUND TRIP, not a local check. `hardware.preview` runs the
- * JSON Schema and TG226-229 against the composed channel map — the same rules
+ * JSON Schema and RIG101–RIG107 against the composed channel map — the same rules
  * the compiler runs — so the editor cannot drift from what a save will accept.
  * Debounced at 200 ms, longer than the spec editor's 120 ms because a preview
  * also recompiles every stored task to compute `breaks`.
@@ -31,10 +31,13 @@ export interface RigSession {
   baseline: RigDocument | null;
   dirty: boolean;
   status: RigStatus | null;
-  /** Schema violations and TG226-229, for the document as it stands. */
+  /** Schema violations and RIG101–RIG107, for the document as it stands. */
   problems: RigProblem[];
   /** Tasks this change would newly stop compiling. */
   breaks: RigImpact[];
+  /** The edge codes a save of this draft would issue, as the sidecar plans
+   *  them (`TASKS.md#edge-codes`); after a save, the ones it did issue. */
+  allocations: RigAllocation[];
   checking: boolean;
   saving: boolean;
   loadError: string | null;
@@ -57,6 +60,7 @@ export function useRig(): RigSession {
   const [status, setStatus] = useState<RigStatus | null>(null);
   const [problems, setProblems] = useState<RigProblem[]>([]);
   const [breaks, setBreaks] = useState<RigImpact[]>([]);
+  const [allocations, setAllocations] = useState<RigAllocation[]>([]);
   const [checking, setChecking] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -71,6 +75,7 @@ export function useRig(): RigSession {
       setStatus(reply.status);
       setProblems(reply.problems);
       setBreaks([]);
+      setAllocations([]);
       setLoadError(null);
     } catch (err) {
       setLoadError(errorMessage(err));
@@ -115,6 +120,7 @@ export function useRig(): RigSession {
           if (mine !== sequence.current) return;
           setProblems(reply.problems);
           setBreaks(reply.breaks);
+          setAllocations(reply.allocations);
         })
         .catch((err) => {
           if (mine === sequence.current) setActionError(errorMessage(err));
@@ -134,6 +140,7 @@ export function useRig(): RigSession {
   const revert = useCallback(() => {
     if (baseline) setDocState(baseline);
     setBreaks([]);
+    setAllocations([]);
   }, [baseline]);
 
   const save = useCallback(
@@ -147,6 +154,7 @@ export function useRig(): RigSession {
         setStatus(reply.status);
         setProblems(reply.problems);
         setBreaks(reply.breaks);
+        setAllocations(reply.allocations);
         return true;
       } catch (err) {
         // A refusal carries the tasks it would break in `detail`. Surfacing it
@@ -172,6 +180,7 @@ export function useRig(): RigSession {
       setStatus(reply.status);
       setProblems(reply.problems);
       setBreaks([]);
+      setAllocations([]);
     } catch (err) {
       setActionError(errorMessage(err));
     } finally {
@@ -186,6 +195,7 @@ export function useRig(): RigSession {
     status,
     problems,
     breaks,
+    allocations,
     checking,
     saving,
     loadError,

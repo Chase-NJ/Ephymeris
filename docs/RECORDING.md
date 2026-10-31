@@ -231,7 +231,7 @@ Two different facts in two places:
 > have put something else there, while the app reports the box has no sync line. So absence is stated:
 > `-1`.
 >
-> **A saved `<data_dir>/hardware/rig.json` replaces the shipped pair** rather than merging, so a rig
+> **A saved rig wiring (`<data_dir>/hardware/`) replaces the shipped pair** rather than merging, so a rig
 > wired before the `sync` kind existed has no `sync_out` until someone adds one. The Record step's
 > readiness list checks for it (`intan.status.rigHasSync`) and `intan.configure` refuses without it.
 

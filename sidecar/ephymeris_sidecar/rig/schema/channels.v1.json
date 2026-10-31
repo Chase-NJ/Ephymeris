@@ -20,7 +20,12 @@
     "the way `port_slot` names a response port's family. It is a NAME -- the number",
     "lives only in the vocabulary -- and nothing derives it from the channel's name",
     "or position, because the onsets are not contiguous (101-109, then 114-116).",
-    "The task editor sets each trial type's code from it; RIG106 checks it."
+    "The task editor sets each trial type's code from it; RIG106 checks it.",
+    "",
+    "`type`, `role`, `active_level`, `debounce_ms` and `serves` are the CHANNEL SET",
+    "(TASKS.md#the-channel-set-and-the-pin-map): what a channel is, beside the kind",
+    "it still generates from. No channel here names its `edges` codes -- a save",
+    "allocates them (TASKS.md#edge-codes), so the shipped vocabulary is untouched."
   ],
   "kinds": {
     "engagement": {
@@ -55,108 +60,162 @@
   "channels": {
     "odor_port": {
       "kind": "engagement",
+      "type": "digital_in",
+      "role": "port",
+      "active_level": "low",
+      "debounce_ms": 0,
       "rationale": "The engagement port. Named in no task profile because it is resolved by kind -- an engagement port is a structural fact of the box, not a per-task choice."
     },
     "right_well": {
       "kind": "response",
       "port_slot": 2,
+      "type": "digital_in",
+      "role": "port",
+      "active_level": "low",
+      "debounce_ms": 0,
       "rationale": "INPUT_PULLUP: LOW means the beam is broken, i.e. poked -- the polarity `verifySensor()` reads. `port_slot` names which family of per-port strobes this port reports with (strobe_vocab `port_slots`); slot 2 is the historical _R family, so the recorded archive is unchanged."
     },
     "left_well": {
       "kind": "response",
       "port_slot": 1,
+      "type": "digital_in",
+      "role": "port",
+      "active_level": "low",
+      "debounce_ms": 0,
       "rationale": "See right_well. Slot 1 is the historical _L family."
     },
     "trial_light": {
       "kind": "cue",
+      "type": "digital_out",
+      "role": "cue",
       "rationale": "Trial availability: raised when the trial opens, dropped on every path out of it. Named in no task profile for the same reason as odor_port. Its OFF edge pairs with a behavioural strobe and the order flips between paths -- LIGHTS_OFF follows ODOR_UNPOKE on a completed trial and follows LAZY_RAT on an abstention."
     },
     "vacuum": {
       "kind": "vacuum",
+      "type": "digital_out",
+      "role": "routing",
       "rationale": "Normally-open. Closed once the commitment hold is satisfied, which is what routes odor to the port; reopened when sampling ends. Purely mechanical -- it carries no strobe of its own."
     },
     "odor_line_1": {
       "kind": "emitter",
       "onset_strobe": "ODOR_1_ON",
+      "type": "digital_out",
+      "role": "stimulus",
       "rationale": "Odor solenoid 1."
     },
     "odor_line_2": {
       "kind": "emitter",
       "onset_strobe": "ODOR_2_ON",
+      "type": "digital_out",
+      "role": "stimulus",
       "rationale": "Odor solenoid 2."
     },
     "odor_line_3": {
       "kind": "emitter",
       "onset_strobe": "ODOR_3_ON",
+      "type": "digital_out",
+      "role": "stimulus",
       "rationale": "Odor solenoid 3."
     },
     "odor_line_4": {
       "kind": "emitter",
       "onset_strobe": "ODOR_4_ON",
+      "type": "digital_out",
+      "role": "stimulus",
       "rationale": "Odor solenoid 4."
     },
     "odor_line_5": {
       "kind": "emitter",
       "onset_strobe": "ODOR_5_ON",
+      "type": "digital_out",
+      "role": "stimulus",
       "rationale": "Odor solenoid 5."
     },
     "odor_line_6": {
       "kind": "emitter",
       "onset_strobe": "ODOR_6_ON",
+      "type": "digital_out",
+      "role": "stimulus",
       "rationale": "Odor solenoid 6."
     },
     "odor_line_7": {
       "kind": "emitter",
       "onset_strobe": "ODOR_7_ON",
+      "type": "digital_out",
+      "role": "stimulus",
       "rationale": "Odor solenoid 7. Note the pin ordering is NOT monotonic past line 6 -- 22,24,26,28,30,32 then 23,25,27,29,31,33 -- which is why channels resolve by name and never by arithmetic."
     },
     "odor_line_8": {
       "kind": "emitter",
       "onset_strobe": "ODOR_8_ON",
+      "type": "digital_out",
+      "role": "stimulus",
       "rationale": "Odor solenoid 8."
     },
     "odor_line_9": {
       "kind": "emitter",
       "onset_strobe": "ODOR_9_ON",
+      "type": "digital_out",
+      "role": "stimulus",
       "rationale": "Odor solenoid 9."
     },
     "odor_line_10": {
       "kind": "emitter",
       "onset_strobe": "ODOR_10_ON",
+      "type": "digital_out",
+      "role": "stimulus",
       "rationale": "Odor solenoid 10."
     },
     "odor_line_11": {
       "kind": "emitter",
       "onset_strobe": "ODOR_11_ON",
+      "type": "digital_out",
+      "role": "stimulus",
       "rationale": "Odor solenoid 11."
     },
     "odor_line_12": {
       "kind": "emitter",
       "onset_strobe": "ODOR_12_ON",
+      "type": "digital_out",
+      "role": "stimulus",
       "rationale": "Odor solenoid 12."
     },
     "fluid_0": {
       "kind": "reward",
       "well": "left_well",
+      "type": "digital_out",
+      "role": "reward",
+      "serves": "left_well",
       "rationale": "Left well, reward line 1. `well` is declared so a task profile that rewards the left well through a right-well line is refused -- a mistake that would look correct on screen and deliver water to the wrong side of the box."
     },
     "fluid_1": {
       "kind": "reward",
       "well": "left_well",
+      "type": "digital_out",
+      "role": "reward",
+      "serves": "left_well",
       "rationale": "Left well, reward line 2. Unused by every current task; present because the hardware has it."
     },
     "fluid_2": {
       "kind": "reward",
       "well": "right_well",
+      "type": "digital_out",
+      "role": "reward",
+      "serves": "right_well",
       "rationale": "Right well, reward line 1."
     },
     "fluid_3": {
       "kind": "reward",
       "well": "right_well",
+      "type": "digital_out",
+      "role": "reward",
+      "serves": "right_well",
       "rationale": "Right well, reward line 2. Unused by every current task."
     },
     "sync_out": {
       "kind": "sync",
+      "type": "digital_out",
+      "role": "sync",
       "rationale": "Pulses on every strobe. The rising edge is the event's true time on the recording clock; what the event WAS is the serial line, matched by order. Named in no task profile -- like the engagement port it is a structural fact of the box."
     }
   }

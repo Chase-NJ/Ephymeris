@@ -76,6 +76,9 @@ class StrobeEntry:
     rationale: str
     emitted_on: str = ""
     emitted_by: tuple[str, ...] = ()
+    #: A channel-set edge code: the (channel, edge, kind, role) it was issued
+    #: for (`rig/allocation.py`). Empty for every other code.
+    issued_for: tuple[str, str, str, str] | tuple[()] = ()
 
 
 @dataclass(frozen=True)
@@ -97,6 +100,12 @@ STROBE_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
 #: vocabulary is the only place a code is defined. Mirrored by `ONSET_NAME` in
 #: `src/lib/taskdef/lines.ts`, which filters the same picker.
 ONSET_NAME = re.compile(r"_\d+_ON$")
+
+
+def _issued_for(raw: object) -> tuple[str, str, str, str] | tuple[()]:
+    if not isinstance(raw, dict):
+        return ()
+    return tuple(str(raw.get(k, "")) for k in ("channel", "edge", "kind", "role"))  # type: ignore[return-value]
 
 
 class Vocabulary:
@@ -128,6 +137,7 @@ class Vocabulary:
                 rationale=e.get("rationale", ""),
                 emitted_on=e.get("emitted_on", ""),
                 emitted_by=tuple(e.get("emitted_by", ())),
+                issued_for=_issued_for(e.get("issued_for")),
             )
             for name, e in raw["codes"].items()
             if not name.startswith("_")
@@ -330,6 +340,58 @@ class Vocabulary:
 # --------------------------------------------------------------------------- #
 
 
+#: A channel's type -> the edges it has, in the fixed order they are
+#: allocated codes (TASKS.md#edge-codes). The type, not the name or the role,
+#: decides: an input is entered and left, an output switched on and off.
+EDGES: dict[str, tuple[str, ...]] = {
+    "digital_in": ("enter", "exit"),
+    "digital_out": ("on", "off"),
+}
+
+#: The direction each type implies. A kind still declares its own, and RIG107
+#: reports a channel whose type contradicts it.
+TYPE_DIRECTION: dict[str, str] = {"digital_in": "in", "digital_out": "out"}
+
+#: What a channel can be for in a task (ADR 0003).
+ROLES: tuple[str, ...] = ("port", "stimulus", "reward", "cue", "routing", "sync")
+
+#: Kind -> (type, role), for a channel that declares neither: every rig saved
+#: before the channel set existed. The kind is today's whole description of a
+#: channel, so it is the one honest source for both.
+KIND_DEFAULTS: dict[str, tuple[str, str]] = {
+    "engagement": ("digital_in", "port"),
+    "response": ("digital_in", "port"),
+    "emitter": ("digital_out", "stimulus"),
+    "reward": ("digital_out", "reward"),
+    "cue": ("digital_out", "cue"),
+    "vacuum": ("digital_out", "routing"),
+    "sync": ("digital_out", "sync"),
+}
+
+
+def channel_set_defaults(entry: dict) -> dict:
+    """The channel-set fields a channel entry lacks, filled from its kind.
+
+    Only what is ABSENT is filled, and nothing is ever invented for `edges`:
+    those are allocated by a save (`rig/allocation.py`), not derived here.
+    `serves` copies `well`, the declaration it will replace.
+    """
+    kind = entry.get("kind")
+    if kind not in KIND_DEFAULTS:
+        return {}
+    kind_type, kind_role = KIND_DEFAULTS[kind]
+    out: dict = {}
+    if "type" not in entry:
+        out["type"] = kind_type
+    if "role" not in entry:
+        out["role"] = kind_role
+    if entry.get("type", kind_type) == "digital_in":
+        out.update({k: v for k, v in (("active_level", "low"), ("debounce_ms", 0)) if k not in entry})
+    if kind == "reward" and entry.get("well") and "serves" not in entry:
+        out["serves"] = entry["well"]
+    return out
+
+
 @dataclass(frozen=True)
 class Channel:
     name: str
@@ -346,6 +408,15 @@ class Channel:
     label: str = ""
     pin_note: str = ""             # why THIS pin, when there is anything to say
     pin_source: str = ""           # the BehaviorBox.h line the number came from
+    # -- the channel set (TASKS.md#the-channel-set-and-the-pin-map). Beside the
+    # fields above, never instead of them: nothing generated reads these yet.
+    type: str = ""                 # digital_in | digital_out
+    role: str = ""                 # port | stimulus | reward | cue | routing | sync
+    active_level: str | None = None  # inputs: "low" | "high"
+    debounce_ms: int | None = None   # inputs
+    serves: str | None = None        # reward lines: the port they pay at
+    #: (edge, code name) for every edge that has its code, in the type's order.
+    edges: tuple[tuple[str, str], ...] = ()
 
     @property
     def watchable(self) -> bool:
@@ -396,23 +467,15 @@ class ChannelMap:
         self._logical = raw
         self._pins = pins
         self._by_name: dict[str, Channel] = {
-            name: Channel(
-                name=name,
-                index=pins[name]["index"],
-                direction=raw["kinds"][c["kind"]]["direction"],
-                kind=c["kind"],
-                watch_bit=pins[name].get("watch_bit"),
-                well=c.get("well"),
-                port_slot=c.get("port_slot"),
-                onset_strobe=c.get("onset_strobe"),
-                rationale=c.get("rationale", ""),
-                label=str(c.get("label") or name.replace("_", " ")),
-                pin_note=pins[name].get("note", ""),
-                pin_source=pins[name].get("source", ""),
-            )
+            name: _channel(name, {**c, **channel_set_defaults(c)}, pins[name], raw["kinds"])
             for name, c in raw["channels"].items()
             if name in pins
         }
+
+    @property
+    def channel_set(self) -> "ChannelSet":
+        """The lab-wide half of this map: what each channel is, with no pin."""
+        return ChannelSet(self._by_name.values())
 
     def disagreements(self) -> list[tuple[str, str]]:
         """(location, message) for every way the two halves fail to describe one box.
@@ -615,6 +678,57 @@ class ChannelMap:
             "against whichever the generator happened to emit.",
         )]
 
+    def edge_problems(self, vocab: "Vocabulary") -> list[tuple[str, str]]:
+        """RIG107: a channel-set declaration that contradicts itself.
+
+        A type whose direction is not the kind's (a reward line that is an
+        input), input-only fields on an output, an edge the type does not have,
+        an edge code the vocabulary does not hold live, and one code on two
+        edges -- which would make two different events indistinguishable in
+        the data, the failure every code rule here exists to prevent.
+        """
+        out: list[tuple[str, str]] = []
+        where = self.channels_source
+        claimed: dict[str, list[str]] = {}
+        for c in sorted(self._by_name.values(), key=lambda c: c.name):
+            at = self._at(where, c.name)
+            if c.type not in EDGES:
+                out.append((at, f"{c.name!r} has the type {c.type!r}, which is not a channel type."))
+                continue
+            if TYPE_DIRECTION[c.type] != c.direction:
+                out.append((
+                    at,
+                    f"{c.name!r} is a {c.kind} channel, an {c.direction}put, but declares "
+                    f"the type {c.type}. Change one so they agree.",
+                ))
+            if c.type != "digital_in" and (c.active_level is not None or c.debounce_ms is not None):
+                out.append((
+                    at,
+                    f"{c.name!r} is an output; an active level and a debounce are for inputs.",
+                ))
+            for edge, code in c.edges:
+                if edge not in EDGES[c.type]:
+                    out.append((
+                        at,
+                        f"{c.name!r} names a code for the edge {edge!r}, which a {c.type} "
+                        f"channel does not have ({', '.join(EDGES[c.type])}).",
+                    ))
+                if code not in vocab:
+                    out.append((
+                        at,
+                        f"{c.name!r} announces its {edge} edge with {code!r}, which the strobe "
+                        + ("vocabulary has retired." if vocab.retired_entry(code) else "vocabulary does not define."),
+                    ))
+                claimed.setdefault(code, []).append(f"{c.name}.{edge}")
+        for code, edges in sorted(claimed.items()):
+            if len(edges) > 1:
+                out.append((
+                    where,
+                    f"{code} is the code of {', '.join(edges)}. Two edges announced by one "
+                    "code are indistinguishable in the data.",
+                ))
+        return out
+
     def content_hash(self) -> str:
         """SHA-256 over the wiring that can change a compiled byte, truncated.
 
@@ -637,7 +751,8 @@ class ChannelMap:
         `onset_strobe` is LEFT OUT. It changes no compiled byte: the generator
         emits the code a trial row stores, and the declaration only decides what
         the editor writes there. Including it would move every rig's pinout hash
-        for a change no box can observe.
+        for a change no box can observe. The channel-set fields are left out for
+        the same reason, and hashed by `ChannelSet.content_hash()` instead.
         """
         payload = [
             [c.name, c.kind, c.direction, c.index, c.watch_bit, c.well, c.port_slot]
@@ -672,6 +787,7 @@ class ChannelMap:
                     **({"well": c.well} if c.well else {}),
                     **({"port_slot": c.port_slot} if c.port_slot else {}),
                     **({"onset_strobe": c.onset_strobe} if c.onset_strobe else {}),
+                    **channel_set_json(c),
                     **({"rationale": c.rationale} if c.rationale else {}),
                     **({"note": c.pin_note} if c.pin_note else {}),
                     **({"source": c.pin_source} if c.pin_source else {}),
@@ -734,6 +850,82 @@ class ChannelMap:
         return sorted(
             (c for c in self._by_name.values() if c.watchable), key=lambda c: c.watch_bit
         )
+
+
+def _channel(name: str, c: dict, pin: dict, kinds: dict) -> Channel:
+    edges = c.get("edges") if isinstance(c.get("edges"), dict) else {}
+    order = EDGES.get(c.get("type", ""), ())
+    return Channel(
+        name=name,
+        index=pin["index"],
+        direction=kinds[c["kind"]]["direction"],
+        kind=c["kind"],
+        watch_bit=pin.get("watch_bit"),
+        well=c.get("well"),
+        port_slot=c.get("port_slot"),
+        onset_strobe=c.get("onset_strobe"),
+        rationale=c.get("rationale", ""),
+        label=str(c.get("label") or name.replace("_", " ")),
+        pin_note=pin.get("note", ""),
+        pin_source=pin.get("source", ""),
+        type=str(c.get("type", "")),
+        role=str(c.get("role", "")),
+        active_level=c.get("active_level"),
+        debounce_ms=c.get("debounce_ms"),
+        serves=c.get("serves"),
+        # The type's own edges first, in its order; anything else after, so
+        # RIG107 can still see and report it.
+        edges=tuple(
+            [(e, str(edges[e])) for e in order if e in edges]
+            + [(e, str(v)) for e, v in edges.items() if e not in order]
+        ),
+    )
+
+
+def channel_set_json(c: Channel) -> dict:
+    return {
+        "type": c.type,
+        "role": c.role,
+        **({"active_level": c.active_level} if c.active_level is not None else {}),
+        **({"debounce_ms": c.debounce_ms} if c.debounce_ms is not None else {}),
+        **({"serves": c.serves} if c.serves else {}),
+        **({"edges": dict(c.edges)} if c.edges else {}),
+    }
+
+
+class ChannelSet:
+    """The lab-wide half of the rig wiring: what each channel IS, never where.
+
+    ADR 0003 makes it one document both lab machines hold, so the same task
+    strobes the same codes on either. This class only answers questions about
+    it; the pins stay in the `ChannelMap` it came from.
+    """
+
+    def __init__(self, channels) -> None:  # noqa: ANN001 - an iterable of Channel
+        self._channels = tuple(sorted(channels, key=lambda c: c.name))
+
+    def edge_codes(self) -> dict[str, tuple[str, str]]:
+        """Code name -> (channel, edge), for every edge that has its code."""
+        return {code: (c.name, edge) for c in self._channels for edge, code in c.edges}
+
+    def content_hash(self) -> str:
+        """SHA-256 over what every channel is, truncated.
+
+        Labels and rationale are left out (a reworded label must not split two
+        machines' channel sets), and so is every pin: two machines that share a
+        channel set agree on this whatever their pin maps say. Today's `kind`,
+        `well`, `port_slot` and `onset_strobe` ride along while they exist,
+        because a task still generates from them.
+        """
+        payload = [
+            [
+                c.name, c.kind, c.type, c.role, c.active_level, c.debounce_ms,
+                c.serves, c.well, c.port_slot, c.onset_strobe, dict(c.edges),
+            ]
+            for c in self._channels
+        ]
+        canonical = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+        return hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
 
 # --------------------------------------------------------------------------- #
@@ -937,6 +1129,11 @@ def channels() -> ChannelMap:
     return _channels_in_force.get()
 
 
+def channel_set() -> ChannelSet:
+    """The channel set in force (or hypothetical): `channels()` without its pins."""
+    return channels().channel_set
+
+
 def shipped_channels() -> ChannelMap:
     """The shipped pair, ignoring whatever the rig has saved.
 
@@ -969,7 +1166,7 @@ def split_rig(rig: dict) -> tuple[dict, dict]:
         "pinout_id": rig.get("derived_from") or "rig",
         "pinout_version": int(rig.get("rig_version", 1)),
         "board": rig.get("board", ""),
-        "transcribed_from": "<data_dir>/hardware/rig.json",
+        "transcribed_from": "<data_dir>/hardware/pin_map.json",
         "source_label": "pins",
         "pins": rig["pins"],
         **({"pin_range": rig["pin_range"]} if rig.get("pin_range") else {}),

@@ -9,6 +9,16 @@ A lab app that runs rodent behavior sessions on six Arduino boxes and keeps the 
 The rig wiring plus the strobe vocabulary in force on this machine: the channels, pins and strobe codes every generated sketch takes from the rig rather than from its task.
 _Avoid_: rig configuration, rig settings
 
+<a id="channel-set"></a>
+**Channel set**:
+The rig wiring's lab-wide half: every channel and what it is (type, role, the code names of its edges), with no pins. It carries its own content hash.
+_Avoid_: channel registry, channel list
+
+<a id="pin-map"></a>
+**Pin map**:
+The rig wiring's local half: which pin each channel of the channel set is on, on this machine's box.
+_Avoid_: pinout (the shipped transcription a pin map starts from)
+
 <a id="held-session"></a>
 **Held session**:
 The one session that holds the rig, from its mapping's confirmation (or a resume) until it ends or is abandoned. It stays held between groups, and it may still read `configuring`.

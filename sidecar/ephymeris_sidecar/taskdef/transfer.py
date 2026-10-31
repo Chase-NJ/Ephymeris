@@ -94,6 +94,8 @@ class ImportPlan:
     same_channel_set: bool
     #: A task with this id is saved here, and applying replaces it.
     replaces: bool = False
+    #: That saved task's name, which may not be the file's.
+    replaces_name: str | None = None
     #: The saved task with this id already is this document: nothing to write.
     identical: bool = False
     conflicts: list[dict[str, Any]] = field(default_factory=list)
@@ -106,6 +108,7 @@ class ImportPlan:
             "taskId": self.task_id,
             "name": self.name,
             "replaces": self.replaces,
+            "replacesName": self.replaces_name,
             "identical": self.identical,
             "sameChannelSet": self.same_channel_set,
             "hereHash": self.here_hash,
@@ -261,6 +264,7 @@ def plan_import(
         file_hash_version=hash_version,
         same_channel_set=here_hash == stated_hash,
         replaces=stored is not None,
+        replaces_name=_name_of(stored),
         identical=stored == document,
         diagnostics=[d.to_json() for d in validate(definition)],
     )
@@ -316,7 +320,8 @@ def _listing(names: list[str]) -> str:
     return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
 
 
-THERE = "in that task's channel set"
+#: How a conflict message says "on the exporting machine".
+IN_THE_FILE = "in that task's channel set"
 
 
 def _differences(here: dict[str, Any], there: dict[str, Any]) -> list[str]:
@@ -329,10 +334,15 @@ def _differences(here: dict[str, Any], there: dict[str, Any]) -> list[str]:
             mine, theirs = mine or {}, theirs or {}
             for edge in [*theirs, *(e for e in mine if e not in theirs)]:
                 if mine.get(edge) != theirs.get(edge):
-                    out.append(f"edges.{edge} is {_shown(mine.get(edge))} here and {_shown(theirs.get(edge))} {THERE}")
+                    out.append(f"edges.{edge} is {_shown(mine.get(edge))} here and {_shown(theirs.get(edge))} {IN_THE_FILE}")
         elif mine != theirs:
-            out.append(f"{name} is {_shown(mine)} here and {_shown(theirs)} {THERE}")
+            out.append(f"{name} is {_shown(mine)} here and {_shown(theirs)} {IN_THE_FILE}")
     return out
+
+
+def _name_of(document: Any) -> str | None:
+    name = document.get("name") if isinstance(document, dict) else None
+    return name if isinstance(name, str) else None
 
 
 def _shown(value: Any) -> str:
@@ -352,7 +362,7 @@ def _order_conflicts(here: list[str], there: list[str]) -> list[dict[str, Any]]:
             "order",
             name,
             f"{name} is the task's channel {at + 1} here and {shared_there.index(name) + 1} "
-            f"{THERE}, counting only the {len(shared_here)} channels both have. Declaration "
+            f"{IN_THE_FILE}, counting only the {len(shared_here)} channels both have. Declaration "
             "order is the odor index, so the two must list their channels in one order.",
         )
         for at, (name, theirs) in enumerate(zip(shared_here, shared_there))

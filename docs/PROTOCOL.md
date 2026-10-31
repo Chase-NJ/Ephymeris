@@ -1641,7 +1641,7 @@ One live view's payload, only while that scope is open (`RECORDING.md#live-windo
 | `STROBE_VOCABULARY_UNREADABLE` | This machine's vocabulary document will not read. Every edit is refused until it is repaired: one issued against the shipped default could reissue a code this machine added. |
 | `STROBE_SESSION_RUNNING` | A vocabulary edit while a session is set up or a box is running. Every edit regenerates the sketches a box was or will be flashed from. |
 | `TASK_NOT_FOUND` | No task profile with that id on this rig. |
-| `TASK_TRANSFER_INVALID` | `tasks.import` with a file that is not an exported task (another version, no definition, a definition that will not read, a channel or code it names that the file does not describe), or `tasks.export` of a task naming a channel this rig lacks or a code this vocabulary does not hold live. Nothing was written. |
+| `TASK_TRANSFER_INVALID` | `tasks.import` with a file that is not an exported task (another version, no definition, a definition that will not read, or a channel the definition names that the file does not describe), or `tasks.export` of a task naming a channel this rig lacks or a code this vocabulary does not hold live. Nothing was written. |
 | `TASK_IMPORT_CONFLICT` | `tasks.import` applied with a plan that has conflicts. Nothing was written; `detail.conflicts` lists every one (`TaskImportConflict`). |
 | `TASK_IMPORT_REPLACES` | `tasks.import` applied without `confirm` while a task with the same id is saved here. Nothing was written; retry with `confirm: true` to replace it. |
 | `TASK_INVALID` | The definition is not a definition — wrong shape, too large, an unusable id or name, or a name that collides with a bundled sketch or another saved task. NOT the same as a task that will not run: a well-formed definition describing an impossible task is a successful reply carrying located diagnostics, exactly as a wiring document is. |
@@ -3137,7 +3137,7 @@ One way another machine's task disagrees with this machine (`TASKS.md#moving-a-t
 
 | Field | Type | Notes |
 |---|---|---|
-| `kind` | string | `not_here` (a channel the task names and this rig lacks), `differs` (a channel the task names whose kind, type, role, input settings, well, port slot, onset code or edge codes differ here), `order` (two channels the task names declared in the other order: declaration order is the odor index, `TASKS.md#order-is-meaning`), `code` (a code the task strobes that the file numbers otherwise than this vocabulary, that is not live here, or that the file does not number), `bundled_name` (a sketch that ships with Ephymeris has the task's name) or `name_taken` (another saved task has it, case-folded). |
+| `kind` | string | `not_here` (a channel the task names and this rig lacks), `differs` (a channel the task names whose kind, type, role, input settings, the port it serves, well, port slot, onset code or edge codes differ here), `order` (two channels the task names declared in the other order: declaration order is the odor index, `TASKS.md#order-is-meaning`), `code` (a code the task strobes that the file numbers otherwise than this vocabulary, that is not live here, or that the file does not number), `bundled_name` (a sketch that ships with Ephymeris has the task's name) or `name_taken` (another saved task has it, case-folded). |
 | `channel` | string \| null | The channel it is about, when it is about one. |
 | `message` | string | The difference, in words, naming both sides. |
 
@@ -3152,6 +3152,7 @@ What importing another machine's task would do here (`TASKS.md#moving-a-task-bet
 | `taskId` | string | The imported task's id: its file here is `<taskId>.json`. |
 | `name` | string | The imported task's name. |
 | `replaces` | boolean | A task with this id is saved here; applying replaces it, and needs `confirm`. |
+| `replacesName` | string \| null | The name of the saved task it replaces, which may differ from the file's; null when it replaces none. |
 | `identical` | boolean | The task saved here under this id already is the file's definition: applying writes nothing. |
 | `sameChannelSet` | boolean | This rig's whole channel set hashes, by the file's rule, to the file's `channel_set_hash`. Informative: only the channels the task names must agree. |
 | `hereHash` | string | This rig's `channelSetHash`, by the rule `fileHashVersion` names. |

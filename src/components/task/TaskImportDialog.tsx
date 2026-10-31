@@ -100,7 +100,13 @@ export function TaskImportDialog({
         {plan && (
           <p className="text-[12px] text-static">
             <span className="text-starlight">{plan.name}</span>
-            {plan.replaces && !plan.identical && " — replaces the task of that name saved here"}
+            {plan.replaces && !plan.identical && (
+              <>
+                {" — replaces "}
+                <span className="text-starlight">{plan.replacesName ?? plan.taskId}</span>
+                {", saved here under the same id"}
+              </>
+            )}
           </p>
         )}
 

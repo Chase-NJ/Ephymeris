@@ -2069,7 +2069,8 @@ SHAPES = (
                 STR,
                 doc="`not_here` (a channel the task names and this rig lacks), `differs` "
                 "(a channel the task names whose kind, type, role, input settings, "
-                "well, port slot, onset code or edge codes differ here), `order` (two "
+                "the port it serves, well, port slot, onset code or edge codes "
+                "differ here), `order` (two "
                 "channels the task names declared in the other order: declaration "
                 "order is the odor index, `TASKS.md#order-is-meaning`), `code` (a code "
                 "the task strobes that the file numbers otherwise than this "
@@ -2100,6 +2101,12 @@ SHAPES = (
                 BOOL,
                 doc="A task with this id is saved here; applying replaces it, and "
                 "needs `confirm`.",
+            ),
+            f(
+                "replacesName",
+                nullable(STR),
+                doc="The name of the saved task it replaces, which may differ from "
+                "the file's; null when it replaces none.",
             ),
             f(
                 "identical",
@@ -4444,8 +4451,8 @@ ERRORS = (
     ErrorCode(
         "TASK_TRANSFER_INVALID",
         "`tasks.import` with a file that is not an exported task (another "
-        "version, no definition, a definition that will not read, a channel or "
-        "code it names that the file does not describe), or `tasks.export` of a "
+        "version, no definition, a definition that will not read, or a channel "
+        "the definition names that the file does not describe), or `tasks.export` of a "
         "task naming a channel this rig lacks or a code this vocabulary does "
         "not hold live. Nothing was written.",
     ),

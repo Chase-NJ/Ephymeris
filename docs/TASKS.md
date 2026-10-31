@@ -590,7 +590,7 @@ A task exported on one lab machine imports on the other, where it compiles again
 - **Export is refused** in three cases:
   - the task names a channel this rig lacks, or strobes a code this vocabulary does not hold live (`TASK_TRANSFER_INVALID`). The file could not state that channel or number;
   - the stored wiring is not in force (`RIG_WIRING_UNLOADED`);
-  - the task is unknown or unreadable (`TASK_NOT_FOUND`).
+  - the task is unknown, or its stored file will not read as a definition (`TASK_NOT_FOUND`).
 
 **The import judges only the channels and codes the task names.** A difference elsewhere in the channel set changes nothing this task compiles or strobes. An import never touches the channel set or the vocabulary. It never adds, edits or reorders a channel, and never adds or renumbers a code: the vocabulary is [append only](#append-only) and lab-wide, and only [the channel-set import](#moving-the-channel-set-between-machines) brings codes over. **Any conflict refuses the whole import, and the plan lists every one** (`TaskImportConflict.kind`):
 
@@ -605,7 +605,7 @@ A task exported on one lab machine imports on the other, where it compiles again
 
 **Besides conflicts:**
 
-- **A task saved here under the same id is replaced** (`replaces`). Applying needs `confirm`; without it the import is `TASK_IMPORT_REPLACES`.
+- **A task saved here under the same id is replaced** (`replaces`, and `replacesName` names it, since the other machine may have renamed it). Applying needs `confirm`; without it the import is `TASK_IMPORT_REPLACES`.
 - **An import identical to the stored document writes nothing** (`identical`).
 - **The plan carries the definition's diagnostics on this rig.** As with any save, a task with diagnostics still imports.
 - **A file that is not an export is `TASK_TRANSFER_INVALID`.** That covers another version, no definition, a definition that will not read, or a channel the definition names that the file does not describe.

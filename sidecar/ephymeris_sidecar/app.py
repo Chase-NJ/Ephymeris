@@ -1102,7 +1102,9 @@ class Application:
             if problem:
                 raise rig_definition.WiringNotLoaded(problem)
             document = self.task_store.document(task_id)
-            if not isinstance(document, dict):
+            # Unreadable as a definition is unreadable: a stored file this
+            # build cannot parse is not a task it can describe.
+            if not isinstance(document, dict) or self.task_store.get(task_id) is None:
                 raise CommandError(
                     ErrCode.TASK_NOT_FOUND,
                     f"No readable task profile called {task_id!r} on this rig.",
@@ -1131,8 +1133,8 @@ class Application:
                 return {"plan": plan.to_json(), "applied": False}
             if plan.replaces and not args.get("confirm"):
                 raise task_transfer.TaskImportReplaces(
-                    f"A task called {plan.name!r} with this id is saved here already. "
-                    "Importing replaces it; confirm to go ahead."
+                    f"{plan.replaces_name or plan.task_id!r} is saved here under this task's "
+                    f"id, {plan.task_id!r}. Importing replaces it; confirm to go ahead."
                 )
             # Verbatim: fields this build does not know are kept.
             await asyncio.to_thread(self.task_store.save_document, plan.definition)

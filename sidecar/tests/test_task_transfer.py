@@ -2,9 +2,9 @@
 
 A task exported on one lab machine imports on the other, where it compiles
 against that machine's pins and the shared channel set. The file carries the
-definition verbatim and the channels it names, never a pin or a code number.
-An import whose channels disagree with this machine's is refused whole, naming
-each difference, and writes nothing.
+definition verbatim, the channels it names and the number of each code it
+strobes, never a pin. An import whose channels or code numbers disagree with
+this machine's is refused whole, naming each difference, and writes nothing.
 """
 
 from __future__ import annotations
@@ -246,8 +246,10 @@ def test_a_name_another_task_or_a_shipped_sketch_has_is_refused(tmp_path):
 def test_a_task_saved_here_under_the_same_id_is_replaced_and_an_identical_one_is_not(tmp_path):
     store = TaskStore(tmp_path, library_root=FIRMWARE)
     store.save_document(tracer(notes="an older version"))
+    store.save_document(tracer(name="Old Tracer", notes="an older version"))
     planned = plan(export(), tmp_path)
     assert planned.conflicts == [] and planned.replaces and not planned.identical
+    assert planned.replaces_name == "Old Tracer"
 
     store.save_document(tracer())
     planned = plan(export(), tmp_path)
@@ -391,6 +393,16 @@ async def test_replacing_a_saved_task_needs_confirm(tmp_path):
         assert replaced["applied"] and replaced["plan"]["replaces"]
     stored = json.loads((a / "tasks" / "spine_tracer.json").read_text())
     assert stored["notes"] == "changed on the other machine" and stored["futureKey"] == [1, {"x": None}]
+
+
+async def test_a_stored_task_that_will_not_read_is_not_found_for_export(tmp_path):
+    (tmp_path / "b" / "tasks").mkdir(parents=True)
+    (tmp_path / "b" / "tasks" / "broken.json").write_text('{"id": "Not An Id"}', encoding="utf-8")
+    async with live_sidecar(tmp_path / "b") as b:
+        await b.call("hardware.save", document=rig_store.default_document(), confirm=True)
+        with pytest.raises(Refused) as refused:
+            await b.call("tasks.export", taskId="broken")
+    assert refused.value.code == "TASK_NOT_FOUND"
 
 
 async def test_a_file_that_is_not_an_export_is_task_transfer_invalid(tmp_path):

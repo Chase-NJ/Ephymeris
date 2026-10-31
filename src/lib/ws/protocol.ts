@@ -1920,12 +1920,12 @@ export interface TaskDiagnostic {
 export interface TaskImportConflict {
   /**
    * `not_here` (a channel the task names and this rig lacks), `differs` (a channel the task names
-   * whose kind, type, role, input settings, well, port slot, onset code or edge codes differ
-   * here), `order` (two channels the task names declared in the other order: declaration order is
-   * the odor index, `TASKS.md#order-is-meaning`), `code` (a code the task strobes that the file
-   * numbers otherwise than this vocabulary, that is not live here, or that the file does not
-   * number), `bundled_name` (a sketch that ships with Ephymeris has the task's name) or
-   * `name_taken` (another saved task has it, case-folded).
+   * whose kind, type, role, input settings, the port it serves, well, port slot, onset code or
+   * edge codes differ here), `order` (two channels the task names declared in the other order:
+   * declaration order is the odor index, `TASKS.md#order-is-meaning`), `code` (a code the task
+   * strobes that the file numbers otherwise than this vocabulary, that is not live here, or that
+   * the file does not number), `bundled_name` (a sketch that ships with Ephymeris has the task's
+   * name) or `name_taken` (another saved task has it, case-folded).
    */
   kind: string;
   /** The channel it is about, when it is about one. */
@@ -1947,6 +1947,11 @@ export interface TaskImportPlan {
   name: string;
   /** A task with this id is saved here; applying replaces it, and needs `confirm`. */
   replaces: boolean;
+  /**
+   * The name of the saved task it replaces, which may differ from the file's; null when it
+   * replaces none.
+   */
+  replacesName: string | null;
   /** The task saved here under this id already is the file's definition: applying writes nothing. */
   identical: boolean;
   /**

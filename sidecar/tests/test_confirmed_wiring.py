@@ -842,16 +842,82 @@ def _order_blind_record(s: store.HardwareStore) -> None:
     )
 
 
+def _first_start_of_this_build(tmp_path) -> Rig:
+    """The machine's first start: no database mark and no
+    `wiring-record-started`. The only start that reads an order-blind record."""
+    store.HardwareStore(tmp_path).started_path.unlink(missing_ok=True)
+    return Rig(tmp_path, first_start=True)
+
+
 def test_a_record_with_the_order_blind_digest_still_confirms_its_file(tmp_path):
-    Rig(tmp_path).save(moved(12))
+    """An unswapped #134-era file under its #134 record, at a genuine first
+    start: the upgrade asks nothing."""
     s = store.HardwareStore(tmp_path)
+    write_wiring(s, {**moved(12), "edited_at": "2026-10-31T05:00:00Z"})
     _order_blind_record(s)
 
-    rig = Rig(tmp_path, first_start=False)  # a machine on #134, upgrading
+    rig = _first_start_of_this_build(tmp_path)
     assert rig.definition.wiring_problem() is None, "the upgrade asks nothing"
     assert rig.get()["status"]["notices"] == []
+    assert registry.channels().get("left_well").index == 12
     _reorder_on_disk(s)  # from then on, order counts
     assert_held(Rig(tmp_path, first_start=False))
+
+
+def _swap_odor_lines(s: store.HardwareStore, doc: dict) -> None:
+    s.path.write_text(json.dumps(_reordered(doc, "odor_line_1", "odor_line_2")), encoding="utf-8")
+
+
+def test_a_carry_over_that_could_not_be_written_trusts_nothing_at_a_later_start(tmp_path, monkeypatch):
+    """The first start converts #134's record of X but cannot write it: X is
+    trusted that run only. At the next start the order-blind record is still
+    on disk, and it must confirm nothing: X with its odor lines swapped least
+    of all."""
+    s = store.HardwareStore(tmp_path)
+    x = {**moved(12), "edited_at": "2026-10-31T05:00:00Z"}
+    write_wiring(s, x)
+    _order_blind_record(s)
+    real = store._write_atomic
+
+    def refuse(path, text):
+        if path.name == store.CONFIRMED_FILENAME:
+            raise PermissionError("read-only")
+        return real(path, text)
+
+    monkeypatch.setattr(store, "_write_atomic", refuse)
+    assert _first_start_of_this_build(tmp_path).definition.wiring_problem() is None, "trusted this run"
+    monkeypatch.undo()
+
+    _swap_odor_lines(s, x)
+    assert_held(Rig(tmp_path, first_start=False))
+    write_wiring(s, x)  # nor anything else the unwritten carry trusted
+    assert_held(Rig(tmp_path, first_start=False))
+
+
+def test_an_order_blind_digest_an_earlier_start_left_never_confirms_swapped_lines(tmp_path):
+    """A machine that already ran #136, which left #134's digest of X
+    unmatched. X with its odor lines swapped is on disk at this build's start,
+    which is not the machine's first."""
+    Rig(tmp_path).save(moved(12))
+    s = store.HardwareStore(tmp_path)
+    x = json.loads(s.path.read_text(encoding="utf-8"))
+    _write_134_record(s, _blind(x))
+    _swap_odor_lines(s, x)
+    assert_held(Rig(tmp_path, first_start=False))
+    write_wiring(s, x)
+    assert_held(Rig(tmp_path, first_start=False))
+
+
+def test_a_save_made_after_a_downgrade_to_134_never_confirms_swapped_lines(tmp_path):
+    """Downgrade to #134, save Y there (an order-blind record), copy in Y with
+    its odor lines swapped, upgrade again: that start is not a first start."""
+    Rig(tmp_path).save(moved(12))  # this build has run here
+    s = store.HardwareStore(tmp_path)
+    y = {**moved(13), "edited_at": "2026-10-31T05:00:00Z"}
+    write_wiring(s, y)  # #134's save of Y
+    _write_134_record(s, _blind(y))
+    _swap_odor_lines(s, y)
+    assert_held(Rig(tmp_path, first_start=False))  # the upgrade again
 
 
 def test_an_earlier_record_never_confirms_a_reordered_file_after_the_upgrade(tmp_path):
@@ -885,7 +951,7 @@ def test_an_order_blind_digest_unmatched_at_the_upgrade_never_confirms_later(tmp
     x = json.loads(s.path.read_text(encoding="utf-8"))
     _write_134_record(s, _blind(x))
     write_wiring(s, moved(13))  # copied in before the upgrade
-    assert_held(Rig(tmp_path, first_start=False))  # the upgrade
+    assert_held(_first_start_of_this_build(tmp_path))  # the upgrade
 
     s.path.write_text(json.dumps(_reordered(x, "odor_line_1", "odor_line_2")), encoding="utf-8")
     assert_held(Rig(tmp_path, first_start=False))
@@ -897,7 +963,7 @@ def test_a_broken_file_at_the_upgrade_drops_the_order_blind_digest(tmp_path):
     x = json.loads(s.path.read_text(encoding="utf-8"))
     _write_134_record(s, _blind(x))
     s.path.write_text("{ damaged", encoding="utf-8")
-    Rig(tmp_path, first_start=False)  # the upgrade
+    _first_start_of_this_build(tmp_path)  # the upgrade
 
     s.path.write_text(json.dumps(_reordered(x, "odor_line_1", "odor_line_2")), encoding="utf-8")
     assert_held(Rig(tmp_path, first_start=False))
@@ -911,7 +977,7 @@ def test_an_order_blind_pending_save_unmatched_at_the_upgrade_never_confirms_lat
     x = json.loads(s.path.read_text(encoding="utf-8"))
     y = {**moved(13), "edited_at": "2026-10-31T05:00:00Z"}
     _write_134_record(s, _blind(x), _blind(y))
-    assert_held(Rig(tmp_path, first_start=False), why="did not finish")  # the upgrade
+    assert_held(_first_start_of_this_build(tmp_path), why="did not finish")  # the upgrade
 
     s.path.write_text(json.dumps(_reordered(y, "odor_line_1", "odor_line_2")), encoding="utf-8")
     assert_held(Rig(tmp_path, first_start=False))
@@ -943,6 +1009,32 @@ def test_a_save_that_died_at_its_commit_is_described_as_saved_here(tmp_path, mon
     assert "copied in" not in text
 
 
+def test_a_pair_a_save_died_over_is_described_as_two_files(tmp_path, monkeypatch):
+    write_pair(store.HardwareStore(tmp_path), moved(12))
+    rig = Rig(tmp_path)  # the upgrade records the pair
+    real = store._write_atomic
+
+    def die(path, text):
+        if path.name == store.WIRING_FILENAME:
+            raise PowerCut()
+        return real(path, text)
+
+    monkeypatch.setattr(store, "_write_atomic", die)
+    with pytest.raises(PowerCut):
+        rig.hardware.save(moved(13))
+    monkeypatch.undo()
+
+    restarted = Rig(tmp_path, first_start=False)
+    assert_held(restarted, why="did not finish")
+    pair = f"{store.CHANNEL_SET_FILENAME} and {store.PIN_MAP_FILENAME}"
+    assert f"{pair} were saved here, but a save after them did not finish" in restarted.definition.wiring_problem()
+    payload = restarted.get()
+    text = " ".join([n["message"] for n in payload["status"]["notices"]] + [p["message"] for p in payload["problems"]])
+    assert f"These pins come from {pair}, saved here, but a save after them did not finish" in text
+    assert "cannot vouch for them" in text
+    assert "Now channel_set.json and pin_map.json are on disk: saved here, but a save after them" in text
+
+
 def test_a_rig_json_left_by_a_134_migration_cut_off_is_the_app_s_own(tmp_path):
     """#134 was saving P (wiring.json) over rig.json (D) and died before
     removing rig.json. After the upgrade P is in force and rig.json is a
@@ -952,9 +1044,8 @@ def test_a_rig_json_left_by_a_134_migration_cut_off_is_the_app_s_own(tmp_path):
     write_rig_json(s, d)
     s.path.write_text(json.dumps(p), encoding="utf-8")
     _write_134_record(s, _blind(d), _blind(p))
-    s.started_path.write_text("2026-10-31T05:00:00Z\n", encoding="utf-8")  # #134 never wrote it
 
-    rig = Rig(tmp_path, first_start=False)
+    rig = _first_start_of_this_build(tmp_path)
     assert rig.definition.wiring_problem() is None
     assert registry.channels().get("left_well").index == 13
     assert rig.get()["status"]["notices"] == []
@@ -968,7 +1059,7 @@ def test_the_next_save_removes_a_rig_json_left_by_a_134_migration(tmp_path):
     write_rig_json(s, d)
     s.path.write_text(json.dumps(p), encoding="utf-8")
     _write_134_record(s, _blind(d), _blind(p))
-    rig = Rig(tmp_path, first_start=False)
+    rig = _first_start_of_this_build(tmp_path)
     rig.save(moved(14))
     assert not s.legacy_rig_path.exists()
 

@@ -1789,8 +1789,9 @@ SHAPES = (
                 BOOL,
                 doc="Of the wiring IN FORCE: false ⇒ this rig runs the wiring its "
                 "build shipped with, which includes while its stored wiring did not "
-                "load or is held because nobody saved or confirmed it on this "
-                "machine (`notices` says so).",
+                "load or is held because the record cannot vouch for it: nobody "
+                "saved or confirmed it on this machine, or a save after it did not "
+                "finish (`notices` says so).",
             ),
             f("derivedFrom", STR, doc="The shipped pinout the wiring in force started as."),
             f("board", STR),
@@ -1818,7 +1819,8 @@ SHAPES = (
                 ListOf(Ref("RigProblem")),
                 doc="Where the wiring in force and the stored files part ways: stored "
                 "wiring that did not load, or that is held because it was not saved "
-                "or confirmed on this machine (the shipped pins are in force and "
+                "or confirmed on this machine, or was saved here but a save after it "
+                "did not finish (the shipped pins are in force and "
                 "every box is refused); a file changed on disk since it was "
                 "installed; or an older layout copied in beside `wiring.json`, "
                 "which is not read. Each says what is in force, what the editor "
@@ -1853,10 +1855,11 @@ SHAPES = (
             f(
                 "needsPinConfirmation",
                 BOOL,
-                doc="The draft is a stored file that is not in force and was not "
-                "saved or confirmed on this machine -- copied in, changed outside "
-                "the app, not loaded (even once repaired in the editor), or a pin "
-                "map not written with its channel set -- so nobody has checked its "
+                doc="The draft is a stored file that is not in force and that the "
+                "record cannot vouch for -- copied in, changed outside the app, not "
+                "loaded (even once repaired in the editor), a pin map not written "
+                "with its channel set, or saved here when a save after it did not "
+                "finish -- so nobody has checked its "
                 "pins here: offer the operator a way to confirm them, sent as "
                 "`confirmedPins`. A restart never confirms them "
                 "(`TASKS.md#the-channel-set-and-the-pin-map`).",
@@ -4234,8 +4237,8 @@ ERRORS = (
         "the rig's stored wiring was not put in force when it was installed: it "
         "did not load (unreadable, unparseable, out of shape, a channel without a "
         "pin, a wiring rule broken, or an older layout that disagrees with itself), "
-        "or it is held because nobody saved or confirmed it on this machine "
-        "(copied in, or changed by hand). A box started, flashed or identified "
+        "or it is held because the record cannot vouch for it (copied in, changed "
+        "by hand, or saved here when a save after it did not finish). A box started, flashed or identified "
         "would drive pins the operator never declared. `hardware.get` names the "
         "problem. Saving the wiring (its pins confirmed) or resetting it clears "
         "it; a file fixed by hand meanwhile does not, and a restart does only "

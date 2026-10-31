@@ -38,7 +38,8 @@ class InForce(NamedTuple):
     document: dict | None
     problem: str | None
     #: Why stored wiring is not in force: True when it was held (not saved or
-    #: confirmed here), False when it did not load. Meaningless without `problem`.
+    #: confirmed here, or saved here but a save after it did not finish), False
+    #: when it did not load. Meaningless without `problem`.
     held: bool = False
 
 
@@ -77,7 +78,10 @@ def held_message(disk: store.Stored) -> str:
 def _held_why(disk: store.Stored) -> str:
     """Why held wiring is held, as true of the file named before it."""
     if disk.interrupted:
-        return f"{'was' if len(disk.sources) == 1 else 'were'} saved here, but a save after it did not finish"
+        return (
+            f"{'was' if len(disk.sources) == 1 else 'were'} saved here, but a save after "
+            f"{_it(disk.sources)} did not finish"
+        )
     return f"{_is(disk.sources)} not saved or confirmed on this machine"
 
 
@@ -165,9 +169,10 @@ def _unconfirmed(state: _Rig) -> str:
     elif disk.state == "invalid":
         source = f"These pins come from {_names(disk.sources)}, which did not load."
     elif disk.interrupted:
+        it = _it(disk.sources)
         source = (
-            f"These pins come from {_names(disk.sources)}, saved here; a save after it "
-            "did not finish, so the record cannot vouch for it."
+            f"These pins come from {_names(disk.sources)}, saved here, but a save after "
+            f"{it} did not finish, so the record cannot vouch for {it}."
         )
     else:
         source = (
@@ -257,8 +262,8 @@ def _now(state: _Rig, names: str, now: str) -> str:
         )
     if disk.state == "held" and disk.interrupted:
         return (
-            f"Now {names} {_is(disk.sources)} on disk: saved here, but a save after it did "
-            "not finish. The editor shows that wiring, not in force: "
+            f"Now {names} {_is(disk.sources)} on disk: saved here, but a save after "
+            f"{_it(disk.sources)} did not finish. The editor shows that wiring, not in force: "
             "check every pin against the box, confirm them, then save to put it in force."
         )
     if disk.state == "held":
@@ -356,6 +361,11 @@ def _names(names: tuple[str, ...]) -> str:
 def _is(names: tuple[str, ...]) -> str:
     """The verb that agrees with `_names(names)`."""
     return "is" if len(names) == 1 else "are"
+
+
+def _it(names: tuple[str, ...]) -> str:
+    """The pronoun that stands for `_names(names)`."""
+    return "it" if len(names) == 1 else "them"
 
 
 # --------------------------------------------------------------------------- #

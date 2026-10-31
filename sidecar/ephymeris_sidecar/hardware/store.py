@@ -207,8 +207,9 @@ class _Record:
 #: What the stored wiring on disk is, as `hardware/service.py` acts on it:
 #:   none          no stored wiring
 #:   loads         it passes every check and was saved here: it may be in force
-#:   held          it passes every check but was not saved or confirmed here:
-#:                 copied in, or changed by hand. Its pins must be confirmed
+#:   held          it passes every check but was not saved or confirmed here
+#:                 (copied in, or changed by hand), or it was saved here but a
+#:                 save after it did not finish. Its pins must be confirmed
 #:   invalid       it parses but is out of shape, a channel lacks a pin, or it
 #:                 breaks a wiring rule (RIG101-RIG107): a document to repair
 #:   mismatched    a two-file pair whose pin map was not written with its
@@ -352,9 +353,20 @@ class HardwareStore:
         A SAVE CUT OFF BEFORE ITS LAST STEP is finished here only if
         `wiring.json` holds exactly the wiring it was saving: that becomes the
         one recorded, and what it replaced a leftover. Anything else stays held.
+
+        AN ORDER-BLIND RECORD is read here, at the first start, and nowhere
+        else (`_carried_over`); at any other start `_record` drops it unread.
         """
-        record = self._carried_over(self._record())
         first = first_start and not self.started_path.exists()
+        record = self._record(order_blind=True)
+        if first:
+            record = self._carried_over(record)
+        elif _order_blind_in(record):
+            log.warning(
+                "%s holds a digest blind to channel order at a start that is not this "
+                "machine's first: it confirms nothing", CONFIRMED_FILENAME,
+            )
+            record = self._record()
         self._mark_started()
         if record.problem:
             if first and (record.missing or record.earlier is not None):
@@ -381,12 +393,15 @@ class HardwareStore:
 
     def _carried_over(self, record: "_Record") -> "_Record":
         """A record whose digests are blind to declaration order (written by a
-        build before they covered it) is carried over ONCE: at the first start
-        of this build, which is the only start that can meet one, since it
-        rewrites every one. Each digest becomes today's form of exactly the
-        file it still matches, and is otherwise dropped, never consulted again
-        -- a digest left order-blind would confirm that wiring with its odor
-        lines swapped at any later start.
+        build before they covered it) is carried over ONCE, and only at the
+        machine's first start (`settle_record` calls nothing else with one):
+        the only start that can meet one, because every other start drops
+        them unread (`_record`). Each digest becomes today's form of exactly
+        the file it still matches, and is otherwise dropped -- a digest left
+        order-blind would confirm that wiring with its odor lines swapped. A
+        carry that cannot be written is trusted this run only (`_unwritten`):
+        the next start is not a first start, so the order-blind record still
+        on disk confirms nothing.
 
           * `digest` carries to the stored wiring it matches; or, while a save
             it was replaced by carries, to the older layout that save replaced,
@@ -394,7 +409,7 @@ class HardwareStore:
           * `pending` carries to the stored wiring it matches; else to
             `_UNFINISHED`: that save did not finish, so nothing is trusted.
         """
-        if record.problem or not (_order_blind(record.digest) or _order_blind(record.pending)):
+        if record.problem or not _order_blind_in(record):
             return record
         present, stored = self._present()
         pending = record.pending
@@ -474,13 +489,26 @@ class HardwareStore:
         replaced = [s for s in present if s.files[0] != self.path and s not in shadows]
         return stored, record, replaced
 
-    def _record(self) -> _Record:
+    def _record(self, *, order_blind: bool = False) -> _Record:
         """The record of the wiring saved here. Missing, or a file that will
-        not read, is a record with a problem: it trusts nothing."""
+        not read, is a record with a problem: it trusts nothing.
+
+        What `settle_record` recorded but could not write stands in for the
+        file for the rest of this run. A digest blind to declaration order is
+        dropped, with the pending save beside it, before anything compares
+        it: only the first start reads one (`order_blind`, `_carried_over`)."""
+        if self._unwritten is not None:
+            return self._unwritten
+        record = self._record_on_disk()
+        if order_blind or not _order_blind_in(record):
+            return record
+        return dataclasses.replace(record, digest=None, pending=None)
+
+    def _record_on_disk(self) -> _Record:
         try:
             raw = self.confirmed_path.read_bytes()
         except FileNotFoundError:
-            return self._unwritten or _Record(
+            return _Record(
                 problem=f"{CONFIRMED_FILENAME}, the record of the wiring saved on this machine, is missing",
                 missing=True,
             )
@@ -726,6 +754,11 @@ def order_blind_digest(doc: dict) -> str:
 
 def _order_blind(digest: str | None) -> bool:
     return digest is not None and not digest.startswith((_ORDERED, "file:"))
+
+
+def _order_blind_in(record: _Record) -> bool:
+    """Whether `record` holds a digest in the order-blind form."""
+    return _order_blind(record.digest) or _order_blind(record.pending)
 
 
 def _digest_of(doc: dict | None) -> str | None:

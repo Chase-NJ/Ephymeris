@@ -938,7 +938,7 @@ ask the lab manager for the new installer instead.
 | A session from earlier today needs another group | **Start a Session**, pick the cohort, then **Continue today**. See [Continue a session from earlier today](#continue-a-session-from-earlier-today) |
 | The dock shows a session that **Ended unexpectedly** | The app closed during a session. Use **Continue with another group** (same day only), **View in Analytics**, or **Close out**. Then run **Recover** in Analytics |
 | The placement walk says it could not light a box | Go by the number on the box. The walk works without the light |
-| No box will start, flash or light up, and the message says the rig's wiring did not load, or was not saved or confirmed on this machine | See [When the rig's wiring does not load](#when-the-rigs-wiring-does-not-load) |
+| No box will start, flash or light up, and the message says the rig's wiring did not load, was not saved or confirmed on this machine, or was saved here but a save after it did not finish | See [When the rig's wiring does not load](#when-the-rigs-wiring-does-not-load) |
 
 ### When the rig's wiring does not load
 

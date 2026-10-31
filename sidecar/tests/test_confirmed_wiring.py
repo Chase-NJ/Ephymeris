@@ -361,20 +361,34 @@ def _fail_after_n_replaces(monkeypatch, n: int) -> None:
     monkeypatch.setattr(store.os, "replace", replace)
 
 
-@pytest.mark.parametrize("renames", [0, 1, 2])
-def test_a_save_cut_off_at_any_step_leaves_a_stored_wiring_that_loads(tmp_path, monkeypatch, renames):
+@pytest.mark.parametrize(
+    "renames, in_force",
+    [
+        (0, 12),  # the pending record never landed: nothing changed
+        (1, None),  # dies at the commit, too dead to put the record back: held
+        (2, 13),  # committed; only the final record is lost: finished at start
+    ],
+)
+def test_a_save_cut_off_at_any_step_never_trusts_wiring_it_was_not_saving(
+    tmp_path, monkeypatch, renames, in_force
+):
+    """While a save is pending only the wiring it was saving is trusted: a
+    death at the commit holds the last wiring once."""
     Rig(tmp_path).save(moved(12))
     rig = Rig(tmp_path)
     _fail_after_n_replaces(monkeypatch, renames)
     try:
         rig.save(moved(13))
     except OSError:
-        pass  # the last rename only records the save, which has landed
+        pass
     monkeypatch.undo()
 
-    restarted = Rig(tmp_path)
+    restarted = Rig(tmp_path, first_start=False)
+    if in_force is None:
+        assert_held(restarted)
+        return
     assert restarted.definition.wiring_problem() is None
-    assert registry.channels().get("left_well").index in (12, 13)
+    assert registry.channels().get("left_well").index == in_force
     assert restarted.get()["status"]["notices"] == []
 
 
@@ -676,17 +690,124 @@ def test_the_first_start_mark_is_read_before_the_database_connects(tmp_path):
     assert has_mark(path, store.FIRST_START_MARK) is True, "unreadable: never seed twice"
 
 
-def test_a_first_start_seeds_over_a_record_it_cannot_read(tmp_path):
-    """A record an earlier build wrote in another shape, met at the first
-    start this database has marked: seeded as if absent, so the upgrade asks
-    nothing. At any later start the same record holds everything."""
+def _old_record(s: store.HardwareStore, *docs: dict) -> None:
+    """The record #132 wrote: a list of digests, any of which it trusted."""
+    s.confirmed_path.write_text(
+        json.dumps({"version": 1, "digests": [store.content_digest(d) for d in docs]}),
+        encoding="utf-8",
+    )
+
+
+def test_a_first_start_trusts_only_what_an_earlier_record_names(tmp_path):
+    """#132's record named pin 12; the 13 beside it was copied in and held.
+    The upgrade must not put 13 in force."""
+    s = store.HardwareStore(tmp_path)
+    write_wiring(s, moved(13))
+    _old_record(s, moved(12))
+    rig = Rig(tmp_path)
+    assert_held(rig)
+    assert rig.get()["document"]["pins"]["left_well"]["index"] == 13
+
+
+def test_a_first_start_keeps_the_wiring_an_earlier_record_names(tmp_path):
     s = store.HardwareStore(tmp_path)
     write_wiring(s, moved(12))
-    s.confirmed_path.write_text('{"version": 1, "digests": ["abc"]}', encoding="utf-8")
-    assert_held(Rig(tmp_path, first_start=False))
-    rig = Rig(tmp_path, first_start=True)
-    assert rig.definition.wiring_problem() is None
+    _old_record(s, moved(9), moved(12))
+    rig = Rig(tmp_path)
+    assert rig.definition.wiring_problem() is None, "the upgrade asks nothing"
     assert rig.get()["status"]["notices"] == []
+    assert Rig(tmp_path, first_start=False).definition.wiring_problem() is None
+
+
+def test_a_record_that_will_not_parse_holds_even_at_the_first_start(tmp_path):
+    s = store.HardwareStore(tmp_path)
+    write_wiring(s, moved(12))
+    s.confirmed_path.write_text("{ damaged", encoding="utf-8")
+    assert_held(Rig(tmp_path))
+
+
+def test_a_cut_off_save_completes_only_for_the_wiring_it_was_saving(tmp_path, monkeypatch):
+    """Save 13 over 12, the final record write fails; then a wiring.json
+    holding 12 is put back. 12 was replaced: it is held, never revived."""
+    rig = Rig(tmp_path)
+    rig.save(moved(12))
+    twelve = rig.hardware.path.read_bytes()
+    real, writes = store._write_atomic, {"n": 0}
+
+    def fail_final_record(path, text):
+        if path.name == store.CONFIRMED_FILENAME:
+            writes["n"] += 1
+            if writes["n"] == 2:  # the pending record lands; the final one does not
+                raise PermissionError("held open")
+        return real(path, text)
+
+    monkeypatch.setattr(store, "_write_atomic", fail_final_record)
+    rig.save(moved(13))
+    monkeypatch.undo()
+    rig.hardware.path.write_bytes(twelve)
+
+    assert_held(Rig(tmp_path, first_start=False))
+
+
+def test_a_save_that_fails_before_its_commit_leaves_the_last_wiring_recorded(tmp_path, monkeypatch):
+    rig = Rig(tmp_path)
+    rig.save(moved(12))
+    _fail_replacing(monkeypatch, store.WIRING_FILENAME)
+    with pytest.raises(OSError):
+        rig.hardware.save(moved(13))
+    monkeypatch.undo()
+    restarted = Rig(tmp_path, first_start=False)
+    assert restarted.definition.wiring_problem() is None
+    assert registry.channels().get("left_well").index == 12
+
+
+def test_a_database_restored_from_before_the_upgrade_is_not_a_first_start(tmp_path):
+    """The record is lost and the database comes back from a snapshot taken
+    before the mark existed: wiring copied in meanwhile is held."""
+    Rig(tmp_path).save(moved(12))  # this machine has run this build
+    s = store.HardwareStore(tmp_path)
+    s.confirmed_path.unlink()
+    write_wiring(s, moved(13))
+    assert_held(Rig(tmp_path, first_start=True))  # what an unmarked database says
+
+
+async def test_the_app_holds_after_a_database_restored_from_before_the_upgrade(tmp_path):
+    import shutil
+
+    from ephymeris_sidecar.cohorts.db import DB_FILENAME, Database
+    from tests.wire import running_app
+
+    data = tmp_path / "data"
+    data.mkdir()
+    before = Database(data / DB_FILENAME)  # main's database, before the upgrade
+    before.connect()
+    before.close()
+    snapshot = tmp_path / "db-snapshot.db"
+    shutil.copy(data / DB_FILENAME, snapshot)
+    write_wiring(store.HardwareStore(data), moved(12))
+    async with running_app(data) as app:
+        assert app.rig_definition.wiring_problem() is None, "the upgrade asks nothing"
+
+    s = store.HardwareStore(data)
+    s.confirmed_path.unlink()
+    shutil.copy(snapshot, data / DB_FILENAME)  # restored from before the mark
+    write_wiring(s, moved(13))
+    async with running_app(data) as app:
+        problem = app.rig_definition.wiring_problem()
+        assert problem and "not saved or confirmed" in problem
+
+
+def test_a_first_start_shows_an_older_layout_beside_the_pair(tmp_path):
+    """Only wiring.json's own migration leaves older layouts the app owns;
+    a rig.json beside the pair is shown, and no save deletes it."""
+    s = store.HardwareStore(tmp_path)
+    write_pair(s, moved(12))
+    write_rig_json(s, moved(9))
+    rig = Rig(tmp_path)
+    assert rig.definition.wiring_problem() is None
+    assert store.RIG_FILENAME in rig.notices()
+    rig.save(moved(14))
+    assert s.legacy_rig_path.exists()
 
 
 def test_a_record_lost_while_running_never_trusts_a_file_copied_in_after(tmp_path):

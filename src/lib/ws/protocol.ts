@@ -181,6 +181,9 @@ export const ERR = {
   SESSION_INVALID: "SESSION_INVALID",
   SESSION_NOT_READY: "SESSION_NOT_READY",
   TASK_PROFILE_INVALID: "TASK_PROFILE_INVALID",
+  PARAMS_MISMATCH: "PARAMS_MISMATCH",
+  PARAMS_CLAMPED: "PARAMS_CLAMPED",
+  FIRMWARE_OUTDATED: "FIRMWARE_OUTDATED",
   BACKUP_UNAVAILABLE: "BACKUP_UNAVAILABLE",
   UTILITY_UNAVAILABLE: "UTILITY_UNAVAILABLE",
   RIG_INVALID: "RIG_INVALID",
@@ -344,7 +347,7 @@ export interface EphymerisSettings {
    * middle layer of the three-layer merge (`TASKS.md#the-start-line`). Keyed by NAME, not path,
    * because the name is what the session file records. Shell-only — the frontend merges these
    * under the profile's own defaults and sends the result as each box's `config` at
-   * `sessions.confirmMapping`, so there is exactly one place a value can enter a `START` line and
+   * `sessions.confirmMapping`, so there is exactly one place a value can enter a `SET` line and
    * the sidecar never reads these.
    */
   taskDefaults: Record<string, Record<string, unknown>>;
@@ -719,7 +722,7 @@ export type ConfigFieldType = "int" | "float" | "bool" | "string";
 export interface ConfigField {
   /** The `.json`/`.mat` field name the form collects under. */
   metadataKey: string;
-  /** The `START` command token (`TASKS.md#the-start-line`). */
+  /** The `SET` command token (`TASKS.md#the-start-line`). */
   wireKey: string;
   label: string;
   type: ConfigFieldType;
@@ -1824,14 +1827,6 @@ export interface TaskSaved {
 /** A pure compile of an unsaved definition. Writes nothing. */
 export interface TaskPreview {
   diagnostics: TaskDiagnostic[];
-  /** Bytes the built START line would occupy, seed included. */
-  startLineLength: number;
-  /**
-   * The firmware's cap, so the editor can show headroom without hardcoding it. At or over it is
-   * TSK107 and a refused generation — `readLineInto()` truncates in silence, so this is checked
-   * rather than trusted.
-   */
-  startLineMax: number;
   /** What this definition compiles to. */
   profile: TaskProfile;
   /**

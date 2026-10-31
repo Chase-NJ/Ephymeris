@@ -12,9 +12,10 @@ Purpose:
 
     * at COMPILE time, in the two generated headers included below. The trial
       table, the pin map, the strobe selection, how many ramp rows exist and
-      which selector runs. None of these fit on a START line, and pins have to
+      which selector runs. None of these fit on a SET line, and pins have to
       be constants anyway.
-    * at START time, on the START line. Every timing, hold, window, penalty,
+    * at START time, on SET lines the app confirms by CRC before it sends START.
+      Every timing, hold, window, penalty,
       per-condition reward volume, pool weight, anti-bias clamp and stage
       threshold. So tuning a run costs a serial line, not a rebuild -- which is
       what lets one flashed binary serve six boxes running the same task with
@@ -43,7 +44,7 @@ Purpose:
 int currentTrial = 0;         // # of trials advanced this session
 bool sessionComplete = false; // Session start / end guard
 
-TaskParams params; // every tunable, filled from the START line (BehaviorBox.h)
+TaskParams params; // every tunable, filled from the SET lines (BehaviorBox.h)
 TrialClock clock;  // trial timestamps
 
 /* recordEvent -> emitStrobe (BehaviorBox.h) bound to this sketch's clock. */
@@ -100,24 +101,33 @@ void setup()
   sessionComplete = true;
   Serial.begin(BOX_BAUD_RATE);
 
-  /* Wait for the START token from the app.
+  /* The handshake with the app.
      1. The host opens the port (which resets the Mega via DTR).
-     2. We land here, announce READY so the app can arm its start button.
-     3. Block until a "START" line arrives carrying this run's parameters and
-        its SEED. A bare "START" keeps every default in TaskParams -- the
-        full-task values, for a hand-typed console session or an older host. */
+     2. We land here and announce INTERP=<n> then READY, so the app can arm its
+        start button and knows which interpreter this build is.
+     3. The host sends the run's parameters as capped "SET KEY=value ..." lines.
+        Each is answered with the running "PARAMS <n> <crc32>" (and a "CLAMPED
+        <KEY>" for any value the clamp would move); the host checks that against
+        what it sent and refuses to go on if they differ.
+     4. Block until "START SEED=<n>" arrives. A bare "START" keeps every default
+        in TaskParams -- the full-task values, for a hand-typed console session. */
   digitalWrite(trialLight, HIGH); // Light on == armed, waiting for GO
   delay(50);                      // Let the post-reset serial settle
-  Serial.println("READY");        // Tell the app we're ready to begin
+  announceReady();                // INTERP=<n>, then READY
 
-  char cmd[START_LINE_MAX]; // must hold the WHOLE line: readLineInto() truncates
-                            // at this cap and a token lost there is silent -- the
-                            // session then runs on a value nobody chose.
+  char cmd[SET_LINE_MAX]; // must hold the WHOLE line: readLineInto() truncates
+                          // at this cap, and the PARAMS reply is how the host
+                          // finds out when it did.
+  ParamAudit audit;
   while (true)
   {
-    if (readLineInto(cmd, sizeof(cmd)) && strncmp(cmd, "START", 5) == 0 && (cmd[5] == '\0' || cmd[5] == ' '))
+    if (!readLineInto(cmd, sizeof(cmd)))
+      continue;
+    if (lineIsCommand(cmd, "SET"))
+      applySetLine(cmd, params, audit); // fill params, then answer for what arrived
+    else if (lineIsCommand(cmd, "START"))
     {
-      parseStartCommand(cmd, params); // fill params (anything unsent keeps its default)
+      parseStartCommand(cmd, params); // SEED, then the clamp (anything unsent keeps its default)
       break;                          // START received -- begin session
     }
   }

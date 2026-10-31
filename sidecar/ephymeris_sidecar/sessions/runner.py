@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from ..analytics.stream.trials import MetricSet
 from ..tasks.profile import TaskProfile
 from ..tasks.seed import new_trial_seed
-from ..tasks.start_command import with_trial_seed
+from ..tasks.start_command import StartCommand, StartRefused
 from .models import SessionAnimalRun
 from .paths import AnimalFilePaths, resolve_animal_files
 from .writer import AnimalWriter
@@ -49,7 +49,7 @@ class BoxConfig:
     animal_name: str
     sketch_path: str
     sketch_name: str
-    start_command: str
+    start_command: StartCommand
     config_metadata: dict[str, Any]
     profile: TaskProfile | None
 
@@ -80,6 +80,9 @@ class ActiveRun:
     #: different number, and that difference is the only signal a box is still
     #: carrying an old sketch.
     host_seed: int | None = None
+    #: Why the board refused this run's start, once it has. Read by the port's
+    #: loss, which then finalizes the run for that reason rather than as a drop.
+    refusal: StartRefused | None = None
     #: The scheduled auto-STOP when the session has a time limit (`ARCHITECTURE.md#configuration`);
     #: cancelled on finalize so a box stopped early never gets a ghost STOP.
     deadline: asyncio.TimerHandle | None = None
@@ -256,10 +259,12 @@ class SessionRunner:
         # `_active` holds for the box when they fire.
         run.claim = self._ports.claim_session(
             box,
-            with_trial_seed(config.start_command, host_seed),
-            on_ready=lambda seed: self._on_ready(run, seed),
+            config.start_command,
+            host_seed,
+            on_ready=lambda seed, interp: self._on_ready(run, seed, interp),
             on_strobe=lambda code, ts: self._on_strobe(run, code, ts),
             on_lost=lambda reason: self._on_lost(run, reason),
+            on_refused=lambda refused: self._on_refused(run, refused),
         )
         self._active[box] = run
         self._ended.discard(box)
@@ -273,7 +278,14 @@ class SessionRunner:
 
     # --- session-thread callbacks (off the event loop) --------------------
 
-    def _on_ready(self, run: ActiveRun, seed: int | None) -> None:
+    def _on_refused(self, run: ActiveRun, refused: StartRefused) -> None:
+        """The board's answer to the parameter block refused the start
+        (`TASKS.md#the-start-line`). Nothing was started, so there is no file; the
+        operator is told why, by box, and the port's loss finalizes the run."""
+        run.refusal = refused
+        self._schedule(self._emit_start_refused(run.box, refused))
+
+    def _on_ready(self, run: ActiveRun, seed: int | None, interp: int | None) -> None:
         """Handshake resolved — open the file and write its header (`DATA.md#the-tsv-log`)."""
         if run.resolved or self._session_folder is None:
             return
@@ -290,12 +302,17 @@ class SessionRunner:
         run.files = files
 
         # Core fields (`DATA.md#the-json-document`), then flat task-profile config, then the seeds.
-        core = {
+        core: dict[str, Any] = {
             "rat": run.config.animal_name,
             "serial_port": run.address,
             "session_id": run.session_id_label,
             "sketch": run.config.sketch_name,
         }
+        if interp is not None:
+            # Which firmware interpreter ran this session, announced before
+            # `READY` (`TASKS.md#the-start-line`). Core, not config: it describes
+            # the build, not the tuning, so it stays out of `params_hash`.
+            core["interp"] = interp
         if self.recording_fields is not None:
             # Which recording this run is inside, and which digital input and
             # headstage port carry it (`RECORDING.md#what-is-written`). Core rather than
@@ -315,8 +332,7 @@ class SessionRunner:
         if run.host_seed is not None:
             config_meta["host_seed"] = run.host_seed
         if seed is not None and run.host_seed is not None and seed != run.host_seed:
-            # Not an error — an old sketch seeding itself is exactly the case
-            # `with_trial_seed` degrades toward. But it means this box's trial
+            # Not an error, but it means this box's trial
             # sequence came from the board's own weak entropy, which is worth
             # saying out loud once rather than leaving to be inferred from two
             # numbers in a file nobody opens.
@@ -478,7 +494,12 @@ class SessionRunner:
         Runs on the loop. Finalizes whatever the write-ahead log durably captured."""
         log.warning("box %d: session lost: %s", run.box, reason)
         if self._active.get(run.box) is run:
-            self._schedule_finalize(run.box, "board disconnected")
+            reason = (
+                f"start refused: {run.refusal.reason}"
+                if run.refusal is not None
+                else "board disconnected"
+            )
+            self._schedule_finalize(run.box, reason)
 
     async def end_all(
         self,
@@ -538,6 +559,20 @@ class SessionRunner:
         from ..protocol import Evt, event
 
         await self._broadcast(event(Evt.SESSION_TELEMETRY, payload))
+
+    async def _emit_start_refused(self, box: int, refused: StartRefused) -> None:
+        from ..protocol import Evt, event
+
+        await self._broadcast(
+            event(
+                Evt.SIDECAR_ERROR,
+                {
+                    "code": refused.code,
+                    "message": f"Box {box}: {refused}",
+                    "detail": {"box": box, "reason": refused.reason, **refused.detail},
+                },
+            )
+        )
 
     async def _emit_write_error(self, box: int, message: str) -> None:
         from ..protocol import ErrCode, Evt, event

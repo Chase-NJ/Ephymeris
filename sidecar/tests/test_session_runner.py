@@ -15,15 +15,17 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import zlib
 from pathlib import Path
 
 import pytest
 
+from ephymeris_sidecar.tasks.start_command import build_start_command
 from ephymeris_sidecar.ports import handler as handler_module
 from ephymeris_sidecar.ports.states import IllegalTransition, PortState
 from ephymeris_sidecar.sessions.runner import CLEAN_STOP_REASON, BoxConfig, SessionRunner
 from ephymeris_sidecar.tasks.profile import parse_profile
-from tests.scripted_board import Bench, until
+from tests.scripted_board import Bench, ScriptedBoard, until
 
 GRGL = {
     "taskName": "GRGL 2-Odor Discrimination",
@@ -97,7 +99,7 @@ def make_runner(tmp_path: Path, bench: Bench, profile_json=GRGL, duration_s=None
                 animal_name=f"remy{box}",
                 sketch_path="/sk/GRGL_2-Odor",
                 sketch_name="GRGL_2-Odor",
-                start_command="START CL=0 LAZY=1",
+                start_command=build_start_command(profile, {}),
                 config_metadata={"correction_left": 0, "lazy_escalation": True},
                 profile=profile,
             )
@@ -125,7 +127,9 @@ async def test_a_run_writes_its_tsv_with_the_seed_captured(tmp_path: Path, bench
     runner, _events, _ended = make_runner(tmp_path, bench)
     runner.start_box(1)
     board = await bench.run_handshake(1, seed=288577176)
-    assert board.sent()[0].startswith("START CL=0 LAZY=1 SEED=")
+    # The parameters on a SET line, confirmed; the seed alone on START.
+    assert board.sent()[:-1] == ["SET CL=0 LAZY=1"]
+    assert board.sent()[-1].startswith("START SEED=")
 
     await board.said("101\t0", "249\t500")
 
@@ -159,7 +163,7 @@ async def test_each_start_draws_its_own_seed(tmp_path: Path, bench: Bench) -> No
     runner.start_box(1)
     again = await bench.run_handshake(1)
     assert again is not board
-    assert board.sent()[0] != again.sent()[0]
+    assert board.sent()[-1] != again.sent()[-1]
 
 
 async def test_both_seeds_are_recorded_when_the_board_disagrees(tmp_path: Path, bench: Bench) -> None:
@@ -169,12 +173,76 @@ async def test_both_seeds_are_recorded_when_the_board_disagrees(tmp_path: Path, 
     runner, _events, _ended = make_runner(tmp_path, bench)
     runner.start_box(1)
     board = await bench.run_handshake(1, seed=4242)  # an old sketch's own micros()-derived value
-    sent = int(board.sent()[0].rsplit("SEED=", 1)[1])
+    sent = int(board.sent()[-1].rsplit("SEED=", 1)[1])
     await board.said("101\t0")
 
     text = tsv_text(tmp_path)
     assert "# trial_seed: 4242" in text, "what the board actually ran on"
     assert f"# host_seed: {sent}" in text, "what this app asked for"
+
+
+async def test_the_interpreter_the_board_announced_is_recorded_in_the_header(
+    tmp_path: Path, bench: Bench
+) -> None:
+    runner, _events, _ended = make_runner(tmp_path, bench)
+    runner.start_box(1)
+    board = await bench.run_handshake(1, seed=5, interp=1)
+    await board.said("101\t0")
+
+    text = tsv_text(tmp_path)
+    assert "# interp: 1\n" in text
+    # Before the first strobe, like the rest of the header.
+    assert text.index("# interp: 1") < text.index("101\t0")
+
+
+async def test_a_board_that_announced_no_interpreter_records_none(tmp_path: Path, bench: Bench) -> None:
+    runner, _events, _ended = make_runner(tmp_path, bench)
+    runner.start_box(1)
+    board = await bench.run_handshake(1, seed=5)
+    await board.said("101\t0")
+
+    assert "# interp" not in tsv_text(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("answer", "code", "reason"),
+    [
+        # A value cut short: the right count, the wrong CRC.
+        (lambda tokens: [f"PARAMS {len(tokens)} 1"], "PARAMS_MISMATCH", "crc"),
+        # A key it does not parse: one fewer than was sent.
+        (lambda tokens: [f"PARAMS {len(tokens) - 1} 1"], "PARAMS_MISMATCH", "count"),
+        # A value its clamp moved.
+        (
+            lambda tokens: ["CLAMPED CL", f"PARAMS {len(tokens)} {zlib.crc32(' '.join(tokens).encode())}"],
+            "PARAMS_CLAMPED",
+            "clamped",
+        ),
+        # An older sketch: no reply at all.
+        (lambda tokens: [], "FIRMWARE_OUTDATED", "no_reply"),
+    ],
+    ids=["cut-short", "unparsed-key", "clamped", "older-sketch"],
+)
+async def test_a_refused_start_names_its_box_and_reason_and_writes_no_file(
+    tmp_path: Path, bench: Bench, monkeypatch: pytest.MonkeyPatch, answer, code: str, reason: str  # noqa: ANN001
+) -> None:
+    monkeypatch.setattr(ScriptedBoard, "answer", staticmethod(answer))
+    monkeypatch.setattr(handler_module, "SESSION_PARAMS_TIMEOUT_S", 0.3)
+    runner, events, ended = make_runner(tmp_path, bench)
+    runner.start_box(1)
+    board = await bench.wait_for_board(1)
+    board.say("READY\n")  # said() would wait for a read the refused session never makes
+
+    await wait_until(lambda: bool(ended))
+    refusals = [e["data"] for e in events if e.get("evt") == "sidecar.error"]
+    assert len(refusals) == 1
+    assert refusals[0]["code"] == code
+    assert refusals[0]["detail"]["box"] == 1 and refusals[0]["detail"]["reason"] == reason
+    assert refusals[0]["message"].startswith("Box 1: ")
+    _run, stop_reason = ended[-1]
+    assert stop_reason == f"start refused: {reason}"
+    assert not any(line.startswith("START") for line in board.sent()), "START went out anyway"
+    assert not (tmp_path / "behavior.tsv").exists(), "a refused start must leave no file"
+    assert bench.state(1) is PortState.ERROR
 
 
 async def test_strobes_push_rolling_telemetry(tmp_path: Path, bench: Bench) -> None:
@@ -183,7 +251,13 @@ async def test_strobes_push_rolling_telemetry(tmp_path: Path, bench: Bench) -> N
     board = await bench.run_handshake(1)
 
     await board.said("101\t0", "249\t100")  # trigger, then went right → hit
-    await wait_until(lambda: any(e.get("evt") == "session.telemetry" for e in events))
+    # Pushes are scheduled onto the loop one per strobe: wait for the hit's, not the first.
+    await wait_until(
+        lambda: any(
+            e.get("evt") == "session.telemetry" and e["data"]["metrics"][0]["value"] is not None
+            for e in events
+        )
+    )
 
     telemetry = [e for e in events if e.get("evt") == "session.telemetry"]
     last = telemetry[-1]["data"]

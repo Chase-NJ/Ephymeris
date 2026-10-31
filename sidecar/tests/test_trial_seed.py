@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from ephymeris_sidecar.tasks.profile import parse_profile
 from ephymeris_sidecar.tasks.seed import new_trial_seed
-from ephymeris_sidecar.tasks.start_command import build_start_command, with_trial_seed
+from ephymeris_sidecar.tasks.start_command import build_start_command
 
 
 def test_a_seed_never_lands_on_a_value_the_firmware_would_discard() -> None:
@@ -55,7 +55,7 @@ def test_consecutive_draws_are_not_adjacent() -> None:
         previous = seed
 
 
-def test_the_seed_rides_on_the_start_line_beside_the_config() -> None:
+def test_the_seed_rides_on_the_start_line_and_the_config_on_the_set_lines() -> None:
     profile = parse_profile(
         {
             "taskName": "GRGL",
@@ -65,12 +65,13 @@ def test_the_seed_rides_on_the_start_line_beside_the_config() -> None:
             ],
         }
     )
-    command = with_trial_seed(build_start_command(profile, {}), 123456789)
-    assert command == "START CL=0 SEED=123456789"
+    command = build_start_command(profile, {})
+    assert command.set_lines == ("SET CL=0",)
+    assert command.start_line(123456789) == "START SEED=123456789"
 
 
 def test_a_profile_less_sketch_still_gets_a_seed() -> None:
     """A bare `START` is the profile-less case (`TASKS.md#task-profile`), not a case where trial
     order stops mattering — the shaping sketches declare no config at all and
     are the ones that were running a fixed sequence."""
-    assert with_trial_seed(build_start_command(None, {}), 7) == "START SEED=7"
+    assert build_start_command(None, {}).start_line(7) == "START SEED=7"

@@ -430,6 +430,7 @@ Each session folder that has a log gets a `notes.md` beside its format folders: 
   "stop_reason": "BF_END_SESSION received",
   "trial_seed": 288577176,
   "host_seed": 288577176,
+  "interp": 1,
   "n_events": 2392,
   "ts_data": [[221, 0], [222, 1000], [223, 5001], /* … */ [246, 3523555]]
 }
@@ -446,6 +447,7 @@ Each session folder that has a log gets a `notes.md` beside its format folders: 
 | `stop_reason` | Set by the sidecar at run end. Open set: `BF_END_SESSION received` (clean), `board disconnected`, `sidecar error: <cause>`, `recovered after crash`, … |
 | `trial_seed` | What the **board** reported on its `SEED` line; absent if it never sent one |
 | `host_seed` | What the **app** put on the `START` line. Differs from `trial_seed` only if the firmware ignored it |
+| `interp` | The firmware interpreter the board announced as `INTERP=<n>` before `READY` ([TASKS.md](TASKS.md#confirming-the-parameters)). Absent when it announced none. Describes the build, not the tuning, so it is never hashed |
 | `intan_*` | Present only inside a recording ([RECORDING.md](RECORDING.md#what-is-written)) |
 | `n_events` | `len(ts_data)` |
 | `ts_data` | `[code, timestamp_ms]` pairs exactly as the board sent them — ms since **that animal's own** session start, never re-based to wall clock |
@@ -462,6 +464,7 @@ A live append-only log, not a serialization of the document:
 # serial_port: COM6
 # session_id: 2O-Bdisc_25
 # sketch: GRGL
+# interp: 1
 # correction_left: 0
 # task_profile: {"config":[…],"liveMetrics":[…],"strobes":{…},"taskName":"GRGL"}
 221	0
@@ -471,7 +474,7 @@ A live append-only log, not a serialization of the document:
 # n_events: 2392
 ```
 
-The `# key: value` header is written by `AnimalWriter.open_files` after `START`/`SEED` resolve and before the first strobe. The **profile snapshot rides in the header as one compact JSON line, always last**, so a `.tsv` rebuilt by [crash recovery](#crash-recovery) yields a `.json` as self-describing as a finalized one — and the recovered file is exactly the one someone carries to another machine. `stop_reason` and `n_events` are unknown until the end, so they form a **footer**. **A `.tsv` cut off mid-session lacks only that footer.**
+The `# key: value` header is written by `AnimalWriter.open_files` after the parameter handshake and `SEED` resolve, and before the first strobe. The **profile snapshot rides in the header as one compact JSON line, always last**, so a `.tsv` rebuilt by [crash recovery](#crash-recovery) yields a `.json` as self-describing as a finalized one — and the recovered file is exactly the one someone carries to another machine. `stop_reason` and `n_events` are unknown until the end, so they form a **footer**. **A `.tsv` cut off mid-session lacks only that footer.**
 
 ### The mat mirror
 

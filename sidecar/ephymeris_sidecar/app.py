@@ -638,10 +638,12 @@ class Application:
     async def _port_send_start(self, args: Args) -> dict[str, Any]:
         """Start a behaviour sketch by hand from the Debug console.
 
-        The line is built here rather than in the client for the reason a
+        The block is built here rather than in the client for the reason a
         session's is: `build_start_command` is the one place that knows the
-        profile's wire keys and the firmware's line cap, and a `START` the board
-        silently truncates is the failure this whole path exists to avoid.
+        profile's wire keys and the firmware's line cap, and a `SET` line the
+        board silently truncates is the failure this whole path exists to avoid.
+        The board's `PARAMS` reply is held against what was sent, as a session's
+        is, before the bare `START` goes out.
         """
         box = _box_arg(args)
         path = args["sketchPath"]
@@ -660,16 +662,17 @@ class Application:
                 profile = await asyncio.to_thread(task_profile.load_profile, sketch.path)
             except task_profile.TaskProfileError:
                 profile = None  # profile-less: bare START, as in a session
-            # A `TaskProfileError` here is a line over the firmware's cap.
+            # A `TaskProfileError` here is a parameter over the firmware's cap.
             command = build_start_command(profile, args.get("config", {}))
-            written = self._require_ports().send(box, command, DEFAULT_LINE_ENDING)
+            # Off the loop: each `SET` line waits for the board's `PARAMS`.
+            written = await asyncio.to_thread(self._require_ports().send_start, box, command)
         # Armed only once the line is really on the wire, and only here: this is
         # the one moment the sidecar knows which profile the strobes that follow
         # should be scored against (`debug_run.py`).
         await self.server.broadcast(
             event(Evt.PORT_TELEMETRY, self.debug_runs.arm(box, profile))
         )
-        return {"command": command, "bytesWritten": written}
+        return {"command": "START", "bytesWritten": written}
 
     # --- the flash queue (ARCHITECTURE.md#the-flash-queue) ---
 
@@ -974,27 +977,11 @@ class Application:
             return await asyncio.to_thread(self._preview_payload, definition)
 
     def _preview_payload(self, definition: TaskDefinition) -> dict[str, Any]:
-        """Compile without writing, and report the line budget.
-
-        The `START` length is carried because it is the one budget an operator
-        can exhaust without noticing: the firmware truncates an overlong line in
-        silence and runs on whichever values happened to fit. Showing the number
-        as it grows is cheaper than explaining the failure afterward.
-        """
+        """Compile without writing."""
         from .taskdef import generate
-        from .tasks.start_command import START_LINE_MAX, build_start_command, with_trial_seed
 
         diagnostics = validate_task(definition)
         profile = generate.build_profile(definition)
-        config = {field.metadata_key: field.default for field in profile.config}
-        try:
-            line = with_trial_seed(build_start_command(profile, config), 2147483646)
-            length = len(line)
-        except task_profile.TaskProfileError:
-            # Over the cap. TSK107 already says so with the real numbers; the
-            # length is reported as the max so the meter reads full rather than
-            # empty, which is the honest rendering of "it does not fit".
-            length = START_LINE_MAX
         # The same profile compiled with the overrides stripped. Two compiles
         # rather than one because "what does this profile PIN" is not derivable
         # from the merged result: a value equal to the catalogue's is
@@ -1005,8 +992,6 @@ class Application:
         bare = generate.build_profile(_replace(definition, params={}))
         return {
             "diagnostics": [d.to_json() for d in diagnostics],
-            "startLineLength": length,
-            "startLineMax": START_LINE_MAX,
             "profile": profile.to_json(),
             "catalogueDefaults": {f.metadata_key: f.default for f in bare.config},
         }

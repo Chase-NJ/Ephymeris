@@ -10,15 +10,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import queue
 import re
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
 import serial
 
+from ..tasks.start_command import ParamsExchange, StartCommand, StartRefused
 from .states import (
     ACKNOWLEDGE_FROM,
     CLAIM_FROM,
@@ -43,11 +45,18 @@ log = logging.getLogger(__name__)
 #: code 1–3 digits. Anything else is logged but not treated as data.
 STROBE_RE = re.compile(r"^(\d{1,3})\t(\d+)$")
 SEED_RE = re.compile(r"^SEED\t(\d+)$")
+#: Announced before `READY`: which firmware interpreter the sketch is
+#: (`TASKS.md#the-start-line`).
+INTERP_RE = re.compile(r"^INTERP=(\d+)$")
 READY_TOKEN = "READY"
 
 #: How long to wait for the board's `READY` after opening (it reboots via the
 #: DTR auto-reset first, so this must cover `setup()`).
 SESSION_READY_TIMEOUT_S = 10.0
+#: How long the board has to answer one `SET` line with `PARAMS`. Parsing a
+#: line takes the Mega well under a millisecond, so silence this long is a
+#: sketch that does not speak `SET` (`TASKS.md#the-start-line`).
+SESSION_PARAMS_TIMEOUT_S = 3.0
 #: Brief window after `START` to catch an optional `SEED` line
 #: (`ARCHITECTURE.md#entering-in_session` step 5).
 SESSION_SEED_WINDOW_S = 1.5
@@ -163,6 +172,9 @@ class PortHandler:
         self._ring: deque[OutputLine] = deque(maxlen=RING_CAPACITY)
         self._pending: list[OutputLine] = []
         self._pending_lock = threading.Lock()
+        #: Callbacks hearing each line the board sends, for a caller waiting on a
+        #: reply (`send_start`). Guarded by `_pending_lock`, called off it.
+        self._listeners: list[Callable[[str], None]] = []
 
         # Used to tell "a trailing CR that may still become CRLF" apart from
         # "a trailing CR that is all we're ever going to get" — see
@@ -353,23 +365,31 @@ class PortHandler:
         self,
         address: str,
         baud: int,
-        start_command: str,
-        on_ready: Callable[[int | None], None],
+        command: StartCommand,
+        seed: int,
+        on_ready: Callable[[int | None, int | None], None],
         on_strobe: Callable[[int, int], None],
         on_lost: Callable[[str], None] = lambda _reason: None,
+        on_refused: Callable[[StartRefused], None] = lambda _refused: None,
     ) -> SessionClaim:
         """Enter `IN_SESSION` and run the entry sequence in a worker thread.
 
         Raises `IllegalTransition` unless the port is `IDLE`, before anything
         starts. The port transition is synchronous (the caller holds the claim
         when this returns); the handshake — open → DTR auto-reset → await
-        `READY` → send `START` → optional `SEED` — then runs off the event loop.
+        `READY` → send each `SET` line and hold its `PARAMS` against `command` →
+        send `START SEED=<seed>` → optional `SEED` — then runs off the event loop.
 
-        `on_ready(seed)` fires once the handshake resolves, *before* the first
-        strobe, so the caller can open the session file and write its header
-        (`DATA.md#written-live`). `on_strobe(code, ts)` fires for each parsed
+        `on_ready(seed, interp)` fires once the handshake resolves, *before* the
+        first strobe, so the caller can open the session file and write its
+        header (`DATA.md#written-live`); `interp` is what the board announced
+        before `READY`, or None. `on_strobe(code, ts)` fires for each parsed
         strobe. Both run on the session thread, so the caller's file I/O stays
         off the event loop.
+
+        `on_refused(refusal)` fires, on the session thread, when the board's
+        answer to the parameter block refuses the start. `START` has not been
+        sent and the port is on its way to `ERROR`, so `on_lost` follows.
         """
         with self._lock:
             assert_leaves(self._state, CLAIM_FROM, PortState.IN_SESSION)
@@ -377,7 +397,7 @@ class PortHandler:
             self._stop = threading.Event()
             self._reader = threading.Thread(
                 target=self._session_loop,
-                args=(address, baud, start_command, on_ready, on_strobe, self._stop),
+                args=(address, baud, command, seed, on_ready, on_strobe, on_refused, self._stop),
                 name=f"box{self.box}-session",
                 daemon=True,
             )
@@ -415,9 +435,11 @@ class PortHandler:
         self,
         address: str,
         baud: int,
-        start_command: str,
-        on_ready: Callable[[int | None], None],
+        command: StartCommand,
+        seed: int,
+        on_ready: Callable[[int | None, int | None], None],
         on_strobe: Callable[[int, int], None],
+        on_refused: Callable[[StartRefused], None],
         stop: threading.Event,
     ) -> None:
         try:
@@ -445,8 +467,7 @@ class PortHandler:
             self._lock.release()
 
         buf = bytearray()
-        phase = "ready"
-        seed_value: int | None = None
+        shake = _Handshake(command, seed)
         ready_deadline = time.monotonic() + SESSION_READY_TIMEOUT_S
         seed_deadline = 0.0
 
@@ -462,64 +483,108 @@ class PortHandler:
             if chunk:
                 buf.extend(chunk)
                 for line in self._extract_lines(buf):
-                    phase, seed_value = self._dispatch_session_line(
-                        line, phase, seed_value, port, start_command, on_ready, on_strobe
-                    )
+                    try:
+                        self._dispatch_session_line(line, shake, port, on_ready, on_strobe)
+                    except StartRefused as refused:
+                        self._refuse_start(stop, refused, on_refused)
+                        return
 
             now = time.monotonic()
-            if phase == "ready" and now > ready_deadline:
+            if shake.phase == "ready" and now > ready_deadline:
                 self._fail_from_worker(stop, "board never reported READY")
                 return
-            if phase == "seed":
+            if shake.phase == "params" and now > shake.params_deadline:
+                try:
+                    command.verify(None)
+                except StartRefused as refused:
+                    self._refuse_start(stop, refused, on_refused)
+                    return
+            if shake.phase == "seed":
                 if seed_deadline == 0.0:
                     seed_deadline = now + SESSION_SEED_WINDOW_S
                 elif now > seed_deadline:
                     # No SEED arrived — proceed without it.
-                    phase = "parse"
-                    on_ready(None)
+                    shake.phase = "parse"
+                    on_ready(None, shake.interp)
+
+    def _refuse_start(
+        self,
+        stop: threading.Event,
+        refused: StartRefused,
+        on_refused: Callable[[StartRefused], None],
+    ) -> None:
+        """Tell the run why its start was refused, then put the port in `ERROR`
+        (which is what `on_lost` answers). `START` was never sent, so the board is
+        still waiting at its prompt: the operator fixes the cause and starts again."""
+        log.warning("box %d: start refused (%s): %s", self.box, refused.reason, refused)
+        try:
+            on_refused(refused)
+        except Exception:  # noqa: BLE001 - the refusal must still reach the port
+            log.exception("box %d: refusal callback failed", self.box)
+        self._fail_from_worker(stop, str(refused))
 
     def _dispatch_session_line(
         self,
         line: str,
-        phase: str,
-        seed_value: int | None,
+        shake: "_Handshake",
         port: serial.Serial,
-        start_command: str,
-        on_ready: Callable[[int | None], None],
+        on_ready: Callable[[int | None, int | None], None],
         on_strobe: Callable[[int, int], None],
-    ) -> tuple[str, int | None]:
-        """Handle one complete line according to the handshake phase."""
+    ) -> None:
+        """Handle one complete line according to the handshake phase.
+
+        Raises `StartRefused` when the board's answer to the parameter block
+        refuses the start."""
         text = line.strip()
         # Everything is mirrored into scrollback so a raw session log exists for
         # a profile-less sketch and for debugging (`TASKS.md#overview`).
         self._emit(OutputLine("rx", text, time.time()))
 
-        if phase == "ready":
-            if text.upper() == READY_TOKEN:
-                port.write((start_command + "\n").encode("utf-8", errors="replace"))
-                port.flush()
-                self._emit(OutputLine("tx", start_command, time.time()))
-                return "seed", seed_value
-            return "ready", seed_value
+        if shake.phase == "ready":
+            interp = INTERP_RE.match(text)
+            if interp:
+                shake.interp = int(interp.group(1))
+            elif text.upper() == READY_TOKEN:
+                shake.phase = "params"
+                self._send_line(port, shake.exchange.first_line)
+                shake.params_deadline = time.monotonic() + SESSION_PARAMS_TIMEOUT_S
+            return
 
-        if phase == "seed":
+        if shake.phase == "params":
+            # One line at a time: the Mega's receive buffer is 64 bytes, and a
+            # second line written before the first is parsed could overrun it.
+            following = shake.exchange.hear(text)
+            if following is not None:
+                self._send_line(port, following)
+                shake.params_deadline = time.monotonic() + SESSION_PARAMS_TIMEOUT_S
+            elif shake.exchange.done:
+                self._send_line(port, shake.command.start_line(shake.seed))
+                shake.phase = "seed"
+            return
+
+        if shake.phase == "seed":
             seed_match = SEED_RE.match(text)
             if seed_match:
-                on_ready(int(seed_match.group(1)))
-                return "parse", int(seed_match.group(1))
+                on_ready(int(seed_match.group(1)), shake.interp)
+                shake.phase = "parse"
+                return
             strobe = STROBE_RE.match(text)
             if strobe:
                 # First data line arrived with no SEED — resolve, then process.
-                on_ready(None)
+                on_ready(None, shake.interp)
                 on_strobe(int(strobe.group(1)), int(strobe.group(2)))
-                return "parse", None
-            return "seed", seed_value
+                shake.phase = "parse"
+            return
 
         # phase == "parse"
         strobe = STROBE_RE.match(text)
         if strobe:
             on_strobe(int(strobe.group(1)), int(strobe.group(2)))
-        return "parse", seed_value
+
+    def _send_line(self, port: serial.Serial, text: str) -> None:
+        port.write((text + "\n").encode("utf-8", errors="replace"))
+        port.flush()
+        self._emit(OutputLine("tx", text, time.time()))
 
     def _extract_lines(self, buf: bytearray) -> list[str]:
         """Pull all complete lines out of `buf`, leaving any partial tail."""
@@ -533,6 +598,38 @@ class PortHandler:
         return lines
 
     # --- write ------------------------------------------------------------
+
+    def send_start(self, command: StartCommand, start_line: str) -> int:
+        """Debug Mode's start: the parameter block, confirmed, then `start_line`.
+
+        The same handshake a session makes (`_dispatch_session_line`) over a
+        console that is already open: each `SET` line goes out alone, its
+        `PARAMS` is waited for, and the final answer is held against `command`.
+        Raises `StartRefused` — with `start_line` never written — when the board
+        refuses the block or does not answer. Blocks, so call it off the event
+        loop. Returns the bytes written for `start_line`.
+        """
+        answers: queue.Queue[str] = queue.Queue()
+        exchange = ParamsExchange(command)
+        with self._pending_lock:
+            self._listeners.append(answers.put)
+        try:
+            self.write(exchange.first_line)
+            deadline = time.monotonic() + SESSION_PARAMS_TIMEOUT_S
+            while not exchange.done:
+                try:
+                    text = answers.get(timeout=max(0.0, deadline - time.monotonic()))
+                except queue.Empty:
+                    command.verify(None)  # nothing answered: always raises
+                    raise AssertionError("verify(None) must refuse") from None  # pragma: no cover
+                following = exchange.hear(text)
+                if following is not None:
+                    self.write(following)
+                    deadline = time.monotonic() + SESSION_PARAMS_TIMEOUT_S
+            return self.write(start_line)
+        finally:
+            with self._pending_lock:
+                self._listeners.remove(answers.put)
 
     def write(self, text: str, line_ending: str = DEFAULT_LINE_ENDING) -> int:
         """Send to the board. Permitted only in `PASSTHROUGH` (`ARCHITECTURE.md#passthrough-send`).
@@ -590,6 +687,10 @@ class PortHandler:
         self._ring.append(line)
         with self._pending_lock:
             self._pending.append(line)
+            listeners = list(self._listeners)
+        if line.dir == "rx":
+            for listener in listeners:
+                listener(line.text)
 
     def flush_stale_partial(self) -> None:
         """Release a line held back only by an ambiguous trailing CR.
@@ -648,6 +749,26 @@ class PortHandler:
     def shutdown(self) -> None:
         with self._lock:
             self._teardown_serial()
+
+
+@dataclass
+class _Handshake:
+    """Where one session start is in its handshake, owned by the session thread.
+
+    `ready` → `params` (a `SET` line out, its `PARAMS` awaited, once per line) →
+    `seed` (`START` sent, optional `SEED` awaited) → `parse` (strobes).
+    """
+
+    command: StartCommand
+    seed: int
+    phase: str = "ready"
+    #: What the board announced before `READY`; None for a board that did not.
+    interp: int | None = None
+    exchange: ParamsExchange = field(init=False)
+    params_deadline: float = 0.0
+
+    def __post_init__(self) -> None:
+        self.exchange = ParamsExchange(self.command)
 
 
 def _find_terminator(buf: bytearray) -> tuple[int, int]:

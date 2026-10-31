@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from ephymeris_sidecar.tasks.start_command import build_start_command
 from ephymeris_sidecar.sessions.lifecycle import build_active_payload
 from ephymeris_sidecar.protocol import Evt, event, validate_command_result
 from ephymeris_sidecar.sessions.models import GroupRun, Session
@@ -58,7 +59,7 @@ def runner(tmp_path: Path):
                 animal_name="remy1",
                 sketch_path="/sk/GRGL_2-Odor",
                 sketch_name="GRGL_2-Odor",
-                start_command="START",
+                start_command=build_start_command(None, {}),
                 config_metadata={},
                 profile=None,
             )

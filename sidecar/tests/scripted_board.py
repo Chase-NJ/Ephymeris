@@ -4,7 +4,9 @@ The manager, its handlers, their state machine and the session thread are the
 real ones. Only the two edges are faked: `serial.Serial`, through the
 manager's `open_serial`, and the board list, through `note_boards`. A test
 plays the board by feeding the lines it would print (`READY`, `SEED`,
-strobes) and reading what the sidecar wrote back.
+strobes) and reading what the sidecar wrote back. The board answers `SET` lines
+the way the firmware does, with the running `PARAMS`, so a start gets through
+the parameter handshake unless a test sets `ScriptedBoard.answer` to refuse it.
 """
 
 from __future__ import annotations
@@ -12,6 +14,8 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+import zlib
+from typing import Callable
 
 from ephymeris_sidecar.boards.tool import BoardTool, DetectedBoard
 from ephymeris_sidecar.ports import handler as handler_module
@@ -23,6 +27,13 @@ from ephymeris_sidecar.settings import SidecarSettings
 class ScriptedBoard:
     """One opened serial port: what the board says, and what it was sent."""
 
+    #: How the board answers a `SET` line, given the tokens it has accepted so
+    #: far: the lines it prints. A test replaces it to play a board that clamps,
+    #: truncates or does not speak `SET`.
+    answer: Callable[[list[str]], list[str]] = staticmethod(
+        lambda tokens: [f"PARAMS {len(tokens)} {zlib.crc32(' '.join(tokens).encode())}"]
+    )
+
     def __init__(self, *_args, **kwargs) -> None:
         self.port = kwargs.get("port")
         self.baudrate = kwargs.get("baudrate")
@@ -32,6 +43,11 @@ class ScriptedBoard:
         self._out = bytearray()
         self._lock = threading.Lock()
         self._fail = False
+        self._tokens: list[str] = []
+        #: The seed to echo the moment START arrives, as the firmware does, or
+        #: None for a board that echoes nothing. Answering in `write` rather than
+        #: from the test keeps the SEED inside the handler's short window.
+        self.seed_on_start: int | None = None
         #: Reads that found nothing. The session thread reads, handles every
         #: line it got, then reads again: an empty read after `say` means all
         #: of it has been handled.
@@ -81,6 +97,15 @@ class ScriptedBoard:
 
     def write(self, data: bytes) -> int:
         self.written.extend(data)
+        for line in data.decode().splitlines():
+            if line == "SET" or line.startswith("SET "):
+                self._tokens.extend(line.split()[1:])
+                reply = self.answer(self._tokens)
+                with self._lock:
+                    self._out.extend("".join(f"{text}\n" for text in reply).encode())
+            elif line.startswith("START") and self.seed_on_start is not None:
+                with self._lock:
+                    self._out.extend(f"SEED\t{self.seed_on_start}\n".encode())
         return len(data)
 
     def flush(self) -> None:
@@ -156,13 +181,19 @@ class Bench:
         await until(lambda: bool(self.opened.get(f"/dev/box{box}")), timeout=timeout)
         return self.board(box)
 
-    async def run_handshake(self, box: int, seed: int | None = None) -> ScriptedBoard:
-        """Play a board through READY, and SEED when given. Without a SEED the
-        handshake resolves on the first strobe, or when the SEED window closes."""
+    async def run_handshake(
+        self, box: int, seed: int | None = None, interp: int | None = None
+    ) -> ScriptedBoard:
+        """Play a board through READY, the `SET` handshake, and SEED when given.
+        Without a SEED the handshake resolves on the first strobe, or when the
+        SEED window closes."""
         board = await self.wait_for_board(box)
-        # In one go, as a board prints them: the SEED window can't close first.
-        await board.said("READY", *([f"SEED\t{seed}"] if seed is not None else []))
-        assert b"START" in bytes(board.written)
+        board.seed_on_start = seed
+        await board.said(*([f"INTERP={interp}"] if interp is not None else []), "READY")
+        # The sidecar sends START once the board has confirmed its parameters;
+        # the board's SEED answers it.
+        await until(lambda: any(line.startswith("START") for line in board.sent()))
+        await board.said()  # until what the board printed in reply is handled
         return board
 
     def transitions(self, box: int) -> list[tuple[PortState, PortState, str]]:

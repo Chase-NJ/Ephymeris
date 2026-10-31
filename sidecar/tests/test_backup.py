@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+from ephymeris_sidecar.tasks.start_command import build_start_command
 from ephymeris_sidecar.backup.manager import (
     DB_MIRROR_NAME,
     DB_SNAPSHOT_DIR,
@@ -652,7 +653,7 @@ async def test_a_hung_backup_target_never_holds_up_a_run(
     )
     runner.configure(data, "2O-Bdisc_25", "g1", [BoxConfig(
         box=1, animal_id="a1", animal_name="remy1", sketch_path="/sk/GRGL",
-        sketch_name="GRGL", start_command="START", config_metadata={},
+        sketch_name="GRGL", start_command=build_start_command(None, {}), config_metadata={},
         profile=parse_profile(GRGL),
     )], session_id="s1")
 

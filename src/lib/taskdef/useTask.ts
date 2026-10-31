@@ -41,7 +41,6 @@ export interface TaskSession {
    *  divergence against, and what a per-field reset falls back to. */
   catalogueDefaults: Record<string, unknown>;
   diagnostics: TaskDiagnostic[];
-  startLine: { length: number; max: number } | null;
   checking: boolean;
   saving: boolean;
   loadError: string | null;
@@ -67,7 +66,6 @@ export function useTask(
   const [profile, setProfile] = useState<TaskProfile | null>(null);
   const [catalogueDefaults, setCatalogue] = useState<Record<string, unknown>>({});
   const [diagnostics, setDiagnostics] = useState<TaskDiagnostic[]>([]);
-  const [startLine, setStartLine] = useState<{ length: number; max: number } | null>(null);
   const [checking, setChecking] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -140,7 +138,6 @@ export function useTask(
           setDiagnostics(reply.diagnostics);
           setProfile(reply.profile);
           setCatalogue(reply.catalogueDefaults as Record<string, unknown>);
-          setStartLine({ length: reply.startLineLength, max: reply.startLineMax });
         })
         .catch((err) => {
           if (mine === sequence.current) setActionError(errorMessage(err));
@@ -199,7 +196,6 @@ export function useTask(
     profile,
     catalogueDefaults,
     diagnostics,
-    startLine,
     checking,
     saving,
     loadError,

@@ -21,12 +21,17 @@ from ephymeris_sidecar.ports.handler import (
     PortHandler,
     RING_CAPACITY,
 )
+from ephymeris_sidecar.tasks.start_command import build_start_command
 from ephymeris_sidecar.ports.states import (
     IDLE_OR_CONSOLE,
     IllegalTransition,
     PortState,
     TakeRefused,
 )
+
+
+#: A run with nothing to set (these tests are about the port, not the handshake).
+CMD = build_start_command(None, {})
 
 
 class FakeSerial:
@@ -132,7 +137,7 @@ def announced(changes: list[tuple]) -> list[tuple[PortState, PortState]]:
 def enter(handler: PortHandler, state: PortState) -> None:
     """Put a fresh handler in `state` the way the app does."""
     if state is PortState.IN_SESSION:
-        handler.claim_session("/dev/fake", 115200, "START", lambda _seed: None, lambda _c, _t: None)
+        handler.claim_session("/dev/fake", 115200, CMD, 1, lambda _seed, _i: None, lambda _c, _t: None)
     elif state is PortState.PASSTHROUGH:
         handler.open_passthrough("/dev/fake", 115200)
     elif state is PortState.ERROR:
@@ -479,7 +484,7 @@ def test_a_lost_claim_hears_of_it_even_if_the_announcement_raises(fake_port) -> 
     _created.append(handler)
     lost: list[str] = []
     handler.claim_session(
-        "/dev/fake", 115200, "START", lambda _seed: None, lambda _c, _t: None, lost.append
+        "/dev/fake", 115200, CMD, 1, lambda _seed, _i: None, lambda _c, _t: None, lost.append
     )
     handler.force_error("board went away")
     _loop.run_until_complete(asyncio.sleep(0))

@@ -144,10 +144,10 @@ Opening a task shows everything about it on one screen:
   out, and the bar shows the share of trials each condition would get.
 - **Parameters**, the dial above it: click a planet, use the arrow keys or scroll to turn it, and that
   category's settings appear below. **Holds** is the shaping ramp.
-- At the top: **Problems** (click one to go to it), the **START** meter (keep it out of the red), and
+- At the top: **Problems** (click one to go to it) and
   **Details** (category, older names, notes). Save when done; a task saves even with problems.
 
-![The task editor for 4-Odor Discrimination: the START meter and Details at the top, the state machine across the left, four trial types below it (Sandalwood, Orange, Cedar and Lemon, each with its odor line, well, fluid line, reward and weight), the Parameters dial on Session at the top right, and Trial generation set to Weighted below it](images/task-editor.webp)
+![The task editor for 4-Odor Discrimination: Details at the top, the state machine across the left, four trial types below it (Sandalwood, Orange, Cedar and Lemon, each with its odor line, well, fluid line, reward and weight), the Parameters dial on Session at the top right, and Trial generation set to Weighted below it](images/task-editor.webp)
 
 The **Strobes** tile opens the list of every event a box can report and the number it is recorded as.
 The band across the top shows all the numbers from 0 to 999: purple ones are in use, grey ones are
@@ -922,6 +922,7 @@ ask the lab manager for the new installer instead.
 | A box will not flash | Read the message on its card. If the box shows `ERROR`, click **Acknowledge**, then try again. If it fails again, tell the lab manager |
 | A box is stuck in `ERROR` | Open it from the Dashboard (click its star) and click **Acknowledge**. Reset does not clear an error |
 | A box will not start | Click **Reset**, wait a few seconds, then **Start** again |
+| A box refuses to start and says it did not confirm its parameters, or that it moved a value, or that it carries an older sketch | The box checks its settings before it runs and refuses rather than run on the wrong ones. Nothing was started and no file was written. **Acknowledge** the error, then flash the box's task again and **Start**. If it refuses again, tell the lab manager what the message says |
 | **Stop** seems to do nothing | The box stops at the end of the current trial. If no animal is poking, that can take until the trial times out. Wait |
 | Screens say *Waiting for the backend* or *The backend isn't connected*, or Debug Mode shows *sidecar down* | The app lost its connection to its own background process. Close Ephymeris and open it again. It does not restart this by itself |
 | **backup failing** on Mission Control, or a warning under **Backup directory** in Settings | Data is still saved locally; the backup copy is not being made. Tell the lab manager. The refresh button beside the warning copies anything missing once the backup drive is back |

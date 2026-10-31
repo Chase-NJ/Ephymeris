@@ -118,7 +118,7 @@ Write one line to the open console. The sent text is echoed into `port.output` a
 <a id="cmd-port.sendstart"></a>
 #### `port.sendStart`
 
-Debug Mode's **Send START**: builds the `START` line from the named sketch's Task Profile exactly as `sessions.confirmMapping` does (a sketch with no profile gets a bare `START`) and writes it to the open console, then arms live scoring, reported as `port.telemetry`. No `SEED` token and nothing recorded: this is not a run. `SKETCH_UNKNOWN` for an undiscovered path; `TASK_PROFILE_INVALID` when the line would reach the firmware's `START_LINE_MAX` (`TASKS.md#the-start-line`); `SEND_NOT_PASSTHROUGH` unless the port is in `PASSTHROUGH`. To end the run, send `STOP` with `port.send` and wait for `port.telemetry.running` to go false — the board ends it. Waits for a rig definition write in progress (`TASKS.md#the-rig-definition`).
+Debug Mode's **Send START**: builds the parameter block from the named sketch's Task Profile exactly as `sessions.confirmMapping` does (a sketch with no profile gets a bare `SET`), sends it as `SET` lines and holds the board's `PARAMS` reply against what was sent. Only a confirmed block is followed by a bare `START`, and then live scoring is armed, reported as `port.telemetry`. No `SEED` token and nothing recorded: this is not a run. `SKETCH_UNKNOWN` for an undiscovered path; `TASK_PROFILE_INVALID` when a parameter cannot fit a `SET` line (`TASKS.md#the-length-cap`); `PARAMS_MISMATCH`, `PARAMS_CLAMPED` or `FIRMWARE_OUTDATED` when the board's reply refuses the start, with nothing started; `SEND_NOT_PASSTHROUGH` unless the port is in `PASSTHROUGH`. To end the run, send `STOP` with `port.send` and wait for `port.telemetry.running` to go false — the board ends it. Waits for a rig definition write in progress (`TASKS.md#the-rig-definition`).
 
 **Args**
 
@@ -132,8 +132,8 @@ Debug Mode's **Send START**: builds the `START` line from the named sketch's Tas
 
 | Field | Type | Notes |
 |---|---|---|
-| `command` | string | The line as sent, for the console's record. |
-| `bytesWritten` | number |  |
+| `command` | string | The `START` line as sent, for the console's record. |
+| `bytesWritten` | number | Of the `START` line alone. |
 
 <a id="cmd-port.reset"></a>
 #### `port.reset`
@@ -208,7 +208,7 @@ The flash queue as it stands. Also replayed on connect as `flash.queue`; this ex
 <a id="cmd-port.startsession"></a>
 #### `port.startSession`
 
-Start one box of the confirmed mapping: open the port (the Mega DTR-resets), await `READY`, send the `START` line built at `sessions.confirmMapping`, capture an optional `SEED`, then parse strobes (`ARCHITECTURE.md#session-lifecycle`). Requires `IDLE`. On a recording session RHX recording begins first and an `INTAN_*` refusal comes before the box starts. Opens the group's run and marks the session `running` if this is the group's first box. `SESSION_INVALID` for a box with no confirmed mapping, and, with `detail.boxes`, for a box whose board does not carry its mapped sketch's current build (`ARCHITECTURE.md#what-a-board-carries`); both come before RHX or the box starts. Long-running on a recording session; the client raises its reply timeout.
+Start one box of the confirmed mapping: open the port (the Mega DTR-resets), await `READY` (and the `INTERP=<n>` before it), send the `SET` lines built at `sessions.confirmMapping` one at a time and hold the board's `PARAMS <n> <crc32>` and any `CLAMPED <key>` against what was sent, then send `START SEED=<n>`, capture an optional `SEED`, and parse strobes (`TASKS.md#confirming-the-parameters`, `ARCHITECTURE.md#session-lifecycle`). Requires `IDLE`. The reply returns at the claim, before the board answers: a start the board's answer refuses (`PARAMS_MISMATCH`, `PARAMS_CLAMPED`, `FIRMWARE_OUTDATED`) arrives as a `sidecar.error` event for the box, with `START` never sent and the port in `ERROR`. On a recording session RHX recording begins first and an `INTAN_*` refusal comes before the box starts. Opens the group's run and marks the session `running` if this is the group's first box. `SESSION_INVALID` for a box with no confirmed mapping, and, with `detail.boxes`, for a box whose board does not carry its mapped sketch's current build (`ARCHITECTURE.md#what-a-board-carries`); both come before RHX or the box starts. Long-running on a recording session; the client raises its reply timeout.
 
 **Args**
 
@@ -721,7 +721,7 @@ Discard a session still in `configuring` (the mapping step's Back): marks it `ab
 <a id="cmd-sessions.confirmmapping"></a>
 #### `sessions.confirmMapping`
 
-Load one group's box → animal → sketch mapping into the runner and build each box's `START` line from its sketch's Task Profile and `config`. `TASK_PROFILE_INVALID` when a line would reach `START_LINE_MAX` — refused because the board cannot report a truncated `START` and would run on whichever values fit (`TASKS.md#the-start-line`). `SESSION_INVALID` for a mapping missing its box, sketch, or an animal of this cohort. From here until the session lets go the rig is **held**: no baseline restore runs. Broadcasts `session.lifecycle`. Waits for a rig definition write in progress (`TASKS.md#the-rig-definition`).
+Load one group's box → animal → sketch mapping into the runner and build each box's `SET` lines from its sketch's Task Profile and `config`. `TASK_PROFILE_INVALID` when one parameter cannot fit a `SET` line (`SET_LINE_MAX`) — refused because the board cannot report a truncated line (`TASKS.md#the-length-cap`). `SESSION_INVALID` for a mapping missing its box, sketch, or an animal of this cohort. From here until the session lets go the rig is **held**: no baseline restore runs. Broadcasts `session.lifecycle`. Waits for a rig definition write in progress (`TASKS.md#the-rig-definition`).
 
 **Args**
 
@@ -773,7 +773,7 @@ What Mission Control renders. The runner is the authority on the confirmed mappi
 <a id="cmd-sessions.startall"></a>
 #### `sessions.startAll`
 
-Enter `IN_SESSION` on every box of the confirmed mapping not already running, open the group's run, and mark the session `running`. On a recording session RHX recording begins **before any box starts**, and an `INTAN_*` refusal (no recording configured for this group, RHX unreachable) leaves every box untouched — a session quietly missing its electrophysiology cannot be re-run. Every box not running must carry its mapped sketch's current build first (`ARCHITECTURE.md#what-a-board-carries`): otherwise `SESSION_INVALID` with `detail.boxes` naming each one, before RHX or any box starts. Broadcasts `session.lifecycle`. Long-running on a recording session; the client raises its reply timeout.
+Enter `IN_SESSION` on every box of the confirmed mapping not already running, open the group's run, and mark the session `running`. On a recording session RHX recording begins **before any box starts**, and an `INTAN_*` refusal (no recording configured for this group, RHX unreachable) leaves every box untouched — a session quietly missing its electrophysiology cannot be re-run. Every box not running must carry its mapped sketch's current build first (`ARCHITECTURE.md#what-a-board-carries`): otherwise `SESSION_INVALID` with `detail.boxes` naming each one, before RHX or any box starts. A box whose board then refuses its parameters is reported per box as `sidecar.error`, as for `port.startSession`. Broadcasts `session.lifecycle`. Long-running on a recording session; the client raises its reply timeout.
 
 **Args**
 
@@ -850,7 +850,7 @@ The global 'what is running?' query — argument-free, so a client with no prior
 <a id="cmd-tasks.getprofile"></a>
 #### `tasks.getProfile`
 
-Read the `task.json` beside a sketch's `.ino` (`TASKS.md#task-profile`). A sketch with none returns `{profile: null}` — fully supported (bare `START`, raw strobe log). `TASK_PROFILE_INVALID` when the file exists but is malformed. Works the same on a bundled sketch and on one generated from a saved task. Waits for a rig definition write in progress (`TASKS.md#the-rig-definition`).
+Read the `task.json` beside a sketch's `.ino` (`TASKS.md#task-profile`). A sketch with none returns `{profile: null}` — fully supported (one bare `SET`, raw strobe log). `TASK_PROFILE_INVALID` when the file exists but is malformed. Works the same on a bundled sketch and on one generated from a saved task. Waits for a rig definition write in progress (`TASKS.md#the-rig-definition`).
 
 **Args**
 
@@ -892,7 +892,7 @@ One definition and everything currently wrong with it. The diagnostics are recom
 <a id="cmd-tasks.preview"></a>
 #### `tasks.preview`
 
-Compile an unsaved definition and say what is wrong with it, writing nothing. The editor calls it as the operator types, so a problem lands against the field that caused it; it also carries the built `START` line's length, the one budget an operator can exhaust without noticing. `TASK_INVALID` only when the document is not a definition.
+Compile an unsaved definition and say what is wrong with it, writing nothing. The editor calls it as the operator types, so a problem lands against the field that caused it. `TASK_INVALID` only when the document is not a definition.
 
 **Args**
 
@@ -1501,7 +1501,7 @@ Progress of a long analytics read (`walking` during a rescan, `reading` while in
 <a id="evt-sidecar.error"></a>
 #### `sidecar.error`
 
-A failure with no command to attribute it to. Emitted by the session runner when a mid-session `.tsv` write fails (disk full, permissions) with `code: "INTERNAL"`, a message naming the box, and `detail: {box}` (`DATA.md#crash-safety`).
+A failure with no command to attribute it to. Emitted by the session runner when a mid-session `.tsv` write fails (disk full, permissions) with `code: "INTERNAL"`, a message naming the box, and `detail: {box}` (`DATA.md#crash-safety`); and when a box's start is refused after its click, with `PARAMS_MISMATCH`, `PARAMS_CLAMPED` or `FIRMWARE_OUTDATED`, the reason in words, and `detail: {box, reason}` (`ARCHITECTURE.md#entering-in_session`).
 
 **Data:** [SidecarErrorData](#shape-sidecarerrordata)
 
@@ -1548,7 +1548,10 @@ One live view's payload, only while that scope is open (`RECORDING.md#live-windo
 | `PREFIX_NAME_TAKEN` | A prefix with that name already exists. |
 | `SESSION_INVALID` | A session command that can't apply: unknown session, cohort, prefix or group; a mapping naming a box or animal outside the session; a box with no confirmed mapping; or a lifecycle step from the wrong state (abandoning a session that ran, resuming another day's, recovering while a box runs). |
 | `SESSION_NOT_READY` | `sessions.create` against a cohort with no group holding a box-assigned animal. |
-| `TASK_PROFILE_INVALID` | A sketch's `task.json` exists but is malformed (`detail` carries the parse error), or a profile's `START` line would reach `START_LINE_MAX`. |
+| `TASK_PROFILE_INVALID` | A sketch's `task.json` exists but is malformed (`detail` carries the parse error), or one of a profile's parameters cannot fit a `SET` line (`SET_LINE_MAX`). |
+| `PARAMS_MISMATCH` | A start refused because the board's `PARAMS <n> <crc32>` reply does not match the parameters the host sent: `detail.reason` is `count` (the board did not parse every key) or `crc` (a line arrived cut or garbled). Nothing was started (`TASKS.md#the-start-line`). |
+| `PARAMS_CLAMPED` | A start refused because the board could not hold a value as sent (`CLAMPED <key>`): its clamp would move it, or it is outside the board's 16-bit `int`. `detail.keys` names them (`*` for more than it can list). Nothing was started (`TASKS.md#confirming-the-parameters`). |
+| `FIRMWARE_OUTDATED` | A start refused because the board never answered the `SET` lines with `PARAMS`: it carries a sketch older than this app. Reflash it. Nothing was started (`TASKS.md#the-start-line`). |
 | `BACKUP_UNAVAILABLE` | `backup.syncNow` with no `backupDirectory` set, or with a sync already running. An ordinary mirroring failure is never a command error; it appears on `backup.status`. |
 | `UTILITY_UNAVAILABLE` | A `utility.*` command when the box utility can't be used at all — the install's sketch library has none, or its profile is unreadable or not a utility profile; for `utility.identify`, also a profile with no `identify` pair. A box-level problem never raises this: it is that box's `state` in the snapshot, because 'box 4 has no board' is a fact about the rig, not a failure of the command. |
 | `RIG_INVALID` | The wiring document is not a wiring document — wrong shape, or too large. NOT a wiring MISTAKE: a document that is well-formed and describes an impossible box is a successful `hardware.preview` reply carrying located problems. |
@@ -1870,7 +1873,7 @@ One operator-tunable parameter. Everything past `default` is optional presentati
 | Field | Type | Notes |
 |---|---|---|
 | `metadataKey` | string | The `.json`/`.mat` field name the form collects under. |
-| `wireKey` | string | The `START` command token (`TASKS.md#the-start-line`). |
+| `wireKey` | string | The `SET` command token (`TASKS.md#the-start-line`). |
 | `label` | string |  |
 | `type` | [ConfigFieldType](#shape-configfieldtype) |  |
 | `default` | unknown |  |
@@ -1966,7 +1969,7 @@ The Tauri-side store's schema; the store is the source of truth (`ARCHITECTURE.m
 | `reducedMotion` | boolean |  |
 | `constellation` | string \| null | Zodiac layout id for the box-status constellation; null = the fixed default layout. Shell-only — the sidecar ignores it. |
 | `constellationSlots` | map&lt;string, number&gt; | Box number (string key, JSON) → star index in the chosen constellation. Shell-only. |
-| `taskDefaults` | map&lt;string, map&lt;string, unknown&gt;&gt; | Sketch folder name → this rig's default task parameters for it, keyed by `metadataKey` — the middle layer of the three-layer merge (`TASKS.md#the-start-line`). Keyed by NAME, not path, because the name is what the session file records. Shell-only — the frontend merges these under the profile's own defaults and sends the result as each box's `config` at `sessions.confirmMapping`, so there is exactly one place a value can enter a `START` line and the sidecar never reads these. |
+| `taskDefaults` | map&lt;string, map&lt;string, unknown&gt;&gt; | Sketch folder name → this rig's default task parameters for it, keyed by `metadataKey` — the middle layer of the three-layer merge (`TASKS.md#the-start-line`). Keyed by NAME, not path, because the name is what the session file records. Shell-only — the frontend merges these under the profile's own defaults and sends the result as each box's `config` at `sessions.confirmMapping`, so there is exactly one place a value can enter a `SET` line and the sidecar never reads these. |
 
 <a id="shape-flashboxstatus"></a>
 #### FlashBoxStatus
@@ -3021,8 +3024,6 @@ A pure compile of an unsaved definition. Writes nothing.
 | Field | Type | Notes |
 |---|---|---|
 | `diagnostics` | [TaskDiagnostic](#shape-taskdiagnostic)[] |  |
-| `startLineLength` | number | Bytes the built START line would occupy, seed included. |
-| `startLineMax` | number | The firmware's cap, so the editor can show headroom without hardcoding it. At or over it is TSK107 and a refused generation — `readLineInto()` truncates in silence, so this is checked rather than trusted. |
 | `profile` | [TaskProfile](#shape-taskprofile) | What this definition compiles to. |
 | `catalogueDefaults` | map&lt;string, unknown&gt; | `metadataKey` → the value this field has with NO override, keyed the same way `profile.config[].default` is. The editor needs both to know which values this profile actually pins: a definition stores only divergences, so a value merely EQUAL to the catalogue's must not be written into it — that would freeze it against a later correction to the range or the default. |
 

@@ -44,6 +44,7 @@ from typing import Any
 from ..rig import registry
 from ..tasks.profile import TaskProfileError
 from ..tasks.start_command import build_start_command
+from . import rows
 from .model import TaskDefinition
 
 
@@ -177,7 +178,7 @@ def _trial_problems(definition, channels, vocab) -> list[Diagnostic]:
             # absent is the definition of it, not an omission. Only the pool
             # PRESENTS one: both anti-bias selectors draw a side first, and a
             # no-go type has no side (`BehaviorBox.h`, `TASKS.md#selection-modes`).
-            if definition.selection_mode == "pool":
+            if definition.selection_mode == "pool" and rows.resolve_row(trial, channels, vocab):
                 presentable += 1
             continue
 
@@ -241,17 +242,26 @@ def _trial_problems(definition, channels, vocab) -> list[Diagnostic]:
                 "rewarded at the well it did not choose.",
                 "TSK103",
             ))
-        else:
+
+        # Presentable is the GENERATOR's rule, not a second reading of the
+        # diagnostics above: a row it drops is a row the session never sees,
+        # however few of them this loop happened to flag.
+        if rows.resolve_row(trial, channels, vocab):
             presentable += 1
 
     if definition.trials and presentable == 0:
         only_nogo = all(not trial.is_go for trial in definition.trials)
+        # Advice has to work: Pool presents a no-go row only if the generator
+        # keeps it, and one on an unknown odor line would still run nothing.
+        pool_would_present = only_nogo and any(
+            rows.resolve_row(trial, channels, vocab) for trial in definition.trials
+        )
         out.append(Diagnostic(
             "trials",
             "every trial type here is no-go, and only Pool selection presents a "
             "no-go type — anti-bias draws a side first, and a withhold has none. "
             "Switch to Pool, or add a go type."
-            if only_nogo and definition.selection_mode != "pool"
+            if pool_would_present and definition.selection_mode != "pool"
             else "no trial type in this table can actually be presented, so a "
             "session would run nothing.",
             "TSK108",

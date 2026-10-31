@@ -561,6 +561,188 @@ def test_a_table_with_no_presentable_trial_is_reported():
     assert "TSK108" in codes(a_task(trials=[]))
 
 
+def _answered_at(channel: str | None) -> TaskDefinition:
+    """The shipped task with every row answered at one channel (or none)."""
+    from dataclasses import replace
+
+    task = a_task()
+    return replace(task, trials=[replace(t, response_channel=channel) for t in task.trials])
+
+
+def _without_port_slots(*channels: str) -> None:
+    """Rewire the rig so each of `channels` reports no strobe slot."""
+    from ephymeris_sidecar.hardware import store as rig_store
+
+    doc = rig_store.default_document()
+    for channel in channels:
+        doc["channels"][channel].pop("port_slot")
+    registry.set_rig_source(lambda: doc)
+
+
+def test_a_table_whose_go_rows_have_no_usable_port_presents_nothing():
+    """The generator drops a go row it cannot resolve a port and a slot for, so
+    a table of only those emits an empty trial table, and TSK108 must say so
+    rather than count a row for its reward line alone."""
+    for why, table in {
+        "unset": _answered_at(None),
+        "unknown": _answered_at("no_such_port"),
+        "wrong kind": _answered_at("odor_line_1"),
+    }.items():
+        assert "TSK108" in codes(table), why
+
+    _without_port_slots("left_well", "right_well")
+    assert "TSK108" in codes(_answered_at("left_well"))
+
+
+def test_a_wrong_kind_port_that_declares_a_slot_is_still_not_a_port():
+    """Nothing stops a slot being declared on a reward line. The generator must
+    not answer a trial at the left well's codes because `fluid_1` says it is
+    slot 1, and TSK108 must say the table presents nothing."""
+    from ephymeris_sidecar.hardware import store as rig_store
+
+    doc = rig_store.default_document()
+    doc["channels"]["fluid_1"]["port_slot"] = 1
+    registry.set_rig_source(lambda: doc)
+
+    table = _answered_at("fluid_1")
+    assert "TSK108" in codes(table)
+    assert "TrialType(true" not in generate.task_trials_h(table)
+
+
+def _resolve(**edit):
+    from dataclasses import replace
+    from ephymeris_sidecar.taskdef.rows import resolve_row
+
+    trial = replace(a_task().trials[0], **edit)
+    return resolve_row(trial, registry.channels(), registry.vocabulary())
+
+
+def test_a_row_resolves_unless_one_thing_it_names_is_missing():
+    """`resolve_row` is the rule both the validator and the generator lean on,
+    so each reason to drop a row is pinned on its own here: the agreement test
+    can only catch the two disagreeing, not this rule being wrong."""
+    from ephymeris_sidecar.hardware import store as rig_store
+
+    doc = rig_store.default_document()
+    doc["channels"]["fluid_1"]["port_slot"] = 1     # a slot on a non-response line
+    registry.set_rig_source(lambda: doc)
+
+    assert _resolve() is not None
+    assert _resolve(is_go=False, response_channel=None, reward_channel=None) is not None
+
+    dropped = {
+        "unknown odor line": dict(odor_channel="no_such_line"),
+        "odor line of the wrong kind": dict(odor_channel="left_well"),
+        "undeclared onset code": dict(onset_strobe="NOT_A_CODE"),
+        "no response port": dict(response_channel=None),
+        "unknown response port": dict(response_channel="no_such_port"),
+        "response port of the wrong kind, slot declared": dict(response_channel="fluid_1"),
+        "no reward line": dict(reward_channel=None),
+        "unknown reward line": dict(reward_channel="no_such_reward"),
+        "reward line of the wrong kind": dict(reward_channel="left_well"),
+    }
+    for why, edit in dropped.items():
+        assert _resolve(**edit) is None, why
+
+    _without_port_slots("left_well", "right_well")
+    assert _resolve(response_channel="left_well") is None, "response port with no slot"
+    for edit in ({"odor_channel": "no_such_line"}, {"onset_strobe": "NOT_A_CODE"}):
+        assert _resolve(is_go=False, response_channel=None, reward_channel=None, **edit) is None
+
+
+def test_a_row_the_generator_drops_gets_no_live_metric():
+    """A live metric is also what gives a stimulus an arm in the state-machine
+    drawing, so one for a row that is not in the trial table draws a branch for
+    a trial that never runs."""
+    from dataclasses import replace
+    from ephymeris_sidecar.hardware import store as rig_store
+
+    doc = rig_store.default_document()
+    doc["channels"]["fluid_1"]["port_slot"] = 1
+    registry.set_rig_source(lambda: doc)
+
+    base = a_task()
+    for why, table in {
+        "go row answered at a reward line": _answered_at("fluid_1"),
+        "go row on an unknown odor line": replace(base, trials=[
+            replace(t, odor_channel="no_such_line") for t in base.trials]),
+        "go row with no reward line": replace(base, trials=[
+            replace(t, reward_channel=None) for t in base.trials]),
+        "no-go row on an unknown odor line": replace(base, selection_mode="pool", trials=[
+            replace(t, is_go=False, response_channel=None, reward_channel=None,
+                    odor_channel="no_such_line") for t in base.trials]),
+    }.items():
+        assert generate.build_profile(table).live_metrics == [], why
+
+    assert len(generate.build_profile(base).live_metrics) == len(base.trials)
+
+
+def test_tsk108_only_advises_pool_when_pool_would_present_a_row():
+    from dataclasses import replace
+
+    base = a_task()
+
+    def advice(odor_channel: str) -> str:
+        nogo = [replace(t, is_go=False, response_channel=None, reward_channel=None,
+                        odor_channel=odor_channel) for t in base.trials]
+        table = replace(base, trials=nogo, selection_mode="antibias")
+        return next(d.message for d in validate(table) if d.code == "TSK108")
+
+    assert "Switch to Pool" in advice(base.trials[0].odor_channel)
+    assert "Switch to Pool" not in advice("no_such_line")
+
+
+def test_the_validator_and_the_generator_agree_on_what_a_presentable_row_is():
+    """Pinned over the same definitions: TSK108 fires exactly when the generated
+    trial table holds no row the selector can draw."""
+    from dataclasses import replace
+    from ephymeris_sidecar.hardware import store as rig_store
+
+    # A reward line that declares a slot, so "wrong-kind port" reaches the kind
+    # check rather than being dropped earlier for having no slot.
+    doc = rig_store.default_document()
+    doc["channels"]["fluid_1"]["port_slot"] = 1
+    registry.set_rig_source(lambda: doc)
+
+    base = a_task()
+    nogo = [replace(t, is_go=False, response_channel=None, reward_channel=None)
+            for t in base.trials]
+    badly = lambda **edit: replace(base, trials=[replace(t, **edit) for t in base.trials])  # noqa: E731
+    tables = {
+        "shipped": base,
+        "empty": replace(base, trials=[]),
+        "one bad odor": replace(base, trials=[
+            replace(base.trials[0], odor_channel="no_such_line"), *base.trials[1:]]),
+        "all bad odor": badly(odor_channel="no_such_line"),
+        "bad onset": badly(onset_strobe="NOT_A_CODE"),
+        "bad reward": badly(reward_channel="no_such_reward"),
+        "reward at the other well": replace(base, trials=[
+            replace(t, reward_channel="fluid_1" if t.response_channel == "right_well" else "fluid_2")
+            for t in base.trials]),
+        "unset port": _answered_at(None),
+        "unknown port": _answered_at("no_such_port"),
+        "wrong-kind port": _answered_at("fluid_1"),
+        "no reward channel": badly(reward_channel=None),
+    }
+    for mode in ("antibias", "weighted", "pool"):
+        tables[f"no-go only, {mode}"] = replace(base, trials=nogo, selection_mode=mode)
+        tables[f"no-go on a bad odor, {mode}"] = replace(base, selection_mode=mode, trials=[
+            replace(t, odor_channel="no_such_line") for t in nogo])
+
+    def drawable(table: TaskDefinition) -> int:
+        header = generate.task_trials_h(table)
+        return header.count("\n    TrialType(") if table.selection_mode == "pool" \
+            else header.count("\n    TrialType(true")
+
+    for why, table in tables.items():
+        assert ("TSK108" in codes(table)) == (drawable(table) == 0), why
+
+    _without_port_slots("left_well", "right_well")
+    slotless = _answered_at("left_well")
+    assert drawable(slotless) == 0
+    assert "TSK108" in codes(slotless)
+
+
 def test_a_pool_that_adds_up_to_nothing_is_reported():
     """The firmware SURVIVES this, which is why it needs saying.
     `generateTrials()` would divide by the summed weight, so an all-zero pool

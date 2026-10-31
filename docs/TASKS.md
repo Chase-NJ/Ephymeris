@@ -440,7 +440,7 @@ A definition stores **channel names and strobe code names, never pins or numbers
 | **`TSK105`** | **Two trial types on one odor line** (one line declares one onset code) | Two conditions, one label, pooled by every analysis |
 | `TSK106` | A ramp not strictly ascending after row 0 | `liveStage()` scans down, so the row never engages |
 | `TSK107` | A `START` line over the cap | The firmware truncates in silence |
-| `TSK108` | No presentable trial — including a table of only no-go types outside pool, since both anti-bias selectors draw a side first | A session that runs nothing |
+| `TSK108` | No presentable trial — a row is presentable exactly when the generator emits it (`taskdef/rows.py`), so go rows with no usable response port, reward line or slot count for nothing; so does a table of only no-go types outside pool, since both anti-bias selectors draw a side first | A session that runs nothing |
 | **`TSK109`** | **All pool weights zero** (pool), or **a side whose go types all weigh zero** (weighted) | The firmware falls back to a uniform draw while the table says otherwise |
 | `TSK110` | A condition with no name | Every readout titles it after whichever channel carried it |
 | `TSK111` | Two conditions sharing a name (case- and whitespace-insensitive) | Two curves under one title |

@@ -217,8 +217,11 @@ against a live RHX. Everything else in the Intan suite runs against `tests/fake_
 
 **Firmware: host tests** in `firmware/libraries/BehaviorBox/extras/host_test/`. They compile the
 shared library without `-fpermissive`, which makes them the strictest type check the sketches get.
-`run_diff.sh` is the differential test between the C interpreter core and the Python replay
-([Compiling and the host tests](docs/TASKS.md#compiling-and-the-host-tests)).
+`run_diff.sh` is the differential test between the C interpreter core and the Python replay, and
+`run_spine.sh` tests the spine runner around that core
+([Compiling and the host tests](docs/TASKS.md#compiling-and-the-host-tests)). `sidecar/tests/test_spine_run.py`
+compiles a generated spine task the same way and plays it through the real session path; it skips without
+a host C++ compiler, and on Windows.
 
 > [!CAUTION]
 > `arduino-cli compile` hides type errors: the AVR core builds with `-fpermissive -w`, so a wrong

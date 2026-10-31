@@ -163,7 +163,7 @@ class Run:
             115200,
             command,
             seed,
-            lambda seed, interp: self.ready.append((seed, interp)),
+            lambda seed, announced: self.ready.append((seed, announced.interp)),
             lambda code, ts: self.strobes.append((code, ts)),
             on_refused=self.refused.append,
         )

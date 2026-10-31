@@ -22,6 +22,11 @@
   CHANGE THEM TOGETHER, and bump INTERP_VERSION when the table format or any
   rule below changes what a table does: replay keeps every version that shipped.
 
+  ONE NUMBERING SPACE. A board announces INTERP=<n> before READY and every run
+  records it (docs/TASKS.md#confirming-the-parameters). 1 is BehaviorBox.h's
+  trial runner (BOX_INTERP), which every recorded GRGL run names, so this
+  interpreter starts at 2: a run's header alone says whether a table ran it.
+
 
   THE TICK RULES
   --------------
@@ -55,7 +60,7 @@
   uint32_t, over a generator the core carries in its own state.
 
 
-  THE STATE TABLE (INTERP_VERSION 1)
+  THE STATE TABLE (INTERP_VERSION 2)
   ----------------------------------
   Generated data. A table is an array of InterpStateRow, indexed 0..254, and an
   array of InterpEdgeRow the states point into. State 0 is where a session
@@ -149,7 +154,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define INTERP_VERSION 1
+#define INTERP_VERSION 2
 
 #define INTERP_NONE 0xFF       // "no state / no slot / no timer" in a uint8_t field
 #define INTERP_PERMILLE 1000UL // a chance state draws over [0, 1000)

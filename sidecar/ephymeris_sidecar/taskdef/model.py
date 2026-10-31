@@ -148,6 +148,147 @@ class StageRow:
 
 
 @dataclass(frozen=True)
+class SpineSlot:
+    """A role in the spine (`port`, `sample`), bound to a channel by each row."""
+
+    id: str
+    type: str  # digital_in | digital_out
+
+    def to_json(self) -> dict[str, Any]:
+        return {"id": self.id, "type": self.type}
+
+
+@dataclass(frozen=True)
+class SpinePhase:
+    """One phase from the palette. Fields a phase does not use stay None.
+
+    `ms` is the default of the phase's timer parameter (`T<i>` on the wire);
+    a Wait has one only when it declares `timeout_ms`.
+    """
+
+    phase: str
+    on: str | None = None              # wait: the input slot whose edge moves on
+    outputs: tuple[str, ...] = ()      # output slots HIGH while in the phase
+    ms: int | None = None              # present, delay, outcome (class timeout), iti
+    timeout_ms: int | None = None      # wait: optional, out to the ITI
+    abort_on_release: str | None = None  # present: an input slot whose release aborts
+    line: str | None = None            # outcome: the reward line's slot
+
+    def to_json(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"phase": self.phase}
+        for key, value in (("on", self.on), ("outputs", list(self.outputs) or None),
+                           ("ms", self.ms), ("timeoutMs", self.timeout_ms),
+                           ("abortOnRelease", self.abort_on_release), ("line", self.line)):
+            if value is not None:
+                out[key] = value
+        return out
+
+
+@dataclass(frozen=True)
+class SpineRow:
+    """A trial type: a stable id, the operator's name, and a channel per slot."""
+
+    id: str
+    name: str
+    bind: dict[str, str]
+    reward_ms: int = 100
+    reward_permille: int = 1000
+
+    def to_json(self) -> dict[str, Any]:
+        return {"id": self.id, "name": self.name, "bind": dict(self.bind),
+                "rewardMs": self.reward_ms, "rewardPermille": self.reward_permille}
+
+
+@dataclass(frozen=True)
+class SpineBlock:
+    """Rows drawn for `trials` trials; the session ends after the last block."""
+
+    id: str
+    rows: tuple[str, ...]
+    trials: int
+
+    def to_json(self) -> dict[str, Any]:
+        return {"id": self.id, "rows": list(self.rows), "trials": self.trials}
+
+
+@dataclass(frozen=True)
+class Spine:
+    """A phase-spine task's own fields (`0003-phase-spine-task-model.md#task-definition`).
+
+    Parsed leniently, like a trial row: only a value of the wrong JSON type is
+    refused here. A phase this palette lacks, a slot no row binds, a channel
+    this rig lacks are diagnostics (`taskdef/spine.py`), so a half-built spine
+    still saves and previews.
+    """
+
+    slots: tuple[SpineSlot, ...]
+    phases: tuple[SpinePhase, ...]
+    rows: tuple[SpineRow, ...]
+    blocks: tuple[SpineBlock, ...]
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "slots": [s.to_json() for s in self.slots],
+            "spine": [p.to_json() for p in self.phases],
+            "rows": [r.to_json() for r in self.rows],
+            "blocks": [b.to_json() for b in self.blocks],
+        }
+
+    @staticmethod
+    def from_json(raw: dict) -> "Spine":
+        def objects(key: str) -> list[dict]:
+            value = raw.get(key, [])
+            if not isinstance(value, list) or any(not isinstance(v, dict) for v in value):
+                raise TaskDefinitionError(f"{key} must be a list of objects")
+            return value
+
+        def strings(value: Any, what: str) -> tuple[str, ...]:
+            if value is None:
+                return ()
+            if not isinstance(value, list) or any(not isinstance(v, str) for v in value):
+                raise TaskDefinitionError(f"{what} must be a list of strings")
+            return tuple(value)
+
+        def opt_int(value: Any, what: str) -> int | None:
+            return None if value is None else _int(value, what)
+
+        phases = tuple(
+            SpinePhase(
+                phase=str(p.get("phase", "")),
+                on=_opt_str(p.get("on")),
+                outputs=strings(p.get("outputs"), "a phase's outputs"),
+                ms=opt_int(p.get("ms"), "ms"),
+                timeout_ms=opt_int(p.get("timeoutMs"), "timeoutMs"),
+                abort_on_release=_opt_str(p.get("abortOnRelease")),
+                line=_opt_str(p.get("line")),
+            )
+            for p in objects("spine")
+        )
+        rows = []
+        for r in objects("rows"):
+            bind = r.get("bind", {})
+            if not isinstance(bind, dict) or any(not isinstance(v, str) for v in bind.values()):
+                raise TaskDefinitionError("a row's bind maps each slot to a channel name")
+            rows.append(SpineRow(
+                id=str(r.get("id", "")),
+                name=str(r.get("name", "")),
+                bind={str(k): v for k, v in bind.items()},
+                reward_ms=_int(r.get("rewardMs", 100), "rewardMs"),
+                reward_permille=_int(r.get("rewardPermille", 1000), "rewardPermille"),
+            ))
+        return Spine(
+            slots=tuple(SpineSlot(id=str(s.get("id", "")), type=str(s.get("type", ""))) for s in objects("slots")),
+            phases=phases,
+            rows=tuple(rows),
+            blocks=tuple(
+                SpineBlock(id=str(b.get("id", "")), rows=strings(b.get("rows"), "a block's rows"),
+                           trials=_int(b.get("trials", 1), "trials"))
+                for b in objects("blocks")
+            ),
+        )
+
+
+@dataclass(frozen=True)
 class TaskDefinition:
     id: str
     name: str
@@ -167,6 +308,11 @@ class TaskDefinition:
     #: profile is treated as data.
     legacy_names: list[str] = field(default_factory=list)
     notes: str = ""
+    #: A phase-spine task (ADR 0003) when set: the generator lowers it to a
+    #: state table and ignores `trials`, `stages` and `selection_mode`. None for
+    #: every definition saved before spines existed, whose document and
+    #: generated folder are then exactly what they were.
+    spine: Spine | None = None
 
     @property
     def stage_count(self) -> int:
@@ -174,9 +320,22 @@ class TaskDefinition:
 
     @property
     def trial_count(self) -> int:
-        return len(self.trials)
+        """Rows in the trial table, or a spine task's rows."""
+        return len(self.spine.rows) if self.spine is not None else len(self.trials)
 
     def to_json(self) -> dict[str, Any]:
+        if self.spine is not None:
+            # A spine task stores only what it is: no trial table, ramp or
+            # selection mode it would never read.
+            return {
+                "id": self.id,
+                "name": self.name,
+                "category": self.category,
+                **self.spine.to_json(),
+                "params": dict(self.params),
+                "legacyNames": list(self.legacy_names),
+                "notes": self.notes,
+            }
         return {
             "id": self.id,
             "name": self.name,
@@ -246,6 +405,8 @@ class TaskDefinition:
             params=dict(params),
             legacy_names=[n for n in legacy],
             notes=str(raw.get("notes", "")),
+            # The `spine` key is what makes a definition a spine task.
+            spine=Spine.from_json(raw) if "spine" in raw else None,
         )
 
 

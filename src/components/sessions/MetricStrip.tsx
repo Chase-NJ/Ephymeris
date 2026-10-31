@@ -1,5 +1,6 @@
 import { LINK_STROKE } from "@/components/chrome/constellationStyle";
 import { useMetricHistory } from "@/lib/sessions/context";
+import { liveScoring } from "@/lib/sessions/liveScoring";
 import type { TelemetryMetric } from "@/lib/sessions/types";
 
 /**
@@ -13,6 +14,7 @@ export function MetricStrip({
   box,
   metrics,
   labels,
+  note = liveScoring(null).note,
   bare = false,
 }: {
   box: number;
@@ -27,6 +29,12 @@ export function MetricStrip({
    */
   labels?: Record<string, string>;
   /**
+   * What the strip says while it has no value: `liveScoring(profile).note`, so
+   * a spine task reads that it is not scored live yet, not that its metrics
+   * are coming (`lib/sessions/liveScoring.ts`).
+   */
+  note?: string;
+  /**
    * True inside a section that already provides its own chrome (`StarPanel`'s
    * Live metrics card) — drops the tile-flow margin and divider the strip
    * carries when it sits at the bottom of a `BoxCard`.
@@ -36,7 +44,7 @@ export function MetricStrip({
   if (metrics.length === 0) {
     return (
       <p className={`text-[11px] text-static ${bare ? "" : "mt-3"}`}>
-        No live metrics yet — they appear once trials start counting.
+        {note}
       </p>
     );
   }

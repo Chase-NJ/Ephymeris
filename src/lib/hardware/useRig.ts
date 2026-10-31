@@ -38,6 +38,10 @@ export interface RigSession {
   /** The edge codes a save of this draft would issue, as the sidecar plans
    *  them (`TASKS.md#edge-codes`); after a save, the ones it did issue. */
   allocations: RigAllocation[];
+  /** The codes the last save issued. Kept through the reload its own
+   *  `hardware.updated` triggers, which clears `allocations` (the reloaded
+   *  baseline names them); cleared by the next edit. */
+  issued: RigAllocation[];
   checking: boolean;
   saving: boolean;
   loadError: string | null;
@@ -61,6 +65,7 @@ export function useRig(): RigSession {
   const [problems, setProblems] = useState<RigProblem[]>([]);
   const [breaks, setBreaks] = useState<RigImpact[]>([]);
   const [allocations, setAllocations] = useState<RigAllocation[]>([]);
+  const [issued, setIssued] = useState<RigAllocation[]>([]);
   const [checking, setChecking] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -134,6 +139,7 @@ export function useRig(): RigSession {
 
   const setDoc = useCallback((next: RigDocument) => {
     setActionError(null);
+    setIssued([]);
     setDocState(next);
   }, []);
 
@@ -141,6 +147,7 @@ export function useRig(): RigSession {
     if (baseline) setDocState(baseline);
     setBreaks([]);
     setAllocations([]);
+    setIssued([]);
   }, [baseline]);
 
   const save = useCallback(
@@ -154,7 +161,8 @@ export function useRig(): RigSession {
         setStatus(reply.status);
         setProblems(reply.problems);
         setBreaks(reply.breaks);
-        setAllocations(reply.allocations);
+        setAllocations([]);
+        setIssued(reply.allocations);
         return true;
       } catch (err) {
         // A refusal carries the tasks it would break in `detail`. Surfacing it
@@ -181,6 +189,7 @@ export function useRig(): RigSession {
       setProblems(reply.problems);
       setBreaks([]);
       setAllocations([]);
+      setIssued([]);
     } catch (err) {
       setActionError(errorMessage(err));
     } finally {
@@ -196,6 +205,7 @@ export function useRig(): RigSession {
     problems,
     breaks,
     allocations,
+    issued,
     checking,
     saving,
     loadError,

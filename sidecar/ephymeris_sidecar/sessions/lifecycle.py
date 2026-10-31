@@ -27,6 +27,7 @@ from ..cohorts.db import NestedWrite, TransactionAborted
 from ..ports.flashing import FlashJob, FlashQueue
 from ..ports.manager import CarriedSketch, sketch_fingerprint
 from ..protocol import Evt, event
+from ..rig.definition import WiringNotLoaded
 from ..tasks import profile as task_profile
 from ..tasks.start_command import build_start_command
 from .models import GroupRun, Session, SessionAnimalRun, SessionNotFound
@@ -182,6 +183,7 @@ class SessionLifecycle:
         broadcast: Callable[[dict[str, Any]], Awaitable[None]],
         carried: Callable[[int], CarriedSketch | None],
         flashes: FlashQueue,
+        wiring_problem: Callable[[], str | None] = lambda: None,
     ) -> None:
         #: Where a finishing run's profile snapshot and record land together,
         #: in one unit of work (`DATA.md#transactions`).
@@ -197,6 +199,8 @@ class SessionLifecycle:
         self._broadcast = broadcast
         self._carried = carried
         self._flashes = flashes
+        #: `RigDefinition.wiring_problem`: why the stored wiring did not load.
+        self._wiring_problem = wiring_problem
         self._held: str | None = None
         #: Mappings confirmed since this process started (`ActiveSessions.confirmations`).
         self._confirmations = 0
@@ -374,6 +378,7 @@ class SessionLifecycle:
                 raise SessionRefused(
                     "this session doesn't hold the rig — confirm its mapping first"
                 )
+            await self._refuse_unless_wiring_loaded()
             configs = {config.box: config for config in self._runner.box_configs()}
             running = set(self._runner.running_boxes())
             for box in boxes:
@@ -681,6 +686,7 @@ class SessionLifecycle:
         A running box is skipped, since starting it is a no-op, and so is an
         unmapped one, which the runner refuses by name.
         """
+        await self._refuse_unless_wiring_loaded()
         configs = {config.box: config for config in self._runner.box_configs()}
         running = set(self._runner.running_boxes())
         problems: list[str] = []
@@ -706,6 +712,14 @@ class SessionLifecycle:
                 f"{'it' if len(refused) == 1 else 'them'} from the Boxes step, then start.",
                 refused,
             )
+
+    async def _refuse_unless_wiring_loaded(self) -> None:
+        """A stored wiring that did not load leaves the shipped pins in force:
+        a box started or flashed now would drive, and record, pins the operator
+        never declared."""
+        problem = await asyncio.to_thread(self._wiring_problem)
+        if problem:
+            raise WiringNotLoaded(problem)
 
     def _start_box(self, box: int) -> None:
         try:

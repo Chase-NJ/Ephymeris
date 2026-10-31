@@ -1976,7 +1976,9 @@ SHAPES = (
                 STR,
                 doc="History, not authority: `firmware` (numbered by the lab's "
                 "recorded sessions before the app), `ephymeris` (declared by the "
-                "app), `operator` (added on the Strobes page).",
+                "app), `operator` (added on the Strobes page), `channel_set` "
+                "(issued to a channel's edge by a wiring save, "
+                "`TASKS.md#edge-codes`).",
             ),
             f("emittedOn", STR, optional=True),
             f("rationale", STR, optional=True),
@@ -2649,7 +2651,7 @@ COMMANDS = (
     # defaulting to a working value — right for a directory path, catastrophic
     # for a pin number, which has no safe default and fails by firing the wrong
     # valve. So the wiring is a sidecar-owned DOCUMENT instead
-    # (`<data_dir>/hardware/rig.json`): validated on the way in, refused when it
+    # (`<data_dir>/hardware/wiring.json`): validated on the way in, refused when it
     # is the wrong shape, and every problem located on the field that caused it.
     Command(
         "hardware.get",
@@ -3992,6 +3994,18 @@ ERRORS = (
         "task profile generating. `detail.breaks` lists them. Retry with "
         "`confirm: true` to proceed — the app does not veto a rewiring, it "
         "refuses to let one happen unnoticed.",
+    ),
+    ErrorCode(
+        "RIG_WIRING_UNLOADED",
+        "`port.startSession`, `sessions.startAll`, `sessions.flash` or "
+        "`utility.identify` while the wiring in force is the shipped one because "
+        "the rig's stored wiring did not load when it was installed (unreadable, "
+        "unparseable, out of shape, a channel without a pin, or an older layout "
+        "that disagrees with itself). A box started, flashed or identified would "
+        "drive pins the operator never declared. `hardware.get` names the "
+        "problem. Saving the wiring, resetting it, or restarting onto a file that "
+        "loads clears it; a file fixed by hand meanwhile does not "
+        "(`TASKS.md#the-channel-set-and-the-pin-map`).",
     ),
     ErrorCode(
         "STROBE_INVALID",

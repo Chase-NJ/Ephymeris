@@ -31,7 +31,7 @@ from .ports.handler import PortBusy
 from .ports.manager import BoardNotDetected, PortNotBound
 from .ports.states import IllegalTransition
 from .protocol import ErrCode
-from .rig.definition import RigInUse, VocabularyInUse, WiringWouldBreakTasks
+from .rig.definition import RigInUse, VocabularyInUse, WiringNotLoaded, WiringWouldBreakTasks
 from .server import Args, CommandError, ErrorTable, resolve_error
 from .sessions.lifecycle import (
     BoxesNotMapped,
@@ -166,6 +166,7 @@ ERRORS: ErrorTable = [
     (UtilityUnavailable, _boxed(ErrCode.UTILITY_UNAVAILABLE)),
     # --- sessions ---
     (SketchNotCarried, _listing_boxes(ErrCode.SESSION_INVALID)),
+    (WiringNotLoaded, _fixed(ErrCode.RIG_WIRING_UNLOADED)),
     # `intan.configure` naming boxes outside the held mapping. The client
     # reads `detail.boxes` as "flash these" only on a Start's refusal.
     (BoxesNotMapped, _listing_boxes(ErrCode.SESSION_INVALID)),

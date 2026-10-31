@@ -387,6 +387,7 @@ class Application:
             discovery=lambda: self.sketches.current,
             broadcast=self.server.broadcast,
             flashes=self.flashes,
+            wiring_problem=self.rig_definition.wiring_problem,
         )
         self.runner = SessionRunner(
             loop=loop,
@@ -420,6 +421,7 @@ class Application:
             broadcast=self.server.broadcast,
             carried=self.ports.carried,
             flashes=self.flashes,
+            wiring_problem=self.rig_definition.wiring_problem,
         )
 
     async def stop(self) -> None:
@@ -465,6 +467,13 @@ class Application:
         """
         from ephymeris_sidecar.rig.registry import active_pinout_id, channels
 
+        problem = self.rig_definition.wiring_problem()
+        if problem:
+            # Never "the shipped pinout": the registry composes it meanwhile, but
+            # the rig's own wiring is what failed, and no box may start until it
+            # is fixed (`TASKS.md#the-channel-set-and-the-pin-map`).
+            log.error("wiring: the stored rig wiring failed to load. %s", problem)
+            return
         status = self.hardware_store.status()
         wiring = (
             f"this rig's own wiring (derived from {status.derived_from or 'the shipped pinout'})"
@@ -1127,7 +1136,11 @@ class Application:
     # (`TASKS.md#the-rig-definition`).
 
     async def _hardware_get(self, _args: Args) -> dict[str, Any]:
-        return await asyncio.to_thread(hardware_service.document_payload, self.hardware_store)
+        return await asyncio.to_thread(
+            hardware_service.document_payload,
+            self.hardware_store,
+            in_force=self.rig_definition.wiring_problem(),
+        )
 
     async def _hardware_preview(self, args: Args) -> dict[str, Any]:
         document = self._rig_document_arg(args)

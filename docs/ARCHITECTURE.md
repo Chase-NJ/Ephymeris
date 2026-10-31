@@ -51,6 +51,7 @@ are [DATA.md](DATA.md); Intan recording is [RECORDING.md](RECORDING.md).
 - [Hardware utility baseline](#hardware-utility-baseline)
   - [When a restore happens](#when-a-restore-happens)
   - [Three rules it never breaks](#three-rules-it-never-breaks)
+  - [Unloaded wiring holds it](#unloaded-wiring-holds-it)
   - [Failed restores](#failed-restores)
   - [Identify](#identify)
   - [What a baseline sketch owes the rig](#what-a-baseline-sketch-owes-the-rig)
@@ -868,6 +869,16 @@ its console open, because the Debug flash that pinned it ends in that console.
 > `utility.ensure` naming the box, a session releasing the rig, the board vanishing, or flashing the
 > utility sketch by hand. `force` overrides it. `test_utility.py` wires
 > the idle hook to a no-op, which is how this hid; `test_debug_flash.py` wires it the way `app.py` does.
+
+### Unloaded wiring holds it
+
+While the rig's stored wiring did not load ([TASKS.md](TASKS.md#the-channel-set-and-the-pin-map)), the box utility is built on the **shipped** pins. Its setup drives every listed output, and identify would light whatever the shipped cue pin is on a rig that moved it. So, for as long as `RigDefinition.wiring_problem` answers:
+
+- every restore reads `held`, its detail naming the problem;
+- `force` (**Reflash boxes**) is held too;
+- `utility.identify` refuses with `RIG_WIRING_UNLOADED`.
+
+The three rules above are untouched, because the hold only ever declines to flash. Saving or resetting the wiring rebuilds the utility, and `rebuilt()` restores every idle, unpinned box as usual.
 
 ### Failed restores
 

@@ -30,6 +30,7 @@ from ephymeris_sidecar.sessions.lifecycle import (
     SessionRefused,
     SketchNotCarried,
     StopRefused,
+    WiringNotLoaded,
 )
 from ephymeris_sidecar.sessions.models import GroupRun, PrefixNameTaken
 from ephymeris_sidecar.sessions.repository import SessionRepository
@@ -245,6 +246,9 @@ class Rig:
         async def broadcast(message: dict) -> None:
             self.events.append(message)
 
+        #: What `RigDefinition.wiring_problem` answers: None while the stored
+        #: wiring is in force.
+        self.wiring_problem: str | None = None
         #: Whether `confirm` also does the Record step for a recording session.
         self.record_step = True
         self.lifecycle = SessionLifecycle(
@@ -260,6 +264,7 @@ class Rig:
             broadcast=broadcast,
             carried=self.carried.get,
             flashes=self.flashes,
+            wiring_problem=lambda: self.wiring_problem,
         )
         self._cohorts = 0
 
@@ -469,6 +474,26 @@ async def test_start_all_refuses_a_box_never_flashed_and_starts_nothing(rig) -> 
     assert rig.log == ["hold"]
     stored = rig.sessions.get_session(session.id)
     assert (stored.status, stored.group_runs) == ("configuring", [])
+
+
+async def test_no_box_starts_or_flashes_while_the_stored_wiring_did_not_load(rig) -> None:
+    """The registry runs the shipped pins meanwhile, so a box started now would
+    drive and record against wiring the operator never declared
+    (`TASKS.md#the-channel-set-and-the-pin-map`)."""
+    session = rig.session()
+    await rig.confirm(session)
+    rig.wiring_problem = "wiring.json did not load: it will not parse."
+
+    for start in (lambda: rig.lifecycle.start_all(session.id), lambda: rig.lifecycle.start_box(1)):
+        with pytest.raises(WiringNotLoaded, match="did not load"):
+            await start()
+    with pytest.raises(WiringNotLoaded):
+        await rig.lifecycle.flash(session.id, [1])
+    assert rig.log == ["hold"]
+
+    rig.wiring_problem = None
+    await rig.lifecycle.start_box(1)
+    assert "start 1" in rig.log
 
 
 async def test_the_refusal_comes_before_the_recording_starts(recording_rig) -> None:
@@ -1363,6 +1388,7 @@ def test_each_refusal_reaches_the_wire_with_its_code() -> None:
         (IntanNotReady("set it up"), "INTAN_NOT_READY", None),
         (_box_refused(4, KeyError(4)), "SESSION_INVALID", {"box": 4}),
         (SketchNotCarried("flash them", [2, 5]), "SESSION_INVALID", {"boxes": [2, 5]}),
+        (WiringNotLoaded("wiring.json did not load"), "RIG_WIRING_UNLOADED", None),
     ]
     for exc, code, data in cases:
         mapped = _mapped(exc)

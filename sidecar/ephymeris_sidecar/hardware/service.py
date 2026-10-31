@@ -24,19 +24,32 @@ from typing import Any
 from . import store
 
 
-def document_payload(rig: store.HardwareStore) -> dict[str, Any]:
+def document_payload(rig: store.HardwareStore, *, in_force: str | None = None) -> dict[str, Any]:
     """`RigDocument`: the wiring, plus everything wrong with it.
 
     An unedited rig gets the SHIPPED pinout as an editable document rather than
     nothing, so the editor opens something real. The operator's first save turns
     that into their own; until then nothing is written.
     """
-    doc = rig.load() or store.default_document()
-    # Stored wiring that did not load comes first: the document below is the
-    # shipped one standing in for it, and the operator must be told so.
+    # The stored document even when it did not load (when it parses at all),
+    # so the operator is shown the wiring that needs fixing, not the shipped one.
+    doc = rig.stored_document() or store.default_document()
+    # Why it did not load comes first: until it is fixed, no box may start.
     stored = [
         {"location": loc, "message": msg, "code": None} for loc, msg in rig.load_problems()
     ]
+    if in_force and not stored:
+        # The file loads NOW, but the wiring in force is still the one that
+        # did not (`RigDefinition.wiring_problem`): a file changed by hand is
+        # not read until the wiring is saved, reset or the app restarts.
+        stored = [{
+            "location": store.WIRING_FILENAME,
+            "message": (
+                f"{in_force} The file has changed on disk since, and is not in force "
+                "until it is saved or reset, or Ephymeris restarts."
+            ),
+            "code": None,
+        }]
     return {
         "document": doc,
         "status": _status(rig, doc),
@@ -94,7 +107,7 @@ def _rule_problems(document: Any) -> list[dict[str, Any]]:
     try:
         chans = registry.ChannelMap(*registry.split_rig(document))
     except (KeyError, TypeError) as exc:  # pragma: no cover - schema catches these
-        return [{"location": "rig.json", "message": str(exc), "code": None}]
+        return [{"location": "wiring.json", "message": str(exc), "code": None}]
 
     vocab = registry.vocabulary()
     return [

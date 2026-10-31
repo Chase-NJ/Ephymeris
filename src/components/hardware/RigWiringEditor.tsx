@@ -339,6 +339,23 @@ export function RigWiringEditor({
               </Callout>
             )}
 
+            {!rig.dirty && rig.issued.length > 0 && (
+              <Callout
+                title={`Issued ${rig.issued.length} strobe code${rig.issued.length === 1 ? "" : "s"}`}
+                why="Appended to the strobe vocabulary by this save. They are this channel set's from now on, and never renumbered."
+              >
+                {rig.issued.map((a) => (
+                  <div key={a.name} className="flex items-baseline gap-2 text-[11px]">
+                    <span className="font-mono text-starlight">{a.name}</span>
+                    <span className="font-mono text-[10px] text-static">
+                      {a.channel}.{a.edge}
+                    </span>
+                    <span className="ml-auto font-mono text-[10px] text-static">{a.code}</span>
+                  </div>
+                ))}
+              </Callout>
+            )}
+
             {rig.actionError && (
               <p className="text-[11px]" style={{ color: "var(--color-status-error)" }}>
                 {rig.actionError}

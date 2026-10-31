@@ -473,7 +473,7 @@ flowchart TD
     inuse -->|yes| busy["RIG_IN_USE<br/>nothing written"]
     inuse -->|no| impact{"Would it newly break<br/>a saved task?"}
     impact -->|"yes, without confirm"| refuse["RIG_WOULD_BREAK_TASKS<br/>nothing written"]
-    impact -->|"no, or confirm: true"| write["Check the schema, issue edge codes,<br/>write the channel set and pin map"]
+    impact -->|"no, or confirm: true"| write["Check the schema, issue edge codes,<br/>write wiring.json in one step"]
     write -->|"not a rig document"| invalid["RIG_INVALID<br/>nothing written"]
     reset["hardware.reset"] --> inuse
     write -->|"written"| install["set_rig_source:<br/>ChannelMap cache cleared"]
@@ -562,25 +562,33 @@ The rig's description of itself lives in `sidecar/ephymeris_sidecar/rig/` and `h
 |---|---|---|
 | `rig/schema/channels.v1.json` | **What a channel means**: `kind`, `well`, `port_slot`, `onset_strobe`, and the channel-set fields | shipped |
 | `rig/hardware/<pinout>.json` (selected by `_default.json`; `$EPHYMERIS_PINOUT` for tests) | **Where it is** on this box generation: a literal transcription of the firmware pinout | shipped |
-| `<data_dir>/hardware/channel_set.json` | **The channel set**: this rig's channels and what each one is. No pins. It is the half meant to be the same on both lab machines | operator |
-| `<data_dir>/hardware/pin_map.json` | **The pin map**: where each channel is on this box (`pins`, `board`, `pin_range`). Never leaves the machine | operator |
+| `<data_dir>/hardware/wiring.json` | This rig's own wiring, as two documents in one file: **the channel set** (`channels`: what each channel is, no pins, the half meant to be the same on both lab machines) and **the pin map** (`pins`, `board`, `pin_range`: where each channel is on this box, never leaving the machine) | operator |
 
 A second box generation is a one-file pinout swap, *provided the channel names are the same*. Resolving by name is what makes that work.
 
 The operator's pair **replaces** the shipped pair rather than merging with it. A merge would bring back a channel someone deleted, and it could not describe a box that lacks one.
 
-The editor and the wire still see **one document**, `{rig_version, channels, pins, …}`. `hardware/store.py` joins the pair on load and splits it on save. A rig saved as the single `rig.json` from before the split is read as both halves, and the next save writes the pair and removes it.
+The editor and the wire see the same **one document**, `{rig_version, channels, pins, …}`. In code, `hardware/store.py`'s `split` and `join` turn it into the two documents and back.
 
 > [!CAUTION]
-> **The pair commits or fails as one, and a pair that does not belong together never loads.** Two files cannot be replaced atomically. A new channel set loaded against old pins can put a swapped port under the other port's codes: every poke is then recorded under the wrong family, with no error anywhere.
+> **The two documents are saved as one file, in one step, and stored wiring that will not load never runs.**
 >
-> So `pin_map.json` records the digest of the channel set it was written beside, and a save works in three steps:
->
-> 1. **Stage** both files, complete.
-> 2. **Replace** the channel set.
-> 3. **Replace** the pin map. If that fails, the save puts the old channel set back.
->
-> A save stopped between steps 2 and 3 leaves its staged pin map behind as the commit record, and the load completes the save from it. Any other mismatch loads nothing: the rig runs the shipped pinout, and `hardware.get` reports the stored wiring that did not load, until it is saved again.
+> - **Why one file.** Two files can be torn by a failure between their writes. A new channel set read against old pins can put a swapped port under the other port's codes: every poke is then recorded under the wrong family, with no error anywhere.
+> - **How a save writes it.** It writes `wiring.json.part`, fsyncs it and renames it over the old file. A failure up to the rename leaves the previous file whole. Once the rename lands the save is committed and its wiring is installed; the folder fsync that follows is best effort, and a failure there is logged as a warning.
+> - **When stored wiring will not load** (unreadable, unparseable, out of shape, a channel without a pin, or an older layout that disagrees with itself):
+>   - the registry composes the shipped pinout, so the sidecar still starts;
+>   - the startup log says the stored wiring failed to load;
+>   - `hardware.get` shows the problem first, with the stored document when it parses;
+>   - `sessions.startAll`, `port.startSession`, `sessions.flash` and `utility.identify` refuse with `RIG_WIRING_UNLOADED`, and the utility baseline flashes no box ([ARCHITECTURE.md](ARCHITECTURE.md#hardware-utility-baseline)).
+> - **The refusal follows the wiring in force, never a fresh read of the file.** `RigDefinition` reads the stored wiring once, when it installs it (at startup, and after every save and reset), and the registry composes from exactly that read (`_install_wiring`). A file fixed or copied in by hand changes no pin, so it lifts nothing: only a save, a reset, or a restart onto a file that loads puts wiring in force.
+> - **No `edited_at` in any digest or hash.** Identical wiring copied from another machine compares equal.
+
+**Older layouts are read in place, and the next save writes `wiring.json` and removes them:**
+
+- `rig.json`: the same document under its old name.
+- `channel_set.json` + `pin_map.json`: the two documents in two files. The pin map names its channel set by a digest, and a pair whose digests disagree is a load problem, never a guess.
+
+`wiring.json` wins over both, so a save stopped before its cleanup still has its wiring in force. A stray temporary file (`*.part`, `*.json.tmp`) on its own is no wiring at all.
 
 Channel kinds are `engagement` (exactly one), `response`, `emitter`, `reward`, `cue`, `vacuum` and `sync` (at most one).
 
@@ -606,7 +614,7 @@ Which documents become the `ChannelMap` (`registry.channels()`), and what is bui
 flowchart TD
     saved{"A saved channel set<br/>and pin map?"}
     saved -->|no| shipped["channels.v1.json + the<br/>selected hardware pinout"]
-    saved -->|"yes: replaces the pair"| rig["data_dir/hardware/<br/>channel_set.json + pin_map.json<br/>(kinds still from channels.v1.json)"]
+    saved -->|"yes: replaces the pair"| rig["data_dir/hardware/wiring.json<br/>(kinds still from channels.v1.json)"]
     shipped --> map["ChannelMap<br/>cached until set_rig_source"]
     rig --> map
     map --> taskPins["Each saved task's generated folder"]

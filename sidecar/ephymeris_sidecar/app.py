@@ -1134,7 +1134,9 @@ class Application:
             if plan.replaces and not args.get("confirm"):
                 raise task_transfer.TaskImportReplaces(
                     f"{plan.replaces_name or plan.task_id!r} is saved here under this task's "
-                    f"id, {plan.task_id!r}. Importing replaces it; confirm to go ahead."
+                    f"id, {plan.task_id!r}"
+                    + (", and its file will not read" if plan.replaces_unreadable else "")
+                    + ". Importing replaces it; confirm to go ahead."
                 )
             # Verbatim: fields this build does not know are kept.
             await asyncio.to_thread(self.task_store.save_document, plan.definition)

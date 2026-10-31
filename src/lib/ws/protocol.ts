@@ -1949,9 +1949,11 @@ export interface TaskImportPlan {
   replaces: boolean;
   /**
    * The name of the saved task it replaces, which may differ from the file's; null when it
-   * replaces none.
+   * replaces none or its file will not read.
    */
   replacesName: string | null;
+  /** The file stored under this id will not read. It is still replaced only with `confirm`. */
+  replacesUnreadable: boolean;
   /** The task saved here under this id already is the file's definition: applying writes nothing. */
   identical: boolean;
   /**

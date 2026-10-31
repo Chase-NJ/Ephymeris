@@ -1644,7 +1644,7 @@ One live view's payload, only while that scope is open (`RECORDING.md#live-windo
 | `TASK_TRANSFER_INVALID` | `tasks.import` with a file that is not an exported task (another version, no definition, a definition that will not read, or a channel the definition names that the file does not describe), or `tasks.export` of a task naming a channel this rig lacks or a code this vocabulary does not hold live. Nothing was written. |
 | `TASK_IMPORT_CONFLICT` | `tasks.import` applied with a plan that has conflicts. Nothing was written; `detail.conflicts` lists every one (`TaskImportConflict`). |
 | `TASK_IMPORT_REPLACES` | `tasks.import` applied without `confirm` while a task with the same id is saved here. Nothing was written; retry with `confirm: true` to replace it. |
-| `TASK_INVALID` | The definition is not a definition — wrong shape, too large, an unusable id or name, or a name that collides with a bundled sketch or another saved task. NOT the same as a task that will not run: a well-formed definition describing an impossible task is a successful reply carrying located diagnostics, exactly as a wiring document is. |
+| `TASK_INVALID` | The definition is not a definition — wrong shape, too large, an unusable id, name or category (each becomes a folder, so each must be one plain folder name), or a name that collides with a bundled sketch or another saved task. NOT the same as a task that will not run: a well-formed definition describing an impossible task is a successful reply carrying located diagnostics, exactly as a wiring document is. |
 | `INTAN_UNAVAILABLE` | RHX is not reachable: not running, its Remote TCP Control command server not opened, or the socket died. The message says what to click. |
 | `INTAN_NOT_READY` | RHX is reachable but this cannot be done now — RHX is already recording, no recording is configured for this group as its mapping was last confirmed, a box has no digital input, the rig's wiring has no sync channel, or a scope asked for a channel the box does not own. The message is the operator's next step. |
 | `INTAN_COMMAND_FAILED` | RHX refused a command, or **accepted it and stored something else** (a read-back mismatch — the save-location-with-a-space case). `detail.command` carries what was sent. |
@@ -3152,7 +3152,8 @@ What importing another machine's task would do here (`TASKS.md#moving-a-task-bet
 | `taskId` | string | The imported task's id: its file here is `<taskId>.json`. |
 | `name` | string | The imported task's name. |
 | `replaces` | boolean | A task with this id is saved here; applying replaces it, and needs `confirm`. |
-| `replacesName` | string \| null | The name of the saved task it replaces, which may differ from the file's; null when it replaces none. |
+| `replacesName` | string \| null | The name of the saved task it replaces, which may differ from the file's; null when it replaces none or its file will not read. |
+| `replacesUnreadable` | boolean | The file stored under this id will not read. It is still replaced only with `confirm`. |
 | `identical` | boolean | The task saved here under this id already is the file's definition: applying writes nothing. |
 | `sameChannelSet` | boolean | This rig's whole channel set hashes, by the file's rule, to the file's `channel_set_hash`. Informative: only the channels the task names must agree. |
 | `hereHash` | string | This rig's `channelSetHash`, by the rule `fileHashVersion` names. |

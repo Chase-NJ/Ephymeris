@@ -375,6 +375,18 @@ class TaskDefinition:
                 "spaces, dots, dashes and underscores"
             )
 
+        # A folder under `<data_dir>/tasks/`, so one plain folder name, never a
+        # path: `..`, a separator, an absolute path or a drive would put the
+        # generated folder -- which every save deletes and rewrites -- outside
+        # the task library. The name's rule, for the same reason.
+        category = str(raw.get("category") or "Tasks")
+        if not NAME_RE.match(category):
+            raise TaskDefinitionError(
+                f"category {category!r} is not a usable category — it becomes a "
+                "folder, so it must be one folder name: start alphanumeric and "
+                "hold only letters, digits, spaces, dots, dashes and underscores"
+            )
+
         mode = raw.get("selectionMode", "antibias")
         if mode not in ("antibias", "pool", "weighted"):
             raise TaskDefinitionError(
@@ -398,7 +410,7 @@ class TaskDefinition:
         return TaskDefinition(
             id=task_id,
             name=name,
-            category=str(raw.get("category") or "Tasks"),
+            category=category,
             selection_mode=mode,
             trials=[TrialTypeDef.from_json(t) for t in trials_raw],
             stages=stages,

@@ -96,6 +96,8 @@ class ImportPlan:
     replaces: bool = False
     #: That saved task's name, which may not be the file's.
     replaces_name: str | None = None
+    #: The file stored under this id will not read; applying replaces it anyway.
+    replaces_unreadable: bool = False
     #: The saved task with this id already is this document: nothing to write.
     identical: bool = False
     conflicts: list[dict[str, Any]] = field(default_factory=list)
@@ -109,6 +111,7 @@ class ImportPlan:
             "name": self.name,
             "replaces": self.replaces,
             "replacesName": self.replaces_name,
+            "replacesUnreadable": self.replaces_unreadable,
             "identical": self.identical,
             "sameChannelSet": self.same_channel_set,
             "hereHash": self.here_hash,
@@ -236,7 +239,7 @@ def plan_import(
     raises `TaskTransferInvalid` for a file that is not an export.
 
     `channels` and `vocabulary` are the rig definition in force; `tasks` the
-    task store (`list_entries()` and `document(id)`); `bundled_named(name)` is
+    task store (`list_entries()`, `document(id)` and `is_stored(id)`); `bundled_named(name)` is
     truthy when a shipped sketch has that name.
 
     EVERY CONFLICT, NOT THE FIRST. Only the channels and codes the task names
@@ -263,8 +266,11 @@ def plan_import(
         file_hash=stated_hash,
         file_hash_version=hash_version,
         same_channel_set=here_hash == stated_hash,
-        replaces=stored is not None,
+        # Any file under this id, readable or not: a corrupt one is still
+        # somebody's work, and is overwritten only with `confirm`.
+        replaces=tasks.is_stored(definition.id),
         replaces_name=_name_of(stored),
+        replaces_unreadable=stored is None and tasks.is_stored(definition.id),
         identical=stored == document,
         diagnostics=[d.to_json() for d in validate(definition)],
     )

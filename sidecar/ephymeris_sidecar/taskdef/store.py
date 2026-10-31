@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import Any
 
 from . import generate
-from .model import TaskDefinition, TaskDefinitionError
+from .model import ID_RE, TaskDefinition, TaskDefinitionError
 from .validate import validate
 
 log = logging.getLogger(__name__)
@@ -101,7 +101,15 @@ class TaskStore:
         return self.root / f"{task_id}.json"
 
     def sketch_dir(self, definition: TaskDefinition) -> Path:
-        return self.root / definition.category / definition.name
+        """The generated folder, which every save deletes and rewrites, so it
+        must sit inside the task library. Parsing refuses a category or name
+        that is not one folder name; this refuses whatever got past it, a
+        definition built in code included (`TaskDefinitionError`)."""
+        return self._inside(self.root / definition.category / definition.name)
+
+    def is_stored(self, task_id: str) -> bool:
+        """A file is stored under this id, whether or not it reads."""
+        return bool(ID_RE.match(task_id)) and self.definition_path(task_id).is_file()
 
     def get(self, task_id: str) -> TaskDefinition | None:
         """The definition, or None when there is no such task.
@@ -123,7 +131,10 @@ class TaskStore:
         """The stored `<id>.json` as JSON, verbatim, or None when there is no
         such file or it will not read. Never passed through `TaskDefinition`,
         which drops what this build does not know: a task export carries this
-        (TASKS.md#moving-a-task-between-machines)."""
+        (TASKS.md#moving-a-task-between-machines). An id that is not an id
+        names no file: `..` would read outside the library."""
+        if not ID_RE.match(task_id):
+            return None
         path = self.definition_path(task_id)
         if not path.is_file():
             return None
@@ -216,6 +227,7 @@ class TaskStore:
         # generated folder, and its old location is only knowable from what was
         # stored a moment ago.
         previous = self.get(definition.id)
+        self.sketch_dir(definition)  # refused before anything is written
 
         self._write(definition.id, definition.to_json())
         self.regenerate(definition, previous)
@@ -230,6 +242,7 @@ class TaskStore:
         for a document that is not a definition, before writing anything."""
         definition = TaskDefinition.from_json(document)
         previous = self.get(definition.id)
+        self.sketch_dir(definition)  # refused before anything is written
         self._write(definition.id, document)
         self.regenerate(definition, previous)
         return [d.to_json() for d in validate(definition)]
@@ -241,7 +254,10 @@ class TaskStore:
         )
 
     def delete(self, task_id: str) -> bool:
-        """Remove the definition and its generated sketch. Idempotent."""
+        """Remove the definition and its generated sketch. Idempotent. An id
+        that is not an id removes nothing."""
+        if not ID_RE.match(task_id):
+            return False
         definition = self.get(task_id)
         self.definition_path(task_id).unlink(missing_ok=True)
         if definition is not None:
@@ -334,8 +350,21 @@ class TaskStore:
         shutil.rmtree(stale, ignore_errors=True)
         self._prune_category(previous.category)
 
+    def _inside(self, path: Path) -> Path:
+        root = self.root.resolve()
+        resolved = path.resolve()
+        if resolved == root or not resolved.is_relative_to(root):
+            raise TaskDefinitionError(
+                f"{path} is outside the task library {self.root}; nothing was written there."
+            )
+        return path
+
     def _prune_category(self, category: str) -> None:
         folder = self.root / category
+        try:
+            self._inside(folder)
+        except TaskDefinitionError:
+            return
         try:
             if folder.is_dir() and not any(folder.iterdir()):
                 folder.rmdir()

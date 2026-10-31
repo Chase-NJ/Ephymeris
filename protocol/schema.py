@@ -2106,7 +2106,13 @@ SHAPES = (
                 "replacesName",
                 nullable(STR),
                 doc="The name of the saved task it replaces, which may differ from "
-                "the file's; null when it replaces none.",
+                "the file's; null when it replaces none or its file will not read.",
+            ),
+            f(
+                "replacesUnreadable",
+                BOOL,
+                doc="The file stored under this id will not read. It is still "
+                "replaced only with `confirm`.",
             ),
             f(
                 "identical",
@@ -4470,7 +4476,8 @@ ERRORS = (
     ErrorCode(
         "TASK_INVALID",
         "The definition is not a definition — wrong shape, too large, an "
-        "unusable id or name, or a name that collides with a bundled sketch "
+        "unusable id, name or category (each becomes a folder, so each must be "
+        "one plain folder name), or a name that collides with a bundled sketch "
         "or another saved task. "
         "NOT the same as a task that will not run: a well-formed definition "
         "describing an impossible task is a successful reply carrying located "

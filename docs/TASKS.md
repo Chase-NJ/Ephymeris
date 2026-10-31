@@ -429,6 +429,8 @@ Four answers, nothing derivable (`taskdef/model.py`):
 
 Plus `id`, `name` (becomes the sketch folder and must be a legal folder name), `category`, `legacyNames` and `notes`.
 
+**`name` and `category` are each one plain folder name**: they start with a letter or digit and hold only letters, digits, spaces, dots, dashes and underscores. A definition with any other value is not a definition (`TASK_INVALID`, or `TASK_TRANSFER_INVALID` on import), and nothing is written. Each save deletes and rewrites `<category>/<name>/`, so a `..`, a separator, an absolute path or a drive letter would delete and write outside the task library. `TaskStore` also refuses any generated folder that resolves outside `<data_dir>/tasks/` before it deletes or writes, and an id that is not an id names no file.
+
 A definition stores **channel names and strobe code names, never pins or numbers.** That indirection makes "odor line 3 means go-left on this rig" an edit to one document rather than to firmware, and lets a rewiring be costed before it is written.
 
 > [!CAUTION]
@@ -605,7 +607,7 @@ A task exported on one lab machine imports on the other, where it compiles again
 
 **Besides conflicts:**
 
-- **A task saved here under the same id is replaced** (`replaces`, and `replacesName` names it, since the other machine may have renamed it). Applying needs `confirm`; without it the import is `TASK_IMPORT_REPLACES`.
+- **A task saved here under the same id is replaced** (`replaces`, and `replacesName` names it, since the other machine may have renamed it). A stored file under that id that will not read counts too (`replacesUnreadable`): it is still somebody's work. Applying needs `confirm`; without it the import is `TASK_IMPORT_REPLACES`.
 - **An import identical to the stored document writes nothing** (`identical`).
 - **The plan carries the definition's diagnostics on this rig.** As with any save, a task with diagnostics still imports.
 - **A file that is not an export is `TASK_TRANSFER_INVALID`.** That covers another version, no definition, a definition that will not read, or a channel the definition names that the file does not describe.

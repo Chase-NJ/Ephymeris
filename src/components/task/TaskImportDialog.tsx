@@ -104,7 +104,9 @@ export function TaskImportDialog({
               <>
                 {" — replaces "}
                 <span className="text-starlight">{plan.replacesName ?? plan.taskId}</span>
-                {", saved here under the same id"}
+                {plan.replacesUnreadable
+                  ? ", a file saved here under the same id that will not read"
+                  : ", saved here under the same id"}
               </>
             )}
           </p>
@@ -123,11 +125,15 @@ export function TaskImportDialog({
             ))}
           </Callout>
         )}
-        {plan && !conflicted && plan.diagnostics.length > 0 && (
+        {plan && plan.diagnostics.length > 0 && (
           <Callout
             title={`${plan.diagnostics.length} problem${plan.diagnostics.length === 1 ? "" : "s"} on this rig`}
             tone="warning"
-            why="It still imports, as a task with problems still saves; the editor shows what to fix."
+            why={
+              conflicted
+                ? "What the task would show in the editor here, beside the conflicts above."
+                : "It still imports, as a task with problems still saves; the editor shows what to fix."
+            }
           >
             {plan.diagnostics.map((d, i) => (
               <span key={`${d.code}-${i}`} className="font-mono text-[10.5px] text-static">

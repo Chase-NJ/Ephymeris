@@ -9,6 +9,7 @@ this machine's is refused whole, naming each difference, and writes nothing.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 from pathlib import Path
@@ -18,6 +19,7 @@ import pytest
 from ephymeris_sidecar.hardware import store as rig_store
 from ephymeris_sidecar.rig import registry
 from ephymeris_sidecar.taskdef import transfer
+from ephymeris_sidecar.taskdef.model import TaskDefinition, TaskDefinitionError
 from ephymeris_sidecar.taskdef.store import TaskStore
 from tests.fixtures import spine as fixture
 from tests.live_sidecar import Refused, live_sidecar
@@ -243,6 +245,36 @@ def test_a_name_another_task_or_a_shipped_sketch_has_is_refused(tmp_path):
     assert conflicts[1]["message"].startswith("Another task here is already called 'spine TRACER'.")
 
 
+def test_a_stored_file_under_the_same_id_that_will_not_read_is_still_replaced_with_confirm(tmp_path):
+    (tmp_path / "tasks").mkdir()
+    (tmp_path / "tasks" / "spine_tracer.json").write_text("{ not json", encoding="utf-8")
+    planned = plan(export(), tmp_path)
+    assert planned.replaces and planned.replaces_unreadable and planned.replaces_name is None
+
+
+def test_the_fields_a_channel_carries_are_the_fields_the_channel_set_hash_covers():
+    """`CHANNEL_FIELDS` restates what `ChannelSet.content_hash` covers: a field
+    the hash gains must travel, or two machines agreeing on every carried
+    field could still hash apart."""
+    base = registry.channels().get("odor_port")
+    changed = {
+        "name": "other", "index": 99, "direction": "out", "kind": "response",
+        "watch_bit": 7, "well": "left_well", "port_slot": 2, "onset_strobe": "ODOR_9_ON",
+        "rationale": "x", "label": "x", "pin_note": "x", "pin_source": "x",
+        "type": "digital_out", "role": "cue", "active_level": "high", "debounce_ms": 9,
+        "serves": "left_well", "edges": (("enter", "OTHER"),),
+    }
+    assert set(changed) == {f.name for f in dataclasses.fields(registry.Channel)}, (
+        "a Channel field was added: give it a changed value here"
+    )
+
+    def hashed(field: str) -> bool:
+        other = dataclasses.replace(base, **{field: changed[field]})
+        return registry.ChannelSet([other]).content_hash() != registry.ChannelSet([base]).content_hash()
+
+    assert {f for f in changed if hashed(f)} == {"name", *transfer.CHANNEL_FIELDS}
+
+
 def test_a_task_saved_here_under_the_same_id_is_replaced_and_an_identical_one_is_not(tmp_path):
     store = TaskStore(tmp_path, library_root=FIRMWARE)
     store.save_document(tracer(notes="an older version"))
@@ -290,6 +322,14 @@ def newer_build_tracer() -> dict:
     return raw
 
 
+def tree(root: Path) -> dict[str, bytes | None]:
+    """Every path under `root`, with each file's bytes (None for a folder)."""
+    return {
+        str(p.relative_to(root)): (p.read_bytes() if p.is_file() else None)
+        for p in sorted(root.rglob("*"))
+    } if root.exists() else {}
+
+
 def defines(header: str) -> dict[str, int]:
     return {m[1]: int(m[2]) for m in re.finditer(r"^#define (BF_\w+) (\d+)$", header, re.M)}
 
@@ -309,7 +349,10 @@ async def machine_a_exports(tmp_path) -> tuple[dict, dict, Path]:
     Returns (A's channel set export, A's task export, A's data dir)."""
     data = tmp_path / "a"
     (data / "tasks").mkdir(parents=True)
-    (data / "tasks" / "spine_tracer.json").write_text(json.dumps(newer_build_tracer()), encoding="utf-8")
+    # As the app stores one (`TaskStore`), so the bytes can be compared on B.
+    (data / "tasks" / "spine_tracer.json").write_text(
+        json.dumps(newer_build_tracer(), indent=2) + "\n", encoding="utf-8"
+    )
     async with live_sidecar(data) as a:
         await a.call("hardware.save", document=rig_store.default_document(), confirm=True)
         channel_set = (await a.call("hardware.exportChannelSet"))["document"]
@@ -334,8 +377,11 @@ async def test_a_task_exported_on_one_machine_strobes_identical_codes_on_another
         assert b.latest("tasks.updated")["tasks"][0]["id"] == "spine_tracer"
 
     b_dir = tmp_path / "b"
-    # The definition arrived verbatim, fields this build does not know included.
-    assert json.loads((b_dir / "tasks" / "spine_tracer.json").read_text()) == newer_build_tracer()
+    # The definition arrived verbatim, byte for byte, fields this build does
+    # not know included.
+    stored = "tasks/spine_tracer.json"
+    assert (b_dir / stored).read_bytes() == (a / stored).read_bytes()
+    assert json.loads((b_dir / stored).read_text()) == newer_build_tracer()
     # Identical codes: every code number compiled in, and the profile with the
     # spine snapshot replay reads code names from, are the same on both...
     a_pins = (a / FOLDER / "TaskPins.h").read_text()
@@ -352,12 +398,17 @@ async def test_an_import_naming_a_missing_or_differing_channel_writes_nothing_an
     _channel_set, exported, _a = await machine_a_exports(tmp_path)
 
     b_dir = tmp_path / "b"
+    # B already has a task of its own, so "nothing written" has bytes to keep.
+    (b_dir / "tasks").mkdir(parents=True)
+    (b_dir / "tasks" / "b_own.json").write_text(
+        json.dumps(tracer(id="b_own", name="B Own", rows=[])), encoding="utf-8"
+    )
     async with live_sidecar(b_dir) as b:
         doc = rig_store.default_document()
         del doc["channels"]["odor_line_1"], doc["pins"]["odor_line_1"]
         doc["channels"]["fluid_2"]["role"] = "routing"
         await b.call("hardware.save", document=doc, confirm=True)
-        before = sorted(p.relative_to(b_dir) for p in (b_dir / "tasks").rglob("*")) if (b_dir / "tasks").exists() else []
+        before = tree(b_dir / "tasks")
 
         plan = (await b.call("tasks.import", document=exported, apply=False))["plan"]
         with pytest.raises(Refused) as refused:
@@ -373,8 +424,8 @@ async def test_an_import_naming_a_missing_or_differing_channel_writes_nothing_an
     )
     assert refused.value.detail["conflicts"] == plan["conflicts"]
     assert "odor_line_1" in refused.value.message
-    after = sorted(p.relative_to(b_dir) for p in (b_dir / "tasks").rglob("*")) if (b_dir / "tasks").exists() else []
-    assert after == before and not (b_dir / "tasks" / "spine_tracer.json").exists()
+    assert tree(b_dir / "tasks") == before and before  # every path and every byte
+    assert not (b_dir / "tasks" / "spine_tracer.json").exists()
 
 
 async def test_replacing_a_saved_task_needs_confirm(tmp_path):
@@ -410,3 +461,47 @@ async def test_a_file_that_is_not_an_export_is_task_transfer_invalid(tmp_path):
         with pytest.raises(Refused) as refused:
             await b.call("tasks.import", document={"x": 1}, apply=False)
     assert refused.value.code == "TASK_TRANSFER_INVALID"
+
+
+
+@pytest.mark.parametrize(
+    "category",
+    ["../../victim", "/tmp/victim", "C:\\victim", "C:victim", "a\\..\\..\\victim", "a/b", "..", "."],
+)
+def test_a_category_that_is_not_one_plain_folder_name_is_refused_and_nothing_written(tmp_path, category):
+    root = tmp_path / "data"
+    with pytest.raises(transfer.TaskTransferInvalid, match="category"):
+        export(tracer(category=category))
+
+    file = export()
+    file["definition"]["category"] = category
+    with pytest.raises(transfer.TaskTransferInvalid, match="category"):
+        plan(file, root)
+
+    store = TaskStore(root, library_root=FIRMWARE)
+    with pytest.raises(TaskDefinitionError, match="category"):
+        store.save_document(tracer(category=category))
+    assert sorted(p.relative_to(tmp_path) for p in tmp_path.rglob("*")) == []
+
+
+def test_a_sketch_folder_outside_the_tasks_root_is_never_touched(tmp_path):
+    """Belt and braces under the parse: a definition built in code, never
+    parsed, still cannot send a write or a delete outside `tasks/`."""
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    (victim / "keep.txt").write_text("mine", encoding="utf-8")
+    store = TaskStore(tmp_path / "data", library_root=FIRMWARE)
+    escaping = dataclasses.replace(TaskDefinition.from_json(tracer()), category="../../victim")
+    with pytest.raises(TaskDefinitionError, match="outside"):
+        store.regenerate(escaping)
+    assert (victim / "keep.txt").read_text() == "mine" and sorted(victim.iterdir()) == [victim / "keep.txt"]
+
+
+@pytest.mark.parametrize("task_id", ["../../victim", "..", "a/b"])
+def test_a_task_id_that_is_not_an_id_reads_and_deletes_nothing(tmp_path, task_id):
+    (tmp_path / "victim.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "data" / "tasks").mkdir(parents=True)  # so `..` resolves through it
+    store = TaskStore(tmp_path / "data", library_root=FIRMWARE)
+    assert store.document(task_id) is None and store.get(task_id) is None
+    assert store.delete(task_id) is False
+    assert (tmp_path / "victim.json").exists()

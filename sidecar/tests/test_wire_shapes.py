@@ -387,6 +387,7 @@ def test_a_populated_task_import_plan_matches_schema() -> None:
         same_channel_set=False,
         replaces=True,
         replaces_name="Task one, before",
+        replaces_unreadable=False,
         conflicts=[{"kind": "not_here", "channel": "lever", "message": "lever …"},
                    {"kind": "code", "channel": None, "message": "FLUID_2_ON …"}],
         diagnostics=[{"location": "rows[0].bind.port", "message": "…", "code": "SPN101"}],

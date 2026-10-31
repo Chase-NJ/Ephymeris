@@ -35,6 +35,13 @@ Everything between "a box runs firmware that emits strobes" and "the app draws i
   - [Rebuilt bundled sketches](#rebuilt-bundled-sketches)
   - [The box utility](#the-box-utility)
   - [Order is meaning](#order-is-meaning)
+- [Spine tasks](#spine-tasks)
+  - [What a spine task holds](#what-a-spine-task-holds)
+  - [Lowering](#lowering)
+  - [The generated folder](#the-generated-folder)
+  - [The runner](#the-runner)
+  - [The snapshot](#the-snapshot)
+  - [Spine diagnostics](#spine-diagnostics)
 - [Rig wiring](#rig-wiring)
   - [The channel set and the pin map](#the-channel-set-and-the-pin-map)
   - [Registry rules](#registry-rules)
@@ -130,6 +137,8 @@ The firmware lives in `firmware/` ([its README](../firmware/README.md)); it was 
 
 All trial logic lives in `libraries/BehaviorBox/BehaviorBox.h`: the serial helpers (strobe emitter, `START` reader, `STOP` poll), `TaskParams` and the one declarative wire-key list `TASK_PARAM_LIST` the `START` parser is generated from, the trial primitives (`TrialType`, `generateTrials`), the selection policies, and one `runTrial()` loop. That shared loop is why the state machine can be [derived](#derived-state-machine) rather than declared. The pinout is in `BoxPins.h`; the strobe codes are in no file of the firmware repo — the app generates them into `TaskPins.h`, and `BoxStrobes.h` only refuses to build without them.
 
+A [spine task](#spine-tasks) runs none of that. Its runner is `libraries/BehaviorBox/BoxSpine.h`, around the phase interpreter's pure core `BoxInterp.h`, and it shares only the serial helpers and the `SET` handshake's pieces with `BehaviorBox.h`.
+
 `emitStrobe()` also pulses a sync pin for electrophysiology alignment; see [RECORDING.md](RECORDING.md#the-sync-line).
 
 ### Guarded defaults
@@ -189,7 +198,9 @@ The three values are themselves guarded in `BehaviorBox.h`. A header that once o
 
 The host tests compile `BehaviorBox.h` off-target against a minimal `Arduino.h` shim. They do not replace a real AVR compile and flash.
 
-`run_interp.sh` tests `BoxInterp.h`, the phase interpreter's pure core ([ADR 0003](adr/0003-phase-spine-task-model.md)), which includes no Arduino header and needs no shim. `run_diff.sh` is the **differential test**: it runs that core and its Python port, `analytics/stream/replay.py`, over generated state tables and randomized input logs, and fails on the first tick where their actions differ. It then changes the Python tie rule and expects a difference, so a run that generates too few ties fails rather than passing on nothing. Change the header and the port together; the header documents the table format and the tick rules for both.
+`run_interp.sh` tests `BoxInterp.h`, the phase interpreter's pure core ([ADR 0003](adr/0003-phase-spine-task-model.md)), which includes no Arduino header and needs no shim. `run_diff.sh` is the **differential test**: it runs that core and its Python port, `analytics/stream/replay.py`, over generated state tables and randomized input logs, and fails on the first tick where their actions differ. It then changes the Python tie rule and expects a difference, so a run that generates too few ties fails rather than passing on nothing. Change the header and the port together; the header documents the table format and the tick rules for both. A third of the differential test's tables are lowered by the generator itself (`taskdef/lowering.py`), so the tables a saved spine task compiles are held to both interpreters.
+
+`run_spine.sh` tests `BoxSpine.h`, the runner around that core, on the instrumented shim with a hand-written table: the handshake, the stream's order and tick times, skipped `millis()` values, and the [session end rule](#the-runner). `sidecar/tests/test_spine_run.py` compiles a **generated** spine task the same way, plays its serial output through the real session path, and replays the `.tsv` that path wrote.
 
 ## Sketch library
 
@@ -273,11 +284,12 @@ Skip reasons, each reported with its path:
 | `telemetry` | object | absent | Utility profiles: how to parse `STATUS` lines |
 | `identify` | `{on, off}` | absent | Commands that make a box point at itself |
 | `legacyNames` | array of strings | `[]` | Names older software wrote into a run's `sketch` field |
+| `spine` | object | absent | A [spine task](#the-snapshot)'s snapshot: the definition, its state table and what each bit is. Written by the generator, passed through verbatim |
 
 Unknown top-level keys are ignored. `kind` is a convention, not a schema gate: every key is read from every profile, and a utility profile's `liveMetrics` is simply never scored.
 
 > [!CAUTION]
-> **There is no `states` or `graph` key, and none should be added.** It would change `profile_hash` and split the sketch's runs in Analytics; see [Derived state machine](#derived-state-machine).
+> **There is no `states` or `graph` key, and none should be added.** It would change `profile_hash` and split the sketch's runs in Analytics; see [Derived state machine](#derived-state-machine). A spine task's `spine` key is not that: it appears only on a profile generated from a spine definition, so no existing profile's hash moves.
 
 ### Config fields
 
@@ -555,6 +567,112 @@ Two orderings carry meaning and both are emitted from a single pass so they cann
 - **Odor index.** `Odors[i]` is odor line i+1, and the pins are not monotonic past line 6. Use `ChannelMap.declared_of_kind()`, never `of_kind()` (which sorts by pin) — the wrong one swaps lines, drives the wrong valve and announces it with the wrong onset code while every trial looks correct.
 - **Trial-table slot.** Slot i is `kTrials[i]`, is `poolWeights[i]` (wire `PW<i+1>`), and is `rewardTimes[i]` (wire `RW<i+1>`). Reordering the table re-weights a pool task and re-pays every condition, which is why the trial table has no drag handle.
 
+## Spine tasks
+
+A **spine task** is ADR 0003's model, one tracer ahead of the rest: an ordered spine of phases, lowered by the generator to a state table that one interpreter walks ([ADR 0003](adr/0003-phase-spine-task-model.md)). It needs no firmware written for it. The definition is saved with `tasks.save` like any task, and its folder is generated, flashed and run through the ordinary session flow; nothing in the app tests whether a sketch is a spine task. The Task editor does not edit one yet, so today a spine definition is written as JSON.
+
+The tracer has limits, and each is diagnosed rather than guessed around:
+
+- the phases are Wait, Present, Delay, Outcome and ITI;
+- a task has one row and one block;
+- nothing is scored live yet: Mission Control says so, from the profile (`src/lib/sessions/liveScoring.ts`).
+
+### What a spine task holds
+
+A definition with a top-level `spine` key is a spine task (`taskdef/model.py`, `Spine`). Without that key a definition is exactly what [What a definition holds](#what-a-definition-holds) describes, byte for byte.
+
+| Field | Holds |
+|---|---|
+| `slots[]` | The spine's roles, each `{id, type}` with type `digital_in` or `digital_out` |
+| `spine[]` | The phases, in order. Each `{phase, …}`:<br>• `wait` moves on at a rise on input slot `on`, with an optional `timeoutMs` that goes to the ITI;<br>• `present` lasts `ms`, and `abortOnRelease` names an input slot whose release aborts to the ITI;<br>• `delay` lasts `ms`;<br>• `outcome` opens output slot `line`, then waits `ms`;<br>• `iti` lasts `ms`.<br>Any phase may name `outputs`, the output slots HIGH while in it |
+| `rows[]` | One row: a stable `id`, a required `name`, `bind` (slot → channel name), `rewardMs`, and `rewardPermille` |
+| `blocks[]` | One block: `{id, rows: [the row's id], trials}` |
+| `params{}` | Only divergences from the defaults the spine itself states, keyed by metadata key |
+
+Plus `id`, `name`, `category`, `legacyNames` and `notes`, as for any task. A slot binds a channel by **name**, never a pin.
+
+### Lowering
+
+`taskdef/lowering.py` writes each phase as states, as `BoxInterp.h`'s *Lowering the first phases* describes. It is pure and standard-library only, so the differential test loads it by path and holds its tables to both interpreters ([Compiling and the host tests](#compiling-and-the-host-tests)).
+
+- **Channels are bits.** Input bit i is the i-th `digital_in` slot and output bit j is the j-th `digital_out` slot, in slot order. No pin enters the table.
+- **Every duration and probability is a parameter slot**, set by a `SET` line. One table therefore serves every tuning and every pin map.
+
+| Slot | Wire key | Metadata key | What |
+|---|---|---|---|
+| 0 | `NT` | `block_trials` | The block's trial count. The session ends at the start of the next trial |
+| 1… | `T<i>` | `<phase>_<i>_ms`, or `wait_<i>_timeout_ms` | Phase i's timer, one per timed phase |
+| then | `RW1`, `RP1` | `reward_ms`, `reward_permille` | The row's reward time and probability, when the spine has an Outcome |
+
+- **The ITI comes last.** A spine ends in exactly one ITI, which is where every abort and timeout goes; its timer leads back to state 0, which starts a trial.
+- **The Outcome's states.** An Outcome is a chance state on `RP1`, recording the outcome class `correct`, then the reward line's state (`RW1`), then the class timeout.
+- **Outcome class numbers** come from `lowering.OUTCOME_CLASSES` and are append-only.
+
+### The generated folder
+
+```
+<data_dir>/tasks/<category>/<name>/
+    <name>.ino      three includes and two calls: box_spine::setup(), box_spine::loop()
+    TaskPins.h      this rig's pins and every live strobe code, as for any task
+    TaskSpine.h     the state table, the channel rows, the parameter keys (preprocessor only)
+    task.json       the profile, carrying the spine snapshot
+```
+
+`TaskSpine.h` names each channel's edge codes as `BF_<NAME>` macros, which `TaskPins.h` defines from the vocabulary. So **no code number is written for a spine task**, and a code the vocabulary lacks does not compile. A folder that cannot run (a slot bound to nothing, an edge with no code, a structural code missing) is still written, with an `#error` naming the reason, so it refuses to compile rather than strobing what nobody declared.
+
+### The runner
+
+`libraries/BehaviorBox/BoxSpine.h` is the one runner of every spine task: the hardware layer around `BoxInterp.h`'s pure core.
+
+- **Inputs.** Each input is read and debounced every loop pass, by its channel's `active_level` and `debounce_ms`.
+- **Ticks.** The core is stepped once per millisecond of `millis()`, including each value AVR `millis()` skips.
+- **Outputs and strobes.** The runner drives each tick's outputs, then strobes the tick's actions, each stamped with the tick.
+- **The handshake.** It is the one in [Confirming the parameters](#confirming-the-parameters), over the table's parameter slots. A value is held only when it is a whole number within its slot's declared range; otherwise the board answers `CLAMPED` and the start is refused.
+- **The announcement.** The runner announces `INTERP=2`.
+
+**The stream** holds only what the board observed and what it did. Within a tick it runs in this order:
+
+1. `START_SESSION`;
+2. watched inputs that rose (the channel's `enter` code), then those that fell (`exit`);
+3. `TRIAL_START`;
+4. outputs driven LOW (`off`), then outputs driven HIGH (`on`).
+
+An edge on an input no state is watching is never strobed: the interpreter ignores it, so replay needs only what was strobed. The structural codes are the vocabulary's `START_SESSION` and `END_SESSION` (the ADR's SESSION_START and SESSION_END, the same events) and `TRIAL_START`. No outcome or state code is ever strobed.
+
+> [!CAUTION]
+> **The session end rule is part of what replay reproduces.** The session ends at the tick that would start trial `NT`+1, or at the first trial start after `STOP`. At that tick the board strobes the tick's watched input edges, then the `off` code of every output still HIGH, then `END_SESSION`. It does not strobe `TRIAL_START` and does not drive the new trial's outputs. Change the rule in `BoxSpine.h` and in `analytics/stream/spine.py` together, or every run's last tick reads as a divergence.
+
+`STOP` is honoured at a trial boundary, as with the trial runner. A spine whose first phase waits forever, with no animal poking, therefore ends only when End Session forces it.
+
+### The snapshot
+
+The profile's `spine` key is everything replay needs that the run's own header does not already hold:
+
+- the definition's slots, phases, rows and blocks;
+- the table exactly as lowered, with its `interp`;
+- each bit's channel and edge code **names**;
+- each parameter slot's wire key;
+- the structural code names.
+
+It rides in the `# task_profile:` header line of every run's `.tsv` ([DATA.md](DATA.md#the-tsv-log)), beside the parameter values, the seed and `# interp: 2`, so a crashed run's `.tsv` alone replays. Code numbers come from the snapshot's own `strobes` map, which is the vocabulary when the run started. `analytics/stream/spine.py` reads a run's document back into the table, parameters, seed and input edges, and predicts every strobe the board must have sent ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#the-folder-at-a-glance)).
+
+`profile_hash` hashes the snapshot with the rest of the profile, names and all. Covering behaviour only, and leaving out every string meant for a person, is still to come (ADR 0003, *Hashes and data*).
+
+### Spine diagnostics
+
+`taskdef/spine.py` judges a spine task in place of the `TSK1xx` rules ([Diagnostics](#diagnostics)). As there, a task with problems still saves.
+
+| Code | Problem | Consequence without it |
+|---|---|---|
+| `SPN101` | A slot bound to no channel, or to one this rig lacks | A role with no pin |
+| `SPN102` | A channel whose type is not the slot's, or the sync line | A sensor driven as a valve; a pulse in a recording |
+| **`SPN103`** | **A channel edge with no live code.** The shipped channel set names none, so the rig's first wiring save issues them ([Edge codes](#edge-codes)) | An edge recorded as a number nothing decodes |
+| `SPN104` | The vocabulary lacks `START_SESSION`, `TRIAL_START` or `END_SESSION`. A machine seeded before `TRIAL_START` existed adds it on Task > Strobes, at 270 | A stream with no trials in it |
+| `SPN105` | A spine of the wrong shape: an unknown phase, no ITI or not last, a slot of the wrong direction, a missing duration | A table the interpreter cannot walk |
+| `SPN106` | More than one row or block, a block that does not draw the row, a trial count or probability out of range | What the tracer cannot express yet |
+| `SPN107` | Two slots on one channel | One pin, two roles |
+| `SPN108` | A row with no name | Every readout titled after nothing |
+
 ## Rig wiring
 
 The rig's description of itself lives in `sidecar/ephymeris_sidecar/rig/` and `hardware/`. Wire commands: [PROTOCOL.md](PROTOCOL.md#rig-wiring). Box↔board bindings are a different, runtime wiring ([ARCHITECTURE.md](ARCHITECTURE.md#boxes-and-boards)); this one is compile-time input to every generated sketch.
@@ -636,7 +754,7 @@ Beside its kind, every channel declares what it is ([ADR 0003](adr/0003-phase-sp
 
 A channel that declares none of these, as every rig saved before they existed does, takes its type and role from its kind (`registry.channel_set_defaults`).
 
-**The generator reads none of the new fields.** It still generates from `kind`, `well`, `port_slot` and `onset_strobe`, so every saved task and bundled sketch regenerates byte-identical (`test_channel_set.py`).
+**The trial-runner generator reads none of the new fields.** It still generates from `kind`, `well`, `port_slot` and `onset_strobe`, so every saved task and bundled sketch regenerates byte-identical (`test_channel_set.py`). A [spine task](#spine-tasks) reads `type`, `active_level`, `debounce_ms` and `edges`, and nothing else of a channel but its pin.
 
 ### Registry rules
 
@@ -858,7 +976,7 @@ A declared code that nothing can emit is a name in every picker that no session 
 
 That covers a channel set reset to the shipped one, a channel deleted and added back as what it was, and a save that issued codes and then failed to write. Issuing those again under `_2` would only grow the vocabulary with codes that mean the same thing. A deleted reward line `lever` that comes back as a cue is a different event, and gets fresh codes.
 
-**Nothing emits an edge code yet.** GRGL still strobes its own codes. The page says "nothing on this machine names it" ([Every declared code is emitted](#every-declared-code-is-emitted)) until a sketch emits it.
+**A spine task emits them; GRGL still strobes its own codes.** A [spine task](#the-runner) strobes the `enter`/`exit` or `on`/`off` code of every channel its slots bind. The page says "nothing on this machine names it" ([Every declared code is emitted](#every-declared-code-is-emitted)) for a code no sketch names.
 
 ## The START line
 
@@ -909,7 +1027,8 @@ Before a run starts, the board proves it holds exactly what the host meant it to
 sequenceDiagram
     participant Host as Sidecar
     participant Board as Mega2560
-    Board-->>Host: INTERP=1
+    Board-->>Host: INTERP=1 (a spine task: INTERP=2)
+    Board-->>Host: FREE_RAM=n
     Board-->>Host: READY
     Host->>Board: BEGIN
     loop each SET line, one at a time
@@ -929,7 +1048,8 @@ sequenceDiagram
   > [!CAUTION]
   > **A parameter whose declared `max` is above 32767 can be refused by the board.** GRGL's `task.json` allows `ERR`, `ITI`, `NPH`, `LZD` up to 120000, `NWP`, `LZS`, `S<n>W`, `S<n>O` up to 60000 and `LZM` up to 300000, but the board holds them in a 16-bit `int`. Such a value now refuses the start with `PARAMS_CLAMPED` instead of running wrapped; the form does not yet stop it being typed.
 - **`START SEED=<n>`** is sent only after the answer clears. It carries the seed and nothing else ([SEED](#seed)); the board clamps and applies ramp row 0 then.
-- **`INTERP=<n>`** is printed before `READY` and names the firmware interpreter; this firmware is `1`. The run's `.tsv` header records it as `# interp: <n>` ([DATA.md](DATA.md#the-tsv-log)); a board that announced none leaves the line out.
+- **`INTERP=<n>`** is printed before `READY` and names the firmware interpreter, in one numbering space: `1` is `BehaviorBox.h`'s trial runner (GRGL), `2` is the state-table interpreter that runs a [spine task](#the-runner) (`BoxInterp.h`'s `INTERP_VERSION`). The run's `.tsv` header records it as `# interp: <n>` ([DATA.md](DATA.md#the-tsv-log)), so the header alone tells a spine run from a legacy one; a board that announced none leaves the line out. Replay runs only the state-table versions and refuses `1`.
+- **`FREE_RAM=<n>`** follows it: the bytes of RAM free between the heap and the stack, measured in `setup()` with the sketch's tables already resident (`boxFreeRam()` in `BehaviorBox.h`). The header records it as `# free_ram: <n>`, and the `.json` as `free_ram`. A host build has no RAM to measure and reports a fixed value.
 
 The start is refused, with nothing started and the port in `ERROR` until acknowledged, on any of:
 
@@ -969,7 +1089,7 @@ Both are SHA-256 over canonical JSON (`sort_keys`, compact separators), truncate
 
 | | `profile_hash` | `params_hash` |
 |---|---|---|
-| Input | the serialized profile — `taskName`, `kind`, the full `config` array **including presentation keys** (`group`, `label`, `unit`, `help`, ranges), `liveMetrics` (as codes), `controls`, `legacyNames`, and `telemetry`/`identify` when present — **not** `strobes` | one run's merged parameter values, keyed by `metadataKey` |
+| Input | the serialized profile — `taskName`, `kind`, the full `config` array **including presentation keys** (`group`, `label`, `unit`, `help`, ranges), `liveMetrics` (as codes), `controls`, `legacyNames`, and `telemetry`/`identify`/`spine` when present — **not** `strobes` | one run's merged parameter values, keyed by `metadataKey` |
 | `None` input | n/a | returns `None` — a run with no recorded parameters is not a run recorded with none |
 | Stored on | `task_profiles.hash` (content-addressed) | `session_animal_runs.params_hash`, beside `config_json` |
 

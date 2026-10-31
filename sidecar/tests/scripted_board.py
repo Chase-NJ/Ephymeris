@@ -184,14 +184,20 @@ class Bench:
         return self.board(box)
 
     async def run_handshake(
-        self, box: int, seed: int | None = None, interp: int | None = None
+        self, box: int, seed: int | None = None, interp: int | None = None,
+        free_ram: int | None = None,
     ) -> ScriptedBoard:
         """Play a board through READY, the `SET` handshake, and SEED when given.
         Without a SEED the handshake resolves on the first strobe, or when the
-        SEED window closes."""
+        SEED window closes. `interp` and `free_ram` are announced before READY
+        when given, as the firmware does."""
         board = await self.wait_for_board(box)
         board.seed_on_start = seed
-        await board.said(*([f"INTERP={interp}"] if interp is not None else []), "READY")
+        await board.said(
+            *([f"INTERP={interp}"] if interp is not None else []),
+            *([f"FREE_RAM={free_ram}"] if free_ram is not None else []),
+            "READY",
+        )
         # The sidecar sends START once the board has confirmed its parameters;
         # the board's SEED answers it.
         await until(lambda: any(line.startswith("START") for line in board.sent()))

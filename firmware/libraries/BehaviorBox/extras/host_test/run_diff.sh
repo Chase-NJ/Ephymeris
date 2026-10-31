@@ -1,8 +1,9 @@
 #!/bin/sh
 # The differential test: BoxInterp.h, built for the host as interp_driver, and
 # the Python replay (sidecar/ephymeris_sidecar/analytics/stream/replay.py) run
-# the same generated tables and input logs, and the test fails on the first
-# tick where their actions differ. It then proves it can fail, by changing the
+# the same tables and input logs, a third of the tables lowered by the generator
+# itself (sidecar/ephymeris_sidecar/taskdef/lowering.py), and the test fails on
+# the first tick where their actions differ. It then proves it can fail, by changing the
 # Python tie rule and expecting a difference. See differential.py.
 #
 # Needs python3 (3.12 or later) and nothing installed: replay.py is loaded by path.

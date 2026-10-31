@@ -432,6 +432,7 @@ Each session folder that has a log gets a `notes.md` beside its format folders: 
   "trial_seed": 288577176,
   "host_seed": 288577176,
   "interp": 1,
+  "free_ram": 6000,              // ← illustrative; no Mega figure is recorded here
   "channel_set_hash": "3f0c9a17b2d4e588",
   "channel_set_hash_version": 2,
   "n_events": 2392,
@@ -450,7 +451,8 @@ Each session folder that has a log gets a `notes.md` beside its format folders: 
 | `stop_reason` | Set by the sidecar at run end. Open set: `BF_END_SESSION received` (clean), `board disconnected`, `sidecar error: <cause>`, `recovered after crash`, … |
 | `trial_seed` | What the **board** reported on its `SEED` line; absent if it never sent one |
 | `host_seed` | What the **app** put on the `START` line. Differs from `trial_seed` only if the firmware ignored it |
-| `interp` | The firmware interpreter the board announced as `INTERP=<n>` before `READY` ([TASKS.md](TASKS.md#confirming-the-parameters)). Absent when it announced none. Describes the build, not the tuning, so it is never hashed |
+| `interp` | The firmware interpreter the board announced as `INTERP=<n>` before `READY` ([TASKS.md](TASKS.md#confirming-the-parameters)), which says which number is which. Absent when it announced none. Describes the build, not the tuning, so it is never hashed |
+| `free_ram` | The bytes of RAM the board reported free with its tables loaded, announced as `FREE_RAM=<n>` beside `interp`. Absent when it announced none. Never hashed, for the same reason |
 | `channel_set_hash` | `ChannelSet.content_hash()` of the channel set the run's sketch was generated against ([TASKS.md](TASKS.md#registry-rules)), read at mapping inside the rig definition's read hold: no wiring or vocabulary write lands between it and the end of the session. Always a string, even when every digit is numeric. Describes the rig, not the tuning, so it is never hashed |
 | `channel_set_hash_version` | Which rule made `channel_set_hash` ([TASKS.md](TASKS.md#registry-rules)): 2 covers the channels' declaration order, 1 ignored it. **A run with `channel_set_hash` and no version was recorded by version 1**, so two such hashes agreeing says nothing about the odor table's order |
 | `intan_*` | Present only inside a recording ([RECORDING.md](RECORDING.md#what-is-written)) |
@@ -470,6 +472,7 @@ A live append-only log, not a serialization of the document:
 # session_id: 2O-Bdisc_25
 # sketch: GRGL
 # interp: 1
+# free_ram: 6000
 # channel_set_hash: 3f0c9a17b2d4e588
 # channel_set_hash_version: 2
 # correction_left: 0
@@ -482,6 +485,8 @@ A live append-only log, not a serialization of the document:
 ```
 
 The `# key: value` header is written by `AnimalWriter.open_files` after the parameter handshake and `SEED` resolve, and before the first strobe. The **profile snapshot rides in the header as one compact JSON line, always last**, so a `.tsv` rebuilt by [crash recovery](#crash-recovery) yields a `.json` as self-describing as a finalized one — and the recovered file is exactly the one someone carries to another machine. `stop_reason` and `n_events` are unknown until the end, so they form a **footer**. **A `.tsv` cut off mid-session lacks only that footer.**
+
+A [spine task](TASKS.md#spine-tasks)'s header reads `# interp: 2`, and its snapshot carries a `spine` key: the state table as lowered, which channel and edge codes each bit is, and which wire key each parameter is. With the parameter values and `trial_seed` beside it, that header is everything replay needs, so a spine run cut off mid-session still replays up to its last strobe ([TASKS.md](TASKS.md#the-snapshot)).
 
 ### The mat mirror
 

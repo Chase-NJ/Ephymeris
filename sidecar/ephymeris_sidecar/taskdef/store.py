@@ -232,7 +232,9 @@ class TaskStore:
         THE FOLDER IS REPLACED, NOT PATCHED. A renamed task leaves its old
         folder behind otherwise, and discovery would offer both.
         """
-        source = self._root_sketch_source()
+        # A spine task copies no root sketch: its runner is the library's
+        # BoxSpine.h and the generator writes its few-line `.ino`.
+        source = "" if definition.spine is not None else self._root_sketch_source()
         if source is None:
             log.warning(
                 "no %s sketch in the bundled library; %s has no flashable sketch",

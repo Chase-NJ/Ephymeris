@@ -13,6 +13,7 @@ import { springSnappy } from "@/lib/motion";
 import { useBoxEnded, useBoxTelemetry } from "@/lib/sessions/context";
 import { rollingAccuracy } from "@/lib/sessions/liveTrials";
 import { useLiveTrials } from "@/lib/sessions/useLiveTrials";
+import { liveScoring } from "@/lib/sessions/liveScoring";
 import { metricLabels, useTaskProfile } from "@/lib/sessions/useTaskProfiles";
 import type { SessionBox } from "@/lib/sessions/types";
 import { taskGraph } from "@/lib/tasks/topology";
@@ -97,6 +98,7 @@ export function StarPanel({
   const metrics = useBoxTelemetry(box.box);
   const profile = useTaskProfile(box.sketchPath);
   const labels = useMemo(() => metricLabels(profile), [profile]);
+  const scoring = liveScoring(profile);
 
   const live = port.state === "IN_SESSION";
   const { state: trials, usable } = useLiveTrials(box.box, profile?.strobes);
@@ -225,7 +227,7 @@ export function StarPanel({
           one glance, no scrolling. */}
       <div className="mt-3 grid grid-cols-[minmax(0,1fr)_300px] items-start gap-4 border-t border-halo pt-3">
         <div className="min-w-0">
-          {usable ? (
+          {usable && scoring.scored ? (
             <LivePanels
               live={trials}
               strobeNames={profile?.strobes ?? {}}
@@ -236,7 +238,9 @@ export function StarPanel({
             />
           ) : (
             <p className="text-[11px] leading-relaxed text-static">
-              {profile
+              {!scoring.scored
+                ? scoring.note
+                : profile
                 ? "This sketch's Task Profile doesn't declare the strobes the panels are derived from, so only the strobe feed is available."
                 : "No Task Profile for this sketch — only the strobe feed is available."}
             </p>
@@ -249,7 +253,7 @@ export function StarPanel({
               costs the readout it was showing. */}
           <HudSection title="Live metrics">
             <div className="px-3 py-2.5">
-              <MetricStrip box={box.box} metrics={metrics} labels={labels} bare />
+              <MetricStrip box={box.box} metrics={metrics} labels={labels} note={scoring.note} bare />
             </div>
           </HudSection>
 

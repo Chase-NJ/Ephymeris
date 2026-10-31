@@ -6,6 +6,7 @@ import { useBoxTelemetry } from "@/lib/sessions/context";
 import { rollingAccuracy } from "@/lib/sessions/liveTrials";
 import type { TaskProfile } from "@/lib/sessions/types";
 import { useLiveTrials } from "@/lib/sessions/useLiveTrials";
+import { liveScoring } from "@/lib/sessions/liveScoring";
 import { metricLabels } from "@/lib/sessions/useTaskProfiles";
 
 /**
@@ -44,6 +45,7 @@ export function DebugLive({
 }) {
   const metrics = useBoxTelemetry(box);
   const labels = useMemo(() => metricLabels(profile), [profile]);
+  const live = liveScoring(profile);
   const { state: trials, usable } = useLiveTrials(box, profile.strobes);
   const accuracy = useMemo(
     () => rollingAccuracy(trials.trials, ACCURACY_WINDOW),
@@ -77,11 +79,13 @@ export function DebugLive({
       </div>
 
       <div className="mt-3">
-        <MetricStrip box={box} metrics={metrics} labels={labels} bare />
+        <MetricStrip box={box} metrics={metrics} labels={labels} note={live.note} bare />
       </div>
 
       <div className="mt-4">
-        {usable ? (
+        {!live.scored ? (
+          <p className="text-[11px] leading-relaxed text-static">{live.note}</p>
+        ) : usable ? (
           <LivePanels live={trials} strobeNames={profile.strobes} chartHeight={36} />
         ) : (
           <p className="text-[11px] leading-relaxed text-static">

@@ -806,6 +806,15 @@ SHAPES = (
                 "asked to point at its own box, which the placement walk "
                 "degrades around rather than refusing.",
             ),
+            f(
+                "spine",
+                MapOf(ANY),
+                optional=True,
+                doc="Phase-spine tasks only (`TASKS.md#spine-tasks`): the snapshot replay "
+                "reads — the definition, the state table as lowered, each bit's channel and "
+                "edge code names, and each parameter slot's wire key. Absent on every other "
+                "profile.",
+            ),
         ),
         doc="Parsed from the sketch's `task.json` sibling "
         "(`TASKS.md#task-profile`); passed through verbatim — the sidecar "
@@ -2025,7 +2034,8 @@ SHAPES = (
                 "code",
                 STR,
                 doc="TSK101–TSK111, TSK113 and TSK114 from the sidecar; TSK112 is derived "
-                "on the Task tab. Each names a failure that is silent without it.",
+                "on the Task tab; SPN101–SPN108 for a phase-spine task "
+                "(`TASKS.md#spine-tasks`). Each names a failure that is silent without it.",
             ),
         ),
     ),

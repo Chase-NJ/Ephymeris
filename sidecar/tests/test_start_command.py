@@ -59,6 +59,10 @@ def test_overrides_are_applied_by_metadata_key_and_stale_keys_are_ignored() -> N
     assert command.tokens == ("ITI=2500", "PRM=1000")
 
 
+def test_a_block_opens_with_begin_so_the_board_forgets_an_earlier_attempt() -> None:
+    assert build_start_command(ITI_PRM, {}).begin_line == "BEGIN"
+
+
 def test_the_start_line_carries_only_the_seed() -> None:
     assert build_start_command(ITI_PRM, {}).start_line(123456789) == "START SEED=123456789"
 
@@ -90,6 +94,71 @@ def test_a_block_too_long_for_one_line_spreads_over_several() -> None:
     # the tokens however they were split.
     assert " ".join(line[len("SET "):] for line in command.set_lines).split(" ") == list(command.tokens)
     assert command.crc32 == zlib.crc32(" ".join(command.tokens).encode())
+
+
+# --- a value of the wrong type is refused, not quietly replaced -----------------
+
+
+_DEFAULTS = {"int": 0, "float": 0.5, "bool": False, "string": "x"}
+
+
+def _one(typ: str):
+    return _profile(("K", typ, _DEFAULTS[typ]))
+
+
+@pytest.mark.parametrize(
+    ("typ", "value", "token"),
+    [
+        ("int", 4000, "K=4000"),
+        ("int", 4000.0, "K=4000"),
+        ("int", "4000", "K=4000"),
+        ("int", -5, "K=-5"),
+        ("float", 0.5, "K=0.5"),
+        ("float", 2, "K=2"),
+        ("float", "0.25", "K=0.25"),
+        ("bool", True, "K=1"),
+        ("bool", False, "K=0"),
+        ("bool", 1, "K=1"),
+        ("bool", "true", "K=1"),
+        ("bool", "0", "K=0"),
+        ("string", "fast", "K=fast"),
+    ],
+)
+def test_a_value_of_the_right_type_is_rendered(typ: str, value: object, token: str) -> None:
+    assert build_start_command(_one(typ), {"k": value}).tokens == (token,)
+
+
+@pytest.mark.parametrize(
+    ("typ", "value"),
+    [
+        ("int", 4.9),  # the board would hold 4
+        ("int", "abc"),  # ... 0
+        ("int", "4.9"),
+        ("int", "12abc"),
+        ("int", True),
+        ("int", [1]),
+        ("float", "abc"),
+        ("float", float("inf")),  # ... infinity
+        ("float", float("nan")),
+        ("float", "1e999"),
+        ("float", True),
+        ("bool", "maybe"),  # ... 0
+        ("bool", 2),
+        ("bool", 0.5),
+        ("bool", [1]),
+        ("string", 5),
+        ("string", "two words"),
+        ("string", " pad"),
+    ],
+)
+def test_a_value_the_board_would_read_differently_is_refused_before_it_is_sent(
+    typ: str, value: object
+) -> None:
+    """The board hashes the text it was sent, so a value it reads as something
+    else (4.9 as 4, `abc` as 0) matches the host's CRC. The host does not render
+    one: the operator is told which field, and nothing reaches the board."""
+    with pytest.raises(TaskProfileError, match="K"):
+        build_start_command(_one(typ), {"k": value})
 
 
 # --- the cap -----------------------------------------------------------------

@@ -803,8 +803,7 @@ The mapping step keeps **only the per-box layer**: a row (and its set-up draft) 
 
 - `config` is keyed by `metadataKey`; tokens follow the profile's `config` order.
 - A missing key uses the field's default; an undeclared key is ignored, so stale UI state cannot leak.
-- An unrenderable value falls back to the default; if that fails too, the token is dropped.
-- `bool` → `1`/`0`; `int` → integer; `float` → trimmed; `string` → verbatim (whitespace raises).
+- A value is rendered only if the board will read exactly what is written: `bool` → `1`/`0` (from a bool, 0/1, or a word such as `true`); `int` → a whole number (4000.0 and `"4000"` pass, 4.9 and `abc` do not); `float` → trimmed, finite and within the board's float; `string` → verbatim (whitespace raises). Anything else raises `TaskProfileError` naming the field, at mapping, and **nothing is swapped for the default**: the board would run a setting nobody chose.
 - Tokens are packed greedily into lines shorter than `SET_LINE_MAX`, never split across lines.
 - No profile, or no config fields → one bare `SET`. The board is asked even about an empty block, because a board that never hears a `SET` cannot be told apart from an older sketch.
 
@@ -820,6 +819,7 @@ sequenceDiagram
     participant Board as Mega2560
     Board-->>Host: INTERP=1
     Board-->>Host: READY
+    Host->>Board: BEGIN
     loop each SET line, one at a time
         Host->>Board: SET KEY=value …
         Board-->>Host: CLAMPED KEY (for each value its clamp would move)
@@ -830,8 +830,9 @@ sequenceDiagram
     Board-->>Host: SEED n
 ```
 
+- **`BEGIN`** opens the block. The board forgets any earlier one: the running total below, and the values, back to what the sketch holds on entry. That is what lets a refused Debug Mode start be corrected and sent again on the same open console. Without it the second block is added to the first and every retry is refused as a count mismatch. A board that has not been sent one (a hand-typed console) starts empty anyway.
 - **`PARAMS <n> <crc32>`** is the running total: `n` is how many keys the board has accepted, and `crc32` is the standard CRC-32 (what Python's `zlib.crc32` computes) over the accepted tokens **exactly as received**, joined by single spaces, in the order received. The host computes both over what it sent (`StartCommand.count`, `.crc32`) and acts on the answer to its last line.
-- **`CLAMPED <key>`** is printed before that `PARAMS`, once for each value the board could not hold as sent: one `clampTaskParams()` would change in the block so far, or one outside the 16-bit range of the board's `int` (`BOX_INT_MIN`..`BOX_INT_MAX`, −32768..32767). The second kind matters because the CRC is over the text: `ITI=40000` hashes the same whether the board holds 40000 or wraps it to −25536, so only the board saying it could not hold it stops the run. More wide keys than the audit can name (16) are reported as `CLAMPED *`. The board judges a copy, so the block it holds is untouched until `START`; a clamp on an early line that a later line corrects does not appear in the last answer.
+- **`CLAMPED <key>`** is printed before that `PARAMS`, once for each value the board could not hold as sent: one `clampTaskParams()` would change in the block so far, or one it read differently from how it was written. The second kind matters because the CRC is over the text. `ITI=40000` hashes the same whether the board holds 40000 or wraps it to −25536 (the range of its 16-bit `int` is `BOX_INT_MIN`..`BOX_INT_MAX`, −32768..32767), `ITI=4.9` the same as 4, `ITI=abc` as 0, `LAZY=true` as 0 and `DBS=1e40` as infinity. Only the board saying it did not parse the text exactly (junk after the digits, a fraction for an int, a word for a number, a non-finite float) stops the run. The host does not render such a value for a bundled profile, but a hand-written `task.json` can declare one. More wide keys than the audit can name (16) are reported as `CLAMPED *`. The board judges a copy, so the block it holds is untouched until `START`; a clamp on an early line that a later line corrects does not appear in the last answer.
 
   > [!CAUTION]
   > **A parameter whose declared `max` is above 32767 can be refused by the board.** GRGL's `task.json` allows `ERR`, `ITI`, `NPH`, `LZD` up to 120000, `NWP`, `LZS`, `S<n>W`, `S<n>O` up to 60000 and `LZM` up to 300000, but the board holds them in a 16-bit `int`. Such a value now refuses the start with `PARAMS_CLAMPED` instead of running wrapped; the form does not yet stop it being typed.

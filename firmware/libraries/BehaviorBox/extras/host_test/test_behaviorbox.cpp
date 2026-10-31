@@ -396,6 +396,72 @@ int main() {
     setLine("SET LAZY=65536", p, a);
     assert(strstr(_serialOut, "CLAMPED LAZY") != NULL); }
 
+  // --- a value the board parses differently from how the host wrote it is a
+  //     clamp too. The CRC is over the text, so it matches whatever the board
+  //     makes of it: ITI=4.9 is held as 4, ITI=abc as 0, LAZY=true as 0 and
+  //     DBS=1e40 as infinity, and none of it would otherwise be noticed.
+  { const char *bad[] = {
+      "SET ITI=4.9", "SET ITI=abc", "SET ITI=12abc", "SET ITI=", "SET ITI=1e3",
+      "SET LAZY=true", "SET LAZY=0.5",
+      "SET DBS=1e40", "SET DBS=-1e40", "SET DBS=abc", "SET DBS=0.5x", "SET DBS=",
+    };
+    const char *keys[] = {
+      "ITI", "ITI", "ITI", "ITI", "ITI", "LAZY", "LAZY", "DBS", "DBS", "DBS", "DBS", "DBS",
+    };
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+      TaskParams p; ParamAudit a;
+      setLine(bad[i], p, a);
+      char want[24];
+      snprintf(want, sizeof(want), "CLAMPED %s", keys[i]);
+      if (strstr(_serialOut, want) == NULL) { printf("not refused: %s -> %s\n", bad[i], _serialOut); assert(false); }
+      assert(a.accepted == 1);                                        // still counted and hashed as sent
+    } }
+  { TaskParams p; ParamAudit a;                                       // what they are held as
+    setLine("SET ITI=4.9", p, a);   assert(p.standardITI == 4);
+    setLine("SET ITI=abc", p, a);   assert(p.standardITI == 0);
+    setLine("SET LAZY=true", p, a); assert(!p.lazyEscalationEnabled); }
+  { const char *good[] = {
+      "SET ITI=4000", "SET ITI=-5", "SET ITI=+7", "SET DBS=0.5", "SET DBS=1e-3", "SET DBS=2", "SET DBS=-0.25",
+      "SET LAZY=1", "SET LAZY=0",
+    };
+    for (size_t i = 0; i < sizeof(good) / sizeof(good[0]); i++) {
+      TaskParams p; ParamAudit a;
+      setLine(good[i], p, a);
+      if (strstr(_serialOut, "CLAMPED") != NULL) { printf("refused: %s -> %s\n", good[i], _serialOut); assert(false); }
+    } }
+  { TaskParams p; ParamAudit a;                                       // fixed by a later line, it is fine
+    setLine("SET ITI=abc", p, a);
+    setLine("SET ITI=4000", p, a);
+    assert(strstr(_serialOut, "CLAMPED") == NULL && p.standardITI == 4000); }
+
+  // --- awaitStart: the one SET/START loop both sketches run. A block opens with
+  //     BEGIN, which forgets any earlier one -- the audit, and the values -- so a
+  //     refused Send START from Debug Mode can be corrected and sent again on the
+  //     same open console. Without it the retry's PARAMS counts the first block
+  //     too and every retry is refused as a count mismatch.
+  { TaskParams p; p.numTrials = 200;                                  // a sketch's own fallback
+    _serialOutLen = 0; _serialOut[0] = '\0';
+    _serialIn = "BEGIN\nSET ITI=40000 RW1=7 NT=50\n"                   // refused: ITI cannot be held
+                "BEGIN\nSET ITI=4000\n"                              // corrected, sent again
+                "START SEED=5\n";
+    awaitStart(p);
+    // The second reply is for the second block alone: one key, ITI=4000.
+    assert(strstr(_serialOut, "CLAMPED ITI\r\nPARAMS 3 ") != NULL);     // the first, with its three keys
+    const char *second = strstr(_serialOut, "PARAMS 1 1462853793\r\n");
+    assert(second != NULL && strstr(second, "CLAMPED") == NULL);
+    assert(p.standardITI == 4000 && p.trialSeed == 5UL);
+    assert(p.rewardTimes[0] == -1);                                   // RW1=7 of the first block is gone
+    assert(p.numTrials == 200); }                                     // and the sketch's own fallback is back
+  { TaskParams p;                                                     // no BEGIN: a hand-typed console works
+    _serialOutLen = 0; _serialOut[0] = '\0';
+    _serialIn = "SET ITI=4000\nSTART SEED=9\n";
+    awaitStart(p);
+    assert(p.standardITI == 4000 && p.trialSeed == 9UL); }
+  { TaskParams p;                                                     // a bare START keeps every default
+    _serialIn = "STARTUP\nSTART\n";                                  // and a word that merely begins with it is ignored
+    awaitStart(p);
+    assert(p.standardITI == 4000); }
+
   { TaskParams p; ParamAudit a;                                       // START SEED=<n> is not a parameter
     setLine("SET ITI=4000", p, a);
     parseStart("START SEED=77", p);

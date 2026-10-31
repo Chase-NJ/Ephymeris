@@ -1147,7 +1147,7 @@ Per box (`ports/handler.py`, `sessions/runner.py`):
 2. Open the port, which pulls DTR and resets the Mega.
 3. Wait `SESSION_READY_TIMEOUT_S` for `READY`, else `ERROR`. An `INTERP=<n>` line before it names the
    firmware interpreter and is kept for the file header.
-4. Send the built `SET` lines one at a time, waiting up to `SESSION_PARAMS_TIMEOUT_S` for each `PARAMS` answer,
+4. Send `BEGIN`, then the built `SET` lines one at a time, waiting up to `SESSION_PARAMS_TIMEOUT_S` for each `PARAMS` answer,
    and hold the last answer against what was sent ([TASKS.md](TASKS.md#confirming-the-parameters)). A mismatch,
    a `CLAMPED` key or silence refuses the start: `START` is never sent, the box is told why in a
    `sidecar.error` (`PARAMS_MISMATCH`, `PARAMS_CLAMPED`, `FIRMWARE_OUTDATED`), the run ends with
@@ -1190,6 +1190,7 @@ sequenceDiagram
     Port->>Board: open the port, DTR resets the Mega
     Board-->>Port: INTERP=n, then READY
     Note over Port,Board: no READY within SESSION_READY_TIMEOUT_S → ERROR
+    Port->>Board: BEGIN
     loop each SET line
         Port->>Board: SET KEY=value …
         Board-->>Port: PARAMS n crc32 (CLAMPED KEY first, if any)

@@ -105,7 +105,8 @@ void setup()
      1. The host opens the port (which resets the Mega via DTR).
      2. We land here and announce INTERP=<n> then READY, so the app can arm its
         start button and knows which interpreter this build is.
-     3. The host sends the run's parameters as capped "SET KEY=value ..." lines.
+     3. The host sends the run's parameters as capped "SET KEY=value ..." lines,
+        after a "BEGIN" that forgets any earlier attempt.
         Each is answered with the running "PARAMS <n> <crc32>" (and a "CLAMPED
         <KEY>" for any value the clamp would move); the host checks that against
         what it sent and refuses to go on if they differ.
@@ -115,22 +116,7 @@ void setup()
   delay(50);                      // Let the post-reset serial settle
   announceReady();                // INTERP=<n>, then READY
 
-  char cmd[SET_LINE_MAX]; // must hold the WHOLE line: readLineInto() truncates
-                          // at this cap, and the PARAMS reply is how the host
-                          // finds out when it did.
-  ParamAudit audit;
-  while (true)
-  {
-    if (!readLineInto(cmd, sizeof(cmd)))
-      continue;
-    if (lineIsCommand(cmd, "SET"))
-      applySetLine(cmd, params, audit); // fill params, then answer for what arrived
-    else if (lineIsCommand(cmd, "START"))
-    {
-      parseStartCommand(cmd, params); // SEED, then the clamp (anything unsent keeps its default)
-      break;                          // START received -- begin session
-    }
-  }
+  awaitStart(params); // SET lines answered, then START SEED=<n>: fills params
 
   /* Each type's reward volume: the value compiled into TaskTrials.h unless the
      line carried RW<slot+1> for it. Before the first trial, after the parse. */

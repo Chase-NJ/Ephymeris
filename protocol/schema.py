@@ -3945,9 +3945,11 @@ ERRORS = (
     ErrorCode(
         "PARAMS_CLAMPED",
         "A start refused because the board could not hold a value as sent "
-        "(`CLAMPED <key>`): its clamp would move it, or it is outside the "
-        "board's 16-bit `int`. `detail.keys` names them (`*` for more than it "
-        "can list). Nothing was started (`TASKS.md#confirming-the-parameters`).",
+        "(`CLAMPED <key>`): its clamp would move it, it is outside the board's "
+        "16-bit `int`, or the board read the text as something else (`4.9` as "
+        "4, `abc` as 0). `detail.keys` names them (`*` for more than it can "
+        "list). Changing the value fixes it, and reflashing does not. Nothing "
+        "was started (`TASKS.md#confirming-the-parameters`).",
     ),
     ErrorCode(
         "FIRMWARE_OUTDATED",

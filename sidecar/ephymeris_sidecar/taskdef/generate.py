@@ -599,7 +599,7 @@ def task_trials_h(definition: TaskDefinition) -> str:
         "",
         "    NOT const: each row's last argument is its reward volume, the",
         "    profile's default, and applyRewardTimes() overwrites it from the",
-        "    START line before the first trial. */",
+        "    SET lines before the first trial. */",
         "static TrialType kTrials[] = {",
     ]
 

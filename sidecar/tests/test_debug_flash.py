@@ -104,6 +104,8 @@ class ParamsSerial(FakeSerial):
     def write(self, data: bytes) -> int:
         line = data.decode().strip()
         written = super().write(data)
+        if line == "BEGIN":
+            self._tokens = []
         if ParamsSerial.silent or not (line == "SET" or line.startswith("SET ")):
             return written
         for token in line[: ParamsSerial.cap].split()[1:]:
@@ -390,9 +392,32 @@ async def test_send_start_sends_the_set_lines_a_session_would_build_then_a_bare_
 
     expected = build_start_command(TASK_PROFILE, {"iti": 2500})
     assert expected.set_lines == ("SET ITI=2500 RW=40",)
-    assert params_serial.instances[-1].written[-2:] == [*expected.set_lines, "START"]
+    assert params_serial.instances[-1].written[-3:] == ["BEGIN", *expected.set_lines, "START"]
     assert reply["command"] == "START"
     assert "SEED" not in reply["command"]
+
+
+async def test_a_refused_send_start_can_be_corrected_and_sent_again_on_the_same_console(
+    rig_definition, task_profile_on_disk, params_serial,  # noqa: ANN001
+) -> None:
+    """The board is still in its start loop after a refusal. Its second PARAMS
+    must count the second block alone, or every retry is refused as a count
+    mismatch and told to reflash a board that needs nothing."""
+    app = await make_app(rig_definition)
+    app.ports.open_passthrough(1)
+
+    params_serial.clamps = {"RW"}
+    with pytest.raises(Refused) as err:
+        await send_start(app, sketchPath=TASK_PATH)
+    assert err.value.code == ErrCode.PARAMS_CLAMPED
+
+    params_serial.clamps = set()
+    reply = await send_start(app, sketchPath=TASK_PATH)
+
+    assert reply["command"] == "START"
+    written = params_serial.instances[-1].written
+    assert written.count("BEGIN") == 2
+    assert written[-3:] == ["BEGIN", "SET ITI=4000 RW=40", "START"]
 
 
 async def test_send_start_refuses_a_block_the_board_does_not_confirm(
@@ -430,7 +455,7 @@ async def test_send_start_without_config_uses_the_profile_defaults(
     app = await make_app(rig_definition)
     app.ports.open_passthrough(1)
     await send_start(app, sketchPath=TASK_PATH)
-    assert params_serial.instances[-1].written[-2:] == ["SET ITI=4000 RW=40", "START"]
+    assert params_serial.instances[-1].written[-3:] == ["BEGIN", "SET ITI=4000 RW=40", "START"]
 
 
 async def test_send_start_needs_an_open_console(rig_definition, task_profile_on_disk) -> None:  # noqa: ANN001

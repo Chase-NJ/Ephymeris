@@ -1,8 +1,8 @@
 /*
   BoxInterp.h
   ===========
-  THE PHASE INTERPRETER'S PURE CORE (docs/adr/0003-phase-spine-task-model.md,
-  "Interpreter and firmware").
+  THE PHASE INTERPRETER'S PURE CORE
+  (0003-phase-spine-task-model.md#interpreter-and-firmware).
 
   A task's spine of phases is lowered, by the generator, to a STATE TABLE. This
   header walks that table one millisecond tick at a time:
@@ -35,7 +35,9 @@
     1. INPUTS FIRST. The tick's edges are masked by the current state's `watch`;
        only watched edges are reported, and only they can move the state.
     2. AN EDGE BEATS A TIMER. If any watched edge matches one of the state's edge
-       rows, one of them is taken and the timer is not looked at.
+       rows, one of them is taken and the timer is not looked at. A watched
+       edge with no edge row (a lick being counted) moves nothing, so it does
+       not hold a timer off.
     3. TWO OR MORE MATCHING EDGES are broken by a draw from the session RNG:
        the k-th match in table order, k = interp_draw(rng, matches). A single
        match draws nothing.
@@ -79,7 +81,9 @@
                 here. An input not in `watch` is ignored entirely.
     timer_min,  Parameter slots of the duration, in ms. Equal slots (or equal
     timer_max   values) give a fixed duration; otherwise it is drawn uniformly
-                from [params[timer_min], params[timer_max]] at entry. NONE in
+                from [params[timer_min], params[timer_max]] at entry, as
+                lo + interp_draw(rng, hi - lo + 1) in uint32_t: a span of the
+                whole 32-bit range wraps to a draw over 0, which is lo. NONE in
                 timer_min: no timer, the state waits for an edge.
     on_timeout  The state entered when the timer runs out.
     chance      NONE, or the parameter slot of a probability in permille. A
@@ -135,12 +139,14 @@
   and the differential test compares it.
 
   Tables live in RAM as plain const arrays for now; how much a table may cost
-  is the ADR's open question 8.
+  is an open question (0003-phase-spine-task-model.md#open-questions, the RAM
+  budget).
 */
 
 #ifndef BOX_INTERP_H
 #define BOX_INTERP_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #define INTERP_VERSION 1

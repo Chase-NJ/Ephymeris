@@ -13,5 +13,5 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 LIB="$HERE/../.."          # the BehaviorBox library root (holds BoxInterp.h)
 CXX="${CXX:-clang++}"
 PYTHON="${PYTHON:-python3}"
-"$CXX" -std=c++11 -Wall -Wextra -Werror -I"$LIB" "$HERE/interp_driver.cpp" -o "$HERE/interp_driver"
+"$CXX" -std=c++11 -Wall -Wextra -Wconversion -Werror -I"$LIB" "$HERE/interp_driver.cpp" -o "$HERE/interp_driver"
 "$PYTHON" "$HERE/differential.py" --driver "$HERE/interp_driver" "$@"

@@ -49,6 +49,29 @@ int main() {
     for (int i = 1; i < 10000; ++i) v = interp_random(&ctx);
     assert(v == 1043618065UL); }
 
+  // The first five values from seeds that exercise avr-libc's quirks: 0 is read
+  // as 123459876, and a state at or above 2^31 - 1 as a negative long.
+  // test_analytics_replay.py's CAPTURED_FROM_C pins the Python port to these
+  // same literals; change one, change both.
+  { static const uint32_t seeds[] = {1UL, 0UL, 123456789UL, 2147483646UL, 2147483647UL,
+                                     0x80000000UL, 0xFFFFFFFFUL};
+    static const uint32_t first5[][5] = {
+      {16807UL, 282475249UL, 1622650073UL, 984943658UL, 1144108930UL},
+      {520932930UL, 28925691UL, 822784415UL, 890459872UL, 145532761UL},
+      {469049721UL, 2053676357UL, 1781357515UL, 1206231778UL, 891865166UL},
+      {2147466840UL, 1865008398UL, 524833574UL, 1162539989UL, 1003374717UL},
+      {0UL, 520932930UL, 28925691UL, 822784415UL, 890459872UL},
+      {2147466840UL, 1865008398UL, 524833574UL, 1162539989UL, 1003374717UL},
+      {2147466840UL, 1865008398UL, 524833574UL, 1162539989UL, 1003374717UL},
+    };
+    for (int s = 0; s < 7; ++s) {
+      uint32_t ctx = seeds[s];
+      for (int i = 0; i < 5; ++i) assert(interp_random(&ctx) == first5[s][i]);
+    } }
+  { uint32_t ctx = 42;                                   // CAPTURED draws, seed 42
+    assert(interp_draw(&ctx, 1000) == 894UL && interp_draw(&ctx, 7) == 2UL
+           && interp_draw(&ctx, 2) == 1UL && interp_draw(&ctx, 3) == 2UL); }
+
   // --- interp_draw: Arduino's random(n), random() % n; n == 0 draws nothing ---
   { uint32_t ctx = 1;
     assert(interp_draw(&ctx, 1000) == 807UL);          // 16807 % 1000

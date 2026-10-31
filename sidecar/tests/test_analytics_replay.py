@@ -28,7 +28,8 @@ from ephymeris_sidecar.analytics.stream.replay import (
 
 #: The first five values of `interp_random()` from each seed, printed by a
 #: host build of BoxInterp.h. Seed 1 is Park and Miller's own sequence; 0 and
-#: everything at or above 2^31 - 1 exercise avr-libc's quirks.
+#: everything at or above 2^31 - 1 exercise avr-libc's quirks. test_interp.cpp
+#: asserts the same literals against the C core; change one, change both.
 CAPTURED_FROM_C = {
     0x00000001: (16807, 282475249, 1622650073, 984943658, 1144108930),
     0x00000000: (520932930, 28925691, 822784415, 890459872, 145532761),

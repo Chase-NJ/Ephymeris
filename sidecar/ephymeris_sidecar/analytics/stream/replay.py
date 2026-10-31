@@ -1,8 +1,8 @@
 """Replay a session through the phase interpreter, exactly as the board ran it.
 
 A Python port of `firmware/libraries/BehaviorBox/BoxInterp.h`, the board's
-pure interpreter core (docs/adr/0003-phase-spine-task-model.md, "Replay and
-analytics"). That header documents the state table, the tick rules and the
+pure interpreter core (`0003-phase-spine-task-model.md#replay-and-analytics`).
+That header documents the state table, the tick rules and the
 actions of a tick; this file follows it line for line and documents only what
 is Python's own. Given the table, the parameters, the seed and the input
 edges, replay predicts every action the board took, at its tick.
@@ -234,7 +234,6 @@ class Core:
     duration: int = 0
     outputs: int = 0
     state: int = 0
-    interp: int = INTERP_VERSION
 
 
 @dataclass
@@ -291,7 +290,7 @@ def begin(
         raise ValueError(f"the table reads parameter slot {table.slots_used() - 1}, past the {len(params)} given")
     if any(not 0 <= p <= _U32 for p in params):
         raise ValueError("every parameter is a uint32_t")
-    core = Core(table=table, params=params, rng=seed & _U32, interp=interp)
+    core = Core(table=table, params=params, rng=seed & _U32)
     a = _Tick(flags=ACT_SESSION_START)
     core = _enter(core, 0, now & _U32, a)
     return core, a.done()

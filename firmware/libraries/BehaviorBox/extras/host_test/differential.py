@@ -257,7 +257,7 @@ def main() -> int:
 
     cases = make_cases(args.seed, args.cases)
     version, c_runs = run_c(args.driver, cases)
-    if version not in rp.INTERP_VERSIONS or version != rp.INTERP_VERSION:
+    if version != rp.INTERP_VERSION:
         print(f"differential: the C core is INTERP {version}, the replay runs {sorted(rp.INTERP_VERSIONS)}")
         return 1
     if len(c_runs) != len(cases):

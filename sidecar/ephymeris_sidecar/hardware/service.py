@@ -209,9 +209,9 @@ def _notices(state: _Rig) -> list[_Notice]:
         out.append(_Notice(
             disk.shadows[0],
             f"{_names(disk.shadows)} {_is(disk.shadows)} on disk beside {names} and "
-            f"{_is(disk.shadows)} not read: {names} wins. {'It was' if one else 'They were'} "
-            f"copied in, not saved here, so no save removes {it}; Reset does, or remove "
-            f"{it} by hand.",
+            f"{_is(disk.shadows)} not read: {names} wins. {'It is' if one else 'They are'} "
+            f"not wiring saved here (copied in, or left by a Reset that did not finish), so "
+            f"no save removes {it}; Reset does, or remove {it} by hand.",
             cleared_by_save=False,
         ))
     return out
@@ -302,9 +302,9 @@ def _beside_wiring_in_force(state: _Rig, names: str, now: str) -> list[str]:
     return []
 
 
-def notices_for(state: _Rig) -> list[dict[str, Any]]:
+def _wire(notices: list[_Notice]) -> list[dict[str, Any]]:
     """`RigStatus.notices`, as the wire carries them."""
-    return [{"location": n.location, "message": n.message, "code": None} for n in _notices(state)]
+    return [{"location": n.location, "message": n.message, "code": None} for n in notices]
 
 
 def _content(doc: dict | None) -> dict | None:
@@ -313,10 +313,12 @@ def _content(doc: dict | None) -> dict | None:
 
 
 def _names(names: tuple[str, ...]) -> str:
+    """File names as a notice lists them: `a and b`, or `a, b, c`."""
     return " and ".join(names) if len(names) <= 2 else ", ".join(names)
 
 
 def _is(names: tuple[str, ...]) -> str:
+    """The verb that agrees with `_names(names)`."""
     return "is" if len(names) == 1 else "are"
 
 
@@ -426,7 +428,7 @@ def _status(
         "editedAt": doc.get("edited_at") if custom else None,
         "pinoutHash": registry.channels().content_hash(),
         "channelSetHash": registry.channel_set().content_hash(),
-        "notices": [{"location": n.location, "message": n.message, "code": None} for n in notices],
+        "notices": _wire(notices),
         # Every notice offers Reset (or a save) as the way out, so Reset is
         # offered with it, even when nothing of the rig's own is in force.
         "canReset": custom or bool(state.paths) or bool(notices),

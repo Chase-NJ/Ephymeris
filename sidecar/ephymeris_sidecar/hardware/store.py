@@ -23,16 +23,17 @@ and renamed over the old one (`_write_atomic`) cannot tear: a reader sees the
 old wiring or the new, never a mix. Once the rename lands the save is
 committed; the folder fsync after it is best effort, logged if it fails.
 
-STORED WIRING NOBODY SAVED OR CONFIRMED HERE IS HELD (#131). The store keeps
+STORED WIRING NOBODY SAVED OR CONFIRMED HERE IS HELD
+(TASKS.md#the-channel-set-and-the-pin-map). The store keeps
 the content digest of the wiring last saved on this machine, which is also how
 a confirmed "I've checked every pin" lands: as a save. Stored wiring that
 passes every check but whose digest is not recorded is `held`: copied in,
 edited by hand, or fixed by hand after a failed load. It is never put in
 force, however many restarts pass, until it is saved. The digests live OUTSIDE
 `hardware/`, so copying that folder from the other lab machine never brings
-its confirmation along. A machine with no digest file yet (an upgrade from
-main, or a fresh install) records, on its first read, the stored wiring it
-would have run anyway, so a normal upgrade asks nothing (`_recorded`).
+its confirmation along. A machine with no digest file yet records, at its
+first start, the stored wiring it would have run anyway, so a normal upgrade
+asks nothing (`record_at_first_start`).
 
 STORED WIRING THAT IS NOT IN FORCE IS NEVER REPLACED BY THE SHIPPED ONE SILENTLY.
 The registry composes the shipped pinout meanwhile, because the process owns six
@@ -54,7 +55,7 @@ and removes them:
 `wiring.json` wins over both, and the pair over `rig.json`. A layout beside
 the one read is a SHADOW: if its digest is recorded it is this app's own
 leftover of a save stopped before its cleanup, and the next save removes it;
-otherwise it was copied in, `inspect` names it, and no save deletes it. A stray
+otherwise `inspect` names it as not saved here, and no save deletes it. A stray
 temporary file (`*.part`, `*.json.tmp`) on its own is no wiring at all.
 
 A RIG DOCUMENT REPLACES THE SHIPPED PAIR, it does not merge with it. A merge
@@ -196,6 +197,8 @@ class HardwareStore:
         self.pin_map_path = self.root / PIN_MAP_FILENAME
         #: Beside `hardware/`, never in it (module docstring).
         self.confirmed_path = Path(data_dir) / CONFIRMED_FILENAME
+        #: What `record_at_first_start` recorded but could not write.
+        self._unwritten: frozenset[str] = frozenset()
 
     # -- reading ----------------------------------------------------------- #
 
@@ -271,40 +274,53 @@ class HardwareStore:
             ),
         )
 
+    def record_at_first_start(self) -> None:
+        """At startup, before the first install: with no record at all yet (a
+        build that kept none, or a fresh install), record the stored wiring if
+        it passes every check -- the wiring that build would have put in force
+        at this start -- and write the record even when empty, so wiring copied
+        in later is held. A normal upgrade therefore asks nothing.
+
+        THE ONLY PLACE unrecorded wiring is ever recorded without a save. A
+        read never does it: a record lost while the app runs must hold a file
+        copied in after it, not adopt it on the next `hardware.get`."""
+        if self.confirmed_path.exists():
+            return
+        present = [layout for layout in self._layouts() if layout.present]
+        stored = present[0].read() if present else Stored(None, [], "none")
+        seed = [stored.digest] if stored.state == "loads" and stored.digest else []
+        try:
+            self._write_recorded(seed)
+        except OSError as exc:
+            log.warning("could not record the wiring in force (%s); it is trusted this run only", exc)
+            self._unwritten = frozenset(seed)
+
     def _survey(self) -> tuple[Stored, frozenset[str], list[_Layout]]:
         """(the stored wiring, the digests recorded as saved here, the older
         layouts a save replaces) -- everything one read of the disk says."""
         present = [layout for layout in self._layouts() if layout.present]
         stored = present[0].read() if present else Stored(None, [], "none")
-        recorded = self._recorded(stored)
+        recorded = self._recorded()
         if stored.state == "loads" and stored.digest not in recorded:
             stored = dataclasses.replace(stored, state="held")
-        shadows = [s for s in present[1:] if s.digest() not in recorded]
+        shadows = [s for s in present[1:] if not _is_recorded(s, recorded)]
         stored = dataclasses.replace(stored, shadows=tuple(
             p.name for s in shadows for p in s.files if p.is_file() and not p.name.endswith(".tmp")
         ))
         replaced = [s for s in present if s.files[0] != self.path and s not in shadows]
         return stored, recorded, replaced
 
-    def _recorded(self, stored: Stored) -> frozenset[str]:
+    def _recorded(self) -> frozenset[str]:
         """The digests of the wiring saved (or confirmed) on this machine.
 
-        NO FILE YET is the upgrade from main, or a fresh install: what is
-        stored is recorded if it passes every check -- it is what main would
-        have put in force at this start -- and the file is written now, even
-        empty, so wiring copied in after today is held. A file that exists but
-        will not read is never "no file": it records nothing, so everything is
-        held until saved, and the log says why.
+        No file reads as nothing recorded: everything is held
+        (`record_at_first_start` is what writes the first one). A file that
+        exists but will not read records nothing either, and the log says why.
         """
         try:
             raw = self.confirmed_path.read_bytes()
         except FileNotFoundError:
-            seed = [stored.digest] if stored.state == "loads" and stored.digest else []
-            try:
-                self._write_recorded(seed)
-            except OSError as exc:
-                log.warning("could not record the wiring in force (%s); it is trusted this run only", exc)
-            return frozenset(seed)
+            return self._unwritten
         except OSError as exc:
             log.error("%s is unreadable (%s): every stored wiring is held", CONFIRMED_FILENAME, exc)
             return frozenset()
@@ -385,8 +401,8 @@ class HardwareStore:
           2. write `wiring.json` (the commit);
           3. remove the older layouts it replaces -- never a shadow copied in;
           4. record the new digest alone, unless a removal failed: then the
-             digests recorded before stay, so a leftover this app recorded is
-             removed silently by the next save (one never recorded is shown).
+             digests recorded before stay, beside each leftover file's own,
+             so the next save removes the leftover silently.
 
         A failure at 1 writes nothing; at 2, the previous wiring is still
         recorded; after 2 the save has landed, and step 4 is logged if it fails.
@@ -404,11 +420,15 @@ class HardwareStore:
         _write_atomic(self.path, json.dumps(stored, indent=2) + "\n")
         # Only once the new file is whole: an older layout left behind by a
         # failure here is harmless, because `wiring.json` wins over it.
-        if self._remove(p for layout in replaced for p in layout.files):
-            try:
-                self._write_recorded([new])
-            except OSError as exc:
-                log.warning("%s was saved, but recording it alone failed (%s)", WIRING_FILENAME, exc)
+        self._remove(p for layout in replaced for p in layout.files)
+        # A file that would not go is this save's own leftover: record its
+        # bytes, so it is never shown as a copy and the next save removes it.
+        # Half a pair has no content digest of its own, hence per file.
+        left = [_file_digest(p) for layout in replaced for p in layout.files if p.is_file()]
+        try:
+            self._write_recorded([*recorded, new, *left] if left else [new])
+        except OSError as exc:
+            log.warning("%s was saved, but recording it alone failed (%s)", WIRING_FILENAME, exc)
         return stored
 
     def reset(self) -> None:
@@ -422,6 +442,7 @@ class HardwareStore:
         that was in force or a load problem, and either is held at a restart.
         """
         self._write_recorded([])
+        self._unwritten = frozenset()
         for path in self.removal_order():
             path.unlink(missing_ok=True)
 
@@ -499,6 +520,23 @@ def content_digest(doc: dict) -> str:
 
 def _digest_of(doc: dict | None) -> str | None:
     return None if doc is None else content_digest(doc)
+
+
+def _file_digest(path: Path) -> str:
+    """A leftover file's own record entry: its bytes, not its content."""
+    return "file:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _is_recorded(layout: _Layout, recorded: frozenset[str]) -> bool:
+    """A layout beside the one read is this app's own leftover: its content
+    was saved here, or every file of it is one a save could not remove."""
+    if layout.digest() in recorded:
+        return True
+    files = [p for p in layout.files if p.is_file()]
+    try:
+        return bool(files) and all(_file_digest(p) in recorded for p in files)
+    except OSError:
+        return False
 
 
 def _unloaded(location: str, why: str | None) -> tuple[str, str]:

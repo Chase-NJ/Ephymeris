@@ -123,6 +123,7 @@ def test_a_rig_saved_before_the_channel_set_existed_composes_with_defaults(tmp_p
     s = store.HardwareStore(tmp_path)
     s.root.mkdir(parents=True)
     s.path.write_text(json.dumps(legacy(store.default_document())), encoding="utf-8")
+    s.record_at_first_start()  # the upgrade onto this build
     loaded = s.load()
     assert loaded["channels"]["left_well"]["type"] == "digital_in"
     assert loaded["channels"]["fluid_0"]["serves"] == "left_well"
@@ -380,6 +381,7 @@ def test_a_rig_saved_as_rig_json_migrates_losslessly(tmp_path):
     doc = store.default_document()
     doc["pins"]["left_well"]["index"] = 12
     _legacy_rig_json(s, doc)
+    s.record_at_first_start()  # the upgrade onto this build
     before = s.load()
     assert before["pins"]["left_well"]["index"] == 12 and s.load_problems() == []
 
@@ -395,6 +397,7 @@ def test_a_main_era_pair_migrates_losslessly(tmp_path):
     doc["pins"]["left_well"]["index"] = 12
     doc["channels"]["odor_port"]["label"] = "nose poke"
     _main_era_pair(s, doc)
+    s.record_at_first_start()  # the upgrade onto this build
     before = s.load()
     assert before["pins"]["left_well"]["index"] == 12
     assert before["channels"]["odor_port"]["label"] == "nose poke"
@@ -611,6 +614,7 @@ def test_an_identical_copy_from_another_machine_loads_and_compares_equal(tmp_pat
     copied["edited_at"] = "2020-01-01T00:00:00Z"
     b.root.mkdir(parents=True)
     b.path.write_text(json.dumps(copied), encoding="utf-8")
+    b.record_at_first_start()  # b, upgrading onto this build with a's wiring
 
     assert b.load_problems() == []
     composed = [registry.ChannelMap(*registry.split_rig(x.load())) for x in (a, b)]
@@ -1136,6 +1140,7 @@ def test_reset_lists_every_file_it_removes(tmp_path):
     _main_era_pair(s, doc)
     # The pin map in force is the staged one: a save stopped between renames.
     s.pin_map_path.rename(s.pin_map_path.with_suffix(".json.tmp"))
+    s.record_at_first_start()
     assert s.load() is not None
 
     listed = {Path(p) for p in service.document_payload(s)["status"]["resetReplaces"]}

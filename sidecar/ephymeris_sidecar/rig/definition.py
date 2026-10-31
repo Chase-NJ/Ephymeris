@@ -233,6 +233,9 @@ class RigDefinition:
         # The vocabulary first: installing the wiring checks its rules, and
         # RIG104/RIG106/RIG107 read codes from the vocabulary in force.
         registry.set_vocabulary_source(vocabulary.load)
+        # The one moment unrecorded wiring may be recorded without a save:
+        # this start, before anything reads it (`record_at_first_start`).
+        hardware.record_at_first_start()
         self._install_wiring()
 
     # -- the lock ------------------------------------------------------------ #

@@ -19,6 +19,11 @@ _Avoid_: channel registry, channel list
 The rig wiring's local half: which pin each channel of the channel set is on, on this machine's box.
 _Avoid_: pinout (the shipped transcription a pin map starts from)
 
+<a id="held-wiring"></a>
+**Held wiring**:
+Stored rig wiring that passes every check but was not saved, or confirmed, on this machine: copied in, or changed by hand. It is never in force, at any start, until its pins are confirmed and it is saved. Unrelated to a held session.
+_Avoid_: unconfirmed wiring, pending wiring
+
 <a id="held-session"></a>
 **Held session**:
 The one session that holds the rig, from its mapping's confirmation (or a resume) until it ends or is abandoned. It stays held between groups, and it may still read `configuring`.

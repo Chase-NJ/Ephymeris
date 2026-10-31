@@ -500,6 +500,42 @@ def test_the_leftover_of_a_migration_the_app_made_is_removed_by_the_next_save(tm
     assert not s.legacy_rig_path.exists()
 
 
+def test_half_a_pair_left_by_a_save_is_the_app_s_own_and_the_next_save_removes_it(tmp_path, monkeypatch):
+    s = store.HardwareStore(tmp_path)
+    write_pair(s, moved(12))
+    rig = Rig(tmp_path)  # the upgrade: the pair is in force and recorded
+    real = Path.unlink
+
+    def unlink(self, *a, **k):
+        if self.name == store.CHANNEL_SET_FILENAME:
+            raise PermissionError("held open")
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    rig.save(moved(13))  # migrates; pin_map.json goes, channel_set.json stays
+    monkeypatch.undo()
+    assert s.channel_set_path.exists() and not s.pin_map_path.exists()
+    assert store.CHANNEL_SET_FILENAME not in rig.notices(), "the app's own leftover, not a copy"
+
+    rig.save(moved(14))
+    assert not s.channel_set_path.exists()
+
+
+def test_a_record_lost_while_running_never_trusts_a_file_copied_in_after(tmp_path):
+    """Only a start records unrecorded wiring; a read never does, so the
+    copy is held for as long as this run lasts and no record is written."""
+    rig = Rig(tmp_path)
+    rig.save(moved(12))
+    rig.hardware.confirmed_path.unlink()  # lost while the app runs
+    write_wiring(rig.hardware, moved(13))  # and another machine's wiring copied in
+    for _ in range(2):
+        payload = rig.get()
+        assert "RIG108" in {p["code"] for p in payload["problems"]}
+        assert payload["status"]["needsPinConfirmation"] is True
+    assert not rig.hardware.confirmed_path.exists(), "a read never records anything"
+    assert registry.channels().get("left_well").index == 12
+
+
 # --------------------------------------------------------------------------- #
 # 5. A save refused for a rule never asks about breaks first
 # --------------------------------------------------------------------------- #

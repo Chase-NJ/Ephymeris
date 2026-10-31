@@ -717,7 +717,9 @@ Both lab machines must hold one channel set and emit identical codes ([ADR 0003]
 
 - **`channel_set`** is the channel set in force: every channel entry whole, in declaration order. It has no pins.
 - **`vocabulary`** is the whole vocabulary, as `strobes.export` sends it.
-- **`channel_set_hash`** is `ChannelSet.content_hash()` ([Registry rules](#registry-rules)), by the rule `channel_set_hash_version` names. An export with no version was made before the hash covered order: the import checks its hash by version 1's rule, and its order by the `order` conflicts. A version this build does not know is `CHANNEL_SET_INVALID`.
+- **`channel_set_hash`** is `ChannelSet.content_hash()` ([Registry rules](#registry-rules)), by the rule `channel_set_hash_version` names. An export with no version was made before the hash covered order: the import checks its hash by version 1's rule, and its order by the `order` conflicts. A higher integer version is `CHANNEL_SET_INVALID`, naming a newer build; anything else that is not an integer version is `CHANNEL_SET_INVALID` as a file that is not an export.
+- **Update both machines before moving a channel set.** A newer build can read an older one's export, but not the reverse. A build from before the hash had a version ignores `channel_set_hash_version` and checks a newer export's hash by its own order-blind rule, so it refuses a genuine file as a `hash` conflict: "changed after it was exported". That build cannot be changed after the fact.
+- **The plan reports three hashes.** `hereHash` and `importedHash` are this rig's, now and after the import, by the current rule. `fileHash` and `fileHashVersion` are what the file states. Only the file's hash is checked against the file.
 - **Export is refused** in two cases:
   - an edge has no code yet, for example on the shipped set before this machine's first save. The importer would issue its own numbers;
   - the stored wiring is not in force: it did not load, or it is held.
@@ -749,7 +751,7 @@ Besides conflicts:
 2. **`wiring.json`.** The new wiring names only codes step 1 made live.
 3. **The vocabulary's retirements.** Only now is a code retired that the old wiring may still name.
 
-> [!CAUTION]
+> [!WARNING]
 > **Never retire before the wiring lands.** A retirement written while the wiring write then fails leaves this rig's own wiring naming a retired code. After a restart it fails RIG107, the shipped pins are in force, and a re-import is refused as unloaded wiring: a dead end.
 
 In this order, a failure between any two steps leaves a wiring and a vocabulary that load together. What landed stays, since the vocabulary is append only. The rebuild still runs, the rig restarts on its own wiring, and importing again finishes the rest. An identical import writes nothing.

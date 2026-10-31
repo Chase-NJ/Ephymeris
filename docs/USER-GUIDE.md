@@ -121,6 +121,9 @@ the same events under the same codes. After the channels change on one computer,
 on the other. The pins stay each computer's own. If the two disagree anywhere, the import is refused and
 lists every difference. Fix each one first, then import again.
 
+Update both computers to the same version of Ephymeris before you move a channel set. An older version can
+refuse a file from a newer one, saying it was **changed after it was exported** when it was not.
+
 ![The Rig tab: the Boxes table with label, bound board, handshake and Test button for each of six boxes, and below it the Utility baseline section showing BOX_Utility and a Ready chip for every box](images/rig.webp)
 
 **Cohorts.** Your groups of animals, drawn as planets. Click one to open it, or click the small disc

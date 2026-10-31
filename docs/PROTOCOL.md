@@ -1848,8 +1848,10 @@ What importing another machine's channel set and vocabulary would do here. The p
 | `vocabulary` | [StrobeImportPlan](#shape-strobeimportplan) | The vocabulary half: the codes the import adds and retires here. |
 | `changed` | string[] | Channels on both sides whose entry the import replaces. |
 | `breaks` | [RigImpact](#shape-rigimpact)[] | Saved tasks the import would newly break. Applying needs `confirm` when non-empty. |
-| `hereHash` | string | This rig's `channelSetHash` now. |
-| `thereHash` | string | The exporting machine's `channelSetHash`: this rig's after a clean import. |
+| `hereHash` | string | This rig's `channelSetHash` now, by the current rule. |
+| `importedHash` | string | This rig's `channelSetHash` after a clean import: computed here, by the current rule, over the file's channel set. It equals `fileHash` only when the file was made by the current rule. |
+| `fileHash` | string | The hash the file states, `channel_set_hash`, made by the rule `fileHashVersion` names. Checked by that rule (a `hash` conflict when it does not match), never compared with `importedHash`. |
+| `fileHashVersion` | number | The rule that made `fileHash` (`TASKS.md#registry-rules`): 2 covers declaration order, 1 ignored it. 1 for a file from a build before the hash had a version. |
 | `identical` | boolean | The two machines already agree: applying writes nothing. |
 
 <a id="shape-cohort"></a>

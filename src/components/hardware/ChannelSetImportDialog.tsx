@@ -155,8 +155,13 @@ export function ChannelSetImportDialog({
           </p>
         )}
         {plan && (
+          // Both computed here, by the current rule. The file's own hash is
+          // shown only when it was made by another rule, so two numbers that
+          // differ never read as a disagreement they are not.
           <p className="font-mono text-[10.5px] text-static/80">
-            channel set {plan.hereHash} here · {plan.thereHash} there
+            channel set {plan.hereHash} now · {plan.importedHash} after import
+            {plan.fileHash !== plan.importedHash &&
+              ` · the file says ${plan.fileHash} (hash version ${plan.fileHashVersion})`}
           </p>
         )}
 

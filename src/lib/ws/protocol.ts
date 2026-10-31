@@ -1863,10 +1863,24 @@ export interface ChannelSetImportPlan {
   changed: string[];
   /** Saved tasks the import would newly break. Applying needs `confirm` when non-empty. */
   breaks: RigImpact[];
-  /** This rig's `channelSetHash` now. */
+  /** This rig's `channelSetHash` now, by the current rule. */
   hereHash: string;
-  /** The exporting machine's `channelSetHash`: this rig's after a clean import. */
-  thereHash: string;
+  /**
+   * This rig's `channelSetHash` after a clean import: computed here, by the current rule, over
+   * the file's channel set. It equals `fileHash` only when the file was made by the current rule.
+   */
+  importedHash: string;
+  /**
+   * The hash the file states, `channel_set_hash`, made by the rule `fileHashVersion` names.
+   * Checked by that rule (a `hash` conflict when it does not match), never compared with
+   * `importedHash`.
+   */
+  fileHash: string;
+  /**
+   * The rule that made `fileHash` (`TASKS.md#registry-rules`): 2 covers declaration order, 1
+   * ignored it. 1 for a file from a build before the hash had a version.
+   */
+  fileHashVersion: number;
   /** The two machines already agree: applying writes nothing. */
   identical: boolean;
 }

@@ -1993,12 +1993,27 @@ SHAPES = (
                 doc="Saved tasks the import would newly break. Applying needs "
                 "`confirm` when non-empty.",
             ),
-            f("hereHash", STR, doc="This rig's `channelSetHash` now."),
+            f("hereHash", STR, doc="This rig's `channelSetHash` now, by the current rule."),
             f(
-                "thereHash",
+                "importedHash",
                 STR,
-                doc="The exporting machine's `channelSetHash`: this rig's after a "
-                "clean import.",
+                doc="This rig's `channelSetHash` after a clean import: computed here, "
+                "by the current rule, over the file's channel set. It equals "
+                "`fileHash` only when the file was made by the current rule.",
+            ),
+            f(
+                "fileHash",
+                STR,
+                doc="The hash the file states, `channel_set_hash`, made by the rule "
+                "`fileHashVersion` names. Checked by that rule (a `hash` conflict "
+                "when it does not match), never compared with `importedHash`.",
+            ),
+            f(
+                "fileHashVersion",
+                INT,
+                doc="The rule that made `fileHash` (`TASKS.md#registry-rules`): 2 "
+                "covers declaration order, 1 ignored it. 1 for a file from a build "
+                "before the hash had a version.",
             ),
             f(
                 "identical",

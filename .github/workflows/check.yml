@@ -43,7 +43,7 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
-    # Windows takes about ten minutes; a hang should fail, not hold the PR for
+    # Windows takes about five minutes; a hang should fail, not hold the PR for
     # GitHub's six-hour default.
     timeout-minutes: 25
     steps:
@@ -53,11 +53,19 @@ jobs:
           python-version: "3.13"
           cache: pip
           cache-dependency-path: sidecar/pyproject.toml
+      # The suite is file-heavy (databases, session files, relocates), and the
+      # runner's C: drive makes every file operation slow. A Dev Drive took a
+      # third off the Windows suite; pytest's temp folder goes on it below.
+      - if: runner.os == 'Windows'
+        uses: samypr100/setup-dev-drive@v3
+        with:
+          drive-size: 4GB
       - run: pip install -e "sidecar[dev]"
       # One worker per hosted-runner vCPU; worksteal keeps the slow RHX and
       # utility tests from piling onto one worker. --durations shows what
       # Windows in particular is slow at.
-      - run: python -m pytest -n 4 --dist worksteal --durations=25
+      - shell: bash
+        run: python -m pytest -n 4 --dist worksteal --durations=25 ${DEV_DRIVE:+--basetemp="$DEV_DRIVE/pytest"}
         working-directory: sidecar
 
   firmware:

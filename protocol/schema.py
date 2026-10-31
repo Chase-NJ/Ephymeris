@@ -1772,7 +1772,7 @@ SHAPES = (
             f(
                 "code",
                 nullable(STR),
-                doc="The wiring rule, when one produced it — RIG101 through RIG106. "
+                doc="The wiring rule, when one produced it — RIG101 through RIG108. "
                 "Null for a schema violation, which has no rule number because it "
                 "is caught before the halves are composed.",
             ),
@@ -1826,6 +1826,30 @@ SHAPES = (
                 BOOL,
                 doc="Reset would change something: the rig has wiring of its own in "
                 "force or on disk, or a notice offers Reset as the way out.",
+            ),
+            f(
+                "resetReplaces",
+                ListOf(STR),
+                doc="The absolute path of every file Reset would remove, for the "
+                "dialog that confirms it. Empty when there is none.",
+            ),
+            f(
+                "canSave",
+                BOOL,
+                doc="Whether `hardware.save` of THIS draft would be taken: the "
+                "draft the reply describes (the one previewed, or the one served) "
+                "has no problems, differs from the served draft or would clear a "
+                "notice, and the rig's state allows a save. False while stored "
+                "wiring that did not load has nothing to repair (only Reset "
+                "replaces it), and while RIG108 asks for the pins to be "
+                "confirmed. The frontend renders it; it never decides it.",
+            ),
+            f(
+                "needsPinConfirmation",
+                BOOL,
+                doc="The draft's pins come from a pin map that was not written with "
+                "its channel set: offer the operator a way to confirm them, sent "
+                "as `confirmedPins` (`TASKS.md#the-channel-set-and-the-pin-map`).",
             ),
         ),
     ),
@@ -2699,7 +2723,18 @@ COMMANDS = (
     ),
     Command(
         "hardware.preview",
-        args=obj(f("document", ANY)),
+        args=obj(
+            f("document", ANY),
+            f(
+                "confirmedPins",
+                BOOL,
+                optional=True,
+                doc="The operator confirmed every pin of a draft whose pin map was not "
+                "written with its channel set (`status.needsPinConfirmation`, RIG108). "
+                "An explicit act, sent with the request: the sidecar refuses such a "
+                "save without it (`RIG_SAVE_BLOCKED`). Ignored otherwise.",
+            ),
+        ),
         result=Ref("RigSaved"),
         doc="Validate a wiring document and cost it, writing nothing. The "
         "editor calls it as the operator types, so a schema violation or a "
@@ -2720,6 +2755,15 @@ COMMANDS = (
                 "would newly stop a saved task profile generating. True ⇒ write "
                 "anyway. Rewiring a box is the operator's call and the app does "
                 "not veto it — but it must not let it happen unnoticed.",
+            ),
+            f(
+                "confirmedPins",
+                BOOL,
+                optional=True,
+                doc="The operator confirmed every pin of a draft whose pin map was not "
+                "written with its channel set (`status.needsPinConfirmation`, RIG108). "
+                "An explicit act, sent with the request: the sidecar refuses such a "
+                "save without it (`RIG_SAVE_BLOCKED`). Ignored otherwise.",
             ),
         ),
         result=Ref("RigSaved"),
@@ -4044,6 +4088,15 @@ ERRORS = (
         "drive pins the operator never declared. `hardware.get` names the "
         "problem. Saving the wiring, resetting it, or restarting onto a file that "
         "loads clears it; a file fixed by hand meanwhile does not "
+        "(`TASKS.md#the-channel-set-and-the-pin-map`).",
+    ),
+    ErrorCode(
+        "RIG_SAVE_BLOCKED",
+        "`hardware.save` that the rig's state does not allow yet: stored wiring "
+        "that did not load and has nothing to repair (unreadable, unparseable, "
+        "not a JSON object, or a pin map with no channel set), which only "
+        "`hardware.reset` replaces; or a draft whose pins came from a mismatched "
+        "pin map, sent without `confirmedPins`. Nothing was written "
         "(`TASKS.md#the-channel-set-and-the-pin-map`).",
     ),
     ErrorCode(

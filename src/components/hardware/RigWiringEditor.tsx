@@ -5,6 +5,7 @@ import { Button, Select } from "@/components/common/controls";
 import { Callout } from "@/components/common/Callout";
 import { Dropdown } from "@/components/common/Dropdown";
 import { FieldRow } from "@/components/common/FieldRow";
+import { Modal } from "@/components/common/Modal";
 import { RowDensityContext } from "@/components/common/rowDensity";
 import { BoardMap } from "@/components/hardware/BoardMap";
 import {
@@ -60,6 +61,7 @@ export function RigWiringEditor({
   onSelect: (channel: string | null) => void;
 }) {
   const [carried, setCarried] = useState<string | null>(null);
+  const [confirmingReset, setConfirmingReset] = useState(false);
 
   const doc = rig.doc;
 
@@ -184,7 +186,15 @@ export function RigWiringEditor({
 
   const errors = rig.problems.length;
   const notices = rig.status?.notices ?? [];
-  const canSave = canSaveView(rig, { dirty: rig.dirty, saving: rig.saving });
+  const canSave = canSaveView(rig, rig.saving);
+  const replaces = rig.status?.resetReplaces ?? [];
+
+  /** Reset removes files; when there are any, the operator is shown exactly
+   *  which before it does (`status.resetReplaces`). */
+  function askReset() {
+    if (replaces.length > 0) setConfirmingReset(true);
+    else void rig.reset();
+  }
 
   return (
     <div>
@@ -212,7 +222,7 @@ export function RigWiringEditor({
         )}
         <Button
           variant="ghost"
-          onClick={() => void rig.reset()}
+          onClick={askReset}
           disabled={!canReset(rig.status, rig.saving)}
           title="Discard this rig's wiring and use the pinout the build shipped with"
         >
@@ -284,6 +294,21 @@ export function RigWiringEditor({
                     {n.message}
                   </p>
                 ))}
+                {rig.status?.needsPinConfirmation && (
+                  <div className="flex items-center gap-2 pt-1">
+                    <Button
+                      variant="secondary"
+                      disabled={rig.confirmedPins}
+                      onClick={rig.confirmPins}
+                    >
+                      {rig.confirmedPins ? "Pins confirmed" : "I've checked every pin"}
+                    </Button>
+                    <span className="text-[10.5px] leading-relaxed text-static">
+                      Compare each pin on the board map with the box before confirming.
+                      Save stays off until you do.
+                    </span>
+                  </div>
+                )}
               </Callout>
             )}
 
@@ -402,6 +427,41 @@ export function RigWiringEditor({
           </div>
         </div>
       )}
+
+      <Modal
+        open={confirmingReset}
+        onClose={() => setConfirmingReset(false)}
+        title="Reset this rig's wiring?"
+      >
+        <div className="flex flex-col gap-3 text-[12px] leading-relaxed">
+          <p>
+            Reset removes this rig&apos;s own wiring and puts the wiring its build shipped
+            with in force. It removes:
+          </p>
+          <ul className="flex flex-col gap-1">
+            {replaces.map((path) => (
+              <li key={path} className="break-all font-mono text-[11px] text-starlight">
+                {path}
+              </li>
+            ))}
+          </ul>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setConfirmingReset(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                setConfirmingReset(false);
+                void rig.reset();
+              }}
+            >
+              <RotateCcw size={12} strokeWidth={1.75} />
+              Reset
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

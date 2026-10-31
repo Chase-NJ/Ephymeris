@@ -93,6 +93,13 @@ class WiringNotLoaded(Exception):
     or identified. The message says why."""
 
 
+class WiringSaveBlocked(Exception):
+    """A wiring save the rig's state does not allow yet
+    (`hardware_service.save_blocked`): stored wiring with nothing to repair,
+    which only Reset replaces, or pins from a mismatched pin map not confirmed.
+    Nothing was written. The message says what to do."""
+
+
 class RigInUse(Exception):
     """A rig definition write refused because a session is set up or a box is
     running. The message says what to do instead."""
@@ -251,7 +258,9 @@ class RigDefinition:
 
     # -- the writes ---------------------------------------------------------- #
 
-    async def save_wiring(self, document: dict[str, Any], *, confirm: bool) -> dict[str, Any]:
+    async def save_wiring(
+        self, document: dict[str, Any], *, confirm: bool, confirmed_pins: bool = False
+    ) -> dict[str, Any]:
         """Raises `RigInUse`, `WiringWouldBreakTasks` without `confirm`,
         `hardware.store.RigInvalid` for a document that is not one, or
         `StrobeRefused` when its edge codes cannot be issued.
@@ -261,6 +270,11 @@ class RigDefinition:
         them, then one rebuild serves both.
         """
         async with self.writing(WIRING_IN_USE):
+            # First, before any cost is computed or code issued: the rig's own
+            # state, which the editor was told about in `status.canSave`.
+            blocked = await asyncio.to_thread(self.save_blocked, confirmed_pins=confirmed_pins)
+            if blocked:
+                raise WiringSaveBlocked(blocked)
             breaks = await asyncio.to_thread(impact_of, self._tasks, wiring=document)
             if breaks and not confirm:
                 # Not an error the operator cannot pass -- it is the "shown
@@ -367,6 +381,12 @@ class RigDefinition:
         lifecycle and the utility baseline ask this before they drive a box.
         """
         return self._unloaded
+
+    def save_blocked(self, *, confirmed_pins: bool) -> str | None:
+        """Why the rig's state refuses a wiring save now, or None."""
+        return hardware_service.save_blocked(
+            hardware_service.rig_state(self._hardware, self.in_force()), confirmed_pins=confirmed_pins
+        )
 
     def _install_wiring(self) -> None:
         """Read the stored wiring ONCE and put exactly that in force.

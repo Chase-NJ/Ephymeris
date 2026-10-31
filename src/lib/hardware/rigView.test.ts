@@ -19,6 +19,9 @@ function status(over: Partial<RigStatus> = {}): RigStatus {
     channelSetHash: "0000000000000000",
     notices: [unloaded],
     canReset: true,
+    resetReplaces: ["/data/hardware/wiring.json"],
+    canSave: false,
+    needsPinConfirmation: false,
     ...over,
   };
 }
@@ -44,17 +47,13 @@ describe("applyPreview", () => {
 });
 
 describe("canSave", () => {
-  it("is blocked by the draft's problems, never by the rig's notices", () => {
-    const repaired: RigView = { ...loaded, problems: [] };
-    expect(canSave(repaired, { dirty: true, saving: false })).toBe(true);
-    expect(canSave(loaded, { dirty: true, saving: false })).toBe(false);
-  });
-
-  it("offers the save that clears a notice even before the draft is edited", () => {
-    const repaired: RigView = { ...loaded, problems: [] };
-    expect(canSave(repaired, { dirty: false, saving: false })).toBe(true);
-    const quiet: RigView = { ...repaired, status: status({ notices: [] }) };
-    expect(canSave(quiet, { dirty: false, saving: false })).toBe(false);
+  it("renders the sidecar's answer and never works one out", () => {
+    const told = (canSave: boolean): RigView => ({ ...loaded, problems: [], status: status({ canSave }) });
+    expect(canSave(told(true), false)).toBe(true);
+    // No problems and a notice, which once enabled Save here: the sidecar said no.
+    expect(canSave(told(false), false)).toBe(false);
+    expect(canSave(told(true), true)).toBe(false);
+    expect(canSave({ ...loaded, status: null }, false)).toBe(false);
   });
 });
 

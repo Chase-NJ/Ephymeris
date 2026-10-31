@@ -39,14 +39,14 @@ export function applyPreview(view: RigView, reply: PreviewReply): RigView {
 }
 
 /**
- * The draft has no problems, and saving it would change something: it was
- * edited, or the rig carries a notice that a save of this draft clears (the
- * stored document served for repair, or a file that differs from the wiring
- * in force).
+ * Whether Save is offered: the sidecar's `status.canSave` for the draft it
+ * last described, never worked out here. It knows what the draft is measured
+ * against (the served draft), the rig's state (nothing to repair, pins to
+ * confirm) and the draft's problems; a guess here once enabled a save that put
+ * a mismatched pin map in force.
  */
-export function canSave(view: RigView, { dirty, saving }: { dirty: boolean; saving: boolean }): boolean {
-  const notices = view.status?.notices.length ?? 0;
-  return !saving && view.problems.length === 0 && (dirty || notices > 0);
+export function canSave(view: RigView, saving: boolean): boolean {
+  return !saving && view.status?.canSave === true;
 }
 
 /** The sidecar decides; a refusal that names Reset always leaves it usable. */

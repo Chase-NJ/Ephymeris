@@ -1153,7 +1153,11 @@ class Application:
         def preview() -> dict[str, Any]:
             breaks = rig_definition.impact_of(self.task_store, wiring=document)
             return hardware_service.preview_payload(
-                self.hardware_store, document, breaks, in_force=self.rig_definition.in_force()
+                self.hardware_store,
+                document,
+                breaks,
+                in_force=self.rig_definition.in_force(),
+                confirmed_pins=bool(args.get("confirmedPins")),
             )
 
         async with self._preview_gate:
@@ -1164,7 +1168,9 @@ class Application:
         # EVERY GENERATED SKETCH IS STALE once this lands -- the rebuild inside
         # the write is what makes "a pin change applies to everything" true
         # rather than a claim.
-        return await self.rig_definition.save_wiring(document, confirm=args["confirm"])
+        return await self.rig_definition.save_wiring(
+            document, confirm=args["confirm"], confirmed_pins=bool(args.get("confirmedPins"))
+        )
 
     async def _hardware_reset(self, _args: Args) -> dict[str, Any]:
         # A wiring change like any other -- see `_hardware_save`.

@@ -31,7 +31,13 @@ from .ports.handler import PortBusy
 from .ports.manager import BoardNotDetected, PortNotBound
 from .ports.states import IllegalTransition
 from .protocol import ErrCode
-from .rig.definition import RigInUse, VocabularyInUse, WiringNotLoaded, WiringWouldBreakTasks
+from .rig.definition import (
+    RigInUse,
+    VocabularyInUse,
+    WiringNotLoaded,
+    WiringSaveBlocked,
+    WiringWouldBreakTasks,
+)
 from .server import Args, CommandError, ErrorTable, resolve_error
 from .sessions.lifecycle import (
     BoxesNotMapped,
@@ -204,6 +210,7 @@ ERRORS: ErrorTable = [
     (BackupNotConfigured, _fixed(ErrCode.BACKUP_UNAVAILABLE)),
     # --- the rig definition (TASKS.md#the-rig-definition) ---
     (VocabularyInUse, _fixed(ErrCode.STROBE_SESSION_RUNNING)),
+    (WiringSaveBlocked, _fixed(ErrCode.RIG_SAVE_BLOCKED)),
     (RigInUse, _fixed(ErrCode.RIG_IN_USE)),
     (WiringWouldBreakTasks, lambda e, _a: CommandError(
         ErrCode.RIG_WOULD_BREAK_TASKS, str(e), {"breaks": e.breaks}

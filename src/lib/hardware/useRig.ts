@@ -48,6 +48,9 @@ export interface RigSession {
   saving: boolean;
   loadError: string | null;
   actionError: string | null;
+  /** The operator confirmed the draft's pins (`status.needsPinConfirmation`). */
+  confirmedPins: boolean;
+  confirmPins: () => void;
   setDoc: (next: RigDocument) => void;
   revert: () => void;
   /** True when the write landed. False means it was refused — see `breaks`. */
@@ -64,6 +67,11 @@ export function useRig(): RigSession {
   const [doc, setDocState] = useState<RigDocument | null>(null);
   const [baseline, setBaseline] = useState<RigDocument | null>(null);
   const [status, setStatus] = useState<RigStatus | null>(null);
+  /** The served draft's status, which Revert returns to: Save is the
+   *  sidecar's answer for a draft, and the baseline is a draft too. */
+  const [baselineStatus, setBaselineStatus] = useState<RigStatus | null>(null);
+  const [baselineProblems, setBaselineProblems] = useState<RigProblem[]>([]);
+  const [confirmedPins, setConfirmedPins] = useState(false);
   const [problems, setProblems] = useState<RigProblem[]>([]);
   const [breaks, setBreaks] = useState<RigImpact[]>([]);
   const [allocations, setAllocations] = useState<RigAllocation[]>([]);
@@ -80,7 +88,10 @@ export function useRig(): RigSession {
       setDocState(reply.document as RigDocument);
       setBaseline(reply.document as RigDocument);
       setStatus(reply.status);
+      setBaselineStatus(reply.status);
+      setConfirmedPins(false);
       setProblems(reply.problems);
+      setBaselineProblems(reply.problems);
       setBreaks([]);
       setAllocations([]);
       setLoadError(null);
@@ -118,11 +129,11 @@ export function useRig(): RigSession {
    * sequence of drags cannot land an old answer over a new one. */
   const sequence = useRef(0);
   useEffect(() => {
-    if (!connected || doc === null || !dirty) return;
+    if (!connected || doc === null || (!dirty && !confirmedPins)) return;
     const mine = ++sequence.current;
     setChecking(true);
     const timer = setTimeout(() => {
-      void previewRig(client, doc)
+      void previewRig(client, doc, confirmedPins)
         .then((reply) => {
           if (mine !== sequence.current) return;
           // The draft's problems are replaced; the rig's notices ride on the
@@ -143,7 +154,7 @@ export function useRig(): RigSession {
     return () => clearTimeout(timer);
     // `status`, `problems`, `breaks` and `allocations` are what the reply
     // replaces, never what triggers a preview.
-  }, [client, connected, doc, dirty]);
+  }, [client, connected, doc, dirty, confirmedPins]);
 
   const setDoc = useCallback((next: RigDocument) => {
     setActionError(null);
@@ -153,10 +164,13 @@ export function useRig(): RigSession {
 
   const revert = useCallback(() => {
     if (baseline) setDocState(baseline);
+    setStatus(baselineStatus);
+    setProblems(baselineProblems);
+    setConfirmedPins(false);
     setBreaks([]);
     setAllocations([]);
     setIssued([]);
-  }, [baseline]);
+  }, [baseline, baselineStatus, baselineProblems]);
 
   const save = useCallback(
     async (confirm: boolean) => {
@@ -164,7 +178,7 @@ export function useRig(): RigSession {
       setSaving(true);
       setActionError(null);
       try {
-        const reply = await saveRig(client, doc, confirm);
+        const reply = await saveRig(client, doc, confirm, confirmedPins);
         setBaseline(doc);
         setStatus(reply.status);
         setProblems(reply.problems);
@@ -183,8 +197,10 @@ export function useRig(): RigSession {
         setSaving(false);
       }
     },
-    [client, doc],
+    [client, doc, confirmedPins],
   );
+
+  const confirmPins = useCallback(() => setConfirmedPins(true), []);
 
   const reset = useCallback(async () => {
     setSaving(true);
@@ -194,7 +210,10 @@ export function useRig(): RigSession {
       setDocState(reply.document as RigDocument);
       setBaseline(reply.document as RigDocument);
       setStatus(reply.status);
+      setBaselineStatus(reply.status);
+      setConfirmedPins(false);
       setProblems(reply.problems);
+      setBaselineProblems(reply.problems);
       setBreaks([]);
       setAllocations([]);
       setIssued([]);
@@ -214,6 +233,8 @@ export function useRig(): RigSession {
     breaks,
     allocations,
     issued,
+    confirmedPins,
+    confirmPins,
     checking,
     saving,
     loadError,

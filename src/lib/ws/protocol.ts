@@ -190,6 +190,7 @@ export const ERR = {
   RIG_IN_USE: "RIG_IN_USE",
   RIG_WOULD_BREAK_TASKS: "RIG_WOULD_BREAK_TASKS",
   RIG_WIRING_UNLOADED: "RIG_WIRING_UNLOADED",
+  RIG_SAVE_BLOCKED: "RIG_SAVE_BLOCKED",
   STROBE_INVALID: "STROBE_INVALID",
   STROBE_REQUIRED: "STROBE_REQUIRED",
   STROBE_IN_RECORDED_SESSION: "STROBE_IN_RECORDED_SESSION",
@@ -1690,7 +1691,7 @@ export interface RigProblem {
   location: string;
   message: string;
   /**
-   * The wiring rule, when one produced it — RIG101 through RIG106. Null for a schema violation,
+   * The wiring rule, when one produced it — RIG101 through RIG108. Null for a schema violation,
    * which has no rule number because it is caught before the halves are composed.
    */
   code: string | null;
@@ -1730,6 +1731,25 @@ export interface RigStatus {
    * offers Reset as the way out.
    */
   canReset: boolean;
+  /**
+   * The absolute path of every file Reset would remove, for the dialog that confirms it. Empty
+   * when there is none.
+   */
+  resetReplaces: string[];
+  /**
+   * Whether `hardware.save` of THIS draft would be taken: the draft the reply describes (the one
+   * previewed, or the one served) has no problems, differs from the served draft or would clear a
+   * notice, and the rig's state allows a save. False while stored wiring that did not load has
+   * nothing to repair (only Reset replaces it), and while RIG108 asks for the pins to be
+   * confirmed. The frontend renders it; it never decides it.
+   */
+  canSave: boolean;
+  /**
+   * The draft's pins come from a pin map that was not written with its channel set: offer the
+   * operator a way to confirm them, sent as `confirmedPins`
+   * (`TASKS.md#the-channel-set-and-the-pin-map`).
+   */
+  needsPinConfirmation: boolean;
 }
 
 /**
@@ -2285,8 +2305,8 @@ export interface CommandArgsMap {
   "utility.ensure": { boxes?: number[]; force?: boolean };
   "utility.identify": { box: number; on: boolean };
   "hardware.get": Record<string, never>;
-  "hardware.preview": { document: unknown };
-  "hardware.save": { document: unknown; confirm: boolean };
+  "hardware.preview": { document: unknown; confirmedPins?: boolean };
+  "hardware.save": { document: unknown; confirm: boolean; confirmedPins?: boolean };
   "hardware.reset": Record<string, never>;
   "strobes.get": Record<string, never>;
   "strobes.usage": { name: string; scan?: boolean };

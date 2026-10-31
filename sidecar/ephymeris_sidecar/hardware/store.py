@@ -23,17 +23,12 @@ and renamed over the old one (`_write_atomic`) cannot tear: a reader sees the
 old wiring or the new, never a mix. Once the rename lands the save is
 committed; the folder fsync after it is best effort, logged if it fails.
 
-STORED WIRING NOBODY SAVED OR CONFIRMED HERE IS HELD
-(TASKS.md#the-channel-set-and-the-pin-map). The store keeps
-the content digest of the wiring last saved on this machine, which is also how
-a confirmed "I've checked every pin" lands: as a save. Stored wiring that
-passes every check but whose digest is not recorded is `held`: copied in,
-edited by hand, or fixed by hand after a failed load. It is never put in
-force, however many restarts pass, until it is saved. The digests live OUTSIDE
-`hardware/`, so copying that folder from the other lab machine never brings
-its confirmation along. A machine with no digest file yet records, at its
-first start, the stored wiring it would have run anyway, so a normal upgrade
-asks nothing (`record_at_first_start`).
+STORED WIRING NOBODY SAVED OR CONFIRMED HERE IS HELD. `wiring-confirmed.json`
+(`_Record`) holds the content digest of the last wiring saved on this machine;
+stored wiring that passes every check but is not that wiring is `held`, at
+every start, until it is saved. How the record is kept -- outside `hardware/`,
+written around each save, seeded only at the machine's first start
+(`settle_record`) -- is TASKS.md#the-channel-set-and-the-pin-map.
 
 STORED WIRING THAT IS NOT IN FORCE IS NEVER REPLACED BY THE SHIPPED ONE SILENTLY.
 The registry composes the shipped pinout meanwhile, because the process owns six
@@ -53,9 +48,8 @@ and removes them:
     disagree is a load problem, never a guess.
 
 `wiring.json` wins over both, and the pair over `rig.json`. A layout beside
-the one read is a SHADOW: if its digest is recorded it is this app's own
-leftover of a save stopped before its cleanup, and the next save removes it;
-otherwise `inspect` names it as not saved here, and no save deletes it. A stray
+the one read is a SHADOW: the record lists it as the app's own leftover, which
+the next save removes, or `inspect` names it and no save deletes it. A stray
 temporary file (`*.part`, `*.json.tmp`) on its own is no wiring at all.
 
 A RIG DOCUMENT REPLACES THE SHIPPED PAIR, it does not merge with it. A merge
@@ -101,6 +95,9 @@ CHANNEL_SET_FILENAME = "channel_set.json"
 PIN_MAP_FILENAME = "pin_map.json"
 #: The digests of the wiring saved on this machine, in the data dir itself.
 CONFIRMED_FILENAME = "wiring-confirmed.json"
+#: The database's mark (`cohorts/db.py`'s `machine_marks`) that this machine's
+#: first start, the one that may seed the record, has happened.
+FIRST_START_MARK = "wiring_record"
 
 #: The keys of the joined document that belong to the pin map, beside `pins`.
 #: `edited_at` belongs to neither: it says when a FILE was written, and two
@@ -150,6 +147,46 @@ class Stored:
     shadows: tuple[str, ...] = ()
     #: `content_digest` of the document as it is on disk, before `upgrade`.
     digest: str | None = None
+    #: Why there is no usable record of the wiring saved here (missing, or
+    #: will not read), so nothing stored is trusted; None when there is one.
+    record_problem: str | None = None
+
+
+@dataclass(frozen=True)
+class _Record:
+    """`wiring-confirmed.json`: which wiring this machine has saved."""
+
+    #: The content digest of the LAST wiring saved or confirmed here, and no
+    #: other: a wiring a save replaced is never trusted again.
+    digest: str | None = None
+    #: A save in flight, recorded before its `wiring.json` is written. Trusted
+    #: only for `wiring.json` itself, whose content is what proves it landed;
+    #: `settle_record` finishes it at the next start.
+    pending: str | None = None
+    #: `_file_digest`s of older layouts that are the app's own leftovers: one a
+    #: save replaced but could not remove, or one the first start found beside
+    #: `wiring.json`. They mark a file for the next save to remove, and never
+    #: put any wiring in force.
+    leftovers: frozenset[str] = frozenset()
+    #: Why the record is not usable; None when it is.
+    problem: str | None = None
+
+    def trusts(self, digest: str | None, *, is_wiring_json: bool) -> bool:
+        """Whether stored wiring with `digest` may be put in force."""
+        if digest is None or self.problem:
+            return False
+        if self.pending is not None:
+            # A save may have landed or not; only wiring.json can show which.
+            return is_wiring_json and digest in (self.digest, self.pending)
+        return digest == self.digest
+
+    def to_json(self) -> str:
+        return json.dumps({
+            "version": 1,
+            "digest": self.digest,
+            **({"pending": self.pending} if self.pending else {}),
+            "leftovers": sorted(self.leftovers),
+        }) + "\n"
 
 
 #: What the stored wiring on disk is, as `hardware/service.py` acts on it:
@@ -197,8 +234,9 @@ class HardwareStore:
         self.pin_map_path = self.root / PIN_MAP_FILENAME
         #: Beside `hardware/`, never in it (module docstring).
         self.confirmed_path = Path(data_dir) / CONFIRMED_FILENAME
-        #: What `record_at_first_start` recorded but could not write.
-        self._unwritten: frozenset[str] = frozenset()
+        #: What the first start recorded but could not write: trusted for this
+        #: run only. The next start is not a first start, so it holds.
+        self._unwritten: _Record | None = None
 
     # -- reading ----------------------------------------------------------- #
 
@@ -274,68 +312,115 @@ class HardwareStore:
             ),
         )
 
-    def record_at_first_start(self) -> None:
-        """At startup, before the first install: with no record at all yet (a
-        build that kept none, or a fresh install), record the stored wiring if
-        it passes every check -- the wiring that build would have put in force
-        at this start -- and write the record even when empty, so wiring copied
-        in later is held. A normal upgrade therefore asks nothing.
+    def settle_record(self, *, first_start: bool) -> None:
+        """Once per start, before the first install (`RigDefinition`).
 
-        THE ONLY PLACE unrecorded wiring is ever recorded without a save. A
-        read never does it: a record lost while the app runs must hold a file
-        copied in after it, not adopt it on the next `hardware.get`."""
-        if self.confirmed_path.exists():
+        THE MACHINE'S FIRST START (`first_start`, which the database decides,
+        never this file's absence): with no record yet, record the stored
+        wiring if it passes every check -- what the build before would have put
+        in force -- and own any older layout beside it, which that build's own
+        save left and would have removed. The record is written even when
+        empty, so wiring copied in later is held. A normal upgrade asks
+        nothing. No other start, and no read, ever records unsaved wiring: a
+        record lost later holds everything until a save.
+
+        A SAVE CUT OFF BEFORE ITS LAST STEP is finished here, if `wiring.json`
+        shows it landed: its wiring becomes the one recorded and what it
+        replaced becomes a leftover. Anything else stays held.
+        """
+        if not self.confirmed_path.exists():
+            if first_start:
+                self._seed()
             return
-        present = [layout for layout in self._layouts() if layout.present]
-        stored = present[0].read() if present else Stored(None, [], "none")
-        seed = [stored.digest] if stored.state == "loads" and stored.digest else []
+        record = self._record()
+        if record.pending is None or record.problem:
+            return
+        on_disk = _digest_of(_read(self.path, quiet=True)[0]) if self.path.is_file() else None
+        if on_disk == record.pending:
+            present, _ = self._present()
+            replaced = {
+                _file_digest(p)
+                for layout in present[1:]
+                if layout.digest() == record.digest
+                for p in layout.files
+                if p.is_file()
+            }
+            settled = _Record(record.pending, None, record.leftovers | replaced)
+        elif on_disk is not None and on_disk == record.digest:
+            settled = _Record(record.digest, None, record.leftovers)
+        else:
+            return  # nothing shows which wiring was saved last: hold it all
         try:
-            self._write_recorded(seed)
+            self._write_record(settled)
+        except OSError as exc:
+            log.warning("could not finish recording the last wiring save (%s)", exc)
+
+    def _seed(self) -> None:
+        present, stored = self._present()
+        record = _Record(
+            stored.digest if stored.state == "loads" else None,
+            None,
+            frozenset(_file_digest(p) for layout in present[1:] for p in layout.files if p.is_file()),
+        )
+        try:
+            self._write_record(record)
         except OSError as exc:
             log.warning("could not record the wiring in force (%s); it is trusted this run only", exc)
-            self._unwritten = frozenset(seed)
+            self._unwritten = record
 
-    def _survey(self) -> tuple[Stored, frozenset[str], list[_Layout]]:
-        """(the stored wiring, the digests recorded as saved here, the older
-        layouts a save replaces) -- everything one read of the disk says."""
+    def _present(self) -> tuple[list[_Layout], Stored]:
+        """(the layouts on disk, highest precedence first; the first one, read
+        and checked, before anything about the record)."""
         present = [layout for layout in self._layouts() if layout.present]
-        stored = present[0].read() if present else Stored(None, [], "none")
-        recorded = self._recorded()
-        if stored.state == "loads" and stored.digest not in recorded:
+        return present, present[0].read() if present else Stored(None, [], "none")
+
+    def _survey(self) -> tuple[Stored, _Record, list[_Layout]]:
+        """(the stored wiring, the record, the older layouts a save replaces)
+        -- everything one read of the disk says."""
+        present, stored = self._present()
+        record = self._record()
+        if stored.state == "loads" and not record.trusts(
+            stored.digest, is_wiring_json=present[0].files[0] == self.path
+        ):
             stored = dataclasses.replace(stored, state="held")
-        shadows = [s for s in present[1:] if not _is_recorded(s, recorded)]
-        stored = dataclasses.replace(stored, shadows=tuple(
-            p.name for s in shadows for p in s.files if p.is_file() and not p.name.endswith(".tmp")
-        ))
+        shadows = [s for s in present[1:] if not _is_leftover(s, record)]
+        stored = dataclasses.replace(
+            stored,
+            shadows=tuple(
+                p.name for s in shadows for p in s.files if p.is_file() and not p.name.endswith(".tmp")
+            ),
+            record_problem=record.problem,
+        )
         replaced = [s for s in present if s.files[0] != self.path and s not in shadows]
-        return stored, recorded, replaced
+        return stored, record, replaced
 
-    def _recorded(self) -> frozenset[str]:
-        """The digests of the wiring saved (or confirmed) on this machine.
-
-        No file reads as nothing recorded: everything is held
-        (`record_at_first_start` is what writes the first one). A file that
-        exists but will not read records nothing either, and the log says why.
-        """
+    def _record(self) -> _Record:
+        """The record of the wiring saved here. Missing, or a file that will
+        not read, is a record with a problem: it trusts nothing."""
         try:
             raw = self.confirmed_path.read_bytes()
         except FileNotFoundError:
-            return self._unwritten
+            return self._unwritten or _Record(
+                problem=f"{CONFIRMED_FILENAME}, the record of the wiring saved on this machine, is missing"
+            )
         except OSError as exc:
-            log.error("%s is unreadable (%s): every stored wiring is held", CONFIRMED_FILENAME, exc)
-            return frozenset()
-        try:
-            digests = json.loads(raw)["digests"]
-            if not isinstance(digests, list) or not all(isinstance(d, str) for d in digests):
-                raise TypeError("digests is not a list of strings")
-        except (ValueError, KeyError, TypeError) as exc:
             log.error("%s will not read (%s): every stored wiring is held", CONFIRMED_FILENAME, exc)
-            return frozenset()
-        return frozenset(digests)
+            return _Record(problem=f"{CONFIRMED_FILENAME}, the record of the wiring saved on this machine, will not read ({exc})")
+        try:
+            data = json.loads(raw)
+            digest, pending = data["digest"], data.get("pending")
+            leftovers = data.get("leftovers", [])
+            if not all(isinstance(d, str) for d in (*[x for x in (digest, pending) if x is not None], *leftovers)):
+                raise TypeError("digests are not strings")
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            log.error("%s will not read (%s): every stored wiring is held", CONFIRMED_FILENAME, exc)
+            return _Record(problem=f"{CONFIRMED_FILENAME}, the record of the wiring saved on this machine, will not read ({exc})")
+        return _Record(digest, pending, frozenset(leftovers))
 
-    def _write_recorded(self, digests: list[str]) -> None:
+    def _write_record(self, record: _Record) -> None:
         self.confirmed_path.parent.mkdir(parents=True, exist_ok=True)
-        _write_atomic(self.confirmed_path, json.dumps({"version": 1, "digests": sorted(set(digests))}) + "\n")
+        _write_atomic(self.confirmed_path, record.to_json())
+        self._unwritten = None
 
     def _two_file_pair(self, *, quiet: bool = False) -> Stored:
         """The two-file layout: `channel_set.json` and `pin_map.json`.
@@ -394,18 +479,19 @@ class HardwareStore:
         be one pass rather than a game of whack-a-mole, which is the same
         argument `ChannelMap.disagreements()` makes.
 
-        A save records the wiring as saved here, in an order no crash can turn
-        into trusting wiring nobody saved, or holding wiring that was:
+        A save records the wiring as the last saved here, in an order no crash
+        can turn into trusting wiring nobody saved, or a wiring it replaced:
 
-          1. record the new digest BESIDE the ones already recorded;
+          1. record the new digest as PENDING beside the last one;
           2. write `wiring.json` (the commit);
-          3. remove the older layouts it replaces -- never a shadow copied in;
-          4. record the new digest alone, unless a removal failed: then the
-             digests recorded before stay, beside each leftover file's own,
-             so the next save removes the leftover silently.
+          3. remove the older layouts it replaces -- never a shadow;
+          4. record the new digest alone, and as leftovers any file of step 3
+             that would not go, so the next save removes it. A leftover is
+             never trusted: with `wiring.json` gone it is held.
 
-        A failure at 1 writes nothing; at 2, the previous wiring is still
-        recorded; after 2 the save has landed, and step 4 is logged if it fails.
+        A failure at 1 writes nothing; at 2, the previous wiring is still the
+        one recorded; after 2 the save has landed, step 4 is logged if it fails,
+        and `settle_record` finishes it at the next start.
         """
         problems = save_problems(doc)
         if problems:
@@ -414,21 +500,21 @@ class HardwareStore:
         stored = dict(doc)
         stored["edited_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         new = content_digest(stored)
-        _, recorded, replaced = self._survey()
-        self._write_recorded([*recorded, new])
+        _, record, replaced = self._survey()
+        self._write_record(_Record(record.digest, new, record.leftovers))
         self.root.mkdir(parents=True, exist_ok=True)
         _write_atomic(self.path, json.dumps(stored, indent=2) + "\n")
         # Only once the new file is whole: an older layout left behind by a
         # failure here is harmless, because `wiring.json` wins over it.
         self._remove(p for layout in replaced for p in layout.files)
-        # A file that would not go is this save's own leftover: record its
-        # bytes, so it is never shown as a copy and the next save removes it.
-        # Half a pair has no content digest of its own, hence per file.
-        left = [_file_digest(p) for layout in replaced for p in layout.files if p.is_file()]
+        # A file that would not go is this save's own leftover: recorded by
+        # its bytes (half a pair has no content digest of its own), so it is
+        # never shown as a copy and the next save removes it.
+        left = frozenset(_file_digest(p) for layout in replaced for p in layout.files if p.is_file())
         try:
-            self._write_recorded([*recorded, new, *left] if left else [new])
+            self._write_record(_Record(new, None, left))
         except OSError as exc:
-            log.warning("%s was saved, but recording it alone failed (%s)", WIRING_FILENAME, exc)
+            log.warning("%s was saved, but recording it failed (%s)", WIRING_FILENAME, exc)
         return stored
 
     def reset(self) -> None:
@@ -441,8 +527,7 @@ class HardwareStore:
         an older wiring back. In this order a failure leaves either the wiring
         that was in force or a load problem, and either is held at a restart.
         """
-        self._write_recorded([])
-        self._unwritten = frozenset()
+        self._write_record(_Record())
         for path in self.removal_order():
             path.unlink(missing_ok=True)
 
@@ -527,14 +612,12 @@ def _file_digest(path: Path) -> str:
     return "file:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _is_recorded(layout: _Layout, recorded: frozenset[str]) -> bool:
-    """A layout beside the one read is this app's own leftover: its content
-    was saved here, or every file of it is one a save could not remove."""
-    if layout.digest() in recorded:
-        return True
+def _is_leftover(layout: _Layout, record: _Record) -> bool:
+    """A layout beside the one read is the app's own leftover: every file of
+    it is one the record lists (`_Record.leftovers`)."""
     files = [p for p in layout.files if p.is_file()]
     try:
-        return bool(files) and all(_file_digest(p) in recorded for p in files)
+        return bool(files) and all(_file_digest(p) in record.leftovers for p in files)
     except OSError:
         return False
 
@@ -561,6 +644,8 @@ def _checked(location: str, doc: dict | None, why: str | None, *, sources: tuple
     if shape:
         where, what = shape[0]
         return Stored(doc, [_unloaded(location, f"{where}: {what}")], "invalid", sources, digest=digest)
+    from ephymeris_sidecar.rig.rules import rule_problems
+
     rules = rule_problems(doc)
     if rules:
         code, where, what = rules[0]
@@ -572,35 +657,6 @@ def save_problems(doc: Any) -> list[tuple[str, str]]:
     """Why `save` would refuse this document: its shape, then a channel with
     no pin. Checked by the rig definition before it issues any edge code."""
     return validate(doc) or (_unpinned(doc) if isinstance(doc, dict) else [])
-
-
-def rule_problems(document: Any) -> list[tuple[str, str, str]]:
-    """(code, location, message) for every wiring rule (RIG101-RIG107) a
-    document that passed the schema breaks, against the vocabulary in force.
-
-    Here rather than in `hardware/service.py` because a load runs them too:
-    a stored file that breaks one is never put in force."""
-    from ephymeris_sidecar.rig import registry
-
-    try:
-        chans = registry.ChannelMap(*registry.split_rig(document))
-    except (KeyError, TypeError) as exc:  # pragma: no cover - schema catches these
-        return [("RIG101", WIRING_FILENAME, str(exc))]
-
-    vocab = registry.vocabulary()
-    return [
-        (code, loc, msg)
-        for code, pairs in (
-            ("RIG101", chans.disagreements()),
-            ("RIG102", chans.pin_problems()),
-            ("RIG103", chans.duplicate_pins()),
-            ("RIG104", chans.slot_problems(vocab)),
-            ("RIG105", chans.sync_problems()),
-            ("RIG106", chans.onset_problems(vocab)),
-            ("RIG107", chans.edge_problems(vocab)),
-        )
-        for loc, msg in pairs
-    ]
 
 
 def _unpinned(doc: dict) -> list[tuple[str, str]]:

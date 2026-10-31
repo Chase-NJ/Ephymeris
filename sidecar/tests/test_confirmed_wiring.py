@@ -46,9 +46,13 @@ class NoTasks:
 
 
 class Rig:
-    """One run of the sidecar on `tmp_path`: constructing another is a restart."""
+    """One run of the sidecar on `tmp_path`: constructing another is a restart.
 
-    def __init__(self, tmp_path, tasks=None) -> None:
+    `first_start` is what the database says (`app.py`): True for a data dir
+    it has never marked. Seeding is a no-op once a record exists, so only a
+    test that loses the record says False."""
+
+    def __init__(self, tmp_path, tasks=None, *, first_start: bool = True) -> None:
         self.vocabulary = strobe_store.VocabularyStore(tmp_path)
         self.vocabulary.ensure_seeded()
         self.hardware = store.HardwareStore(tmp_path)
@@ -61,6 +65,7 @@ class Rig:
             rescan=self._nothing,
             after_rebuild=self._after,
             broadcast=self._broadcast,
+            first_start=first_start,
         )
 
     async def _nothing(self) -> None:
@@ -292,7 +297,39 @@ def test_a_digest_file_that_will_not_read_holds_everything(tmp_path):
     Rig(tmp_path).save(moved(12))
     s = store.HardwareStore(tmp_path)
     s.confirmed_path.write_text("{ damaged", encoding="utf-8")
-    assert_held(Rig(tmp_path))
+    rig = Rig(tmp_path, first_start=False)
+    assert_held(rig)
+    assert store.CONFIRMED_FILENAME in rig.notices() and "will not read" in rig.notices()
+
+
+def test_a_record_lost_between_starts_holds_every_stored_wiring(tmp_path):
+    """Only the machine's first start may record unrecorded wiring; a lost
+    record at any later start is not that (`app.py` asks the database)."""
+    Rig(tmp_path).save(moved(12))
+    s = store.HardwareStore(tmp_path)
+    s.confirmed_path.unlink()
+    write_wiring(s, moved(13))  # copied in while the record was gone
+
+    rig = Rig(tmp_path, first_start=False)
+    assert_held(rig)
+    assert store.CONFIRMED_FILENAME in rig.notices() and "missing" in rig.notices()
+    rig.save(rig.get()["document"], confirmed_pins=True)
+    assert Rig(tmp_path, first_start=False).definition.wiring_problem() is None
+
+
+def test_a_record_the_first_start_cannot_write_is_trusted_that_run_only(tmp_path, monkeypatch):
+    write_wiring(store.HardwareStore(tmp_path), moved(12))
+    real = store._write_atomic
+
+    def refuse(path, text):
+        if path.name == store.CONFIRMED_FILENAME:
+            raise PermissionError("read-only")
+        return real(path, text)
+
+    monkeypatch.setattr(store, "_write_atomic", refuse)
+    assert Rig(tmp_path).definition.wiring_problem() is None, "the upgrade asks nothing"
+    monkeypatch.undo()
+    assert_held(Rig(tmp_path, first_start=False))
 
 
 # --------------------------------------------------------------------------- #
@@ -500,6 +537,108 @@ def test_the_leftover_of_a_migration_the_app_made_is_removed_by_the_next_save(tm
     assert not s.legacy_rig_path.exists()
 
 
+def _stuck(monkeypatch, name: str) -> None:
+    real = Path.unlink
+
+    def unlink(self, *a, **k):
+        if self.name == name:
+            raise PermissionError("held open")
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+
+
+def test_a_superseded_layout_a_save_left_behind_is_never_put_back_in_force(tmp_path, monkeypatch):
+    write_rig_json(store.HardwareStore(tmp_path), moved(12))
+    rig = Rig(tmp_path)  # the upgrade: rig.json is in force and recorded
+    _stuck(monkeypatch, store.RIG_FILENAME)
+    rig.save(moved(13))  # cannot remove rig.json
+    monkeypatch.undo()
+    rig.hardware.path.unlink()  # and wiring.json is deleted by hand
+
+    restarted = Rig(tmp_path, first_start=False)
+    assert_held(restarted)
+    assert restarted.get()["document"]["pins"]["left_well"]["index"] == 12, "shown, never in force"
+
+
+class PowerCut(BaseException):
+    """The process dies here: nothing after it in the save runs."""
+
+
+def _cut_at_removing(monkeypatch, name: str) -> None:
+    """A crash after `wiring.json` landed, before the save removed `name`."""
+    real = Path.unlink
+
+    def unlink(self, *a, **k):
+        if self.name == name:
+            raise PowerCut()
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+
+
+def _rig_json_then_cut_save(tmp_path, monkeypatch) -> None:
+    write_rig_json(store.HardwareStore(tmp_path), moved(12))
+    Rig(tmp_path)  # the upgrade: rig.json in force and recorded
+    s = store.HardwareStore(tmp_path)
+    _cut_at_removing(monkeypatch, store.RIG_FILENAME)
+    with pytest.raises(PowerCut):
+        s.save(moved(13))
+    monkeypatch.undo()
+    assert s.path.exists() and s.legacy_rig_path.exists()
+
+
+def test_a_save_cut_off_before_its_record_never_revives_the_wiring_it_replaced(tmp_path, monkeypatch):
+    _rig_json_then_cut_save(tmp_path, monkeypatch)
+    store.HardwareStore(tmp_path).path.unlink()  # deleted by hand before the next start
+
+    restarted = Rig(tmp_path, first_start=False)
+    assert_held(restarted)
+    assert restarted.get()["document"]["pins"]["left_well"]["index"] == 12, "shown, never in force"
+
+
+def test_a_save_cut_off_before_its_record_is_finished_at_the_next_start(tmp_path, monkeypatch):
+    _rig_json_then_cut_save(tmp_path, monkeypatch)
+
+    restarted = Rig(tmp_path, first_start=False)
+    assert restarted.definition.wiring_problem() is None
+    assert registry.channels().get("left_well").index == 13
+    assert store.RIG_FILENAME not in restarted.notices(), "the replaced layout is the save's own"
+    restarted.hardware.path.unlink()  # finished, so the old layout is superseded
+    assert_held(Rig(tmp_path, first_start=False))
+
+
+def test_an_upgrade_adopts_the_older_layout_main_left_beside_wiring_json(tmp_path):
+    """Main's own save wrote wiring.json and then removed the older layouts;
+    one stopped between leaves them, and main's next save would have removed
+    them. So the first start adopts them as leftovers, never as copies."""
+    s = store.HardwareStore(tmp_path)
+    write_wiring(s, moved(12))
+    write_rig_json(s, moved(9))
+    rig = Rig(tmp_path)
+    assert rig.get()["status"]["notices"] == []
+    rig.save(moved(14))
+    assert not s.legacy_rig_path.exists()
+
+
+async def test_the_app_records_unrecorded_wiring_only_at_the_machine_s_first_start(tmp_path):
+    from tests.wire import running_app
+
+    data = tmp_path / "data"
+    write_wiring(store.HardwareStore(data), moved(12))  # main's wiring, before the upgrade
+    async with running_app(data) as app:
+        assert app.rig_definition.wiring_problem() is None, "the upgrade asks nothing"
+        assert registry.channels().get("left_well").index == 12
+
+    s = store.HardwareStore(data)
+    s.confirmed_path.unlink()  # the record is lost
+    write_wiring(s, moved(13))  # and another machine's wiring copied in
+    async with running_app(data) as app:
+        problem = app.rig_definition.wiring_problem()
+        assert problem and "not saved or confirmed" in problem
+        assert registry.channels().content_hash() == SHIPPED_PINOUT_HASH
+
+
 def test_half_a_pair_left_by_a_save_is_the_app_s_own_and_the_next_save_removes_it(tmp_path, monkeypatch):
     s = store.HardwareStore(tmp_path)
     write_pair(s, moved(12))
@@ -519,6 +658,22 @@ def test_half_a_pair_left_by_a_save_is_the_app_s_own_and_the_next_save_removes_i
 
     rig.save(moved(14))
     assert not s.channel_set_path.exists()
+
+
+def test_the_first_start_mark_is_read_before_the_database_connects(tmp_path):
+    from ephymeris_sidecar.cohorts.db import Database, has_mark
+
+    path = tmp_path / "ephymeris.db"
+    assert has_mark(path, store.FIRST_START_MARK) is False, "no database: a first start"
+    db = Database(path)
+    db.connect()
+    assert has_mark(path, store.FIRST_START_MARK) is False, "a database that never marked it"
+    db.set_mark(store.FIRST_START_MARK)
+    db.set_mark(store.FIRST_START_MARK)  # idempotent
+    db.close()
+    assert has_mark(path, store.FIRST_START_MARK) is True
+    path.write_bytes(b"not a database at all, and long enough to be read as one" * 4)
+    assert has_mark(path, store.FIRST_START_MARK) is True, "unreadable: never seed twice"
 
 
 def test_a_record_lost_while_running_never_trusts_a_file_copied_in_after(tmp_path):

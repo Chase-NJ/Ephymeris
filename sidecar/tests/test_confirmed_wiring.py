@@ -864,6 +864,23 @@ def test_a_record_with_the_order_blind_digest_still_confirms_its_file(tmp_path):
     assert_held(Rig(tmp_path, first_start=False))
 
 
+def test_a_machine_that_ran_134_holds_its_unswapped_file_once(tmp_path):
+    """#134 set the database's mark but never wrote `wiring-record-started`,
+    so its next start is not a first start: the order-blind record confirms
+    nothing, and the unswapped file is held until one confirm."""
+    s = store.HardwareStore(tmp_path)
+    write_wiring(s, {**moved(12), "edited_at": "2026-10-31T05:00:00Z"})
+    _order_blind_record(s)
+    assert not s.started_path.exists()
+
+    rig = Rig(tmp_path, first_start=False)  # a machine on #134, upgrading
+    assert_held(rig)
+    rig.save(rig.get()["document"], confirmed_pins=True)
+    restarted = Rig(tmp_path, first_start=False)
+    assert restarted.definition.wiring_problem() is None, "one confirm is enough"
+    assert registry.channels().get("left_well").index == 12
+
+
 def _swap_odor_lines(s: store.HardwareStore, doc: dict) -> None:
     s.path.write_text(json.dumps(_reordered(doc, "odor_line_1", "odor_line_2")), encoding="utf-8")
 

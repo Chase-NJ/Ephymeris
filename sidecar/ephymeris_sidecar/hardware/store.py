@@ -358,7 +358,7 @@ class HardwareStore:
         else (`_carried_over`); at any other start `_record` drops it unread.
         """
         first = first_start and not self.started_path.exists()
-        record = self._record(order_blind=True)
+        record = self._record(keep_order_blind=True)
         if first:
             record = self._carried_over(record)
         elif _order_blind_in(record):
@@ -394,9 +394,9 @@ class HardwareStore:
     def _carried_over(self, record: "_Record") -> "_Record":
         """A record whose digests are blind to declaration order (written by a
         build before they covered it) is carried over ONCE, and only at the
-        machine's first start (`settle_record` calls nothing else with one):
-        the only start that can meet one, because every other start drops
-        them unread (`_record`). Each digest becomes today's form of exactly
+        machine's first start (`settle_record`); every other start drops
+        them unread (`_record`), so a machine that ran #134 (its database
+        marked, no `STARTED_FILENAME`) is held once. Each digest becomes today's form of exactly
         the file it still matches, and is otherwise dropped -- a digest left
         order-blind would confirm that wiring with its odor lines swapped. A
         carry that cannot be written is trusted this run only (`_unwritten`):
@@ -489,18 +489,18 @@ class HardwareStore:
         replaced = [s for s in present if s.files[0] != self.path and s not in shadows]
         return stored, record, replaced
 
-    def _record(self, *, order_blind: bool = False) -> _Record:
+    def _record(self, *, keep_order_blind: bool = False) -> _Record:
         """The record of the wiring saved here. Missing, or a file that will
         not read, is a record with a problem: it trusts nothing.
 
         What `settle_record` recorded but could not write stands in for the
         file for the rest of this run. A digest blind to declaration order is
         dropped, with the pending save beside it, before anything compares
-        it: only the first start reads one (`order_blind`, `_carried_over`)."""
+        it: only the first start keeps one (`keep_order_blind`, `_carried_over`)."""
         if self._unwritten is not None:
             return self._unwritten
         record = self._record_on_disk()
-        if order_blind or not _order_blind_in(record):
+        if keep_order_blind or not _order_blind_in(record):
             return record
         return dataclasses.replace(record, digest=None, pending=None)
 

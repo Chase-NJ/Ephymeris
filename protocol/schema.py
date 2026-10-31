@@ -1818,9 +1818,8 @@ SHAPES = (
                 "notices",
                 ListOf(Ref("RigProblem")),
                 doc="Where the wiring in force and the stored files part ways: stored "
-                "wiring that did not load, or that is held because it was not saved "
-                "or confirmed on this machine, or was saved here but a save after it "
-                "did not finish (the shipped pins are in force and "
+                "wiring that did not load, or that is held because the record "
+                "cannot vouch for it (the shipped pins are in force and "
                 "every box is refused); a file changed on disk since it was "
                 "installed; or an older layout copied in beside `wiring.json`, "
                 "which is not read. Each says what is in force, what the editor "

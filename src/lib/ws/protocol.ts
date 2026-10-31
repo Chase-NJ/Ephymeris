@@ -1728,12 +1728,11 @@ export interface RigStatus {
   channelSetHash: string;
   /**
    * Where the wiring in force and the stored files part ways: stored wiring that did not load, or
-   * that is held because it was not saved or confirmed on this machine, or was saved here but a
-   * save after it did not finish (the shipped pins are in force and every box is refused); a file
-   * changed on disk since it was installed; or an older layout copied in beside `wiring.json`,
-   * which is not read. Each says what is in force, what the editor shows, what is blocked, and
-   * what a restart does. About the RIG, never the draft: they stand through every edit, and do
-   * not stop a save, which is how most are cleared.
+   * that is held because the record cannot vouch for it (the shipped pins are in force and every
+   * box is refused); a file changed on disk since it was installed; or an older layout copied in
+   * beside `wiring.json`, which is not read. Each says what is in force, what the editor shows,
+   * what is blocked, and what a restart does. About the RIG, never the draft: they stand through
+   * every edit, and do not stop a save, which is how most are cleared.
    */
   notices: RigProblem[];
   /**

@@ -663,7 +663,7 @@ def test_a_file_fixed_by_hand_never_lifts_the_refusal_while_the_shipped_pins_are
     assert rig.hardware.load_problems() == []
     assert rig.definition.wiring_problem(), "the shipped pins are still the ones in force"
     assert registry.channels().content_hash() == SHIPPED_PINOUT_HASH
-    payload = service.document_payload(rig.hardware, in_force=rig.definition.wiring_problem())
+    payload = _hardware_get(rig)
     assert any(p["location"] == store.WIRING_FILENAME for p in payload["problems"])
 
     rig.save(rig.hardware.load())  # only a save (or a restart) puts it in force
@@ -702,15 +702,109 @@ def test_a_stray_temp_file_alone_is_no_wiring(tmp_path):
     assert s.load_problems() == []
 
 
-def test_a_parseable_but_broken_wiring_is_what_hardware_get_shows(tmp_path):
-    s = store.HardwareStore(tmp_path)
-    s.save(_swapped_ports())
-    doc = json.loads(s.path.read_text(encoding="utf-8"))
-    doc["pins"]["left_well"]["index"] = "three"
-    s.path.write_text(json.dumps(doc), encoding="utf-8")
-    payload = service.document_payload(s)
-    assert payload["document"]["pins"]["left_well"]["index"] == "three"
-    assert payload["document"]["channels"]["left_well"]["port_slot"] == 2
+def _hardware_get(rig: "Rig") -> dict:
+    """`hardware.get`, as `app.py` builds it: against the wiring in force."""
+    return service.document_payload(rig.hardware, in_force=rig.definition.in_force())
+
+
+def test_hardware_get_shows_the_wiring_in_force_not_a_file_copied_in_since(tmp_path):
+    rig = Rig(tmp_path)
+    rig.save(_swapped_ports())  # left_well on 3
+    copied = json.loads(rig.hardware.path.read_text(encoding="utf-8"))
+    copied["pins"]["left_well"]["index"] = 12
+    rig.hardware.path.write_text(json.dumps(copied), encoding="utf-8")
+
+    payload = _hardware_get(rig)
+    assert payload["document"]["pins"]["left_well"]["index"] == 3
+    assert registry.channels().get("left_well").index == 3
+    differs = [p for p in payload["problems"] if p["location"] == store.WIRING_FILENAME]
+    assert differs and "not in force" in differs[0]["message"]
+    assert "boxes run the wiring in force" in differs[0]["message"]
+
+
+def test_hardware_get_after_a_hand_corruption_says_the_wiring_in_force_still_runs(tmp_path):
+    rig = Rig(tmp_path)
+    rig.save(_swapped_ports())
+    rig.hardware.path.write_text("{ damaged", encoding="utf-8")
+
+    payload = _hardware_get(rig)
+    assert payload["document"]["pins"]["left_well"]["index"] == 3
+    message = payload["problems"][0]["message"]
+    assert "did not load" in message and "boxes run the wiring in force" in message
+    assert "no box can start" not in message
+    assert rig.definition.wiring_problem() is None
+
+
+def test_hardware_get_on_unloaded_wiring_shows_the_shipped_pins_and_says_so(tmp_path):
+    first = Rig(tmp_path)
+    first.save(_swapped_ports())
+    first.hardware.path.write_text("{ damaged", encoding="utf-8")
+    rig = Rig(tmp_path)
+
+    payload = _hardware_get(rig)
+    assert payload["document"]["pins"]["left_well"]["index"] == 4  # the shipped pin
+    message = payload["problems"][0]["message"]
+    assert "shipped pins are in force" in message and "no box can start" in message
+    assert "no box can start" in rig.definition.wiring_problem()
+
+
+def test_an_identical_copy_with_another_edited_at_is_no_difference(tmp_path):
+    rig = Rig(tmp_path)
+    rig.save(_swapped_ports())
+    copied = json.loads(rig.hardware.path.read_text(encoding="utf-8"))
+    copied["edited_at"] = "2020-01-01T00:00:00Z"
+    rig.hardware.path.write_text(json.dumps(copied), encoding="utf-8")
+    assert [p for p in _hardware_get(rig)["problems"] if p["code"] is None] == []
+
+
+# Fix 2: reset can never bring older wiring back into force
+
+
+def _fail_unlinking(monkeypatch, name: str) -> None:
+    real = Path.unlink
+
+    def unlink(self, *a, **k):
+        if self.name == name:
+            raise PermissionError(f"{name} is held open")
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+
+
+@pytest.mark.parametrize("stuck", [store.PIN_MAP_FILENAME, store.CHANNEL_SET_FILENAME, store.RIG_FILENAME])
+def test_a_reset_that_cannot_remove_an_older_layout_never_brings_it_back(tmp_path, monkeypatch, stuck):
+    rig = Rig(tmp_path)
+    old = store.default_document()
+    old["pins"]["left_well"]["index"] = 12
+    _main_era_pair(rig.hardware, old)
+    _legacy_rig_json(rig.hardware, old)
+    _fail_unlinking(monkeypatch, stuck)
+    rig.save(_swapped_ports())  # the migrating save cannot remove it: wiring.json wins
+    assert registry.channels().get("left_well").index == 3
+
+    with pytest.raises(OSError):
+        asyncio.run(rig.definition.reset_wiring())
+    monkeypatch.undo()
+
+    assert rig.hardware.path.exists(), "wiring.json goes last, so it still wins"
+    assert registry.channels().get("left_well").index == 3
+    restarted = Rig(tmp_path)
+    assert restarted.hardware.load()["pins"]["left_well"]["index"] == 3
+    assert restarted.definition.wiring_problem() is None
+
+
+# Fix 3: a refused save never touches the vocabulary
+
+
+def test_a_save_refused_for_a_missing_pin_issues_no_code(tmp_path):
+    rig = Rig(tmp_path)
+    before = rig.vocabulary.path.read_bytes()
+    doc = store.default_document()
+    doc["pins"].pop("odor_port")
+    with pytest.raises(store.RigInvalid):
+        rig.save(doc)
+    assert rig.vocabulary.path.read_bytes() == before
+    assert "ODOR_PORT_ENTER" not in registry.vocabulary()
 
 
 def test_a_wiring_save_that_fails_after_issuing_codes_still_rebuilds(tmp_path, monkeypatch):

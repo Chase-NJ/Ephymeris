@@ -220,6 +220,7 @@ class RigDefinition:
         #: None. Set only by `_install_wiring`, from the same read that chose
         #: the pins in force, so the refusal and the pins never disagree.
         self._unloaded: str | None = None
+        self._in_force: dict[str, Any] | None = None
         self._install_wiring()
         registry.set_vocabulary_source(vocabulary.load)
 
@@ -266,7 +267,7 @@ class RigDefinition:
                 # does not veto a rewiring; it refuses to let one happen
                 # unnoticed. Nothing is written on this path.
                 raise WiringWouldBreakTasks(breaks)
-            problems = hardware_store.validate(document)
+            problems = hardware_store.save_problems(document)
             if problems:
                 # Before any code is issued: a refused wiring issues nothing.
                 raise hardware_store.RigInvalid(problems)
@@ -317,7 +318,7 @@ class RigDefinition:
             await asyncio.to_thread(self._hardware.reset)
             self._install_wiring()
             payload = await asyncio.to_thread(
-                hardware_service.document_payload, self._hardware, in_force=self._unloaded
+                hardware_service.document_payload, self._hardware, in_force=self.in_force()
             )
             await self._rebuild()
             await self._broadcast(event(Evt.HARDWARE_UPDATED, payload["status"]))
@@ -369,8 +370,15 @@ class RigDefinition:
         it composes, and when, cannot drift from what this read decided.
         """
         document, problems = self._hardware.snapshot()
-        self._unloaded = problems[0][1] if problems else None
+        self._in_force = document
+        self._unloaded = hardware_service.unloaded_message(problems[0][1]) if problems else None
         registry.set_rig_source(lambda: copy.deepcopy(document))
+
+    def in_force(self) -> hardware_service.InForce:
+        """The wiring in force -- the stored document installed, or None for
+        the shipped one -- and why stored wiring did not load, if it did not.
+        What `hardware.get` describes."""
+        return hardware_service.InForce(copy.deepcopy(self._in_force), self._unloaded)
 
     def load_vocabulary_strict(self) -> dict[str, Any]:
         """Raises `StrobeRefused("unreadable")` for a document that won't read."""

@@ -4004,8 +4004,8 @@ ERRORS = (
     ),
     ErrorCode(
         "RIG_WIRING_UNLOADED",
-        "`port.startSession`, `sessions.startAll`, `sessions.flash` or "
-        "`utility.identify` while the wiring in force is the shipped one because "
+        "`port.startSession`, `sessions.startAll`, `sessions.flash`, `flash.enqueue` "
+        "or `utility.identify` while the wiring in force is the shipped one because "
         "the rig's stored wiring did not load when it was installed (unreadable, "
         "unparseable, out of shape, a channel without a pin, or an older layout "
         "that disagrees with itself). A box started, flashed or identified would "

@@ -578,9 +578,12 @@ The editor and the wire see the same **one document**, `{rig_version, channels, 
 > - **When stored wiring will not load** (unreadable, unparseable, out of shape, a channel without a pin, or an older layout that disagrees with itself):
 >   - the registry composes the shipped pinout, so the sidecar still starts;
 >   - the startup log says the stored wiring failed to load;
->   - `hardware.get` shows the problem first, with the stored document when it parses;
->   - `sessions.startAll`, `port.startSession`, `sessions.flash` and `utility.identify` refuse with `RIG_WIRING_UNLOADED`, and the utility baseline flashes no box ([ARCHITECTURE.md](ARCHITECTURE.md#hardware-utility-baseline)).
+>   - `hardware.get` shows the shipped pins and says they are in force and what that blocks;
+>   - `sessions.startAll`, `port.startSession`, `sessions.flash`, `flash.enqueue` (Debug Mode) and `utility.identify` refuse with `RIG_WIRING_UNLOADED`, and the utility baseline flashes no box ([ARCHITECTURE.md](ARCHITECTURE.md#unloaded-wiring-holds-it)).
 > - **The refusal follows the wiring in force, never a fresh read of the file.** `RigDefinition` reads the stored wiring once, when it installs it (at startup, and after every save and reset), and the registry composes from exactly that read (`_install_wiring`). A file fixed or copied in by hand changes no pin, so it lifts nothing: only a save, a reset, or a restart onto a file that loads puts wiring in force.
+> - **`hardware.get` shows the wiring in force, never the file.** When the file on disk differs from it (copied in, edited, corrupted or deleted by hand), the reply flags the difference first. The flag says whether boxes run the wiring in force or are refused, and what a restart would do.
+> - **A save validates the whole document, a pin for every channel included, before it issues any edge code**, so a refused save never touches the vocabulary.
+> - **Reset removes the lowest-precedence file first and `wiring.json` last, and stops at the first file it cannot remove.** A partial reset therefore leaves either the wiring that was in force or a load problem, never an older wiring in force.
 > - **No `edited_at` in any digest or hash.** Identical wiring copied from another machine compares equal.
 
 **Older layouts are read in place, and the next save writes `wiring.json` and removes them:**

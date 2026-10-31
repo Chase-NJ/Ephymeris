@@ -876,7 +876,8 @@ While the rig's stored wiring did not load ([TASKS.md](TASKS.md#the-channel-set-
 
 - every restore reads `held`, its detail naming the problem;
 - `force` (**Reflash boxes**) is held too;
-- `utility.identify` refuses with `RIG_WIRING_UNLOADED`.
+- `utility.identify` refuses with `RIG_WIRING_UNLOADED`;
+- a Debug Mode flash (`flash.enqueue`) refuses with `RIG_WIRING_UNLOADED`, whatever the sketch: every one is built on the pins in force, and a Debug flash of `BOX_Utility` would drive the shipped outputs the hold exists to keep still.
 
 The three rules above are untouched, because the hold only ever declines to flash. Saving or resetting the wiring rebuilds the utility, and `rebuilt()` restores every idle, unpinned box as usual.
 

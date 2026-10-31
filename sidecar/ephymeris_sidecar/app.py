@@ -717,6 +717,10 @@ class Application:
             raise CommandError(ErrCode.BAD_MESSAGE, "`boxes` must name at least one box")
         path = args["sketchPath"]
         baud = args.get("baud")
+        if (problem := self.rig_definition.wiring_problem()) is not None:
+            # Every sketch here is built on the pins in force, the shipped ones
+            # meanwhile (`ARCHITECTURE.md#unloaded-wiring-holds-it`).
+            raise rig_definition.WiringNotLoaded(problem)
         # Only a discovered sketch is flashable (`TASKS.md#sketch-library`) —
         # enforced here, not just by the picker only listing discovered
         # sketches, and again when the job runs.
@@ -1140,7 +1144,7 @@ class Application:
         return await asyncio.to_thread(
             hardware_service.document_payload,
             self.hardware_store,
-            in_force=self.rig_definition.wiring_problem(),
+            in_force=self.rig_definition.in_force(),
         )
 
     async def _hardware_preview(self, args: Args) -> dict[str, Any]:

@@ -19,42 +19,82 @@ would make it a two-pass job.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NamedTuple
 
 from . import store
 
 
-def document_payload(rig: store.HardwareStore, *, in_force: str | None = None) -> dict[str, Any]:
-    """`RigDocument`: the wiring, plus everything wrong with it.
+class InForce(NamedTuple):
+    """The wiring in force (`RigDefinition.in_force`): the stored document the
+    registry composes, or None for the shipped one; and, when stored wiring
+    did not load, the refusal every box is under (`unloaded_message`)."""
 
-    An unedited rig gets the SHIPPED pinout as an editable document rather than
-    nothing, so the editor opens something real. The operator's first save turns
-    that into their own; until then nothing is written.
+    document: dict | None
+    problem: str | None
+
+
+def unloaded_message(problem: str) -> str:
+    """The refusal while stored wiring did not load: what is in force, and what
+    that blocks. The wire error and `hardware.get` both say exactly this."""
+    return (
+        f"{problem} The shipped pins are in force, so no box can start, be flashed "
+        "or identified until this rig's wiring is saved or reset, or Ephymeris "
+        "restarts onto a file that loads."
+    )
+
+
+def document_payload(rig: store.HardwareStore, *, in_force: InForce | None = None) -> dict[str, Any]:
+    """`RigDocument`: the wiring IN FORCE, plus everything wrong with it.
+
+    Always the wiring the registry composes and every box runs -- never a file
+    that changed on disk since it was installed. A difference between the two
+    is reported first, with what it does and does not block, so the editor
+    never shows pins that are not in force without saying so. An unedited rig
+    gets the SHIPPED pinout as an editable document, so the editor opens
+    something real. `in_force` defaults to what the file would install now.
     """
-    # The stored document even when it did not load (when it parses at all),
-    # so the operator is shown the wiring that needs fixing, not the shipped one.
-    doc = rig.stored_document() or store.default_document()
-    # Why it did not load comes first: until it is fixed, no box may start.
-    stored = [
-        {"location": loc, "message": msg, "code": None} for loc, msg in rig.load_problems()
-    ]
-    if in_force and not stored:
-        # The file loads NOW, but the wiring in force is still the one that
-        # did not (`RigDefinition.wiring_problem`): a file changed by hand is
-        # not read until the wiring is saved, reset or the app restarts.
-        stored = [{
-            "location": store.WIRING_FILENAME,
-            "message": (
-                f"{in_force} The file has changed on disk since, and is not in force "
-                "until it is saved or reset, or Ephymeris restarts."
-            ),
-            "code": None,
-        }]
+    disk, disk_problems = rig.snapshot()
+    if in_force is None:
+        in_force = InForce(
+            disk, unloaded_message(disk_problems[0][1]) if disk_problems else None
+        )
+    doc = in_force.document if in_force.document is not None else store.default_document()
+    flagged: list[dict[str, Any]] = []
+    if in_force.problem:
+        flagged.append(_flag(in_force.problem))
+    if disk_problems and in_force.problem is None:
+        flagged.append(_flag(
+            f"{disk_problems[0][1]} The wiring shown is the one in force, loaded before "
+            "the file changed, and boxes run the wiring in force. A restart onto this "
+            "file would stop every box until the wiring is saved or reset."
+        ))
+    elif not disk_problems and _content(disk) != _content(in_force.document):
+        until = (
+            "until then the refusal above stands"
+            if in_force.problem
+            else "until then boxes run the wiring in force"
+        )
+        flagged.append(_flag(
+            f"{store.WIRING_FILENAME} on disk "
+            + ("is gone" if disk is None else "differs from the wiring in force")
+            + ": it changed outside the app, and is not in force until this wiring "
+            f"is saved or reset, or Ephymeris restarts. The wiring shown is the one in "
+            f"force; {until}."
+        ))
     return {
         "document": doc,
-        "status": _status(rig, doc),
-        "problems": stored + problems_for(doc),
+        "status": _status(rig, doc, custom=rig.exists() or in_force.document is not None),
+        "problems": flagged + problems_for(doc),
     }
+
+
+def _flag(message: str) -> dict[str, Any]:
+    return {"location": store.WIRING_FILENAME, "message": message, "code": None}
+
+
+def _content(doc: dict | None) -> dict | None:
+    """A document's wiring, without when its file was written."""
+    return None if doc is None else {k: v for k, v in doc.items() if k != "edited_at"}
 
 
 def preview_payload(
@@ -125,15 +165,16 @@ def _rule_problems(document: Any) -> list[dict[str, Any]]:
     ]
 
 
-def _status(rig: store.HardwareStore, doc: dict) -> dict[str, Any]:
+def _status(rig: store.HardwareStore, doc: dict, *, custom: bool | None = None) -> dict[str, Any]:
+    """Of `doc`, the wiring being described; `custom` defaults to whether the
+    rig has stored wiring of its own (which keeps Reset reachable)."""
     from ephymeris_sidecar.rig import registry
 
-    status = rig.status()
     return {
-        "custom": status.custom,
-        "derivedFrom": status.derived_from or registry.active_pinout_id(),
+        "custom": rig.exists() if custom is None else custom,
+        "derivedFrom": str(doc.get("derived_from") or "") or registry.active_pinout_id(),
         "board": str(doc.get("board", "")),
-        "editedAt": status.edited_at,
+        "editedAt": doc.get("edited_at"),
         "pinoutHash": registry.channels().content_hash(),
         "channelSetHash": registry.channel_set().content_hash(),
     }

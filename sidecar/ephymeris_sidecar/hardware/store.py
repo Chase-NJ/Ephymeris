@@ -224,7 +224,7 @@ class HardwareStore:
         be one pass rather than a game of whack-a-mole, which is the same
         argument `ChannelMap.disagreements()` makes.
         """
-        problems = validate(doc) or _unpinned(doc)
+        problems = save_problems(doc)
         if problems:
             raise RigInvalid(problems)
 
@@ -238,8 +238,25 @@ class HardwareStore:
         return stored
 
     def reset(self) -> None:
-        """Back to the shipped pinout. The files go; nothing else does."""
-        self._remove(self._every_layout())
+        """Back to the shipped pinout. The files go; nothing else does.
+
+        LOWEST PRECEDENCE FIRST, and the first file that will not go stops it
+        (raised). `_stored` reads `wiring.json`, then the pair, then `rig.json`;
+        removing them in that order would let a failure part-way put an older
+        wiring back in force with nothing to say so. In this order a failure
+        leaves either the wiring that was in force or a load problem.
+        """
+        for path in (
+            self.channel_set_path.with_suffix(".json.tmp"),
+            self.pin_map_path.with_suffix(".json.tmp"),
+            self.legacy_rig_path.with_suffix(".json.tmp"),
+            self.legacy_rig_path,
+            self.pin_map_path,
+            self.channel_set_path,
+            self.path.with_name(self.path.name + ".part"),
+            self.path,
+        ):
+            path.unlink(missing_ok=True)
 
     def _older_layouts(self) -> tuple[Path, ...]:
         return (
@@ -300,12 +317,9 @@ def legacy_pair_digest(channel_set: dict) -> str:
 
 
 def _unloaded(location: str, why: str | None) -> tuple[str, str]:
-    message = (
-        f"{location} did not load: {why or 'it could not be read'}. This rig is not "
-        "using it, so no box can start or be flashed until its wiring is saved "
-        "again or reset."
-    )
-    return location, message
+    """What is wrong with the FILE, and nothing about its consequence: that
+    depends on what is in force, which `hardware/service.py` says."""
+    return location, f"{location} did not load: {why or 'it could not be read'}."
 
 
 def _checked(location: str, doc: dict | None, why: str | None) -> _Stored:
@@ -323,6 +337,12 @@ def _checked(location: str, doc: dict | None, why: str | None) -> _Stored:
         where, what = shape[0]
         return _Stored(doc, [_unloaded(location, f"{where}: {what}")])
     return _Stored(doc, [])
+
+
+def save_problems(doc: Any) -> list[tuple[str, str]]:
+    """Why `save` would refuse this document: its shape, then a channel with
+    no pin. Checked by the rig definition before it issues any edge code."""
+    return validate(doc) or (_unpinned(doc) if isinstance(doc, dict) else [])
 
 
 def _unpinned(doc: dict) -> list[tuple[str, str]]:

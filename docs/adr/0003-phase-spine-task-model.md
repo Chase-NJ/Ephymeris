@@ -104,8 +104,8 @@ The lab has recorded behavior but no neural data, so new sessions need not repro
 - **A pure core:** `step(state, event, now) → actions`, in fixed-width integer types. A thin hardware layer wraps it on the board.
 - **Tick rules:**
   - a 1 ms tick on `millis()`, with every input read and debounced first;
-  - an input edge beats a timer in the same tick;
-  - two watched edges in one tick are broken by a draw from the session RNG;
+  - an input edge beats a timer in the same tick only when the state exits on that edge: a watched edge the state has no exit for (a lick being counted) moves nothing and does not hold the timer off;
+  - two or more edges the state exits on, in one tick, are broken by a draw from the session RNG; a single one draws nothing;
   - a strobe carries its tick time, not its emission time.
 - **Determinism rules:**
   - nothing in the loop calls `delay()`;

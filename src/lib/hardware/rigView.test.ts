@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { applyPreview, canReset, canSave, type RigView } from "./rigView";
+import { applyPreview, canReset, canSave, servedView, type RigView } from "./rigView";
 import type { RigProblem, RigStatus } from "./types";
 
 const unloaded: RigProblem = {
@@ -49,11 +49,32 @@ describe("applyPreview", () => {
 describe("canSave", () => {
   it("renders the sidecar's answer and never works one out", () => {
     const told = (canSave: boolean): RigView => ({ ...loaded, problems: [], status: status({ canSave }) });
-    expect(canSave(told(true), false)).toBe(true);
+    const idle = { saving: false, checking: false };
+    expect(canSave(told(true), idle)).toBe(true);
     // No problems and a notice, which once enabled Save here: the sidecar said no.
-    expect(canSave(told(false), false)).toBe(false);
-    expect(canSave(told(true), true)).toBe(false);
-    expect(canSave({ ...loaded, status: null }, false)).toBe(false);
+    expect(canSave(told(false), idle)).toBe(false);
+    expect(canSave(told(true), { saving: true, checking: false })).toBe(false);
+    expect(canSave({ ...loaded, status: null }, idle)).toBe(false);
+  });
+
+  it("is held while a preview is in flight, so a click can't send a stale answer", () => {
+    const told: RigView = { ...loaded, problems: [], status: status({ canSave: true }) };
+    expect(canSave(told, { saving: false, checking: true })).toBe(false);
+  });
+});
+
+describe("servedView", () => {
+  const baseline: RigView = { ...loaded, status: status({ canSave: false }) };
+
+  it("is the served draft's own answer when the draft is back at the baseline", () => {
+    // An edit undone by hand runs no preview; the last preview's `canSave: true`
+    // and empty problems must not stay up.
+    expect(servedView({ dirty: false, confirmedPins: false }, baseline)).toBe(baseline);
+  });
+
+  it("leaves any draft a preview will describe to that preview", () => {
+    expect(servedView({ dirty: true, confirmedPins: false }, baseline)).toBeNull();
+    expect(servedView({ dirty: false, confirmedPins: true }, baseline)).toBeNull();
   });
 });
 

@@ -286,6 +286,15 @@ class RigDefinition:
             if problems:
                 # Before any code is issued: a refused wiring issues nothing.
                 raise hardware_store.RigInvalid(problems)
+            rules = await asyncio.to_thread(hardware_service.problems_for, document)
+            if rules:
+                # The editor holds Save on these too, but this is the guard: a
+                # save that bypassed it would put two channels on one pin in
+                # force and lift a refusal.
+                raise WiringSaveBlocked(
+                    "This wiring has problems a save does not take: "
+                    + "; ".join(f"{p['code'] or 'shape'} {p['location']}: {p['message']}" for p in rules[:5])
+                )
             filled, issued = await asyncio.to_thread(self._issue_edge_codes, document)
             try:
                 stored = await asyncio.to_thread(self._hardware.save, filled)

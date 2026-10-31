@@ -1847,9 +1847,11 @@ SHAPES = (
             f(
                 "needsPinConfirmation",
                 BOOL,
-                doc="The draft's pins come from a pin map that was not written with "
-                "its channel set: offer the operator a way to confirm them, sent "
-                "as `confirmedPins` (`TASKS.md#the-channel-set-and-the-pin-map`).",
+                doc="The draft is a stored file that is not in force -- copied in, "
+                "changed outside the app, not loaded, or a pin map not written with "
+                "its channel set -- so nobody has checked its pins on this rig: "
+                "offer the operator a way to confirm them, sent as `confirmedPins` "
+                "(`TASKS.md#the-channel-set-and-the-pin-map`).",
             ),
         ),
     ),
@@ -1860,10 +1862,12 @@ SHAPES = (
                 "document",
                 ANY,
                 doc="The draft the editor opens — `{rig_version, channels, pins}`, "
-                "validated against rig/schema/rig_hardware.v1.json. The wiring in "
-                "force; or, while stored wiring did not load, that stored document "
-                "itself, broken, so it can be repaired and saved (the shipped pins "
-                "when it will not even parse). `status.notices` says which.",
+                "validated against rig/schema/rig_hardware.v1.json. A stored file "
+                "that is not in force, when there is one (copied in, changed "
+                "outside the app, or not loaded, even broken), so the operator can "
+                "check its pins or repair it; else the wiring in force, or the "
+                "shipped pins when there is nothing stored to show. "
+                "`status.notices` says which.",
             ),
             f("status", Ref("RigStatus")),
             f("problems", ListOf(Ref("RigProblem"))),
@@ -2729,10 +2733,12 @@ COMMANDS = (
                 "confirmedPins",
                 BOOL,
                 optional=True,
-                doc="The operator confirmed every pin of a draft whose pin map was not "
-                "written with its channel set (`status.needsPinConfirmation`, RIG108). "
-                "An explicit act, sent with the request: the sidecar refuses such a "
-                "save without it (`RIG_SAVE_BLOCKED`). Ignored otherwise.",
+                doc="The operator confirmed every pin of a draft read from a stored "
+                "file that is not in force (`status.needsPinConfirmation`, RIG108): "
+                "copied in, changed outside the app, not loaded, or a pin map not "
+                "written with its channel set. An explicit act, sent with the "
+                "request: the sidecar refuses such a save without it "
+                "(`RIG_SAVE_BLOCKED`), edited or not. Ignored otherwise.",
             ),
         ),
         result=Ref("RigSaved"),
@@ -2760,10 +2766,12 @@ COMMANDS = (
                 "confirmedPins",
                 BOOL,
                 optional=True,
-                doc="The operator confirmed every pin of a draft whose pin map was not "
-                "written with its channel set (`status.needsPinConfirmation`, RIG108). "
-                "An explicit act, sent with the request: the sidecar refuses such a "
-                "save without it (`RIG_SAVE_BLOCKED`). Ignored otherwise.",
+                doc="The operator confirmed every pin of a draft read from a stored "
+                "file that is not in force (`status.needsPinConfirmation`, RIG108): "
+                "copied in, changed outside the app, not loaded, or a pin map not "
+                "written with its channel set. An explicit act, sent with the "
+                "request: the sidecar refuses such a save without it "
+                "(`RIG_SAVE_BLOCKED`), edited or not. Ignored otherwise.",
             ),
         ),
         result=Ref("RigSaved"),
@@ -4095,9 +4103,10 @@ ERRORS = (
         "`hardware.save` that the rig's state does not allow yet: stored wiring "
         "that did not load and has nothing to repair (unreadable, unparseable, "
         "not a JSON object, or a pin map with no channel set), which only "
-        "`hardware.reset` replaces; or a draft whose pins came from a mismatched "
-        "pin map, sent without `confirmedPins`. Nothing was written "
-        "(`TASKS.md#the-channel-set-and-the-pin-map`).",
+        "`hardware.reset` replaces; a draft read from a stored file not in force, "
+        "sent without `confirmedPins`; or a draft with a wiring-rule problem "
+        "(RIG101–RIG107), which the editor holds Save on too. Nothing was written "
+        "and no code was issued (`TASKS.md#the-channel-set-and-the-pin-map`).",
     ),
     ErrorCode(
         "STROBE_INVALID",

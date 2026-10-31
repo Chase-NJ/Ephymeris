@@ -667,7 +667,9 @@ def test_a_file_fixed_by_hand_never_lifts_the_refusal_while_the_shipped_pins_are
     payload = _hardware_get(rig)
     assert any(p["location"] == store.WIRING_FILENAME for p in payload["status"]["notices"])
 
-    rig.save(rig.hardware.load())  # only a save (or a restart) puts it in force
+    with pytest.raises(definition.WiringSaveBlocked):
+        rig.save(rig.hardware.load())  # pins nobody on this rig has looked at
+    asyncio.run(rig.definition.save_wiring(rig.hardware.load(), confirm=True, confirmed_pins=True))
     assert rig.definition.wiring_problem() is None
     assert registry.channels().get("left_well").index == 3
 
@@ -706,21 +708,6 @@ def test_a_stray_temp_file_alone_is_no_wiring(tmp_path):
 def _hardware_get(rig: "Rig") -> dict:
     """`hardware.get`, as `app.py` builds it: against the wiring in force."""
     return service.document_payload(rig.hardware, in_force=rig.definition.in_force())
-
-
-def test_hardware_get_shows_the_wiring_in_force_not_a_file_copied_in_since(tmp_path):
-    rig = Rig(tmp_path)
-    rig.save(_swapped_ports())  # left_well on 3
-    copied = json.loads(rig.hardware.path.read_text(encoding="utf-8"))
-    copied["pins"]["left_well"]["index"] = 12
-    rig.hardware.path.write_text(json.dumps(copied), encoding="utf-8")
-
-    payload = _hardware_get(rig)
-    assert payload["document"]["pins"]["left_well"]["index"] == 3
-    assert registry.channels().get("left_well").index == 3
-    differs = payload["status"]["notices"]
-    assert differs and "not in force" in differs[0]["message"]
-    assert "boxes run the wiring in force" in differs[0]["message"]
 
 
 def test_hardware_get_after_a_hand_corruption_says_the_wiring_in_force_still_runs(tmp_path):
@@ -768,7 +755,9 @@ def test_unloaded_wiring_serves_the_stored_document_to_repair_and_a_save_lifts_t
     assert registry.channels().content_hash() == SHIPPED_PINOUT_HASH
 
     draft["pins"]["odor_port"] = {"index": 2, "watch_bit": 0}
-    saved = rig.save(draft)
+    with pytest.raises(definition.WiringSaveBlocked):
+        rig.save(draft)  # repaired, but its pins are not confirmed yet
+    saved = asyncio.run(rig.definition.save_wiring(draft, confirm=True, confirmed_pins=True))
     assert rig.definition.wiring_problem() is None
     assert saved["status"]["notices"] == [] and saved["status"]["custom"] is True
     assert registry.channels().get("left_well").index == 3
@@ -813,11 +802,12 @@ def _fail_unlinking(monkeypatch, name: str) -> None:
 
 @pytest.mark.parametrize("stuck", [store.PIN_MAP_FILENAME, store.CHANNEL_SET_FILENAME, store.RIG_FILENAME])
 def test_a_reset_that_cannot_remove_an_older_layout_never_brings_it_back(tmp_path, monkeypatch, stuck):
-    rig = Rig(tmp_path)
     old = store.default_document()
     old["pins"]["left_well"]["index"] = 12
-    _main_era_pair(rig.hardware, old)
-    _legacy_rig_json(rig.hardware, old)
+    on_disk = store.HardwareStore(tmp_path)
+    _main_era_pair(on_disk, old)
+    _legacy_rig_json(on_disk, old)
+    rig = Rig(tmp_path)  # started on the older layouts: they are in force
     _fail_unlinking(monkeypatch, stuck)
     rig.save(_swapped_ports())  # the migrating save cannot remove it: wiring.json wins
     assert registry.channels().get("left_well").index == 3
@@ -1045,4 +1035,99 @@ def test_a_file_fixed_after_a_failed_load_is_described_as_it_is_now(tmp_path):
     assert "shipped pins are in force" in notices[0]
     assert not any("parse" in n for n in notices), "the file parses now"
     assert any(n.startswith("Now wiring.json loads") for n in notices)
-    assert _hardware_get(rig)["status"]["canSave"] is True
+    served = _hardware_get(rig)
+    assert served["status"]["needsPinConfirmation"] is True
+    assert served["status"]["canSave"] is False
+    assert _preview(rig, served["document"], confirmed=True)["status"]["canSave"] is True
+
+
+# --------------------------------------------------------------------------- #
+# Wiring that appears on disk unseen is a draft whose pins must be confirmed
+# --------------------------------------------------------------------------- #
+
+
+def _copied_in(tmp_path, layout: str) -> "Rig":
+    """The shipped pins in force; then another machine's wiring (left_well on
+    12) is copied into the folder by hand."""
+    rig = Rig(tmp_path)
+    doc = store.default_document()
+    doc["pins"]["left_well"]["index"] = 12
+    if layout == "rig.json":
+        _legacy_rig_json(rig.hardware, doc)
+    else:
+        _main_era_pair(rig.hardware, doc)
+    return rig
+
+
+@pytest.mark.parametrize("layout", ["rig.json", "pair"])
+def test_a_copied_in_wiring_is_the_draft_and_needs_its_pins_confirmed(tmp_path, layout):
+    rig = _copied_in(tmp_path, layout)
+    payload = _hardware_get(rig)
+
+    assert payload["document"]["pins"]["left_well"]["index"] == 12
+    assert "RIG108" in {p["code"] for p in payload["problems"]}
+    status = payload["status"]
+    assert status["needsPinConfirmation"] is True and status["canSave"] is False
+    named = store.RIG_FILENAME if layout == "rig.json" else store.CHANNEL_SET_FILENAME
+    text = " ".join(n["message"] for n in status["notices"])
+    assert named in text and store.WIRING_FILENAME not in text
+
+    with pytest.raises(definition.WiringSaveBlocked):
+        rig.save(payload["document"])
+    assert registry.channels().get("left_well").index == 4, "still the shipped pins"
+    edited = copy.deepcopy(payload["document"])
+    edited["pins"]["trial_light"]["index"] = 37
+    assert _preview(rig, edited)["status"]["canSave"] is False, "an edit is not a confirmation"
+
+    assert _preview(rig, payload["document"], confirmed=True)["status"]["canSave"] is True
+    asyncio.run(rig.definition.save_wiring(payload["document"], confirm=True, confirmed_pins=True))
+    assert registry.channels().get("left_well").index == 12, "the confirmed copy is in force"
+
+
+def test_a_file_copied_over_the_wiring_in_force_needs_its_pins_confirmed(tmp_path):
+    rig = Rig(tmp_path)
+    rig.save(_swapped_ports())
+    copied = json.loads(rig.hardware.path.read_text(encoding="utf-8"))
+    copied["pins"]["left_well"]["index"] = 12
+    rig.hardware.path.write_text(json.dumps(copied), encoding="utf-8")
+
+    payload = _hardware_get(rig)
+    assert payload["document"]["pins"]["left_well"]["index"] == 12
+    assert payload["status"]["canSave"] is False
+    assert "boxes run the wiring in force" in " ".join(n["message"] for n in payload["status"]["notices"])
+    assert registry.channels().get("left_well").index == 3
+
+
+@pytest.mark.parametrize(
+    "rule, change",
+    [
+        ("RIG103", lambda d: d["pins"]["trial_light"].update(index=3)),
+        ("RIG102", lambda d: d["pins"]["trial_light"].update(index=60)),
+        ("RIG105", lambda d: d["channels"]["trial_light"].update(kind="sync", type="digital_out", role="sync")),
+    ],
+)
+def test_a_save_with_a_wiring_rule_problem_is_refused_and_issues_nothing(tmp_path, rule, change):
+    rig = Rig(tmp_path)
+    rig.save(_swapped_ports())
+    before = rig.vocabulary.path.read_bytes()
+    draft = store.default_document()
+    change(draft)
+    with pytest.raises(definition.WiringSaveBlocked, match=rule):
+        rig.save(draft)
+    assert rig.vocabulary.path.read_bytes() == before
+    assert registry.channels().get("left_well").index == 3
+
+
+def test_reset_lists_every_file_it_removes(tmp_path):
+    s = store.HardwareStore(tmp_path)
+    doc = store.default_document()
+    _main_era_pair(s, doc)
+    # The pin map in force is the staged one: a save stopped between renames.
+    s.pin_map_path.rename(s.pin_map_path.with_suffix(".json.tmp"))
+    assert s.load() is not None
+
+    listed = {Path(p) for p in service.document_payload(s)["status"]["resetReplaces"]}
+    present = {p for p in s.root.iterdir() if p.is_file()}
+    assert listed == present
+    s.reset()
+    assert not any(p.exists() for p in listed)

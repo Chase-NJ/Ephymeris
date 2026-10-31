@@ -951,8 +951,11 @@ now. What you do depends on that note:
   Click **Reset**. A dialog names the exact file it will remove. Click **Reset** again to confirm. The
   shipped wiring is then in force; re-enter any changes your rig had, and **Save**.
 
-If the note says the file **changed outside the app**, the wiring shown is still the one the boxes use.
-Save to keep it, or Reset, or restart Ephymeris to use the changed file.
+If the note says a file was **copied in or changed outside the app**, the boxes still use the wiring
+that was in force, and the board map shows the file's wiring for you to check. It names the file. To use
+that wiring, compare each pin with the box, click **I've checked every pin**, then **Save**. To discard it
+instead, click **Reset**: the shipped wiring is then in force, and you re-enter your rig's changes. Save
+stays off until you confirm, even if you edit the pins.
 
 ## Rules that protect the data
 

@@ -1745,8 +1745,9 @@ export interface RigStatus {
    */
   canSave: boolean;
   /**
-   * The draft's pins come from a pin map that was not written with its channel set: offer the
-   * operator a way to confirm them, sent as `confirmedPins`
+   * The draft is a stored file that is not in force -- copied in, changed outside the app, not
+   * loaded, or a pin map not written with its channel set -- so nobody has checked its pins on
+   * this rig: offer the operator a way to confirm them, sent as `confirmedPins`
    * (`TASKS.md#the-channel-set-and-the-pin-map`).
    */
   needsPinConfirmation: boolean;
@@ -1760,9 +1761,10 @@ export interface RigStatus {
 export interface RigDocument {
   /**
    * The draft the editor opens — `{rig_version, channels, pins}`, validated against
-   * rig/schema/rig_hardware.v1.json. The wiring in force; or, while stored wiring did not load,
-   * that stored document itself, broken, so it can be repaired and saved (the shipped pins when
-   * it will not even parse). `status.notices` says which.
+   * rig/schema/rig_hardware.v1.json. A stored file that is not in force, when there is one
+   * (copied in, changed outside the app, or not loaded, even broken), so the operator can check
+   * its pins or repair it; else the wiring in force, or the shipped pins when there is nothing
+   * stored to show. `status.notices` says which.
    */
   document: unknown;
   status: RigStatus;

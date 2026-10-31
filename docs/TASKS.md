@@ -579,18 +579,25 @@ The editor and the wire see the same **one document**, `{rig_version, channels, 
 >   - the registry composes the shipped pinout, so the sidecar still starts;
 >   - the startup log says the stored wiring failed to load;
 >   - `hardware.get` serves the stored document itself as the editor's draft, so it can be repaired and saved. What the draft is depends on what the file is now:
->     - **out of shape** (or a channel without a pin): the broken document;
->     - **a two-file pair whose pin map was not written with its channel set**: the joined document, with RIG108 until the operator confirms every pin. The confirmation is an explicit act sent as `confirmedPins`, and `hardware.save` without it is `RIG_SAVE_BLOCKED`;
+>     - **out of shape** (or a channel without a pin): the broken document, to repair;
+>     - **a file that loads now**: that file;
+>     - **a two-file pair whose pin map was not written with its channel set**: the joined document;
 >     - **unreadable, unparseable, not a JSON object, or a pin map alone**: the shipped pins. There is nothing to repair, so Save is off (`RIG_SAVE_BLOCKED`), and Reset is offered with a dialog naming every file it removes (`status.resetReplaces`).
 >
 >     One notice says the shipped pins are in force and what that blocks; the next describes the file as it is now;
 >   - `sessions.startAll`, `port.startSession`, `sessions.flash`, `flash.enqueue` (Debug Mode) and `utility.identify` refuse with `RIG_WIRING_UNLOADED`, and the utility baseline flashes no box ([ARCHITECTURE.md](ARCHITECTURE.md#unloaded-wiring-holds-it)).
 > - **The refusal follows the wiring in force, never a fresh read of the file.** `RigDefinition` reads the stored wiring once, when it installs it (at startup, and after every save and reset), and the registry composes from exactly that read (`_install_wiring`). A file fixed or copied in by hand changes no pin, so it lifts nothing: only a save, a reset, or a restart onto a file that loads puts wiring in force.
 > - **The status describes the wiring in force, never the file.** `status.custom` is false while the shipped pins are in force. `status.notices` say where the wiring in force and the file part ways: it did not load, or it was copied in, edited, corrupted or deleted by hand. Each says whether boxes run or are refused, and what a restart would do.
-> - **Notices are the rig's, `problems` are the draft's.** Every preview replaces `problems`, while the notices stand through every edit. While stored wiring is in force and healthy, the draft is that wiring.
+> - **A stored file that is not in force is never put in force unseen.** This covers a file copied in from another machine (as `wiring.json`, `rig.json` or the two-file pair, over the shipped pins or over the rig's own), a file changed outside the app, and any stored wiring served after a failed load.
+>   - It is served as the draft, its notice names the actual files, and the draft carries RIG108 until the operator confirms every pin.
+>   - The confirmation is an explicit act sent as `confirmedPins`. Without it, `hardware.save` is `RIG_SAVE_BLOCKED`, edited or not; with it, the save puts that wiring in force.
+>   - Until then boxes run the wiring in force.
+> - **Notices are the rig's, `problems` are the draft's.** Every preview replaces `problems`, while the notices stand through every edit. While stored wiring is in force, healthy and the same as the file, the draft is that wiring.
 > - **The sidecar decides Save (`status.canSave`), and the editor renders it.** A draft may be saved when it has no problems, the rig's state allows a save, and it either differs from the served draft or would clear a notice. Every `hardware.get`, `hardware.preview` and `hardware.save` reply carries the answer for the draft it describes.
-> - **A save validates the whole document, a pin for every channel included, before it issues any edge code**, so a refused save never touches the vocabulary.
-> - **Reset removes the lowest-precedence file first and `wiring.json` last, and stops at the first file it cannot remove.** A partial reset therefore leaves either the wiring that was in force or a load problem, never an older wiring in force.
+>   - The editor holds Save while a preview is in flight.
+>   - When an edit is undone back to the served draft, the editor shows the served draft's own answer again; no preview describes that draft.
+> - **A save validates the whole document before it issues any edge code**: its shape, a pin for every channel, and every wiring rule (RIG101–RIG107, refused as `RIG_SAVE_BLOCKED`). So a refused save never touches the vocabulary, and the editor's own hold on Save is never the only guard.
+> - **Reset removes the lowest-precedence file first and `wiring.json` last, and stops at the first file it cannot remove.** A partial reset therefore leaves either the wiring that was in force or a load problem, never an older wiring in force. Its confirm dialog lists `status.resetReplaces`, built from the same list Reset walks (`HardwareStore.removal_order`), so a staged pin map holding the pins in force is named too.
 > - **No `edited_at` in any digest or hash.** Identical wiring copied from another machine compares equal.
 
 **Older layouts are read in place, and the next save writes `wiring.json` and removes them:**
@@ -669,7 +676,7 @@ A well-formed document describing an impossible box is a successful reply carryi
 | `RIG105` | More than one `sync` channel |
 | `RIG106` | An odor line with no onset code, one that is not a live onset code, two lines on one code, or an onset on a channel that is not an emitter ([Onset codes](#onset-codes)) |
 | `RIG107` | A type that contradicts the kind's direction, an active level or debounce on an output, an edge the type does not have, an edge code that is not live, or one code on two edges ([Edge codes](#edge-codes)) |
-| `RIG108` | Pins from a pin map that was not written with its channel set, not yet confirmed by the operator ([The channel set and the pin map](#the-channel-set-and-the-pin-map)) |
+| `RIG108` | A draft read from a stored file that is not in force (copied in, changed outside the app, not loaded, or a pin map not written with its channel set), its pins not yet confirmed by the operator ([The channel set and the pin map](#the-channel-set-and-the-pin-map)) |
 
 ### The sync channel
 

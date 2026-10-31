@@ -45,8 +45,27 @@ export function applyPreview(view: RigView, reply: PreviewReply): RigView {
  * confirm) and the draft's problems; a guess here once enabled a save that put
  * a mismatched pin map in force.
  */
-export function canSave(view: RigView, saving: boolean): boolean {
-  return !saving && view.status?.canSave === true;
+export function canSave(
+  view: RigView,
+  { saving, checking }: { saving: boolean; checking: boolean },
+): boolean {
+  // Held while a preview is in flight: the answer on screen is for the draft
+  // before the last edit. The sidecar refuses a bad save regardless.
+  return !saving && !checking && view.status?.canSave === true;
+}
+
+/**
+ * The view for a draft no preview will describe: back at the served draft
+ * (Revert, or an edit undone by hand) with no confirmation to send. Then the
+ * served draft's own reply is the sidecar's answer, and the last preview's --
+ * for a draft that no longer exists -- must not stay up. Null when a preview
+ * will run and answer instead.
+ */
+export function servedView(
+  { dirty, confirmedPins }: { dirty: boolean; confirmedPins: boolean },
+  baseline: RigView,
+): RigView | null {
+  return !dirty && !confirmedPins ? baseline : null;
 }
 
 /** The sidecar decides; a refusal that names Reset always leaves it usable. */

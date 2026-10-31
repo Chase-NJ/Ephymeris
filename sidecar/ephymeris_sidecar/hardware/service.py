@@ -73,47 +73,74 @@ def rig_state(rig: store.HardwareStore, in_force: InForce | None) -> _Rig:
     return _Rig(in_force, disk, [str(p) for p in rig.stored_paths()])
 
 
+def draft_from_disk(state: _Rig) -> bool:
+    """The served draft is a stored file that is NOT in force: wiring the
+    operator has not seen on this rig. Its pins must be confirmed before a
+    save may put it in force (RIG108).
+
+    While stored wiring did not load, that is any stored document there is
+    (to repair, or with pins from a mismatched pin map). While wiring is in
+    force, it is a file that loads, or a mismatched pair, and differs from it:
+    copied in from another machine or changed outside the app.
+    """
+    disk, in_force = state.disk, state.in_force
+    if disk.document is None:
+        return False
+    if in_force.problem:
+        return disk.state in ("loads", "invalid", "mismatched")
+    return disk.state in ("loads", "mismatched") and _content(disk.document) != _content(in_force.document)
+
+
 def served_draft(state: _Rig) -> dict:
-    """The draft `hardware.get` serves. The wiring in force; or, while stored
-    wiring did not load, the stored document itself (broken, or with pins to
-    confirm) so it can be repaired -- the shipped pins when there is nothing
-    to repair."""
-    if state.in_force.problem:
-        if state.disk.state in ("loads", "invalid", "mismatched") and state.disk.document:
-            return state.disk.document
+    """The draft `hardware.get` serves. A stored file not in force when there
+    is one (`draft_from_disk`), so the operator decides about it with its pins
+    in front of them; else the wiring in force, or the shipped pins."""
+    if draft_from_disk(state):
+        return state.disk.document
+    if state.in_force.problem or state.in_force.document is None:
         return store.default_document()
-    if state.in_force.document is not None:
-        return state.in_force.document
-    return store.default_document()
+    return state.in_force.document
+
+
+def _disk_names(state: _Rig) -> list[str]:
+    """The stored wiring files present, by name, temporary files left out."""
+    return [Path(p).name for p in state.paths if not p.endswith((".tmp", ".part"))]
+
+
+def _unconfirmed(state: _Rig) -> str:
+    """What RIG108 says, for where the draft's pins came from."""
+    if state.disk.state == "mismatched":
+        source = (
+            f"These pins come from {store.PIN_MAP_FILENAME}, which was not written with "
+            f"{store.CHANNEL_SET_FILENAME}."
+        )
+    else:
+        source = (
+            f"These pins come from {', '.join(_disk_names(state))}, which "
+            + ("is" if len(_disk_names(state)) == 1 else "are")
+            + " not the wiring in force: copied in, changed outside the app, or not "
+            "loaded."
+        )
+    return f"{source} Check every pin against the box and confirm them before saving."
 
 
 def save_blocked(state: _Rig, *, confirmed_pins: bool) -> str | None:
     """Why the rig's state refuses any save now (`RIG_SAVE_BLOCKED`), or None."""
-    if not state.in_force.problem:
-        return None
-    if state.disk.state in ("unrepairable", "none"):
+    if state.in_force.problem and state.disk.state in ("unrepairable", "none"):
         where = ", ".join(state.paths) or "nothing on disk"
         return (
             "There is no stored wiring to repair, so a save is refused: Reset "
             f"replaces it ({where}) and puts the shipped pins in force."
         )
-    if state.disk.state == "mismatched" and not confirmed_pins:
-        return (
-            f"These pins come from {store.PIN_MAP_FILENAME}, which was not written with "
-            f"{store.CHANNEL_SET_FILENAME}. Check every pin against the box and confirm "
-            "them before saving."
-        )
+    if draft_from_disk(state) and not confirmed_pins:
+        return _unconfirmed(state)
     return None
 
 
 def _draft_problems(state: _Rig, draft: Any, *, confirmed_pins: bool) -> list[dict[str, Any]]:
     out = problems_for(draft)
-    if state.in_force.problem and state.disk.state == "mismatched" and not confirmed_pins:
-        out = [{
-            "location": "pins",
-            "message": save_blocked(state, confirmed_pins=False),
-            "code": "RIG108",
-        }] + out
+    if draft_from_disk(state) and not confirmed_pins:
+        out = [{"location": "pins", "message": _unconfirmed(state), "code": "RIG108"}] + out
     return out
 
 
@@ -145,15 +172,15 @@ def notices_for(state: _Rig) -> list[dict[str, Any]]:
         out.append(_flag(IN_FORCE_UNLOADED))
         now = disk.problems[0][1] if disk.problems else ""
         if disk.state == "loads":
-            name = Path(state.paths[0]).name if state.paths else store.WIRING_FILENAME
+            name = ", ".join(_disk_names(state)) or store.WIRING_FILENAME
             out.append(_flag(
-                f"Now {name} loads. The draft below is that file, not in force until it "
-                "is saved or reset, or Ephymeris restarts."
+                f"Now {name} loads. The draft below is that file, not in force: check "
+                "every pin against the box, confirm them, then save to put it in force."
             ))
         elif disk.state == "invalid":
             out.append(_flag(
                 f"Now: {now} The draft below is that stored wiring, not in force: "
-                "repair it and save to put it in force."
+                "repair it, check and confirm every pin, then save to put it in force."
             ))
         elif disk.state == "mismatched":
             out.append(_flag(
@@ -177,13 +204,21 @@ def notices_for(state: _Rig) -> list[dict[str, Any]]:
             "the file changed, and boxes run the wiring in force. A restart onto this "
             "file would stop every box until the wiring is saved or reset."
         ))
-    elif _content(disk.document) != _content(in_force.document):
+    elif disk.document is None and in_force.document is not None:
         out.append(_flag(
-            f"{store.WIRING_FILENAME} on disk "
-            + ("is gone" if disk.document is None else "differs from the wiring in force")
-            + ": it changed outside the app, and is not in force until this wiring "
-            "is saved or reset, or Ephymeris restarts. The wiring shown is the one in "
-            "force; until then boxes run the wiring in force."
+            "The stored wiring on disk is gone: it was removed outside the app. The "
+            "wiring shown is the one in force, and boxes run the wiring in force; "
+            "save it to store it again, or a restart would run the shipped pins."
+        ))
+    elif draft_from_disk(state):
+        names = _disk_names(state)
+        out.append(_flag(
+            f"{', '.join(names)} on disk "
+            + ("differs" if len(names) == 1 else "differ")
+            + " from the wiring in force: copied in or changed outside the app. The "
+            "draft below is that wiring, not in force: check every pin against the box, "
+            "confirm them, then save to put it in force, or Reset. Until then boxes run "
+            "the wiring in force."
         ))
     return out
 
@@ -307,7 +342,7 @@ def _status(
         "canReset": custom or bool(state.paths) or bool(notices),
         "resetReplaces": state.paths,
         "canSave": can_save,
-        "needsPinConfirmation": bool(in_force.problem) and state.disk.state == "mismatched",
+        "needsPinConfirmation": draft_from_disk(state),
     }
 
 

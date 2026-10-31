@@ -186,7 +186,7 @@ export function RigWiringEditor({
 
   const errors = rig.problems.length;
   const notices = rig.status?.notices ?? [];
-  const canSave = canSaveView(rig, rig.saving);
+  const canSave = canSaveView(rig, { saving: rig.saving, checking: rig.checking });
   const replaces = rig.status?.resetReplaces ?? [];
 
   /** Reset removes files; when there are any, the operator is shown exactly

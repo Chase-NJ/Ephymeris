@@ -6,7 +6,7 @@ import { useSidecar } from "@/lib/ws/context";
 import { EVT } from "@/lib/ws/protocol";
 
 import { getRig, previewRig, resetRig, saveRig } from "./commands";
-import { applyPreview } from "./rigView";
+import { applyPreview, servedView } from "./rigView";
 import type { RigAllocation, RigDocument, RigImpact, RigProblem, RigStatus } from "./types";
 
 /**
@@ -129,7 +129,22 @@ export function useRig(): RigSession {
    * sequence of drags cannot land an old answer over a new one. */
   const sequence = useRef(0);
   useEffect(() => {
-    if (!connected || doc === null || (!dirty && !confirmedPins)) return;
+    if (!connected || doc === null) return;
+    const served = servedView(
+      { dirty, confirmedPins },
+      { status: baselineStatus, problems: baselineProblems, breaks: [], allocations: [] },
+    );
+    if (served !== null) {
+      // No preview will describe this draft, so show what the sidecar said
+      // about the served one, as Revert does.
+      sequence.current += 1;
+      setChecking(false);
+      setStatus(served.status);
+      setProblems(served.problems);
+      setBreaks(served.breaks);
+      setAllocations(served.allocations);
+      return;
+    }
     const mine = ++sequence.current;
     setChecking(true);
     const timer = setTimeout(() => {
@@ -154,7 +169,7 @@ export function useRig(): RigSession {
     return () => clearTimeout(timer);
     // `status`, `problems`, `breaks` and `allocations` are what the reply
     // replaces, never what triggers a preview.
-  }, [client, connected, doc, dirty, confirmedPins]);
+  }, [client, connected, doc, dirty, confirmedPins, baselineStatus, baselineProblems]);
 
   const setDoc = useCallback((next: RigDocument) => {
     setActionError(null);

@@ -188,8 +188,10 @@ class HardwareStore:
         return self._stored().state
 
     def stored_paths(self) -> list[Path]:
-        """Every file that holds stored wiring now: what a reset replaces."""
-        return [p for p in self._documents() if p.is_file()]
+        """Every file Reset would remove now, in the order it removes them --
+        built from `removal_order`, the list Reset itself walks, so what the
+        confirm dialog names and what Reset deletes cannot drift apart."""
+        return [p for p in self.removal_order() if p.is_file()]
 
     def stored_document(self) -> dict | None:
         """The stored document as parsed, whether or not it loads: the draft
@@ -282,7 +284,12 @@ class HardwareStore:
         wiring back in force with nothing to say so. In this order a failure
         leaves either the wiring that was in force or a load problem.
         """
-        for path in (
+        for path in self.removal_order():
+            path.unlink(missing_ok=True)
+
+    def removal_order(self) -> tuple[Path, ...]:
+        """Every file Reset removes, lowest precedence first (see `reset`)."""
+        return (
             self.channel_set_path.with_suffix(".json.tmp"),
             self.pin_map_path.with_suffix(".json.tmp"),
             self.legacy_rig_path.with_suffix(".json.tmp"),
@@ -291,8 +298,7 @@ class HardwareStore:
             self.channel_set_path,
             self.path.with_name(self.path.name + ".part"),
             self.path,
-        ):
-            path.unlink(missing_ok=True)
+        )
 
     def _older_layouts(self) -> tuple[Path, ...]:
         return (

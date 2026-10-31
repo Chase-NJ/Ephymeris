@@ -23,7 +23,7 @@ from .boards import create_board_tool
 from .boards.tool import BoardTool
 from .cohorts import folders, grouping, move_apply, relocate
 from .cohorts.move import MoveRequest
-from .cohorts.db import DB_FILENAME, Database
+from .cohorts.db import DB_FILENAME, Database, has_mark
 from .cohorts.repository import CohortRepository
 from .sessions.paths import resolve_session_folder
 from .hardware import service as hardware_service
@@ -141,6 +141,10 @@ class Application:
         #: the rig definition rather than read by them, so `rig` never learns
         #: about data_dir.
         self.hardware_store = hardware_store.HardwareStore(data_dir)
+        #: The machine's first start, as the database records it -- never the
+        #: wiring record's own absence, which a lost record would fake
+        #: (`HardwareStore.settle_record`). Marked once `start` connects.
+        self._first_start = not has_mark(data_dir / DB_FILENAME, hardware_store.FIRST_START_MARK)
         #: This machine's strobe vocabulary — the one source of every code
         #: (`TASKS.md#strobe-vocabulary`). Seeded from the shipped default on
         #: first start, then pointed at the registry exactly as the wiring is.
@@ -161,6 +165,7 @@ class Application:
             rescan=self.sketches.rescan,
             after_rebuild=self._after_rebuild,
             broadcast=lambda message: self.server.broadcast(message),
+            first_start=self._first_start,
         )
         #: The Strobes page's edits and the evidence they're judged on.
         self.vocabulary = VocabularyEditor(
@@ -303,6 +308,9 @@ class Application:
 
     def start(self) -> None:
         self.db.connect()
+        if self._first_start:
+            # After the wiring record was seeded: from here a lost record holds.
+            self.db.set_mark(hardware_store.FIRST_START_MARK)
         # scipy is NOT imported here: `__main__._run` preloads it before the
         # parent-watch thread exists, and importing it any later than that
         # deadlocks the frozen build (`DATA.md#the-mat-mirror`).

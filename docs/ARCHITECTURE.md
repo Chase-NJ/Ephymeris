@@ -872,7 +872,7 @@ its console open, because the Debug flash that pinned it ends in that console.
 
 ### Unloaded wiring holds it
 
-While the rig's stored wiring is not in force because it did not load, or because nobody saved or confirmed it on this machine ([TASKS.md](TASKS.md#the-channel-set-and-the-pin-map)), the box utility is built on the **shipped** pins. Its setup drives every listed output, and identify would light whatever the shipped cue pin is on a rig that moved it. So, for as long as `RigDefinition.wiring_problem` answers:
+"Unloaded" here, as in `RIG_WIRING_UNLOADED` and `WiringNotLoaded`, means unloaded or [held](../GLOSSARY.md#held-wiring). While the rig's stored wiring is not in force because it did not load, or because nobody saved or confirmed it on this machine ([TASKS.md](TASKS.md#the-channel-set-and-the-pin-map)), the box utility is built on the **shipped** pins. Its setup drives every listed output, and identify would light whatever the shipped cue pin is on a rig that moved it. So, for as long as `RigDefinition.wiring_problem` answers:
 
 - every restore reads `held`, its detail naming the problem;
 - `force` (**Reflash boxes**) is held too;

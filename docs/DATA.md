@@ -49,6 +49,7 @@ Read with [TASKS.md](TASKS.md) (the profile that decodes a run) and [ARCHITECTUR
   - [Tables](#tables)
   - [Indexes](#indexes)
   - [Transactions](#transactions)
+  - [Machine marks](#machine-marks)
   - [Changing the schema](#changing-the-schema)
 - [Backup mirroring](#backup-mirroring)
   - [Mirror layout](#mirror-layout)
@@ -662,6 +663,7 @@ erDiagram
 | `prefixes` | `id`, `name` (`UNIQUE COLLATE NOCASE`) | Hard delete; nothing on disk depends on it |
 | `sessions` | `id`, `cohort_id`, `prefix_id`, `prefix_name`, `session_number`, `date`, `started_at`, `ended_at`, `status`, `folder_path`, `group_runs` (JSON), `duration_minutes`, `recording_json` | No FK on `prefix_id` |
 | `session_animal_runs` | `id`, `session_id`, `animal_id`, `box_number`, `sketch_path`, `file_path`, `started_at`, `ended_at`, `stop_reason`, `profile_hash`, `config_json`, `params_hash` | Cascades from `sessions`; **no FK on `animal_id`** |
+| `machine_marks` | `name`, `at` | [Machine marks](#machine-marks). Never deleted |
 | `task_profiles` | `hash`, `task_name`, `kind`, `profile_json`, `first_seen_at` | **Content-addressed** snapshots: identical profiles store once, and comparability is an indexed equality test |
 | `run_metrics_cache` | `run_id`, `file_path`, `file_mtime_ns`, `file_size`, `profile_hash`, `profile_source`, `scored_profile_hash`, `params_hash`, `config_json`, `codec_version`, `computed_at`, `status`, `detail`, `summary_json` | A pure cache. **No FK on `run_id`** — adopted runs have no run record. `profile_hash` is what *resolution* reached; `scored_profile_hash` what the run was *scored* with ([why both](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#which-profile-decodes-a-run)). `codec_version` holds the [cache version](#caching) |
 | `adopted_runs` | `id`, `cohort_id`, `animal_id`, `file_path`, `prefix_name`, `session_number`, `date`, `started_at`, `sketch_name`, `sketch_path`, `adopted_at`, `file_mtime_ns`, `file_size` | Files the archive walk matched to an animal. Deliberately separate from `sessions`/`session_animal_runs` |
@@ -706,6 +708,14 @@ with db.write() as tx:                 # the lock, then BEGIN IMMEDIATE
 - **What a commit announces.** The database hook ([backup](#the-database-copy)) fires once per committed unit that changed a row, under the lock right after `COMMIT`. A unit that rolled back, or changed nothing, announces nothing. `tx.on_commit(fn)` runs `fn` once after the commit, with the lock free.
 
 A finalization snapshots the run's [profile](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#which-profile-decodes-a-run) and records the run in one unit. Apart, a rollback by any other writer between the two would leave the run naming a profile hash with no `task_profiles` row. The analytics indexing pass writes nothing until its end: it collects the profiles it scored with and writes them with its cache rows in one unit ([one transaction per job](#never-at-the-expense-of-a-session)), so no cached row names a scored profile hash without its `task_profiles` row, and a pass that changed nothing announces nothing. A [tidy](#tidy-records) is one unit, so a merge the database refuses undoes the ones before it; a [relocate](#data-folder) and a [move](#moving-animals-between-cohorts) write each journal step, and their records with their `committed` step, as units of their own.
+
+### Machine marks
+
+`machine_marks` (`name`, `at`) holds facts about this machine that must outlive any file beside the database: a row's presence is the fact, and nothing ever removes one. `has_mark` reads one **before** `connect`, read-only, because a decision taken while the app is constructed needs it; no file or no table is no mark, and a database that will not read answers "marked", the side that does nothing twice.
+
+| Mark | Set | Means |
+|---|---|---|
+| `wiring_record` | Once the first start connects | That start, the only one that may seed the wiring record, has happened ([TASKS.md](TASKS.md#the-channel-set-and-the-pin-map)) |
 
 ### Changing the schema
 

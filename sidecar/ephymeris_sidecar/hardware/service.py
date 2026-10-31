@@ -210,9 +210,15 @@ def _notices(state: _Rig) -> list[_Notice]:
             disk.shadows[0],
             f"{_names(disk.shadows)} {_is(disk.shadows)} on disk beside {names} and "
             f"{_is(disk.shadows)} not read: {names} wins. {'It is' if one else 'They are'} "
-            f"not wiring saved here (copied in, or left by a Reset that did not finish), so "
-            f"no save removes {it}; Reset does, or remove {it} by hand.",
+            "not wiring saved here (copied in, or left by a save or Reset that did not "
+            f"finish), so no save removes {it}; Reset does, or remove {it} by hand.",
             cleared_by_save=False,
+        ))
+    if disk.record_problem and disk.state != "none":
+        out.append(_Notice(
+            store.CONFIRMED_FILENAME,
+            f"{disk.record_problem}, so no stored wiring is trusted: check every pin "
+            "against the box, confirm them and save to record the wiring again, or Reset.",
         ))
     return out
 
@@ -390,9 +396,11 @@ def problems_for(document: Any) -> list[dict[str, Any]]:
         # not have the sections they read, and "channels is not an object" is a
         # better first message than a KeyError from a rule.
         return out
+    from ephymeris_sidecar.rig.rules import rule_problems
+
     return [
         {"location": loc, "message": msg, "code": code}
-        for code, loc, msg in store.rule_problems(document)
+        for code, loc, msg in rule_problems(document)
     ]
 
 

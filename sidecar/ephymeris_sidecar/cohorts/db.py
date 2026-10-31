@@ -28,6 +28,7 @@ import os
 import sqlite3
 import threading
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator
 
@@ -139,6 +140,14 @@ CREATE TABLE IF NOT EXISTS animal_moves (
     created_at        TEXT NOT NULL,
     updated_at        TEXT NOT NULL,
     error             TEXT
+);
+
+-- Facts about this machine that must outlive any file beside the database
+-- (DATA.md#machine-marks): a row's presence is the fact. `wiring_record`
+-- says the first start that may seed the wiring record has happened.
+CREATE TABLE IF NOT EXISTS machine_marks (
+    name  TEXT PRIMARY KEY,
+    at    TEXT NOT NULL
 );
 
 -- The journal of a "move existing contents" relocate (DATA.md#data-folder):
@@ -706,6 +715,31 @@ def _migrate(conn: sqlite3.Connection, found: int) -> None:
             MIGRATIONS[target](conn)
 
 
+def has_mark(path: Path, name: str) -> bool:
+    """Whether the database at `path` holds the mark `name`, read BEFORE
+    `Database.connect`, which creates the file and its tables.
+
+    No file, or no `machine_marks` table (a build before it), is no mark. A
+    database that exists but cannot be read answers True: a mark gates
+    something done once, and doing it twice is the unsafe direction."""
+    if not path.exists():
+        return False
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            table = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'machine_marks'"
+            ).fetchone()
+            if table is None:
+                return False
+            return conn.execute("SELECT 1 FROM machine_marks WHERE name = ?", (name,)).fetchone() is not None
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        log.error("could not read %s for the mark %r (%s); taking it as set", path.name, name, exc)
+        return True
+
+
 class NestedWrite(RuntimeError):
     """A unit of work was opened inside another on the same thread, or a unit
     was joined, or used, other than on its thread while it is open
@@ -936,6 +970,14 @@ class Database:
         conn.isolation_level = None
         self._conn = conn
         log.info("cohort database ready at %s (schema v%d)", self.path, SCHEMA_VERSION)
+
+    def set_mark(self, name: str) -> None:
+        """Record the mark `name` (`has_mark`). Idempotent."""
+        with self.write() as tx:
+            tx.execute(
+                "INSERT OR IGNORE INTO machine_marks (name, at) VALUES (?, ?)",
+                (name, datetime.now(UTC).isoformat(timespec="seconds")),
+            )
 
     def close(self) -> None:
         with self._lock:

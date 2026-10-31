@@ -613,7 +613,7 @@ Plus `id`, `name`, `category`, `legacyNames` and `notes`, as for any task. A slo
 
 ```
 <data_dir>/tasks/<category>/<name>/
-    <name>.ino      three includes and two calls: box_spine::setup(), box_spine::loop()
+    <name>.ino      five includes and two calls: box_spine::setup(), box_spine::loop()
     TaskPins.h      this rig's pins and every live strobe code, as for any task
     TaskSpine.h     the state table, the channel rows, the parameter keys (preprocessor only)
     task.json       the profile, carrying the spine snapshot

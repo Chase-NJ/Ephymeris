@@ -2691,7 +2691,9 @@ The runner-held session — the same shape a sessions.status reply carries.
 <a id="shape-runstatus"></a>
 #### RunStatus
 
-"ok" \| "no-metrics" \| "missing" \| "unreadable"
+Why a run has numbers or not (`ANALYTICS.md#why-a-run-has-no-numbers`). `replay-pending` is a spine task's run: recorded, and scored by replay once that exists.
+
+"ok" \| "no-metrics" \| "replay-pending" \| "missing" \| "unreadable"
 
 <a id="shape-runsummary"></a>
 #### RunSummary

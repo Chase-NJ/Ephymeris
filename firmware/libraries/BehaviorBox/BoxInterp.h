@@ -127,8 +127,10 @@
                               lost" adds edge (h, FALL) -> the abort state.
     Delay(t)                  timer t -> next; "abort on an edge" adds that edge row.
     Outcome(line r, ms, p)    a chance state (p -> reward, else -> class timeout,
-                              outcome = the class); reward: outputs r, timer ms ->
-                              class timeout; class timeout: timer -> next.
+                              outcome = the class); reward: the phase's outputs
+                              and r, timer ms -> class timeout; class timeout: the
+                              phase's outputs, timer -> next. A phase's outputs are
+                              HIGH in every state it rests in.
     ITI(t)                    timer t -> the trial's first state, which carries
                               INTERP_STARTS_TRIAL.
 

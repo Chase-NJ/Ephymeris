@@ -261,6 +261,36 @@ async def test_a_run_cut_inside_one_ticks_burst_replays_what_it_holds(tmp_path, 
     ]
 
 
+async def test_a_cut_at_any_byte_replays_what_it_holds_or_is_refused_by_name(tmp_path, monkeypatch):
+    """A power cut can land on any byte. Whatever it tears, the torn line costs
+    only itself: every cut recovers to exactly what its complete lines say, and
+    then replays to exactly its strobes, or is refused as `SpineDecodeError`
+    (a cut before the snapshot, the seed or a parameter is complete), never
+    with a bare error and never with a prediction the file contradicts."""
+    folder = save_tracer(tmp_path)
+    port = registry.channels().get("odor_port").index
+    transcript = run_board(folder, host_lines(folder), animal(port), 16000, tmp_path)
+    data = (await run_session(tmp_path, folder, transcript, monkeypatch)).read_bytes()
+
+    cut, whole = tmp_path / "cut.tsv", tmp_path / "whole.tsv"
+    replayed = refused = 0
+    for k in range(1, len(data) + 1):
+        cut.write_bytes(data[:k])
+        whole.write_bytes(data[: data.rfind(b"\n", 0, k) + 1])
+        document = recovery.recovered_document(recovery.parse_tsv(cut))
+        assert document == recovery.recovered_document(recovery.parse_tsv(whole)), k
+        try:
+            record = spine_stream.decode(document)
+            predicted = spine_stream.expected_stream(record)
+        except spine_stream.SpineDecodeError:
+            refused += 1
+            continue
+        assert predicted == [tuple(s) for s in document["ts_data"]], k
+        replayed += 1
+    assert replayed > 100, "every cut after the header replays"
+    assert refused > 0
+
+
 async def test_an_edited_output_strobe_is_not_what_replay_predicts(tmp_path, monkeypatch):
     folder = save_tracer(tmp_path)
     port = registry.channels().get("odor_port").index
@@ -278,6 +308,32 @@ def test_an_unknown_table_format_is_refused_rather_than_replayed():
     document = {"interp": 99, "task_profile": {"spine": {"interp": 99}}, "ts_data": []}
     with pytest.raises(spine_stream.SpineDecodeError, match="INTERP 99"):
         spine_stream.decode(document)
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        lambda d: d.update(ts_data=[["x", 1]]),
+        lambda d: d.update(trial_seed="seven"),
+        lambda d: d["task_profile"]["spine"].update(inputs=[{"slot": "port"}]),
+        lambda d: d["task_profile"]["spine"]["table"].update(states=[[1, 2]]),
+        lambda d: d.update(ts_data=[[1, 5], [1, 3]]),
+    ],
+)
+def test_a_malformed_document_is_refused_by_name(damage):
+    """Replay refuses as `SpineDecodeError`, never with whatever a malformed
+    field happens to raise, so a caller can always tell a refusal apart."""
+    document = {
+        "interp": 2, "trial_seed": 7, "ts_data": [],
+        "task_profile": {"strobes": {}, "config": [], "spine": {
+            "interp": 2, "params": [], "inputs": [], "outputs": [],
+            "table": {"states": [[0, 0, 255, 255, 255, 255, 255, 255, 0, 0, 1, 0]], "edges": []},
+            "structural": {},
+        }},
+    }
+    damage(document)
+    with pytest.raises(spine_stream.SpineDecodeError):
+        spine_stream.expected_stream(spine_stream.decode(document))
 
 
 @pytest.mark.parametrize("header", [1, None])

@@ -1156,7 +1156,12 @@ SHAPES = (
         "entries partition `RunSummary.outcomes` field for field. Answers 'how many trials of this "
         "kind were administered, and how many of those paid out'.",
     ),
-    Shape("RunStatus", lit("ok", "no-metrics", "missing", "unreadable")),
+    Shape(
+        "RunStatus",
+        lit("ok", "no-metrics", "replay-pending", "missing", "unreadable"),
+        doc="Why a run has numbers or not (`ANALYTICS.md#why-a-run-has-no-numbers`). "
+        "`replay-pending` is a spine task's run: recorded, and scored by replay once that exists.",
+    ),
     Shape(
         "ProfileSource",
         lit("snapshot", "sketch-current", "inferred", "unavailable"),

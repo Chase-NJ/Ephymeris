@@ -110,9 +110,12 @@ def parse_tsv(path: Path) -> ParsedTsv:
     """Read a `.tsv` back into header, events, and optional footer.
 
     Tolerant exactly where a crash makes tolerance necessary: a torn final
-    line (power died mid-write, `DATA.md#what-is-guaranteed`) matches neither rule and contributes
+    line (power died mid-write, `DATA.md#what-is-guaranteed`) contributes
     nothing, costing at most the one strobe the guarantee already declares at risk.
-    Everything else is strict — a line is a `# key: value` comment or a
+    It is told by its missing newline, never by its shape: `AnimalWriter` ends
+    every line it writes with one before its fsync, so a complete line always
+    has it, and a strobe cut mid-timestamp (`127\t2` of `127\t200`) or a header
+    cut mid-value would otherwise read as real. Everything else is strict — a line is a `# key: value` comment or a
     board-format strobe, and anything unrecognized is skipped, not guessed at.
 
     A file whose first line is `LEGACY_HEADER` is read by the pre-Ephymeris
@@ -129,6 +132,8 @@ def parse_tsv(path: Path) -> ParsedTsv:
             return _parse_legacy(fh)
         fh.seek(0)
         for raw in fh:
+            if not raw.endswith("\n"):
+                break  # the torn final line: only the last line can lack its newline
             line = raw.rstrip("\r\n")
             if line.startswith("# "):
                 key, sep, value = line[2:].partition(": ")
@@ -155,8 +160,24 @@ def parse_tsv(path: Path) -> ParsedTsv:
     return ParsedTsv(metadata=metadata, events=events, stop_reason=stop_reason)
 
 
+def recovered_document(parsed: ParsedTsv) -> dict[str, Any]:
+    """The `.json` document a parsed log recovers to: its header fields, its
+    strobes, and a stop reason from its footer or from how it was cut off."""
+    document = dict(parsed.metadata)
+    document["stop_reason"] = parsed.stop_reason or (
+        RECOVERED_LEGACY_STOP_REASON if parsed.dialect == "legacy" else RECOVERED_STOP_REASON
+    )
+    document["n_events"] = len(parsed.events)
+    document["ts_data"] = parsed.events
+    return document
+
+
 def _parse_legacy(fh: Any) -> ParsedTsv:
     """The rest of a pre-Ephymeris log, after its header line.
+
+    An unterminated last line IS read here, as it always was: the old software
+    may not have ended its last line, its archive is fixed, and a whole strobe
+    there is still a strobe.
 
     Its comments are the run's parameters (`# trial_seed\t93518744`), read into
     the document flat as the app's own header fields are. It names no animal:
@@ -214,13 +235,8 @@ def recover_file(tsv_path: Path) -> dict[str, Any]:
         )
         return entry
 
-    stop_reason = parsed.stop_reason or (
-        RECOVERED_LEGACY_STOP_REASON if parsed.dialect == "legacy" else RECOVERED_STOP_REASON
-    )
-    document = dict(parsed.metadata)
-    document["stop_reason"] = stop_reason
-    document["n_events"] = len(parsed.events)
-    document["ts_data"] = parsed.events
+    document = recovered_document(parsed)
+    stop_reason = document["stop_reason"]
 
     json_path = reader.sibling_json(tsv_path)
     try:

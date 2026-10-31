@@ -38,6 +38,7 @@ from ..tasks import profile as task_profile
 from ..tasks.profile import TaskProfile
 from . import reader, stream
 from .stream import infer
+from .stream import spine as spine_stream
 from .repository import AnalyticsRepository, CachedRun, CacheKey
 
 log = logging.getLogger(__name__)
@@ -519,6 +520,17 @@ resolved: _Resolved, document: dict[str, Any], pass_: _Pass
     mtime/size, and of the code and vocabulary that read it, which the key's
     version covers (`score_version`).
     """
+    if spine_stream.is_spine_run(document):
+        # A spine run decodes by its own snapshot or by nothing: never today's
+        # task.json and never inference, whose onset patterns its edge code
+        # names only mimic. `summarize` reports it `replay-pending`.
+        embedded = task_profile.embedded_profile(document)
+        if embedded is not None:
+            return embedded, "snapshot", pass_.digest(embedded)
+        if resolved.source == "snapshot":
+            return resolved.profile, resolved.source, resolved.digest
+        return None, "unavailable", None
+
     if (
         resolved.source == "snapshot"
         and resolved.profile is not None
@@ -838,6 +850,10 @@ def _canary_runs(
             ("utility", held(utility, "snapshot"), document(session)),
             ("short", held(snapshot, "snapshot"), document(session[:12])),
             ("unclean", held(snapshot, "snapshot"), unclean),
+            # A spine run over the same onset-shaped stream: never inferred.
+            ("spine-run", nothing, document(session, interp=2, **{task_profile.SNAPSHOT_KEY: {
+                **{k: v for k, v in declared.items() if k != "liveMetrics"}, "spine": {"interp": 2},
+            }})),
         ]
     ] + [
         # The same single-alternate no-go snapshot, scored under a vocabulary

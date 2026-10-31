@@ -1164,7 +1164,11 @@ export interface ConditionOutcomes {
   outcomes: TrialOutcomes;
 }
 
-export type RunStatus = "ok" | "no-metrics" | "missing" | "unreadable";
+/**
+ * Why a run has numbers or not (`ANALYTICS.md#why-a-run-has-no-numbers`). `replay-pending` is a
+ * spine task's run: recorded, and scored by replay once that exists.
+ */
+export type RunStatus = "ok" | "no-metrics" | "replay-pending" | "missing" | "unreadable";
 
 /**
  * How much the decoding can be trusted (`DATA.md#reading-the-archive`). Four states —

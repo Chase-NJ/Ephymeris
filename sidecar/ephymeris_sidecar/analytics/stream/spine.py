@@ -63,22 +63,51 @@ class SpineRecord:
     recorded: tuple[tuple[int, int], ...]
 
 
+#: What a summary says of a spine run until replay scores it.
+REPLAY_PENDING_DETAIL = (
+    "a spine task's run: scoring it by replay is still to come (ADR 0003), so it has no "
+    "numbers yet. Every strobe is recorded"
+)
+
+
 def is_spine_run(document: dict[str, Any]) -> bool:
+    """Whether a state table ran this run, by what its own file says.
+
+    Either mark is enough: the snapshot's `spine` key, or a header `interp` the
+    replay runs. The header is what the board announced, so a run whose
+    snapshot did not survive is still known for what it is. A task's name
+    never decides it.
+    """
+    return _snapshot_spine(document) is not None or document.get("interp") in rp.INTERP_VERSIONS
+
+
+def _snapshot_spine(document: dict[str, Any]) -> dict[str, Any] | None:
     snapshot = document.get("task_profile")
-    return isinstance(snapshot, dict) and isinstance(snapshot.get("spine"), dict)
+    spine = snapshot.get("spine") if isinstance(snapshot, dict) else None
+    return spine if isinstance(spine, dict) else None
 
 
 def decode(document: dict[str, Any]) -> SpineRecord:
     """Read a spine run's table, parameters, seed and input edges out of its document.
 
-    Raises `SpineDecodeError` for a document that is not a spine run, or one
-    whose table format (`interp`) this replay does not know: never replayed
-    under a guess.
+    Raises `SpineDecodeError` for a document that is not a spine run, one
+    whose table format (`interp`) this replay does not know, and every
+    malformed one: never replayed under a guess, and never refused with
+    whatever a damaged field happens to raise.
     """
-    if not is_spine_run(document):
-        raise SpineDecodeError("not a spine run: its profile snapshot carries no spine")
+    try:
+        return _decode(document)
+    except SpineDecodeError:
+        raise
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        raise SpineDecodeError(f"the run's document is malformed: {exc!r}") from exc
+
+
+def _decode(document: dict[str, Any]) -> SpineRecord:
+    spine = _snapshot_spine(document)
+    if spine is None:
+        raise SpineDecodeError("its profile snapshot carries no spine, so there is no table to replay")
     snapshot = document["task_profile"]
-    spine = snapshot["spine"]
     # The header's `interp` is what the board announced, and it alone says which
     # interpreter ran the run (TASKS.md#confirming-the-parameters). The snapshot
     # says which the table was lowered for. Both must agree, and be one replay knows.
@@ -176,8 +205,11 @@ def expected_stream(record: SpineRecord) -> list[tuple[int, int]]:
 def _predict(record: SpineRecord) -> list[tuple[int, int]]:
     """Every strobe of every tick through the end, or through the last recorded one."""
     ticks = record.end_tick if record.end_tick is not None else record.last_tick
-    actions = rp.replay(record.table, record.params, record.seed, record.events, ticks,
-                        start=0, interp=record.interp)
+    try:
+        actions = rp.replay(record.table, record.params, record.seed, record.events, ticks,
+                            start=0, interp=record.interp)
+    except ValueError as exc:  # strobes out of order, an edge after the end, a bad parameter
+        raise SpineDecodeError(f"the recorded strobes cannot be replayed: {exc}") from exc
     out: list[tuple[int, int]] = []
     trials, outputs = 0, 0
     max_trials = record.params[TRIALS_SLOT]

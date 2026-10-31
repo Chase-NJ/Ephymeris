@@ -5,7 +5,7 @@ slots to this rig's channels, one block. The definition's data is
 `model.Spine`; this module judges it against the rig and the vocabulary and
 writes what the board runs:
 
-    <name>.ino      three includes and two calls: the runner is BoxSpine.h's
+    <name>.ino      five includes and two calls: the runner is BoxSpine.h's
     TaskPins.h      this rig's pins and every live strobe code (generate.py)
     TaskSpine.h     the lowered state table, the channel rows, the parameters
     task.json       the profile, carrying the `spine` snapshot replay reads

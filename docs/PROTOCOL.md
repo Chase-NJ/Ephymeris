@@ -1943,7 +1943,7 @@ One operator-tunable parameter. Everything past `default` is optional presentati
 | `label` | string |  |
 | `type` | [ConfigFieldType](#shape-configfieldtype) |  |
 | `default` | unknown |  |
-| `group` *(optional)* | string | Section heading the form files this field under; absent = ungrouped. Part of `profile_hash`, so re-filing a field splits a task's recorded runs from its future ones (`TASKS.md#profile-and-params-hashes`). |
+| `group` *(optional)* | string | Section heading the form files this field under; absent = ungrouped. Part of `profile_hash` (except on a spine task), so re-filing a field splits a task's recorded runs from its future ones (`TASKS.md#profile-and-params-hashes`). |
 | `unit` *(optional)* | string | Suffix shown after the input, e.g. "ms". |
 | `min` *(optional)* | number | Inclusive bound the form clamps to. |
 | `max` *(optional)* | number | Inclusive bound the form clamps to. |

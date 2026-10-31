@@ -734,9 +734,9 @@ export interface ConfigField {
   type: ConfigFieldType;
   default: unknown;
   /**
-   * Section heading the form files this field under; absent = ungrouped. Part of `profile_hash`,
-   * so re-filing a field splits a task's recorded runs from its future ones
-   * (`TASKS.md#profile-and-params-hashes`).
+   * Section heading the form files this field under; absent = ungrouped. Part of `profile_hash`
+   * (except on a spine task), so re-filing a field splits a task's recorded runs from its future
+   * ones (`TASKS.md#profile-and-params-hashes`).
    */
   group?: string;
   /** Suffix shown after the input, e.g. "ms". */

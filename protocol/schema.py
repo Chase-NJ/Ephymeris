@@ -664,8 +664,8 @@ SHAPES = (
                 STR,
                 optional=True,
                 doc="Section heading the form files this field under; absent = "
-                "ungrouped. Part of `profile_hash`, so re-filing a field splits "
-                "a task's recorded runs from its future ones "
+                "ungrouped. Part of `profile_hash` (except on a spine task), so "
+                "re-filing a field splits a task's recorded runs from its future ones "
                 "(`TASKS.md#profile-and-params-hashes`).",
             ),
             f("unit", STR, optional=True, doc='Suffix shown after the input, e.g. "ms".'),

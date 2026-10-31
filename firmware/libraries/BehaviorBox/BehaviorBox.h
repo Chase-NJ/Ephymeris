@@ -485,7 +485,7 @@ inline void flashLight(int duration, int pollMs)
 /*  Number of rows in the ramp table.
 
     GUARDED, so a generated `TaskPins.h` sets it -- a profile that ramps over
-    three stages compiles three rows and sends fifteen fewer START tokens, and
+    three stages compiles three rows and sends fifteen fewer SET tokens, and
     one that does not ramp at all compiles one. Five is the lab's historical
     schedule (a forgiving stage 0 plus four steps toward the full task) and is
     what a sketch with no generated header still gets.

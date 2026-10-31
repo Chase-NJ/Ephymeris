@@ -1140,13 +1140,13 @@ Per box (`ports/handler.py`, `sessions/runner.py`):
    and hold the last answer against what was sent ([TASKS.md](TASKS.md#confirming-the-parameters)). A mismatch,
    a `CLAMPED` key or silence refuses the start: `START` is never sent, the box is told why in a
    `sidecar.error` (`PARAMS_MISMATCH`, `PARAMS_CLAMPED`, `FIRMWARE_OUTDATED`), the run ends with
-   `stop_reason: "start refused: <reason>"` and the port goes `ERROR`.
-5. Send `START SEED=<n>`. **The seed is drawn at the click**, not at mapping, or every box in a
-   group would share it and it would survive a Stop/Start ([TASKS.md](TASKS.md#seed)).
-6. Watch `SESSION_SEED_WINDOW_S` for an optional `SEED\t<value>`; a strobe also ends the window.
-7. Strict parsing: a data line is exactly `^\d{1,3}\t\d+$` (`STROBE_RE`). Anything else goes to scrollback
+   `stop_reason: "start refused: <reason>"` and the port goes `ERROR`. Otherwise send `START SEED=<n>`.
+   **The seed is drawn at the click**, not at mapping, or every box in a group would share it and it would
+   survive a Stop/Start ([TASKS.md](TASKS.md#seed)).
+5. Watch `SESSION_SEED_WINDOW_S` for an optional `SEED\t<value>`; a strobe also ends the window.
+6. Strict parsing: a data line is exactly `^\d{1,3}\t\d+$` (`STROBE_RE`). Anything else goes to scrollback
    — a profile-less sketch's raw log — and is never data.
-8. Each strobe is appended and fsync'd to the animal's `.tsv`, then fed to the rolling metrics
+7. Each strobe is appended and fsync'd to the animal's `.tsv`, then fed to the rolling metrics
    ([DATA.md](DATA.md#crash-safety)).
 
 Writer I/O stays on the port's session thread; anything touching the socket or state machine is scheduled

@@ -638,7 +638,8 @@ class PortHandler:
                     try:
                         text = answers.get(timeout=max(0.0, deadline - time.monotonic()))
                     except queue.Empty:
-                        command.verify(None)  # raises: nothing answered
+                        command.verify(None)  # nothing answered: always raises
+                        raise AssertionError("verify(None) must refuse")  # pragma: no cover
                     heard = CLAMPED_RE.match(text)
                     if heard:
                         clamped.append(heard.group(1))

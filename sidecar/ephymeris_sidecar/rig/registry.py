@@ -7,7 +7,7 @@ otherwise -- and nothing here invents a value: if a number is not in that
 document, it does not exist. A preview asks about a document that is not in
 force through `hypothetical`, which no other reader can see.
 
-That discipline is the whole point. `START_LINE_MAX` is mirrored across two
+That discipline is the whole point. `SET_LINE_MAX` is mirrored across two
 repositories with nothing keeping it in sync and `baudRate` across nine files;
 both are documented hazards. The moment this module hard-codes a pin or a code
 "just for now", it becomes the next instance.

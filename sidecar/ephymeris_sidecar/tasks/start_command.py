@@ -136,8 +136,8 @@ class StartCommand:
                 PARAMS_MISMATCH,
                 "count",
                 f"The board accepted {reply.count} of {self.count} parameters: a key "
-                f"was not recognised by this sketch. Reflash the box with a current "
-                f"build of the task.",
+                f"was not recognised by this sketch, or a line was cut short. "
+                f"Reflash the box with a current build of the task.",
                 {"sent": self.count, "accepted": reply.count},
             )
         if reply.crc32 != self.crc32:

@@ -65,12 +65,20 @@ def unloaded_message(problem: str) -> str:
 
 
 def held_message(disk: store.Stored) -> str:
-    """The refusal while stored wiring is held: nobody saved it here."""
+    """The refusal while stored wiring is held: nobody saved it here, or a
+    save after it did not finish."""
     return (
-        f"{_names(disk.sources)} {_is(disk.sources)} not saved or confirmed on this "
-        "machine, so the shipped pins are in force and no box can start, be flashed or "
-        "identified until its pins are confirmed and it is saved, or the wiring is reset."
+        f"{_names(disk.sources)} {_held_why(disk)}, so the shipped pins are in force and "
+        "no box can start, be flashed or identified until its pins are confirmed and it "
+        "is saved, or the wiring is reset."
     )
+
+
+def _held_why(disk: store.Stored) -> str:
+    """Why held wiring is held, as true of the file named before it."""
+    if disk.interrupted:
+        return f"{'was' if len(disk.sources) == 1 else 'were'} saved here, but a save after it did not finish"
+    return f"{_is(disk.sources)} not saved or confirmed on this machine"
 
 
 #: The first notice while a refusal stands. No reason in it: the reason belongs
@@ -85,6 +93,12 @@ IN_FORCE_HELD = (
     "The shipped pins are in force: this rig's stored wiring was not saved or "
     "confirmed on this machine when it was installed, so it is held, and no box can "
     "start, be flashed or identified until its pins are confirmed and it is saved, "
+    "or the wiring is reset. A restart never confirms it."
+)
+IN_FORCE_INTERRUPTED = (
+    "The shipped pins are in force: this rig's stored wiring was saved here, but a "
+    "save after it did not finish, so it was held when it was installed, and no box "
+    "can start, be flashed or identified until its pins are confirmed and it is saved, "
     "or the wiring is reset. A restart never confirms it."
 )
 
@@ -150,6 +164,11 @@ def _unconfirmed(state: _Rig) -> str:
         )
     elif disk.state == "invalid":
         source = f"These pins come from {_names(disk.sources)}, which did not load."
+    elif disk.interrupted:
+        source = (
+            f"These pins come from {_names(disk.sources)}, saved here; a save after it "
+            "did not finish, so the record cannot vouch for it."
+        )
     else:
         source = (
             f"These pins come from {_names(disk.sources)}, which {_is(disk.sources)} not "
@@ -199,7 +218,12 @@ def _notices(state: _Rig) -> list[_Notice]:
     names = _names(disk.sources) or store.WIRING_FILENAME
     now = disk.problems[0][1] if disk.problems else ""
     if in_force.problem:
-        messages = [IN_FORCE_HELD if in_force.held else IN_FORCE_UNLOADED, _now(state, names, now)]
+        first = (
+            IN_FORCE_UNLOADED if not in_force.held
+            else IN_FORCE_INTERRUPTED if disk.interrupted
+            else IN_FORCE_HELD
+        )
+        messages = [first, _now(state, names, now)]
     else:
         messages = _beside_wiring_in_force(state, names, now)
     out = [_Notice(store.WIRING_FILENAME, m) for m in messages]
@@ -230,6 +254,12 @@ def _now(state: _Rig, names: str, now: str) -> str:
         return (
             f"Now {names} loads, and it is the wiring last saved here. The editor shows "
             "it, not in force: save it to put it in force."
+        )
+    if disk.state == "held" and disk.interrupted:
+        return (
+            f"Now {names} {_is(disk.sources)} on disk: saved here, but a save after it did "
+            "not finish. The editor shows that wiring, not in force: "
+            "check every pin against the box, confirm them, then save to put it in force."
         )
     if disk.state == "held":
         return (

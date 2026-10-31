@@ -152,6 +152,9 @@ class Stored:
     digest: str | None = None
     #: `order_blind_digest` of the same: only to carry an older record over.
     order_blind: str | None = None
+    #: Held because a save after it did not finish: this IS the wiring last
+    #: saved here, but the record cannot tell it from what that save replaced.
+    interrupted: bool = False
     #: Why there is no usable record of the wiring saved here (missing, or
     #: will not read), so nothing stored is trusted; None when there is one.
     record_problem: str | None = None
@@ -225,6 +228,8 @@ class _Layout:
     #: The digest of what it holds, read quietly, or None if it holds nothing
     #: whole -- for a shadow, which is never composed.
     digest: Callable[[], str | None]
+    #: The same, blind to declaration order: only to carry an older record over.
+    blind: Callable[[], str | None]
 
 
 class HardwareStore:
@@ -312,18 +317,21 @@ class HardwareStore:
                 self.path.is_file(),
                 lambda: _checked(WIRING_FILENAME, *_read(self.path), sources=(WIRING_FILENAME,)),
                 lambda: _digest_of(_read(self.path, quiet=True)[0]),
+                lambda: _blind_of(_read(self.path, quiet=True)[0]),
             ),
             _Layout(
                 pair,
                 self.channel_set_path.is_file() or self.pin_map_path.is_file(),
                 self._two_file_pair,
                 lambda: self._two_file_pair(quiet=True).digest,
+                lambda: self._two_file_pair(quiet=True).order_blind,
             ),
             _Layout(
                 (self.legacy_rig_path, self.legacy_rig_path.with_suffix(".json.tmp")),
                 self.legacy_rig_path.is_file(),
                 lambda: _checked(RIG_FILENAME, *_read(self.legacy_rig_path), sources=(RIG_FILENAME,)),
                 lambda: _digest_of(_read(self.legacy_rig_path, quiet=True)[0]),
+                lambda: _blind_of(_read(self.legacy_rig_path, quiet=True)[0]),
             ),
         )
 
@@ -372,20 +380,35 @@ class HardwareStore:
             log.warning("could not finish recording the last wiring save (%s)", exc)
 
     def _carried_over(self, record: "_Record") -> "_Record":
-        """A record whose digests are blind to declaration order (written
-        before they covered it) confirms the stored wiring it still matches,
-        and is rewritten in today's form, so it confirms exactly that file and
-        a reorder after today is held. A digest it no longer matches stays as
-        it is, and trusts nothing."""
+        """A record whose digests are blind to declaration order (written by a
+        build before they covered it) is carried over ONCE: at the first start
+        of this build, which is the only start that can meet one, since it
+        rewrites every one. Each digest becomes today's form of exactly the
+        file it still matches, and is otherwise dropped, never consulted again
+        -- a digest left order-blind would confirm that wiring with its odor
+        lines swapped at any later start.
+
+          * `digest` carries to the stored wiring it matches; or, while a save
+            it was replaced by carries, to the older layout that save replaced,
+            so `settle_record` makes it a leftover; else None.
+          * `pending` carries to the stored wiring it matches; else to
+            `_UNFINISHED`: that save did not finish, so nothing is trusted.
+        """
         if record.problem or not (_order_blind(record.digest) or _order_blind(record.pending)):
             return record
-        _, stored = self._present()
-        carry = {d: stored.digest for d in (record.digest, record.pending) if _order_blind(d) and d == stored.order_blind}
-        carried = dataclasses.replace(
-            record,
-            digest=carry.get(record.digest, record.digest),
-            pending=carry.get(record.pending, record.pending),
-        )
+        present, stored = self._present()
+        pending = record.pending
+        if _order_blind(pending):
+            pending = stored.digest if pending == stored.order_blind else _UNFINISHED
+        digest = record.digest
+        if _order_blind(digest):
+            if digest == stored.order_blind:
+                digest = stored.digest
+            elif pending not in (None, _UNFINISHED):
+                digest = next((s.digest() for s in present[1:] if s.blind() == digest), None)
+            else:
+                digest = None
+        carried = dataclasses.replace(record, digest=digest, pending=pending)
         if carried != record:
             try:
                 self._write_record(carried)
@@ -435,7 +458,11 @@ class HardwareStore:
         if stored.state == "loads" and not record.trusts(
             stored.digest, is_wiring_json=present[0].files[0] == self.path
         ):
-            stored = dataclasses.replace(stored, state="held")
+            stored = dataclasses.replace(
+                stored,
+                state="held",
+                interrupted=record.pending is not None and stored.digest == record.digest,
+            )
         shadows = [s for s in present[1:] if not _is_leftover(s, record)]
         stored = dataclasses.replace(
             stored,
@@ -666,6 +693,9 @@ def legacy_pair_digest(channel_set: dict) -> str:
 
 #: The prefix of a digest that covers channel declaration order.
 _ORDERED = "o1:"
+#: A pending save carried over from an order-blind record that matched
+#: nothing: a save that did not finish, matching no file ever.
+_UNFINISHED = _ORDERED + "unfinished"
 
 
 def content_digest(doc: dict) -> str:
@@ -700,6 +730,10 @@ def _order_blind(digest: str | None) -> bool:
 
 def _digest_of(doc: dict | None) -> str | None:
     return None if doc is None else content_digest(doc)
+
+
+def _blind_of(doc: dict | None) -> str | None:
+    return None if doc is None else order_blind_digest(doc)
 
 
 def _file_digest(path: Path) -> str:

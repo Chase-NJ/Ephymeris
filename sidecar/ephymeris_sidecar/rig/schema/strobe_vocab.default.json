@@ -112,7 +112,7 @@
       "emitted_on": "entry to the broken-hold penalty",
       "paired_with": "LIGHTS_OFF",
       "pair_order": "ODOR_UNPOKE_EARLY first",
-      "rationale": "A commitment or sampling hold released early. Emitted from two sites in runTrial() (the pre-odor hold and the sampling hold) with the same code, so the code alone does not tell them apart. Downstream they are told apart by whether an odor-on code preceded it (taskGraph in topology.ts; the engagement ladder in analytics/stream/engagement.py)."
+      "rationale": "A commitment or sampling hold released early. Emitted from two sites in runTrial() (the pre-odor hold and the sampling hold) with the same code, so the code alone does not tell them apart. Whether an odor-on code preceded it separates them: taskGraph in topology.ts draws two abort nodes from that; the engagement ladder in analytics/stream/engagement.py isolates only the pre-odor release (poked minus odor delivered); a sampling release is counted as TrialOutcomes.aborted."
     },
     "ODOR_UNPOKE": {
       "code": 226,
@@ -149,7 +149,7 @@
       "origin": "firmware",
       "since": 1,
       "emitted_on": "entry to the incorrect terminal",
-      "rationale": "Reached by THREE distinct outcomes -- wrong port, omission, and response-hold failure (BehaviorBox.h:1225) -- so outcome class is NOT recoverable from this code alone. It is recoverable from the preceding strobe, which is exactly why the invariant matters."
+      "rationale": "Reached by every non-correct outcome of checkResponse() -- wrong port, omission, response-hold failure, and a response on a no-go trial -- so outcome class is NOT recoverable from this code alone. It is recoverable from the preceding strobe, which is exactly why the invariant matters."
     },
     "END_SESSION": {
       "code": 246,
@@ -198,7 +198,7 @@
       "origin": "firmware",
       "since": 1,
       "emitted_on": "entry to the left reward PULSE",
-      "rationale": "Emitted before the solenoid opens (BehaviorBox.h:1047). Pulse width is the delivered volume."
+      "rationale": "Emitted before the solenoid opens (deliverReward() in BehaviorBox.h). Pulse width is the delivered volume."
     },
     "FLUID_R": {
       "code": 253,
@@ -212,7 +212,7 @@
       "origin": "firmware",
       "since": 1,
       "emitted_on": "entry to the ITI delay, after leaving the left well",
-      "rationale": "The only place the firmware observes the end of a consummatory bout, which makes it the anchor for consumption-duration measures. Not emitted on a wrong-well answer -- BehaviorBox.h:1108-1113 returns immediately without awaiting withdrawal."
+      "rationale": "The only place the firmware observes the end of a consummatory bout, which makes it the anchor for consumption-duration measures. Not emitted on a wrong-well answer -- checkResponse() returns immediately without awaiting withdrawal."
     },
     "WATER_UNPOKE_R": {
       "code": 255,
@@ -226,7 +226,7 @@
       "origin": "firmware",
       "since": 1,
       "emitted_on": "entry to the correct terminal path on a withhold trial",
-      "rationale": "Correct withholding. Already fully implemented in firmware (BehaviorBox.h:1115-1133) although no shipped sketch instantiates isGo=false today, so go/no-go reuses an existing code rather than needing a new one."
+      "rationale": "Correct withholding. Strobed by the no-go branch of checkResponse() when neither well is poked for nogoWellPoll. A generated trial table can declare no-go types, so go/no-go reuses an existing code rather than needing a new one."
     },
     "WATER_POKE_ERROR_L": {
       "code": 257,
@@ -247,7 +247,7 @@
       "origin": "firmware",
       "since": 1,
       "emitted_on": "entry to the right consumption WAIT_EXIT",
-      "rationale": "Emitted after the solenoid closes (BehaviorBox.h:1051). Modelling it as the entry strobe of the consumption state colocates the actuator close with its strobe -- semantically tidier than the current bracketing, and free."
+      "rationale": "Emitted after the solenoid closes (deliverReward() in BehaviorBox.h). Modelling it as the entry strobe of the consumption state colocates the actuator close with its strobe -- semantically tidier than the current bracketing, and free."
     },
     "STOP_FLUID_G_L": {
       "code": 369,

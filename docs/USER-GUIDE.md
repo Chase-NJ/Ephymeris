@@ -958,6 +958,9 @@ shows, and what the file is now. What you do depends on that note:
 - **The note asks you to check every pin.** The pins came from a file nobody saved here, or from two files
   that were not written together, so they may belong to another arrangement. Compare each pin on the board
   map with the box. Then click **I've checked every pin**, and **Save**.
+- **The note says the record of the wiring saved on this machine is missing.** Ephymeris cannot tell which
+  wiring was saved here, so it trusts none. Compare each pin with the box, click **I've checked every pin**,
+  and **Save**: that records the wiring again.
 - **Save is off, and the note says there is no stored wiring to repair.** The file cannot be read at all.
   Click **Reset**. A dialog names the exact file it will remove. Click **Reset** again to confirm. The
   shipped wiring is then in force; re-enter any changes your rig had, and **Save**.

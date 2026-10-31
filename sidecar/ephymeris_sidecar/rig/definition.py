@@ -203,7 +203,9 @@ class RigDefinition:
     What it does not own is passed in, because each belongs elsewhere:
     `in_use` (the session lifecycle's "is a session set up or a box running?"),
     `repin` (rebuild the bundled sketches), `rescan` (discovery), `after_rebuild`
-    (what the app announces and resets once folders changed) and `broadcast`.
+    (what the app announces and resets once folders changed), `broadcast`, and
+    `first_start` (whether the database has never marked this machine started,
+    the one time unsaved wiring may be recorded; False holds it).
     """
 
     def __init__(
@@ -217,6 +219,7 @@ class RigDefinition:
         rescan: Callable[[], Awaitable[None]],
         after_rebuild: Callable[[int, int], Awaitable[None]],
         broadcast: Callable[[dict[str, Any]], Awaitable[None]],
+        first_start: bool = False,
     ) -> None:
         self._hardware = hardware
         self._vocabulary = vocabulary
@@ -234,9 +237,11 @@ class RigDefinition:
         # The vocabulary first: installing the wiring checks its rules, and
         # RIG104/RIG106/RIG107 read codes from the vocabulary in force.
         registry.set_vocabulary_source(vocabulary.load)
-        # The one moment unrecorded wiring may be recorded without a save:
-        # this start, before anything reads it (`record_at_first_start`).
-        hardware.record_at_first_start()
+        # Before anything reads the wiring: finish a save cut off at its last
+        # step, and on the machine's first start (`first_start`, which the
+        # database decides) record the wiring the build before ran
+        # (`HardwareStore.settle_record`).
+        hardware.settle_record(first_start=first_start)
         self._install_wiring()
 
     # -- the lock ------------------------------------------------------------ #

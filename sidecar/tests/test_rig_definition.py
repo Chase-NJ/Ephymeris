@@ -558,7 +558,9 @@ async def test_the_announcement_is_part_of_the_write(rigdef):
     rigdef.broadcast_gate.set()
     await write
     await settle()
-    assert rigdef.events == ["hardware.updated"]
+    # A first save issues the channel set's edge codes, so the vocabulary is
+    # announced too -- inside the same write (TASKS.md#edge-codes).
+    assert rigdef.events == ["strobes.updated", "hardware.updated"]
     assert entered == ["read"]
     reader.cancel()
 

@@ -1698,6 +1698,12 @@ export interface RigStatus {
    * rationale must not move it.
    */
   pinoutHash: string;
+  /**
+   * The channel set's hash: what every channel is (type, role, edges and their code names), never
+   * where it is. Labels and prose are excluded, and so is every pin, so two machines sharing one
+   * channel set agree on it whatever their pin maps (`TASKS.md#the-channel-set-and-the-pin-map`).
+   */
+  channelSetHash: string;
 }
 
 /**
@@ -1726,6 +1732,24 @@ export interface RigImpact {
   codes: string[];
 }
 
+/**
+ * One strobe code a channel-set save issues (`TASKS.md#edge-codes`). Appended to the vocabulary
+ * inside the same rig definition write as the wiring, never renumbered after.
+ */
+export interface RigAllocation {
+  /** The channel whose edge gets the code. */
+  channel: string;
+  /** The edge the code announces: `enter`/`exit` on an input, `on`/`off` on an output. */
+  edge: string;
+  /**
+   * The code's name, `<CHANNEL>_<EDGE>`, with a numeric suffix when that name was ever issued to
+   * something else. Never derived again: a renamed channel keeps it.
+   */
+  name: string;
+  /** The vocabulary number it is issued, the lowest free one. */
+  code: number;
+}
+
 export interface RigSaved {
   status: RigStatus;
   problems: RigProblem[];
@@ -1734,6 +1758,12 @@ export interface RigSaved {
    * the save was refused — see the command.
    */
   breaks: RigImpact[];
+  /**
+   * The edge codes this document needs and the channel set does not yet name: what a save WOULD
+   * issue, from `hardware.preview`, and what it DID issue, from `hardware.save`. Empty when every
+   * edge already has its code.
+   */
+  allocations: RigAllocation[];
 }
 
 export interface TaskDiagnostic {

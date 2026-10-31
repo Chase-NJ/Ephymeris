@@ -7,9 +7,10 @@ is not a command error. It is a successful reply carrying located problems.
 `problems` comes from two places and reads as one list:
 
   * the JSON Schema, for shape -- a `kind` that is not a kind, a missing pin;
-  * the wiring rules (`RIG101`-`RIG106`), for sense -- a pin the board does not
+  * the wiring rules (`RIG101`-`RIG107`), for sense -- a pin the board does not
     have, two channels on one pin, a response port with no strobe slot, an odor
-    line with no onset code of its own, halves that describe different boxes.
+    line with no onset code of its own, halves that describe different boxes, a
+    channel-set declaration that contradicts itself.
 
 They are merged rather than reported separately because an operator fixing new
 wiring does not care which layer objected, and running one and then the other
@@ -53,7 +54,19 @@ def preview_payload(
         "status": _status(rig, rig.load() or store.default_document()),
         "problems": problems_for(document),
         "breaks": breaks,
+        "allocations": [a.to_json() for a in planned_allocations(document)],
     }
+
+
+def planned_allocations(document: Any) -> list:
+    """The edge codes a save of `document` would issue (TASKS.md#edge-codes),
+    against the vocabulary in force. Nothing for a document that fails the
+    schema: it will not be saved, so it will issue nothing."""
+    from ephymeris_sidecar.rig import allocation, registry
+
+    if store.validate(document):
+        return []
+    return allocation.plan(document, registry.vocabulary())[1]
 
 
 def problems_for(document: Any) -> list[dict[str, Any]]:
@@ -88,6 +101,7 @@ def _rule_problems(document: Any) -> list[dict[str, Any]]:
             ("RIG104", chans.slot_problems(vocab)),
             ("RIG105", chans.sync_problems()),
             ("RIG106", chans.onset_problems(vocab)),
+            ("RIG107", chans.edge_problems(vocab)),
         )
         for loc, msg in pairs
     ]
@@ -103,8 +117,14 @@ def _status(rig: store.HardwareStore, doc: dict) -> dict[str, Any]:
         "board": str(doc.get("board", "")),
         "editedAt": status.edited_at,
         "pinoutHash": registry.channels().content_hash(),
+        "channelSetHash": registry.channel_set().content_hash(),
     }
 
 
 def saved_payload(rig: store.HardwareStore, doc: dict) -> dict[str, Any]:
-    return {"status": _status(rig, doc), "problems": problems_for(doc), "breaks": []}
+    return {
+        "status": _status(rig, doc),
+        "problems": problems_for(doc),
+        "breaks": [],
+        "allocations": [],
+    }

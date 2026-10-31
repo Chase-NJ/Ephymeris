@@ -1,5 +1,7 @@
 """The rig wiring document: the store, the composition, and RIG101-106.
 
+RIG107 and the channel set's own rules are `test_channel_set.py`'s.
+
 Everything here was unreachable until the pinout became editable. The shipped
 pair is a transcription of BehaviorBox.h that lives inside the package and is
 read-only in a frozen build, so "what if the operator types pin 300" was not a
@@ -110,7 +112,8 @@ def test_a_saved_document_round_trips_and_carries_a_stamp(tmp_path):
     stored = s.save(rig())
     assert s.exists()
     assert stored["edited_at"]
-    assert json.loads(s.path.read_text(encoding="utf-8"))["channels"] == stored["channels"]
+    assert json.loads(s.channel_set_path.read_text(encoding="utf-8"))["channels"] == stored["channels"]
+    assert s.load() == stored
     assert s.status().custom is True
 
     s.reset()

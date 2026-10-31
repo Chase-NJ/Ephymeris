@@ -17,6 +17,17 @@ export interface RigChannel {
   /** Emitters only: the vocabulary code this odor line announces its onset
    *  with, by name (`TASKS.md#onset-codes`). RIG106 checks it. */
   onset_strobe?: string;
+  /** The channel set (`TASKS.md#the-channel-set-and-the-pin-map`): what the
+   *  line is, beside the kind it still generates from. */
+  type?: string;
+  role?: string;
+  /** Inputs only. */
+  active_level?: string;
+  debounce_ms?: number;
+  /** Reward lines only: the port it pays at, equal to `well`. */
+  serves?: string;
+  /** Edge → code name. Issued by a save (`TASKS.md#edge-codes`), never typed. */
+  edges?: Record<string, string>;
   rationale?: string;
 }
 
@@ -39,6 +50,7 @@ export interface RigDocument {
 export type RigProblem = CommandResultMap["hardware.get"]["problems"][number];
 export type RigStatus = CommandResultMap["hardware.get"]["status"];
 export type RigImpact = CommandResultMap["hardware.preview"]["breaks"][number];
+export type RigAllocation = CommandResultMap["hardware.preview"]["allocations"][number];
 
 /** The seven kinds `channels.v1.json` declares, in the order the rail lists them. */
 export const KINDS = [

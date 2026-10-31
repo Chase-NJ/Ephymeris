@@ -8,6 +8,14 @@ import { FieldRow } from "@/components/common/FieldRow";
 import { RowDensityContext } from "@/components/common/rowDensity";
 import { BoardMap } from "@/components/hardware/BoardMap";
 import {
+  CHANNEL_TYPES,
+  ROLES,
+  edgesOf,
+  kindDefaults,
+  patchChannel,
+  servePort,
+} from "@/lib/hardware/channelSet";
+import {
   KINDS,
   kindColor,
   type RigChannel,
@@ -84,7 +92,7 @@ export function RigWiringEditor({
     if (!doc) return;
     const current = doc.channels[name];
     if (!current) return;
-    const next: RigChannel = { ...current, ...patch };
+    const next = patchChannel(current, patch);
     // Only an odor line announces an onset; a channel that stops being one
     // drops its declaration rather than carrying a code RIG106 would refuse.
     if (next.kind !== "emitter" || next.onset_strobe === "") delete next.onset_strobe;
@@ -118,7 +126,10 @@ export function RigWiringEditor({
 
     edit({
       ...doc,
-      channels: { ...doc.channels, [name]: { kind: "emitter", label: name } },
+      channels: {
+        ...doc.channels,
+        [name]: { kind: "emitter", label: name, ...kindDefaults("emitter") },
+      },
       pins: { ...doc.pins, [name]: { index: pin } },
     });
     onSelect(name);
@@ -154,6 +165,7 @@ export function RigWiringEditor({
     // followed there too or TG224 starts reporting a well that is not a channel.
     for (const entry of Object.values(channels)) {
       if (entry.well === from) entry.well = to;
+      if (entry.serves === from) entry.serves = to;
     }
     edit({ ...doc, channels, pins: rekey(doc.pins) });
     onSelect(to);
@@ -166,10 +178,7 @@ export function RigWiringEditor({
     if (!doc) return;
     const current = doc.channels[name];
     if (!current) return;
-    const next = { ...current };
-    if (well) next.well = well;
-    else delete next.well;
-    edit({ ...doc, channels: { ...doc.channels, [name]: next } });
+    edit({ ...doc, channels: { ...doc.channels, [name]: servePort(current, well) } });
   }
 
   const errors = rig.problems.length;
@@ -184,7 +193,7 @@ export function RigWiringEditor({
           {rig.status
             ? `${rig.status.board || "board"} · ${
                 rig.status.custom ? "this rig's own" : "as shipped"
-              } · ${rig.status.pinoutHash}`
+              } · pins ${rig.status.pinoutHash} · channel set ${rig.status.channelSetHash}`
             : "loading…"}
         </div>
         {rig.checking && (
@@ -311,6 +320,25 @@ export function RigWiringEditor({
               </Callout>
             )}
 
+            {rig.allocations.length > 0 && (
+              <Callout
+                title={`Saving issues ${rig.allocations.length} strobe code${
+                  rig.allocations.length === 1 ? "" : "s"
+                }`}
+                why="Every edge of a channel is announced by a code of its own. A save appends one to the vocabulary for each edge that has none; renaming the channel later keeps it."
+              >
+                {rig.allocations.map((a) => (
+                  <div key={a.name} className="flex items-baseline gap-2 text-[11px]">
+                    <span className="font-mono text-starlight">{a.name}</span>
+                    <span className="font-mono text-[10px] text-static">
+                      {a.channel}.{a.edge}
+                    </span>
+                    <span className="ml-auto font-mono text-[10px] text-static">{a.code}</span>
+                  </div>
+                ))}
+              </Callout>
+            )}
+
             {rig.actionError && (
               <p className="text-[11px]" style={{ color: "var(--color-status-error)" }}>
                 {rig.actionError}
@@ -434,6 +462,80 @@ function ChannelInspector({
         </span>
       </label>
 
+      <label className="flex flex-col gap-1">
+        <span className="text-[11px] text-starlight">Type</span>
+        <Select
+          label="Type"
+          value={entry.type ?? ""}
+          options={CHANNEL_TYPES.map((t) => ({ value: t as string, label: t }))}
+          onChange={(v) => onEdit(selected, { type: v })}
+        />
+        <span className="text-[10px] leading-relaxed text-static">
+          What the line electrically is. It decides the channel&apos;s edges — an input
+          is entered and left, an output switched on and off — and each edge gets a
+          strobe code of its own.
+        </span>
+      </label>
+
+      <label className="flex flex-col gap-1">
+        <span className="text-[11px] text-starlight">Role</span>
+        <Select
+          label="Role"
+          value={entry.role ?? ""}
+          options={ROLES.map((r) => ({ value: r as string, label: r }))}
+          onChange={(v) => onEdit(selected, { role: v })}
+        />
+        <span className="text-[10px] leading-relaxed text-static">
+          What the line is for in a task. Lab-wide, like the type: both machines share
+          one channel set.
+        </span>
+      </label>
+
+      {entry.type === "digital_in" && (
+        <>
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] text-starlight">Active level</span>
+            <Select
+              label="Active level"
+              value={entry.active_level ?? "low"}
+              options={[
+                { value: "low", label: "low" },
+                { value: "high", label: "high" },
+              ]}
+              onChange={(v) => onEdit(selected, { active_level: v })}
+            />
+          </label>
+          <FieldRow
+            label="Debounce"
+            type="int"
+            value={entry.debounce_ms ?? 0}
+            fallback={0}
+            baseline={entry.debounce_ms ?? 0}
+            min={0}
+            max={1000}
+            unit="ms"
+            onChange={(v) => onEdit(selected, { debounce_ms: Number(v) })}
+            help="How long an edge must hold before it counts. A beam break is active LOW on the shipped ports."
+          />
+        </>
+      )}
+
+      <div className="flex flex-col gap-1">
+        <span className="text-[11px] text-starlight">Strobe codes</span>
+        {edgesOf(entry.type).map((edge) => (
+          <div key={edge} className="flex items-baseline gap-2 text-[11px]">
+            <span className="w-10 shrink-0 font-mono text-[10px] text-static">{edge}</span>
+            <span className="font-mono text-starlight">
+              {entry.edges?.[edge] ?? <span className="text-static">issued on save</span>}
+            </span>
+          </div>
+        ))}
+        <span className="text-[10px] leading-relaxed text-static">
+          Shown, never typed. A save issues each edge a fresh code, and a renamed
+          channel keeps its codes.
+        </span>
+      </div>
+
       <FieldRow
         label="Label"
         type="string"
@@ -487,7 +589,7 @@ function ChannelInspector({
           <span className="text-[11px] text-starlight">Serves</span>
           <Select
             label="Serves"
-            value={entry.well ?? ""}
+            value={entry.serves ?? entry.well ?? ""}
             options={[
               { value: "", label: "— not plumbed —" },
               ...Object.entries(doc.channels)

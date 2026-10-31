@@ -1783,6 +1783,15 @@ SHAPES = (
                 "'could these two produce different firmware?', so a reworded "
                 "rationale must not move it.",
             ),
+            f(
+                "channelSetHash",
+                STR,
+                doc="The channel set's hash: what every channel is (type, role, "
+                "edges and their code names), never where it is. Labels and prose "
+                "are excluded, and so is every pin, so two machines sharing one "
+                "channel set agree on it whatever their pin maps "
+                "(`TASKS.md#the-channel-set-and-the-pin-map`).",
+            ),
         ),
     ),
     Shape(
@@ -1811,6 +1820,29 @@ SHAPES = (
         doc="A task this wiring change would break. Computed BEFORE the write.",
     ),
     Shape(
+        "RigAllocation",
+        obj(
+            f("channel", STR, doc="The channel whose edge gets the code."),
+            f(
+                "edge",
+                STR,
+                doc="The edge the code announces: `enter`/`exit` on an input, "
+                "`on`/`off` on an output.",
+            ),
+            f(
+                "name",
+                STR,
+                doc="The code's name, `<CHANNEL>_<EDGE>`, with a numeric suffix "
+                "when that name was ever issued to something else. Never derived "
+                "again: a renamed channel keeps it.",
+            ),
+            f("code", INT, doc="The vocabulary number it is issued, the lowest free one."),
+        ),
+        doc="One strobe code a channel-set save issues "
+        "(`TASKS.md#edge-codes`). Appended to the vocabulary inside the same rig "
+        "definition write as the wiring, never renumbered after.",
+    ),
+    Shape(
         "RigSaved",
         obj(
             f("status", Ref("RigStatus")),
@@ -1821,6 +1853,14 @@ SHAPES = (
                 doc="Task profiles that generate today and would not after this "
                 "change. Non-empty does NOT mean the save was refused — see the "
                 "command.",
+            ),
+            f(
+                "allocations",
+                ListOf(Ref("RigAllocation")),
+                doc="The edge codes this document needs and the channel set does "
+                "not yet name: what a save WOULD issue, from `hardware.preview`, "
+                "and what it DID issue, from `hardware.save`. Empty when every "
+                "edge already has its code.",
             ),
         ),
     ),

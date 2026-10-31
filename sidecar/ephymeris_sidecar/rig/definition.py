@@ -25,7 +25,7 @@ from ..hardware import service as hardware_service
 from ..hardware import store as hardware_store
 from ..protocol import Evt, event
 from ..strobes import store as strobe_store
-from . import registry
+from . import allocation, registry
 
 log = logging.getLogger(__name__)
 
@@ -238,8 +238,14 @@ class RigDefinition:
     # -- the writes ---------------------------------------------------------- #
 
     async def save_wiring(self, document: dict[str, Any], *, confirm: bool) -> dict[str, Any]:
-        """Raises `RigInUse`, `WiringWouldBreakTasks` without `confirm`, or
-        `hardware.store.RigInvalid` for a document that is not one."""
+        """Raises `RigInUse`, `WiringWouldBreakTasks` without `confirm`,
+        `hardware.store.RigInvalid` for a document that is not one, or
+        `StrobeRefused` when its edge codes cannot be issued.
+
+        Issuing the channel set's new edge codes (TASKS.md#edge-codes) is part
+        of this one write: the vocabulary gains them, then the wiring names
+        them, then one rebuild serves both.
+        """
         async with self.writing(WIRING_IN_USE):
             breaks = await asyncio.to_thread(impact_of, self._tasks, wiring=document)
             if breaks and not confirm:
@@ -248,15 +254,41 @@ class RigDefinition:
                 # does not veto a rewiring; it refuses to let one happen
                 # unnoticed. Nothing is written on this path.
                 raise WiringWouldBreakTasks(breaks)
-            stored = await asyncio.to_thread(self._hardware.save, document)
+            problems = hardware_store.validate(document)
+            if problems:
+                # Before any code is issued: a refused wiring issues nothing.
+                raise hardware_store.RigInvalid(problems)
+            filled, issued = await asyncio.to_thread(self._issue_edge_codes, document)
+            stored = await asyncio.to_thread(self._hardware.save, filled)
             # Install before reporting, or the reply would describe the wiring
             # that was in force a moment ago.
             registry.set_rig_source(self._hardware.load)
             payload = await asyncio.to_thread(hardware_service.saved_payload, self._hardware, stored)
             payload["breaks"] = breaks
+            payload["allocations"] = [a.to_json() for a in issued]
             await self._rebuild()
+            if issued:
+                vocabulary = await asyncio.to_thread(self.vocabulary_payload)
+                await self._broadcast(event(Evt.STROBES_UPDATED, vocabulary))
             await self._broadcast(event(Evt.HARDWARE_UPDATED, payload["status"]))
         return payload
+
+    def _issue_edge_codes(
+        self, document: dict[str, Any]
+    ) -> tuple[dict[str, Any], list[allocation.Allocation]]:
+        """Plan against the vocabulary in force; if anything is to be issued,
+        plan again against this machine's own document, read strictly, and
+        write it. A wiring save that issues nothing never reads it, so a
+        damaged vocabulary refuses only a save that needs a code."""
+        filled, planned = allocation.plan(document, registry.vocabulary())
+        if not planned:
+            return filled, []
+        own = self.load_vocabulary_strict()
+        filled, planned = allocation.plan(document, registry.Vocabulary(own))
+        if planned:
+            self._vocabulary.save(allocation.issue(own, planned))
+            registry.set_vocabulary_source(self._vocabulary.load)
+        return filled, planned
 
     async def reset_wiring(self) -> dict[str, Any]:
         async with self.writing(WIRING_IN_USE):

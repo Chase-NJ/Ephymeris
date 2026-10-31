@@ -272,7 +272,13 @@ def validate(doc: Any) -> list[tuple[str, str]]:
 
 
 def add(
-    doc: dict, name: str, code: int, *, rationale: str, emitted_on: str = ""
+    doc: dict,
+    name: str,
+    code: int,
+    *,
+    rationale: str,
+    emitted_on: str = "",
+    origin: str = OPERATOR_ORIGIN,
 ) -> dict:
     """A new live code. Refused unless the name is new and the number free.
 
@@ -312,7 +318,7 @@ def add(
     out = copy.deepcopy(doc)
     out["codes"][name] = {
         "code": code,
-        "origin": OPERATOR_ORIGIN,
+        "origin": origin,
         "added_at": _now(),
         **({"emitted_on": emitted_on.strip()} if emitted_on.strip() else {}),
         "rationale": rationale.strip(),

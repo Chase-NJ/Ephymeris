@@ -1,7 +1,7 @@
 """Where a rig's task profiles live, and how they become flashable sketches.
 
 Layout, under the sidecar's own data dir (beside `ephymeris.db` and
-`hardware/rig.json` — sidecar-side writes, no Tauri fs capability involved):
+`hardware/` — sidecar-side writes, no Tauri fs capability involved):
 
     <data_dir>/tasks/
         <id>.json                 the DEFINITION -- the operator's document

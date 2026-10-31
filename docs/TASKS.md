@@ -36,7 +36,7 @@ Everything between "a box runs firmware that emits strobes" and "the app draws i
   - [The box utility](#the-box-utility)
   - [Order is meaning](#order-is-meaning)
 - [Rig wiring](#rig-wiring)
-  - [Three documents](#three-documents)
+  - [The channel set and the pin map](#the-channel-set-and-the-pin-map)
   - [Registry rules](#registry-rules)
   - [The wiring page](#the-wiring-page)
   - [Wiring rules](#wiring-rules)
@@ -48,6 +48,7 @@ Everything between "a box runs firmware that emits strobes" and "the app draws i
   - [Every declared code is emitted](#every-declared-code-is-emitted)
   - [Port slots](#port-slots)
   - [Onset codes](#onset-codes)
+  - [Edge codes](#edge-codes)
 - [The START line](#the-start-line)
   - [Three layer merge](#three-layer-merge)
   - [Building the line](#building-the-line)
@@ -462,7 +463,7 @@ A saved task's folder is regenerated on `tasks.save`, at **every sidecar start**
 - **At start**, because a folder written by an older generator either stops compiling (loud — `TrialType` grew an argument) or sends keys the firmware no longer parses (silent).
 - **On a wiring change or a vocabulary edit**, because pins and strobe codes are compiled into `TaskPins.h`.
 
-A wiring change, from the Rig tab's save to the rescan, all one [rig definition write](#the-rig-definition) (`RigDefinition.save_wiring` / `reset_wiring` in `rig/definition.py`). A vocabulary edit joins at the rebuild after installing its document. Startup runs the same two rebuilds (`rebuild_at_startup`), before anything can flash:
+A wiring change, from the Rig tab's save to the rescan, is all one [rig definition write], including the [edge codes](#edge-codes) it issues(#the-rig-definition) (`RigDefinition.save_wiring` / `reset_wiring` in `rig/definition.py`). A vocabulary edit joins at the rebuild after installing its document. Startup runs the same two rebuilds (`rebuild_at_startup`), before anything can flash:
 
 ```mermaid
 flowchart TD
@@ -470,7 +471,7 @@ flowchart TD
     inuse -->|yes| busy["RIG_IN_USE<br/>nothing written"]
     inuse -->|no| impact{"Would it newly break<br/>a saved task?"}
     impact -->|"yes, without confirm"| refuse["RIG_WOULD_BREAK_TASKS<br/>nothing written"]
-    impact -->|"no, or confirm: true"| write["Check the schema,<br/>write rig.json"]
+    impact -->|"no, or confirm: true"| write["Check the schema, issue edge codes,<br/>write the channel set and pin map"]
     write -->|"not a rig document"| invalid["RIG_INVALID<br/>nothing written"]
     reset["hardware.reset"] --> inuse
     write -->|"written"| install["set_rig_source:<br/>ChannelMap cache cleared"]
@@ -553,15 +554,36 @@ Two orderings carry meaning and both are emitted from a single pass so they cann
 
 The rig's description of itself lives in `sidecar/ephymeris_sidecar/rig/` and `hardware/`. Wire commands: [PROTOCOL.md](PROTOCOL.md#rig-wiring). Box↔board bindings are a different, runtime wiring ([ARCHITECTURE.md](ARCHITECTURE.md#boxes-and-boards)); this one is compile-time input to every generated sketch.
 
-### Three documents
+### The channel set and the pin map
 
 | File | Says | Owner |
 |---|---|---|
-| `rig/schema/channels.v1.json` | **What a channel means** — `kind`, `well`, `port_slot`, `onset_strobe` | shipped |
-| `rig/hardware/<pinout>.json` (selected by `_default.json`; `$EPHYMERIS_PINOUT` for tests) | **Where it is** on this box generation — a literal transcription of the firmware pinout | shipped |
-| `<data_dir>/hardware/rig.json` | This rig's own wiring, written by the wiring editor | operator |
+| `rig/schema/channels.v1.json` | **What a channel means**: `kind`, `well`, `port_slot`, `onset_strobe`, and the channel-set fields | shipped |
+| `rig/hardware/<pinout>.json` (selected by `_default.json`; `$EPHYMERIS_PINOUT` for tests) | **Where it is** on this box generation: a literal transcription of the firmware pinout | shipped |
+| `<data_dir>/hardware/channel_set.json` | **The channel set**: this rig's channels and what each one is. No pins. It is the half meant to be the same on both lab machines | operator |
+| `<data_dir>/hardware/pin_map.json` | **The pin map**: where each channel is on this box (`pins`, `board`, `pin_range`). Never leaves the machine | operator |
 
-A second box generation is a one-file pinout swap, *provided the channel names are the same* — which is what resolving by name buys. The operator's `rig.json` **replaces** the shipped pair rather than merging with it: a merge would bring back a channel someone deleted and could not describe a box that lacks one. Channel kinds are `engagement` (exactly one), `response`, `emitter`, `reward`, `cue`, `vacuum` and `sync` (at most one).
+A second box generation is a one-file pinout swap, *provided the channel names are the same*. Resolving by name is what makes that work.
+
+The operator's pair **replaces** the shipped pair rather than merging with it. A merge would bring back a channel someone deleted, and it could not describe a box that lacks one.
+
+The editor and the wire still see **one document**, `{rig_version, channels, pins, …}`. `hardware/store.py` joins the pair on load and splits it on save. A rig saved as the single `rig.json` from before the split is read as both halves, and the next save writes the pair and removes it.
+
+Channel kinds are `engagement` (exactly one), `response`, `emitter`, `reward`, `cue`, `vacuum` and `sync` (at most one).
+
+Beside its kind, every channel declares what it is ([ADR 0003](adr/0003-phase-spine-task-model.md)):
+
+| Field | Values | Notes |
+|---|---|---|
+| `type` | `digital_in`, `digital_out` | Fixes the channel's edges: `enter`/`exit` on an input, `on`/`off` on an output. Must agree with the kind's direction (RIG107) |
+| `role` | `port`, `stimulus`, `reward`, `cue`, `routing`, `sync` | What the line is for in a task |
+| `active_level`, `debounce_ms` | `low`/`high`, ms | Inputs only |
+| `serves` | a channel name | Reward lines only: the port the line pays at, equal to `well` while both exist |
+| `edges` | edge → code name | Issued by a save ([Edge codes](#edge-codes)), never typed |
+
+A channel that declares none of these, as every rig saved before they existed does, takes its type and role from its kind (`registry.channel_set_defaults`).
+
+**The generator reads none of the new fields.** It still generates from `kind`, `well`, `port_slot` and `onset_strobe`, so every saved task and bundled sketch regenerates byte-identical (`test_channel_set.py`).
 
 ### Registry rules
 
@@ -569,9 +591,9 @@ Which documents become the `ChannelMap` (`registry.channels()`), and what is bui
 
 ```mermaid
 flowchart TD
-    saved{"A saved<br/>hardware/rig.json?"}
+    saved{"A saved channel set<br/>and pin map?"}
     saved -->|no| shipped["channels.v1.json + the<br/>selected hardware pinout"]
-    saved -->|"yes: replaces the pair"| rig["data_dir/hardware/rig.json<br/>(kinds still from channels.v1.json)"]
+    saved -->|"yes: replaces the pair"| rig["data_dir/hardware/<br/>channel_set.json + pin_map.json<br/>(kinds still from channels.v1.json)"]
     shipped --> map["ChannelMap<br/>cached until set_rig_source"]
     rig --> map
     map --> taskPins["Each saved task's generated folder"]
@@ -584,6 +606,7 @@ flowchart TD
 - **`channels()` is cached and cleared only by `set_rig_source`**, which `Application` calls at construction and after a wiring write. Never hang invalidation off `settings.push`: it fires on every reconnect.
 - **`hardware/store.py`'s `default_document()` reads the shipped pair via `shipped_channels()`**, never the wiring in force — otherwise Reset resets to itself. It also keeps declaration order (sorting by pin once re-ordered the odor table on a rig's first save).
 - **`ChannelMap.content_hash()` covers only fields that can change a compiled byte** (name, kind, direction, pin, watch bit, well, port slot). A reworded rationale must not move it, or people learn to ignore it. **`onset_strobe` is excluded for the same reason**: the generator emits the code a trial row stores, so the declaration changes what the editor writes, never a compiled byte. A profile names channels, not pins, so a rewiring moves no `profile_hash`; this hash is what records which wiring a sketch was built against (it is stamped into each generated header).
+- **The channel-set fields stay out of `ChannelMap.content_hash()`.** They have their own hash, `ChannelSet.content_hash()` (`channelSetHash` on the Rig status). It covers what every channel is, and leaves out labels, prose and every pin, so two machines sharing one channel set agree on it whatever their pin maps say. Putting the new fields in the pinout hash would rebuild every sketch for a change no box can observe.
 
 ### The wiring page
 
@@ -591,10 +614,14 @@ flowchart TD
 
 ![The Wiring page: a kind summary (1 engagement, 2 response, 12 emitter, 4 reward, 1 cue, 1 vacuum, 1 sync), the Mega's pin map with each channel labelled on its pin (odor_port, right_well and left_well on 2 to 4, odor lines on 22 to 33, trial_light, vacuum, fluid_0 to fluid_3, sync_out on 49), an Inspector, Reset, Revert and Save, and the Configured pins table below](images/rig-wiring.webp)
 
-*The shipped wiring ("as shipped"; a saved `rig.json` reads "this rig's own"). The hash beside it is
+*The shipped wiring ("as shipped"; a saved one reads "this rig's own"). The hash beside it is
 `ChannelMap.content_hash()`, the one stamped into each generated header. Odor lines 1–6 sit on the even pins 22–32 and
 7–12 on the odd pins 23–33, which is why [odor index](#order-is-meaning) must come from declaration order,
 not pin order.*
+
+**The inspector edits what a channel is.** Beside its kind, it edits the channel's type and role; for an input, its active level and debounce; for a reward line, the port it serves. A channel's edge codes are shown read-only, and an edge with no code yet reads "issued on save".
+
+**Saving previews what it would issue.** `hardware.preview` returns `allocations`, the [edge codes](#edge-codes) a save would issue. The page lists them above Save, so a new code is never a surprise in the vocabulary.
 
 **Saving previews what it would break.** `hardware.preview` validates as the operator types and reports `breaks` — the saved tasks this wiring would *newly* break, computed by validating each definition under both wirings ([The rig definition](#the-rig-definition)). `hardware.save` without `confirm` refuses such a change with `RIG_WOULD_BREAK_TASKS`; with `confirm: true` it writes anyway. Rewiring is the operator's call; the app only refuses to let it happen unnoticed. A document that fails validation is never written.
 
@@ -610,10 +637,11 @@ A well-formed document describing an impossible box is a successful reply carryi
 | `RIG104` | A response port with no strobe slot ([Port slots](#port-slots)) |
 | `RIG105` | More than one `sync` channel |
 | `RIG106` | An odor line with no onset code, one that is not a live onset code, two lines on one code, or an onset on a channel that is not an emitter ([Onset codes](#onset-codes)) |
+| `RIG107` | A type that contradicts the kind's direction, an active level or debounce on an output, an edge the type does not have, an edge code that is not live, or one code on two edges ([Edge codes](#edge-codes)) |
 
 ### The sync channel
 
-`sync` is the seventh kind: one output that pulses on every strobe into a recording controller's digital input ([RECORDING.md](RECORDING.md#the-sync-line)). It is resolved by kind, so a rig may name it anything. `BOX_PIN_SYNC_OUT` is **the one pin always emitted** — `-1` when the rig declares no sync channel — because every other undeclared pin keeps `BoxPins.h`'s default, and here that default would pulse a pin the operator never declared while the app reports the box has no sync line. Since `rig.json` replaces the shipped pair, a rig document saved without a sync channel has none until one is added.
+`sync` is the seventh kind: one output that pulses on every strobe into a recording controller's digital input ([RECORDING.md](RECORDING.md#the-sync-line)). It is resolved by kind, so a rig may name it anything. `BOX_PIN_SYNC_OUT` is **the one pin always emitted** — `-1` when the rig declares no sync channel — because every other undeclared pin keeps `BoxPins.h`'s default, and here that default would pulse a pin the operator never declared while the app reports the box has no sync line. Since a saved rig replaces the shipped pair, a rig document saved without a sync channel has none until one is added.
 
 ## Strobe vocabulary
 
@@ -681,7 +709,7 @@ A declared code that nothing can emit is a name in every picker that no session 
 
 ### Onset codes
 
-**An odor line declares the code that announces its onset** — `onset_strobe: "ODOR_3_ON"` on the emitter in `channels.v1.json` and in a rig's own `rig.json` — the way a response port declares its slot. It is a code **name**; the number lives only in the vocabulary. Nothing derives it from the channel's name or position: the onsets run 101–109 and then 114–116, and the emitter pins are not in line order (`generate._onset_macro` records the derivation that was wrong).
+**An odor line declares the code that announces its onset** — `onset_strobe: "ODOR_3_ON"` on the emitter in `channels.v1.json` and in a rig's own channel set — the way a response port declares its slot. It is a code **name**; the number lives only in the vocabulary. Nothing derives it from the channel's name or position: the onsets run 101–109 and then 114–116, and the emitter pins are not in line order (`generate._onset_macro` records the derivation that was wrong).
 
 - **The editor fills a row's code from its line**, and shows it read-only, so line and code are one choice. One line declares one code, so **a line can carry only one trial type** — the picker lists a line another row holds as disabled, and two rows on one line are `TSK105`.
 - **The row still stores `onsetStrobe`**; the generator emits it, and `profile_hash` is unchanged. A stored row that disagrees with its line's declaration is **`TSK114`**.
@@ -690,6 +718,27 @@ A declared code that nothing can emit is a name in every picker that no session 
 
 > [!CAUTION]
 > **When `TSK114` appears on a task the lab has run, fix the wiring, not the task.** Changing the row changes the code every *future* session records for that bottle, splitting it from the archive. If the bottle has always been recorded under the stored code, set the line's onset code on the Rig tab to match.
+
+### Edge codes
+
+**Every edge of every channel names the code that announces it**: `edges: {"on": "FLUID_2_ON", "off": "FLUID_2_OFF"}` in the channel set. The channel's type fixes its edges. A code is a **name**, and the number lives only in the vocabulary.
+
+**A save issues a code for every edge that has none** (`rig/allocation.py`):
+
+- **Order:** channels in declaration order, and each channel's edges in its type's order.
+- **The name:** `<CHANNEL>_<EDGE>`, upper-cased (`ODOR_PORT_ENTER`). A name the vocabulary ever gave to anything else, live or retired, gets `_2`, `_3`, … instead.
+- **The number:** the lowest free one ([Append only](#append-only)), with origin `channel_set`.
+- **Inside the write:** the vocabulary gains the codes inside the same [rig definition write](#the-rig-definition) as the wiring, then one rebuild serves both. `strobes.updated` is broadcast beside `hardware.updated`.
+- **In the preview:** `hardware.preview` runs the same plan and writes nothing.
+- **When the vocabulary will not read:** a save that needs a code is refused, as every vocabulary edit is. A save that needs none goes ahead.
+
+**The shipped channel set names no edge codes.** So the shipped vocabulary is untouched, and a machine's first save issues one code per edge.
+
+**Renaming a channel never renames its codes.** The `edges` map travels inside the channel's entry, and a save fills only an edge that has none.
+
+**One case takes a name back.** If a live `channel_set` code has exactly the name a plan would issue, and no edge in the document holds it, the plan reuses it. That happens to a channel set reset to the shipped one, and to a channel deleted and added back under its old name. Issuing those again under `_2` would only grow the vocabulary with codes that mean the same thing.
+
+**Nothing emits an edge code yet.** GRGL still strobes its own codes. The page says "nothing on this machine names it" ([Every declared code is emitted](#every-declared-code-is-emitted)) until a sketch emits it.
 
 ## The START line
 

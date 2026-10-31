@@ -3,7 +3,7 @@
   "$id": "rig_hardware.v1.json",
   "title": "Rig wiring",
   "_readme": [
-    "THE OPERATOR'S OWN WIRING, at <data_dir>/hardware/rig.json. It REPLACES the",
+    "THE OPERATOR'S OWN WIRING, stored as <data_dir>/hardware/channel_set.json + pin_map.json. It REPLACES the",
     "shipped pair (schema/channels.v1.json + hardware/<pinout>.json) rather than",
     "merging with it -- a merge would mean a channel you deleted came back, and",
     "there would be no way to say 'this box has no vacuum line'.",
@@ -111,6 +111,64 @@
             "type": "string",
             "pattern": "^[A-Z][A-Z0-9_]*$",
             "description": "Emitters only: the strobe vocabulary code this odor line announces its onset with, by NAME (e.g. ODOR_3_ON) — the number lives only in the vocabulary. Declared rather than derived because the onsets are not contiguous and the emitter pins are not in line order. The task editor sets each trial type's onset code from it; RIG106 checks that it is a live onset code and that no two lines share one."
+          },
+          "type": {
+            "enum": [
+              "digital_in",
+              "digital_out"
+            ],
+            "description": "Channel set (TASKS.md#the-channel-set-and-the-pin-map): what the line electrically is. It fixes which edges the channel has -- enter/exit on an input, on/off on an output -- and must agree with the kind's direction (RIG107). Defaults from the kind when absent."
+          },
+          "role": {
+            "enum": [
+              "port",
+              "stimulus",
+              "reward",
+              "cue",
+              "routing",
+              "sync"
+            ],
+            "description": "Channel set: what the line is for in a task. Defaults from the kind when absent; nothing generated reads it yet."
+          },
+          "active_level": {
+            "enum": [
+              "low",
+              "high"
+            ],
+            "description": "Inputs only: the level that means 'active' (a broken beam is LOW on an INPUT_PULLUP port)."
+          },
+          "debounce_ms": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000,
+            "description": "Inputs only: how long an edge must hold before it counts."
+          },
+          "serves": {
+            "$ref": "#/$defs/channel_name",
+            "description": "Reward lines only: the port this line pays at. Equal to `well` while both exist."
+          },
+          "edges": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Each edge's strobe code, by NAME. Allocated by a save (TASKS.md#edge-codes) and never typed: a channel that is renamed keeps its codes, because they travel inside its entry. RIG107 checks each is a live code on one edge only.",
+            "properties": {
+              "enter": {
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9_]*$"
+              },
+              "exit": {
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9_]*$"
+              },
+              "on": {
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9_]*$"
+              },
+              "off": {
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9_]*$"
+              }
+            }
           },
           "rationale": {
             "type": "string"

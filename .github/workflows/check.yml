@@ -81,6 +81,12 @@ jobs:
       - uses: actions/checkout@v5
       - run: sh firmware/libraries/BehaviorBox/extras/host_test/run.sh
       - run: sh firmware/libraries/BehaviorBox/extras/host_test/run_box.sh
+      - run: sh firmware/libraries/BehaviorBox/extras/host_test/run_interp.sh
+      # The C interpreter core against the Python replay (docs/adr/0003).
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: sh firmware/libraries/BehaviorBox/extras/host_test/run_diff.sh
 
   # The host tests are the strict type check; this is the real AVR build. The
   # sketches only compile from a folder the app generated, so generate them the

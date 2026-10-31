@@ -32,6 +32,7 @@ The [worked example](#a-worked-example) shows all of it on thirty strobes.
 | [`stream/curves.py`](stream/curves.py) | The run trial by trial: learning curves, strategy walk | document + profile → series |
 | [`stream/infer.py`](stream/infer.py) | Which conditions ran, when no profile says | strobes → a `TaskProfile` |
 | [`stream/false_starts.py`](stream/false_starts.py) | Which restarted runs to set aside | run facts → verdicts |
+| [`stream/replay.py`](stream/replay.py) | What did the board do at each tick? The Python port of the firmware's interpreter ([ADR 0003](../../../docs/adr/0003-phase-spine-task-model.md)); nothing scores with it yet | state table + params + seed + input edges → actions per tick |
 | [`stream/stats.py`](stream/stats.py), [`stream/document.py`](stream/document.py) | The Wilson interval; reading `ts_data` out of a file | |
 
 **The plumbing**: files, cache and commands. You need these only to change how runs are found or stored.

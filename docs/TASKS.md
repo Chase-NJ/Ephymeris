@@ -198,7 +198,7 @@ The three values are themselves guarded in `BehaviorBox.h`. A header that once o
 
 The host tests compile `BehaviorBox.h` off-target against a minimal `Arduino.h` shim. They do not replace a real AVR compile and flash.
 
-`run_interp.sh` tests `BoxInterp.h`, the phase interpreter's pure core ([ADR 0003](adr/0003-phase-spine-task-model.md)), which includes no Arduino header and needs no shim. `run_diff.sh` is the **differential test**: it runs that core and its Python port, `analytics/stream/replay.py`, over generated state tables and randomized input logs, and fails on the first tick where their actions differ. It then changes the Python tie rule and expects a difference, so a run that generates too few ties fails rather than passing on nothing. Change the header and the port together; the header documents the table format and the tick rules for both. A third of the differential test's tables are lowered by the generator itself (`taskdef/lowering.py`), so the tables a saved spine task compiles are held to both interpreters.
+`run_interp.sh` tests `BoxInterp.h`, the phase interpreter's pure core ([ADR 0003](adr/0003-phase-spine-task-model.md)), which includes no Arduino header and needs no shim. `run_diff.sh` is the **differential test**: it runs that core and its Python port, `analytics/stream/replay.py`, over generated state tables and randomized input logs, and fails on the first tick where their actions differ. It then changes the Python tie rule and expects a difference, so a run that generates too few ties fails rather than passing on nothing. Change the header and the port together; the header documents the table format and the tick rules for both. A third of the differential test's tables are lowered by the generator itself (`taskdef/lowering.py`), so the tables a saved spine task compiles are held to both interpreters. Those tables hold no ties (a lowered state has at most one exit), so their family has a self-check of its own: with every RNG draw reflected, they must differ.
 
 `run_spine.sh` tests `BoxSpine.h`, the runner around that core, on the instrumented shim with a hand-written table: the handshake, the stream's order and tick times, skipped `millis()` values, and the [session end rule](#the-runner). `sidecar/tests/test_spine_run.py` compiles a **generated** spine task the same way, plays its serial output through the real session path, and replays the `.tsv` that path wrote.
 
@@ -606,7 +606,7 @@ Plus `id`, `name`, `category`, `legacyNames` and `notes`, as for any task. A slo
 | then | `RW1`, `RP1` | `reward_ms`, `reward_permille` | The row's reward time and probability, when the spine has an Outcome |
 
 - **The ITI comes last.** A spine ends in exactly one ITI, which is where every abort and timeout goes; its timer leads back to state 0, which starts a trial.
-- **The Outcome's states.** An Outcome is a chance state on `RP1`, recording the outcome class `correct`, then the reward line's state (`RW1`), then the class timeout.
+- **The Outcome's states.** An Outcome is a chance state on `RP1`, recording the outcome class `correct`, then the reward line's state (`RW1`), then the class timeout. The phase's own `outputs` stay HIGH through all of it, the reward included.
 - **Outcome class numbers** come from `lowering.OUTCOME_CLASSES` and are append-only.
 
 ### The generated folder
@@ -668,7 +668,7 @@ It rides in the `# task_profile:` header line of every run's `.tsv` ([DATA.md](D
 | `SPN101` | A slot bound to no channel, or to one this rig lacks | A role with no pin |
 | `SPN102` | A channel whose type is not the slot's, or the sync line | A sensor driven as a valve; a pulse in a recording |
 | **`SPN103`** | **A channel edge with no live code.** The shipped channel set names none, so the rig's first wiring save issues them ([Edge codes](#edge-codes)) | An edge recorded as a number nothing decodes |
-| `SPN104` | The vocabulary lacks `START_SESSION`, `TRIAL_START` or `END_SESSION`. A machine seeded before `TRIAL_START` existed adds it on Task > Strobes, at 270 | A stream with no trials in it |
+| `SPN104` | The vocabulary lacks `START_SESSION`, `TRIAL_START` or `END_SESSION`. A machine seeded before `TRIAL_START` existed adds it on Task > Strobes, at the number the shipped vocabulary gives it (`rig/schema/strobe_vocab.default.json`) | A stream with no trials in it |
 | `SPN105` | A spine of the wrong shape: an unknown phase, no ITI or not last, a slot of the wrong direction, a missing duration | A table the interpreter cannot walk |
 | `SPN106` | More than one row or block, a block that does not draw the row, a trial count or probability out of range | What the tracer cannot express yet |
 | `SPN107` | Two slots on one channel | One pin, two roles |

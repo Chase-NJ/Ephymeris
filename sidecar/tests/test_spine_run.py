@@ -275,6 +275,18 @@ async def test_an_edited_output_strobe_is_not_what_replay_predicts(tmp_path, mon
 
 
 def test_an_unknown_table_format_is_refused_rather_than_replayed():
-    document = {"task_profile": {"spine": {"interp": 99}}, "ts_data": []}
-    with pytest.raises(spine_stream.SpineDecodeError):
+    document = {"interp": 99, "task_profile": {"spine": {"interp": 99}}, "ts_data": []}
+    with pytest.raises(spine_stream.SpineDecodeError, match="INTERP 99"):
+        spine_stream.decode(document)
+
+
+@pytest.mark.parametrize("header", [1, None])
+def test_the_header_must_name_the_interpreter_the_snapshot_was_lowered_for(header):
+    """The header alone says which interpreter ran a run (`INTERP=<n>`). A run
+    whose header names the trial runner, or nothing, is not replayed as a table
+    whatever its snapshot claims: the board that wrote it never said it ran one."""
+    document = {"task_profile": {"spine": {"interp": 2}}, "ts_data": []}
+    if header is not None:
+        document["interp"] = header
+    with pytest.raises(spine_stream.SpineDecodeError, match="header"):
         spine_stream.decode(document)

@@ -84,12 +84,14 @@ class Lowered:
     on_hit, on_miss, edge_first, edge_count, flags, outcome); `edges[k]` is
     (input, edge, next); `params[s]` is the wire key of parameter slot s.
     `timers[i]` is phase i's wire key, or None for a phase with no timer.
+    `phases[s]` is the index of the phase state s belongs to.
     """
 
     states: tuple[tuple[int, ...], ...]
     edges: tuple[tuple[int, int, int], ...]
     params: tuple[str, ...]
     timers: tuple[str | None, ...]
+    phases: tuple[int, ...]
 
 
 def timer_key(phase_index: int) -> str:
@@ -179,7 +181,9 @@ def lower(phases: Sequence[dict[str, Any]], inputs: Sequence[str], outputs: Sequ
             line = output_mask(i, [p.get("line")])
             reward, settle = first[i] + 1, first[i] + 2
             state(chance=slot[REWARD_PERMILLE_KEY], on_hit=reward, on_miss=settle, outcome=OUTCOME_CORRECT)
-            state(line, 0, REWARD_MS_KEY, settle)
+            # The reward line opens BESIDE the phase's own outputs: a phase's
+            # outputs are HIGH for the whole phase, the reward included.
+            state(mask | line, 0, REWARD_MS_KEY, settle)
             state(mask, 0, timers[i], nxt)
         else:  # iti
             state(mask, 0, timers[i], 0)
@@ -193,4 +197,5 @@ def lower(phases: Sequence[dict[str, Any]], inputs: Sequence[str], outputs: Sequ
         edges=tuple(edges),
         params=tuple(params),
         timers=tuple(timers),
+        phases=tuple(i for i, p in enumerate(phases) for _ in range(3 if p["phase"] == "outcome" else 1)),
     )

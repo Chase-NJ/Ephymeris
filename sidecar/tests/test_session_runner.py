@@ -240,17 +240,18 @@ async def test_the_free_ram_the_board_measured_is_recorded_in_the_header_and_the
     tmp_path: Path, bench: Bench
 ) -> None:
     """The board measures its free RAM with its table loaded and announces it
-    before READY (`TASKS.md#the-start-line`). Kept with the run, beside the
+    before READY (`TASKS.md#confirming-the-parameters`). Kept with the run, beside the
     interpreter, so a table's RAM cost is on record from every box it ran on."""
     runner, _events, _ended = make_runner(tmp_path, bench)
     runner.start_box(1)
     board = await bench.run_handshake(1, seed=5, interp=1, free_ram=4321)
     await board.said("101\t0", "246\t10")
-    await wait_until(lambda: not runner.running_boxes())
 
     text = tsv_text(tmp_path)
     assert "# free_ram: 4321\n" in text
     assert text.index("# free_ram: 4321") < text.index("101\t0")
+    # The run leaves `running_boxes()` before its `.json` is written: wait for the file.
+    await wait_until(lambda: any((tmp_path / "behavior.json").glob("*.json")))
     document = json.loads(next((tmp_path / "behavior.json").glob("*.json")).read_text(encoding="utf-8"))
     assert document["free_ram"] == 4321
 

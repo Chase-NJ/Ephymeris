@@ -79,9 +79,18 @@ def decode(document: dict[str, Any]) -> SpineRecord:
         raise SpineDecodeError("not a spine run: its profile snapshot carries no spine")
     snapshot = document["task_profile"]
     spine = snapshot["spine"]
-    interp = spine.get("interp")
+    # The header's `interp` is what the board announced, and it alone says which
+    # interpreter ran the run (TASKS.md#confirming-the-parameters). The snapshot
+    # says which the table was lowered for. Both must agree, and be one replay knows.
+    interp = document.get("interp")
     if interp not in rp.INTERP_VERSIONS:
-        raise SpineDecodeError(f"INTERP {interp!r} is not a version this replay knows ({sorted(rp.INTERP_VERSIONS)})")
+        raise SpineDecodeError(f"the header says INTERP {interp!r}, not a version this replay knows "
+                               f"({sorted(rp.INTERP_VERSIONS)})"
+                               if interp is not None else
+                               "the header names no interpreter: the board never said a table ran this run")
+    if spine.get("interp") != interp:
+        raise SpineDecodeError(f"the header says INTERP {interp} but the snapshot's table is for "
+                               f"INTERP {spine.get('interp')!r}")
     table_doc = spine.get("table")
     if not isinstance(table_doc, dict):
         raise SpineDecodeError("the snapshot carries no state table: the task could not be lowered")

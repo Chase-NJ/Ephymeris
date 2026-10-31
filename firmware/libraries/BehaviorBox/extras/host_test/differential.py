@@ -10,7 +10,9 @@ their actions differ.
 
 Then it checks itself: with the Python tie rule deliberately changed, the same
 cases must differ. A differential test that cannot see a changed tie rule is
-generating too few ties to be trusted.
+generating too few ties to be trusted. The generator's own tables hold no ties
+(a lowered state has at most one exit), so their family has a check of its
+own: with every RNG draw reflected, those cases alone must differ.
 
 Usage:  python3 differential.py --driver ./interp_driver [--cases N] [--seed S]
 """
@@ -325,9 +327,30 @@ def main() -> int:
         print("differential: a reversed tie rule went unnoticed; the cases hold too few ties")
         return 1
 
-    generated = sum(1 for i in range(len(cases)) if i % 3 == 2)
+    # The lowering gives a state at most one exit, so the generator's tables
+    # hold no ties and the check above cannot see them. Their own check: with
+    # every RNG draw reflected (k -> n-1-k), the generated cases alone must now
+    # differ, through their Outcome phases' chance states.
+    family = [i for i in range(len(cases)) if i % 3 == 2]
+    honest_draw = rp.draw
+
+    def reflected(ctx, n):
+        value, ctx = honest_draw(ctx, n)
+        return ((n & 0xFFFFFFFF) - 1 - value if n & 0xFFFFFFFF else value), ctx
+
+    rp.draw = reflected
+    try:
+        caught = first_difference([c_runs[i] for i in family], [cases[i] for i in family])
+    finally:
+        rp.draw = honest_draw
+    if not caught:
+        print("differential: a changed draw went unnoticed on the generator's tables; they reach "
+              "too few chance states")
+        return 1
+
+    generated = len(family)
     print(f"differential: {len(cases)} cases ({generated} lowered by the generator), "
-          f"{actions} actions equal; a changed tie rule is caught")
+          f"{actions} actions equal; a changed tie rule and a changed draw are caught")
     return 0
 
 

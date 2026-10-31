@@ -392,7 +392,7 @@ class RigDefinition:
         code it added is one the lab holds under the same number), the rebuild
         a vocabulary edit owes still runs, and the error is raised.
 
-        Raises `transfer.ChannelSetRefused` (a conflict, or not an export),
+        Raises `transfer.ChannelSetImportConflict`, `transfer.ChannelSetInvalid`,
         `WiringWouldBreakTasks` without `confirm`, `WiringNotLoaded`,
         `WiringSaveBlocked` or `RigInUse`. Nothing is written on any of them.
         """
@@ -403,21 +403,20 @@ class RigDefinition:
             planned = await asyncio.to_thread(self._plan_import, other)
             plan = planned.plan
             if plan.conflicts:
-                raise transfer.refusal(plan)
+                raise transfer.ChannelSetImportConflict(plan.conflicts)
             if plan.breaks and not confirm:
                 raise WiringWouldBreakTasks(plan.breaks)
             if plan.identical:
                 return {"plan": plan.to_json(), "applied": False}
-            if planned.vocabulary is not None:
+            vocabulary_changed = planned.vocabulary is not None
+            if vocabulary_changed:
                 await asyncio.to_thread(self._vocabulary.save, planned.vocabulary)
                 registry.set_vocabulary_source(self._vocabulary.load)
             try:
                 await asyncio.to_thread(self._hardware.save, planned.wiring)
             except BaseException:
-                if planned.vocabulary is not None:
-                    await self._rebuild()
-                    vocabulary = await asyncio.to_thread(self.vocabulary_payload)
-                    await self._broadcast(event(Evt.STROBES_UPDATED, vocabulary))
+                if vocabulary_changed:
+                    await self._rebuild_announcing_vocabulary()
                 raise
             self._install_wiring()
             status = await asyncio.to_thread(
@@ -425,12 +424,16 @@ class RigDefinition:
                     hardware_service.document_payload, self._hardware, in_force=self.in_force()
                 )
             )
-            await self._rebuild()
-            if planned.vocabulary is not None:
-                vocabulary = await asyncio.to_thread(self.vocabulary_payload)
-                await self._broadcast(event(Evt.STROBES_UPDATED, vocabulary))
+            await self._rebuild_announcing_vocabulary(vocabulary_changed)
             await self._broadcast(event(Evt.HARDWARE_UPDATED, status["status"]))
         return {"plan": plan.to_json(), "applied": True}
+
+    async def _rebuild_announcing_vocabulary(self, announce: bool = True) -> None:
+        """The one rebuild, then `strobes.updated` when the vocabulary changed."""
+        await self._rebuild()
+        if announce:
+            vocabulary = await asyncio.to_thread(self.vocabulary_payload)
+            await self._broadcast(event(Evt.STROBES_UPDATED, vocabulary))
 
     def _plan_import(self, other: Any) -> transfer.Planned:
         """Against the wiring and the vocabulary in force, and refused while

@@ -2890,7 +2890,7 @@ COMMANDS = (
                 "vocabulary}`: the channel set in force, with no pins, and this "
                 "machine's whole vocabulary.",
             ),
-            f("filename", STR),
+            f("filename", STR, doc="`channel-set-<YYYY-MM-DD>.json`, the save dialog's default."),
         ),
         doc="The channel set and the vocabulary as they travel to the other lab "
         "machine (`TASKS.md#moving-the-channel-set-between-machines`). "

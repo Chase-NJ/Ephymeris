@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
 
 import pytest
 
@@ -199,10 +200,9 @@ def test_a_conflicting_import_writes_nothing_and_lists_each_conflict(tmp_path):
     assert len(vocabulary) == len(plan["vocabulary"]["conflicts"]) > 1
     assert plan["identical"] is False
 
-    with pytest.raises(transfer.ChannelSetRefused) as refused:
+    with pytest.raises(transfer.ChannelSetImportConflict) as refused:
         b.import_(exported, confirm=True)
-    assert refused.value.reason == "import_conflict"
-    assert refused.value.detail["conflicts"] == plan["conflicts"]
+    assert refused.value.conflicts == plan["conflicts"]
 
     assert b.files() == before
     assert hash_in_force() == hash_before
@@ -224,7 +224,7 @@ def test_a_code_retired_here_that_the_file_names_is_a_conflict(tmp_path):
     plan = b.plan(exported)
     assert [(c["kind"], c["channel"]) for c in plan["conflicts"]] == [("rule", "trial_light")]
     assert "RIG107" in plan["conflicts"][0]["message"]
-    with pytest.raises(transfer.ChannelSetRefused):
+    with pytest.raises(transfer.ChannelSetImportConflict):
         b.import_(exported)
     assert b.files() == before
 
@@ -242,7 +242,7 @@ def test_a_file_changed_after_export_is_refused_by_its_hash(tmp_path):
 
 def test_an_edge_with_no_code_is_refused_at_export_and_at_import(tmp_path):
     a = Machine(tmp_path / "a")  # the shipped set: no edge has a code yet
-    with pytest.raises(transfer.ChannelSetRefused, match="Save the wiring"):
+    with pytest.raises(transfer.ChannelSetInvalid, match="Save the wiring"):
         a.export()
 
     a.save()
@@ -259,9 +259,8 @@ def test_an_edge_with_no_code_is_refused_at_export_and_at_import(tmp_path):
 )
 def test_a_file_that_is_not_an_export_is_invalid(tmp_path, document):
     b = Machine(tmp_path / "b")
-    with pytest.raises(transfer.ChannelSetRefused) as refused:
+    with pytest.raises(transfer.ChannelSetInvalid):
         b.plan(document)
-    assert refused.value.reason == "invalid"
 
 
 # --------------------------------------------------------------------------- #
@@ -439,3 +438,64 @@ async def test_export_and_import_over_the_wire(sidecar) -> None:  # noqa: ANN001
     with pytest.raises(Refused) as refused:
         await sidecar.call("hardware.importChannelSet", document={"x": 1}, apply=False)
     assert refused.value.code == "CHANNEL_SET_INVALID"
+
+
+def test_conflicts_of_different_kinds_are_listed_together(tmp_path):
+    """A code in conflict is left out of the merge the rules are judged
+    against, so a rule it breaks is still reported beside it."""
+    a = Machine(tmp_path / "a")
+    a.save()
+    exported = a.export()
+    exported["channel_set"]["channels"]["vacuum"].pop("edges")
+    exported["channel_set_hash"] = "tampered"
+
+    b = _machine_b_that_disagrees(tmp_path)
+    doc = b.hardware.load()
+    del doc["channels"]["door"], doc["pins"]["door"]
+    b.save(doc)
+    b.vocabulary.save(strobe_store.retire(b.vocabulary.load_strict(), "TRIAL_LIGHT_ON"))
+    b.use()
+
+    kinds = {(c["kind"], c["channel"]) for c in b.plan(exported)["conflicts"]}
+    assert ("vocabulary", None) in kinds
+    assert ("no_code", "vacuum") in kinds
+    assert ("rule", "trial_light") in kinds
+    # The hash is not judged over a conflict that already names the edit.
+    assert ("hash", None) not in kinds
+
+
+def test_an_import_is_refused_while_a_stored_file_waits_for_its_pins_to_be_confirmed(tmp_path):
+    """RIG108: an import would otherwise replace a copied-in file unseen."""
+    a = Machine(tmp_path / "a")
+    a.save()
+    exported = a.export()
+
+    b = Machine(tmp_path / "b")
+    b.save()
+    copied_in = b.hardware.load()
+    copied_in["pins"]["vacuum"]["index"] = 53
+    b.hardware.path.write_text(json.dumps(copied_in))  # by hand, not installed
+    before = b.files()
+
+    with pytest.raises(definition.WiringSaveBlocked):
+        b.plan(exported)
+    with pytest.raises(definition.WiringSaveBlocked):
+        b.import_(exported)
+    assert b.files() == before
+
+
+def test_a_file_whose_vocabulary_or_channel_set_is_out_of_shape_is_invalid(tmp_path):
+    a = Machine(tmp_path / "a")
+    a.save()
+    exported = a.export()
+    b = Machine(tmp_path / "b")
+
+    bad_vocabulary = copy.deepcopy(exported)
+    bad_vocabulary["vocabulary"]["codes"]["ODOR_PORT_ENTER"]["code"] = "one"
+    with pytest.raises(transfer.ChannelSetInvalid, match="vocabulary"):
+        b.plan(bad_vocabulary)
+
+    bad_channels = copy.deepcopy(exported)
+    bad_channels["channel_set"]["channels"]["vacuum"]["kind"] = "teleporter"
+    with pytest.raises(transfer.ChannelSetInvalid, match="channel set"):
+        b.plan(bad_channels)

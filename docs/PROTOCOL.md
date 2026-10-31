@@ -329,7 +329,7 @@ The channel set and the vocabulary as they travel to the other lab machine (`TAS
 | Field | Type | Notes |
 |---|---|---|
 | `document` | unknown | `{channel_set_export_version, channel_set_hash, channel_set, vocabulary}`: the channel set in force, with no pins, and this machine's whole vocabulary. |
-| `filename` | string |  |
+| `filename` | string | `channel-set-<YYYY-MM-DD>.json`, the save dialog's default. |
 
 <a id="cmd-hardware.importchannelset"></a>
 #### `hardware.importChannelSet`

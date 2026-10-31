@@ -728,6 +728,8 @@ Both lab machines must hold one channel set and emit identical codes ([ADR 0003]
 | `rule` | A [wiring rule](#wiring-rules) the joined document breaks against the merged vocabulary. One case is a code retired here that the file's channel names: a merge never reinstates |
 | `hash` | The joined channel set does not hash to the file's `channel_set_hash`: the file changed after export |
 
+Two kinds are judged only when nothing else already names the problem. `rule` and `hash` are judged only once both sides have the same channels, because a channel one side lacks would come back as RIG101. `hash` is also skipped over a `rule` or `no_code` conflict. A code in a `vocabulary` conflict is left out of the merge the rules are judged against, so a rule it breaks is still listed beside it.
+
 Besides conflicts:
 
 - **A plan reports `breaks`**, as `hardware.preview` does. Applying it needs `confirm`.

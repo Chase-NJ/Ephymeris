@@ -692,7 +692,20 @@ SHAPES = (
             f("label", STR),
             f("triggerCode", INT),
             f("successCode", INT),
-            f("alternateCode", INT),
+            f(
+                "alternateCode",
+                INT,
+                doc="The first (often the only) code that scores a miss.",
+            ),
+            f(
+                "alternateCodes",
+                ListOf(INT),
+                optional=True,
+                doc="Every code that scores a miss, present only when there are "
+                "several: a no-go type is wrong at any response port "
+                "(`ANALYTICS.md#trials-hits-misses-and-exclusions`). "
+                "`alternateCode` repeats the first.",
+            ),
             f("windowSize", INT),
         ),
     ),

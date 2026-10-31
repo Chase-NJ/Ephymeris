@@ -5,12 +5,12 @@ followed to the letter. The live runner scores with it during a session and
 every offline figure replays it, so the two cannot disagree:
 
 For each occurrence of `triggerCode`, scan forward for the *next* occurrence of
-`successCode` or `alternateCode`, stopping at the next trial boundary — whichever
-comes first:
+`successCode` or any of the `alternateCodes`, stopping at the next trial boundary
+— whichever comes first:
 
 * `successCode` first  → **hit**  (counts toward numerator and denominator)
-* `alternateCode` first → **miss** (counts toward the denominator — "went to the
-  other side", not "failed to respond")
+* an alternate first → **miss** (counts toward the denominator — "went to the
+  other side", not "failed to respond"; for a no-go type, a poke at any port)
 * neither before the scan stops → **excluded** from both (a lazy / invalid /
   no-response trial)
 
@@ -101,7 +101,7 @@ class MetricAccumulator:
             if code == self._metric.success_code:
                 self._record(True)
                 return
-            if code == self._metric.alternate_code:
+            if code in self._metric.alternate_codes:
                 self._record(False)
                 return
             if code in self._boundaries:

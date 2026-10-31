@@ -283,10 +283,13 @@ def _live_metrics(definition, channels, vocab) -> list[dict[str, Any]]:
         if not trial.is_go:
             if "WATER_POKE_NONE" not in vocab:
                 continue
-            # The alternate is "answered at all", and any port will do: the
-            # trial is already wrong the moment one is chosen.
-            answered = _first_enter_code(channels, vocab)
-            if answered is None:
+            # The alternate is "answered at all": the trial is already wrong
+            # the moment ANY port is chosen, so every response port's enter
+            # code scores the miss. One port would leave a poke at another
+            # matching nothing, and the trial would drop out of the
+            # denominator as if it were never answered.
+            answered = _enter_codes(channels, vocab)
+            if not answered:
                 continue
             out.append({
                 "id": f"p_withhold_{i + 1}",
@@ -314,13 +317,19 @@ def _live_metrics(definition, channels, vocab) -> list[dict[str, Any]]:
     return out
 
 
-def _first_enter_code(channels, vocab) -> str | None:
+def _enter_codes(channels, vocab) -> list[str]:
+    """The enter code of every response port, in port-slot order.
+
+    The order inference writes (`analytics/stream/infer.py` `_enter_codes`), so
+    a declared and an inferred no-go metric are the same document.
+    """
+    found: dict[int, str] = {}
     for port in channels.of_kind("response"):
         slot = vocab.port_slot(port.port_slot) if port.port_slot else None
         entry = vocab.get(slot["enter_code"]) if slot else None
         if entry is not None:
-            return entry.name
-    return None
+            found.setdefault(port.port_slot, entry.name)
+    return [found[number] for number in sorted(found)]
 
 
 def _other_enter_code(channels, vocab, exclude: str) -> str | None:

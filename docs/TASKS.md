@@ -326,14 +326,14 @@ Mission Control's strobe console, `liveTrials.ts`'s `vocabFrom` and the [state m
   "trigger": "ODOR_1_ON", "success": "WATER_POKE_R", "alternate": "WATER_POKE_L", "windowSize": 20 }
 ```
 
-Each code is named, and resolved against the vocabulary at load; a name that is not a live code raises. The numeric keys (`triggerCode`, `successCode`, `alternateCode`) still parse, because every recorded snapshot carries them, and `to_json` always writes numbers — so the two spellings of one metric hash the same.
+Each code is named, and resolved against the vocabulary at load; a name that is not a live code raises. The numeric keys (`triggerCode`, `successCode`, `alternateCode`) still parse, because every recorded snapshot carries them, and `to_json` always writes numbers — so the two spellings of one metric hash the same. A metric with a single alternate writes `alternateCode` alone; one with several also writes `alternateCodes`.
 
 | Key | Required | Notes |
 |---|:---:|---|
 | `id` | yes | A stable identifier only. A generated profile numbers them (`p_correct_1`), which names no condition |
 | `trigger` (or `triggerCode`) | yes | Opens a trial for this metric |
 | `success` (or `successCode`) | yes | Scores a hit |
-| `alternate` (or `alternateCode`) | yes | Scores a miss (still in the denominator) |
+| `alternate` (or `alternateCode`) | yes | Scores a miss (still in the denominator). A name, or a list of names when several codes miss: a no-go type misses at every response port. `alternateCodes` is the numeric list; `alternateCode` repeats its first |
 | `label` | | What every readout titles the metric with. Falls back to `id`; a generated profile builds it from the trial type's required name |
 | `windowSize` | | Default 20, matching the firmware's anti-bias `biasWindow` default |
 
@@ -791,7 +791,7 @@ Every behaviour sketch runs one shared `runTrial()`, so the topology is identica
 
 - **`usable`** = `LIGHTS_ON` and any of `WATER_POKE_L`/`_R`/`_NONE`. Otherwise no diagram (prose instead), though `conditions` is still returned.
 - **`conditionsOf` — the gate.** Odor names are those matching `ODOR_<n>_ON`. If any is the `triggerCode` of a `liveMetrics` entry, **only metric-named odors survive**; if none is, all declared odors survive unlabelled.
-- **`scoredNames`** — names any metric's trigger, success or alternate code resolves to. Gates the `withheld` outcome.
+- **`scoredNames`** — names any metric's trigger, success or alternate code (every one of `alternateCodes`) resolves to. Gates the `withheld` outcome.
 
 > [!IMPORTANT]
 > **A declared code is not a presented condition.** A hand-written profile lists every odor code of the shared vocabulary, and every generated profile declares `WATER_POKE_NONE` because the runner can emit it, while a task presents a few odors and often no no-go trials. So conditions and the withhold arm are gated on a `liveMetrics` entry **scoring** them, not on the code existing. Any change to this derivation must keep handling that.
@@ -858,7 +858,7 @@ The conditions are **one node carrying `variants`**, drawn as a tick strip, not 
 **`armsCongruent` is the guard.** Differing correct wells are still congruent, but a **go/no-go mix is not**: a withhold arm never reaches the wells, so one node would assert a path that does not exist. That profile falls back to a fan (`lane: "fan"`).
 
 > [!CAUTION]
-> **`correctWellOf` reads `successCode` only and returns `null` whenever it cannot prove an answer.** Falling back to `alternateCode` prints a confident lie: a no-go type's alternate is "any port will do" (the generator's `_first_enter_code`, `infer.py`'s `slots[0]`), so the fallback renders "Odor 4 → left well" for a condition whose answer is to poke nothing. It is the only figure the diagram *adds* rather than rearranges, so it is the only one that can be false.
+> **`correctWellOf` reads `successCode` only and returns `null` whenever it cannot prove an answer.** Falling back to `alternateCode` prints a confident lie: a no-go type's alternates are every response port (the generator's `_enter_codes`, `infer.py`'s slots), so the fallback renders "Odor 4 → left well" for a condition whose answer is to poke nothing. It is the only figure the diagram *adds* rather than rearranges, so it is the only one that can be false.
 
 **`liveConditionId`** walks the strobe tail newest-first and **stops at a trial boundary** (`LIGHTS_ON`, `INVALID_TRIAL`, the ITI and session codes), so a previous trial's odor never leaks into the current pre-odor phase. It returns a condition, **`unlisted`** (the box announced an odor the profile does not declare — almost always the `liveMetrics` gate having dropped a trial type), or `null` (no odor yet this trial). It **never falls back to `conditions[0]`**: a wrong condition looks exactly like a right one. `unlisted` exists because collapsing turned a missing arm (a visibly missing node) into a nameless absence; the Task tab makes the same finding at edit time as `TSK112`.
 

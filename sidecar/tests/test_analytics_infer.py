@@ -13,7 +13,7 @@ from __future__ import annotations
 from ephymeris_sidecar.analytics import stream
 from ephymeris_sidecar.analytics.stream import infer
 from ephymeris_sidecar.rig import registry
-from ephymeris_sidecar.tasks.profile import parse_profile
+from ephymeris_sidecar.tasks.profile import TaskProfile, parse_profile
 
 from tests.test_analytics_derive import GRGL_FULL, document
 
@@ -159,6 +159,69 @@ def test_inference_scores_exactly_as_the_declared_profile_does() -> None:
 
     # The outcome tally and the engagement ladder read the same universal
     # names, so they must agree too.
+    assert declared.outcomes == inferred.outcomes
+
+
+def declared_with_a_no_go() -> TaskProfile:
+    """What the generator writes for a task with two go types and a no-go one."""
+    from dataclasses import replace
+
+    from ephymeris_sidecar.taskdef import generate
+    from ephymeris_sidecar.taskdef.model import TrialTypeDef
+    from tests.fixtures import task_definitions as presets
+
+    registry.set_rig_source(None)
+    task = replace(presets.instantiate("grgl_2odor", "probe"), trials=[
+        TrialTypeDef("odor_line_1", "ODOR_1_ON", True, "right_well", "fluid_2", label="Go right"),
+        TrialTypeDef("odor_line_3", "ODOR_3_ON", True, "left_well", "fluid_1", label="Go left"),
+        TrialTypeDef("odor_line_5", "ODOR_5_ON", is_go=False, label="Withhold"),
+    ])
+    return generate.build_profile(task)
+
+
+#: Odor 5 is a no-go. Three withholds, two false alarms at the left port and
+#: two at the right: a poke at EITHER port is the wrong answer.
+WITHHELD_5 = [105, 226, 256]
+FALSE_ALARM_5_L = [105, 226, 248]
+FALSE_ALARM_5_R = [105, 226, 249]
+NO_GO_SESSION = (
+    REWARDED_1 * 2 + REWARDED_3 * 2
+    + WITHHELD_5 * 3 + FALSE_ALARM_5_L * 2 + FALSE_ALARM_5_R * 2
+)
+
+
+def test_a_no_go_false_alarm_at_either_port_is_a_miss() -> None:
+    """The bug: a no-go metric's alternate was ONE port, so a poke at the other
+    matched neither code, the trial was excluded, and P(withhold) was inflated.
+    Both profiles must count all seven trials, three of them correct."""
+    doc = document(NO_GO_SESSION)
+    inferred_profile = infer.infer_profile(NO_GO_SESSION)
+    assert inferred_profile is not None
+    for profile in (declared_with_a_no_go(), inferred_profile):
+        summary = stream.summarize(doc, profile)
+        withhold = next(m for m in summary.metrics if "withhold" in m.label)
+        assert (withhold.hits, withhold.counted, withhold.excluded) == (3, 7, 0)
+        assert withhold.p_session == 3 / 7
+
+
+def test_generated_and_inferred_profiles_score_a_no_go_stream_identically() -> None:
+    """The equality pin, for a stream that includes a no-go condition."""
+    doc = document(NO_GO_SESSION)
+    declared = stream.summarize(doc, declared_with_a_no_go())
+    inferred = stream.summarize(doc, infer.infer_profile(NO_GO_SESSION))
+
+    assert declared.status == inferred.status == "ok"
+    # The two profiles are the same document, down to the order of the alternates.
+    inferred_profile = infer.infer_profile(NO_GO_SESSION)
+    assert [m.alternate_codes for m in declared_with_a_no_go().live_metrics] == [
+        m.alternate_codes for m in inferred_profile.live_metrics
+    ]
+    # Both list conditions in onset order: odor 1, odor 3, odor 5.
+    assert len(declared.metrics) == len(inferred.metrics) == 3
+    for twin, metric in zip(declared.metrics, inferred.metrics):
+        assert (metric.p_session, metric.hits, metric.counted, metric.excluded) == (
+            twin.p_session, twin.hits, twin.counted, twin.excluded)
+    assert declared.overall == inferred.overall
     assert declared.outcomes == inferred.outcomes
 
 

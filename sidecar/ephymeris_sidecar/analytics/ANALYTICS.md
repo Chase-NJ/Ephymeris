@@ -103,16 +103,29 @@ through `stream/trials.py`'s `MetricAccumulator`, the same class Mission Control
 > [!IMPORTANT]
 > This is scientific output, not a UI detail. Implemented in [`stream/trials.py`](stream/trials.py).
 
-Each condition the profile declares (a `liveMetrics` entry) names three codes: the `triggerCode` that
-opens its trials (the odor onset), the `successCode` (the correct well) and the `alternateCode` (the
-other well). For each `triggerCode` in an animal's strobe stream, scan forward for the next `successCode`
-or `alternateCode`, stopping at the next trial-boundary code:
+Each condition the profile declares (a `liveMetrics` entry) names a `triggerCode` that opens its trials
+(the odor onset), a `successCode` (the correct answer) and one or more alternate codes (every wrong
+one). For each `triggerCode` in an animal's strobe stream, scan forward for the next `successCode` or
+alternate, stopping at the next trial-boundary code:
 
 | Found first | Counts as |
 |---|---|
 | `successCode` | **hit**: numerator and denominator |
-| `alternateCode` | **miss**: denominator only ("went to the other side", not "didn't respond") |
+| any alternate | **miss**: denominator only ("went to the other side", not "didn't respond") |
 | neither, before a boundary | **excluded** from both |
+
+A go condition has one alternate, the other well. A **no-go condition** has `WATER_POKE_NONE` as its
+`successCode` (the withhold) and the enter code of **every response port** as its alternates, because
+a poke at any port is the wrong answer. A no-go trial is therefore a hit when withheld, a miss when
+answered at any port, and excluded only when nothing resolves it before the next boundary. Alternates
+are `alternateCodes` on the wire, with `alternateCode` repeating the first; a generated and an inferred
+profile list the same ports in the same order (port-slot order, [inference](#which-profile-decodes-a-run)).
+
+> [!NOTE]
+> **A run recorded before a no-go metric listed every port re-scores correctly.** Its snapshot holds a
+> single `alternateCode`, so scoring widens any metric whose success code is `WATER_POKE_NONE` and which
+> lists one alternate to every response port (`infer.widen_no_go`, applied in `scoring._settle`). Only the
+> scored copy is widened: the stored snapshot, its `to_json` and its `profile_hash` stay as recorded.
 
 The metric is **response-conditional and reward-unconditional**: the firmware strobes the well poke the
 instant it is detected, before any hold check. The rolling window is the last `windowSize` **counted**
@@ -255,9 +268,11 @@ Each has its own Wilson interval. Three deliberate choices:
 >   has poked and held, so an ignored trial produces no boundary and appears nowhere, not even as
 >   `aborted`. **Every figure here is conditioned on engagement**; the [engagement
 >   ladder](#engagement-ladder) measures it.
-> - **A no-go withhold would land in `no response`**: the correct no-go answer looks exactly like a
->   non-response from the strobes. No sketch in this lab runs no-go trials, so nothing is mis-scored today,
->   but a no-go task needs its own bucket first.
+> - **A no-go trial, withheld or answered, lands in `no response`** in the outcome tally: the correct
+>   answer looks exactly like a non-response from the strobes, a false alarm at a port has no fluid or
+>   error evidence, and `stream/outcomes.py` has no withheld or false-alarm bucket. P(withhold) is not
+>   affected, because it is a per-condition metric ([above](#trials-hits-misses-and-exclusions)) that
+>   scores a withhold as a hit and a poke at any port as a miss.
 
 ### Per-condition tally
 

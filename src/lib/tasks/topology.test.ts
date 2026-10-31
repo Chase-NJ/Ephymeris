@@ -87,10 +87,9 @@ describe("correctWellOf", () => {
 
   it("NEVER answers a no-go condition with a well", () => {
     /*
-     * THE ONE THAT WOULD PRINT A LIE. A no-go type's `alternateCode` is set by
-     * the generator to "any port will do" (`_first_enter_code`), and `infer.py`
-     * does the same with `slots[0]` — so a `successCode → alternateCode`
-     * fallback renders "Odor 4 → left well" for a condition whose correct
+     * THE ONE THAT WOULD PRINT A LIE. A no-go type's alternates are every
+     * response port (the generator's `_enter_codes`, `infer.py`'s slots) — so a
+     * `successCode → alternateCode` fallback renders "Odor 4 → left well" for a condition whose correct
      * answer is to poke nothing. This pins the whole path, not just the helper:
      * the withhold condition's alternate here IS a well.
      */
@@ -142,6 +141,28 @@ describe("correctWellOf", () => {
 });
 
 // --- the congruence guard --------------------------------------------------
+
+describe("scoredNames", () => {
+  it("reads every alternate a metric lists, not only the first", () => {
+    // WATER_POKE_NONE gates the Withheld outcome and is named only as the
+    // SECOND alternate here, so a first-alternate-only read would drop it.
+    const base = profile(1);
+    const metric = base.liveMetrics[0]!;
+    const scored = {
+      ...base,
+      liveMetrics: [
+        {
+          ...metric,
+          alternateCodes: [metric.alternateCode, code("WATER_POKE_NONE")],
+        },
+      ],
+    };
+    const outcomes = (p: TaskProfile) =>
+      taskGraph(p).nodes.filter((n) => n.entryNames.includes("WATER_POKE_NONE"));
+    expect(outcomes(base)).toHaveLength(0);
+    expect(outcomes(scored)).toHaveLength(1);
+  });
+});
 
 describe("armsCongruent", () => {
   it("is true for the tasks this lab actually runs", () => {

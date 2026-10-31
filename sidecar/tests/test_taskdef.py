@@ -422,6 +422,21 @@ def test_live_metrics_gate_the_state_machine_drawing():
         assert metric.success_code != metric.alternate_code
 
 
+def test_a_no_go_metric_misses_at_every_response_port():
+    """A no-go trial is wrong at ANY port. An alternate of one port left a poke
+    at the other matching neither code, so the trial fell out of P(withhold)."""
+    definition = a_task(trials=[
+        TrialTypeDef("odor_line_1", "ODOR_1_ON", True, "right_well", "fluid_2",
+                     label="Go right"),
+        TrialTypeDef("odor_line_5", "ODOR_5_ON", is_go=False, label="Withhold"),
+    ])
+    metrics = {m.trigger_code: m for m in generate.build_profile(definition).live_metrics}
+    assert metrics[105].success_code == 256
+    assert metrics[105].alternate_codes == (248, 249)
+    # A go type still has exactly one: the other well.
+    assert metrics[101].alternate_codes == (248,)
+
+
 # --------------------------------------------------------------------------- #
 # Validation
 # --------------------------------------------------------------------------- #

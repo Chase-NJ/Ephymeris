@@ -62,10 +62,10 @@ class TrialOutcomes:
     #: On a **no-go** task this bucket also catches the *correct* answer — a
     #: withhold looks exactly like a non-response from the strobes alone, since
     #: the only thing distinguishing them (`WATER_POKE_NONE`) isn't part of the
-    #: recognised vocabulary. No sketch in this lab runs no-go trials today
-    #: (`GRGL`'s and shaping's trial types are all `isGo`), so nothing is
-    #: currently mis-scored; a no-go task would need its own bucket before
-    #: these numbers could be read.
+    #: recognised vocabulary, and a no-go trial answered at a port carries no
+    #: fluid or error evidence either. A task with a no-go type needs its own
+    #: bucket before these numbers can be read; P(withhold) is a per-condition
+    #: metric and is unaffected (`ANALYTICS.md#trials-hits-misses-and-exclusions`).
     no_response: int = 0
     #: Odor was delivered and the animal left the port before sampling cleared.
     #: **Not** every unengaged trial — see `trials` above: a trial the animal

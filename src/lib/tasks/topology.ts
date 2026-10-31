@@ -472,8 +472,8 @@ function conditionsOf(profile: TaskProfile | null, names: Set<string>): Conditio
  * > **From `successCode` alone, and `null` whenever it cannot be proved.**
  * > The obvious convenience — falling back to `alternateCode` when the success
  * > code is not a well — is wrong in a way that prints a confident lie. A no-go
- * > type's alternate is set by the generator to "any port will do"
- * > (`_first_enter_code`), and `infer.py` does the same with `slots[0]`, so that
+ * > type's alternates are every response port (the generator's `_enter_codes`,
+ * > `infer.py`'s slots), so that
  * > fallback renders *"Odor 4 → left well"* for a condition whose correct answer
  * > is to poke nothing at all. This is the only figure the diagram ADDS rather
  * > than rearranges, so it is the only one that can be false — and it would be
@@ -526,7 +526,8 @@ function scoredNames(profile: TaskProfile | null): Set<string> {
   );
   const out = new Set<string>();
   for (const metric of profile?.liveMetrics ?? []) {
-    for (const code of [metric.triggerCode, metric.successCode, metric.alternateCode]) {
+    const alternates = metric.alternateCodes ?? [metric.alternateCode];
+    for (const code of [metric.triggerCode, metric.successCode, ...alternates]) {
       const name = nameOf.get(code);
       if (name) out.add(name);
     }
@@ -906,7 +907,7 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
       /*
        * Declaring a code is not presenting it. Every task.json in the lab lists
        * WATER_POKE_NONE because they all mirror the one shared BF_* vocabulary,
-       * yet no sketch here builds a no-go TrialType — so gating on the strobe
+       * yet most tasks build no no-go TrialType — so gating on the strobe
        * alone would draw a branch the animal can never take, on every profile.
        * A metric that SCORES the withhold is the declaration that it is real;
        * this is the same reason the odor rows filter through liveMetrics.

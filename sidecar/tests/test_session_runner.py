@@ -156,13 +156,31 @@ async def test_a_run_writes_its_tsv_with_the_seed_captured(tmp_path: Path, bench
     assert "249\t500" in text
 
 
-async def test_each_start_draws_its_own_seed(tmp_path: Path, bench: Bench) -> None:
+async def test_each_start_draws_its_own_seed(
+    tmp_path: Path, bench: Bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Stop → Start on the same box must not replay the same trial sequence.
 
     The seed is drawn on the click and not with the mapping, precisely so that
     a box restarted after a false start gets a fresh stream rather than the one
     the animal already ran through.
     """
+    # Each start in a second of its own, as on the rig. Two starts inside one
+    # second share a file name, so the second run's exclusive open is refused
+    # and the run finalized at once, and that can stop its port before the
+    # handshake below sees the board read again.
+    from datetime import datetime, timedelta
+
+    from ephymeris_sidecar.sessions import runner as runner_module
+
+    clock = iter(datetime(2026, 10, 31, 12, 0, 0) + timedelta(seconds=n) for n in range(1000))
+
+    class _Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):  # noqa: ANN001, ANN206
+            return next(clock) if tz is None else datetime.now(tz)
+
+    monkeypatch.setattr(runner_module, "datetime", _Clock)
     runner, _events, _ended = make_runner(tmp_path, bench)
     runner.start_box(1)
     board = await bench.run_handshake(1)

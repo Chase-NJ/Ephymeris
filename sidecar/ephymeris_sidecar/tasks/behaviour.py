@@ -11,7 +11,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-#: Any list element or dict value, in an `UNHASHED` path.
+#: Any list element, in an `UNHASHED` path. A dict step is always a key.
 ANY = "*"
 
 #: Every string meant for a person in a spine profile's `to_json`, by path. A
@@ -56,8 +56,8 @@ def _without(value: Any, paths: list[tuple[str, ...]]) -> Any:
 
 
 def _below(paths: list[tuple[str, ...]], step: str) -> list[tuple[str, ...]]:
-    """The rest of each path whose first step matches `step` (a key, or any)."""
-    return [p[1:] for p in paths if len(p) > 1 and p[0] in (step, ANY)]
+    """The rest of each path whose first step is `step`: a dict's key, or `ANY` for a list's element."""
+    return [p[1:] for p in paths if len(p) > 1 and p[0] == step]
 
 
 def _keyed_by_id(rows: list[Any]) -> Any:

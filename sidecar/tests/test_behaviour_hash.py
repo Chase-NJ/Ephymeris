@@ -12,6 +12,7 @@ import json
 
 import pytest
 
+from ephymeris_sidecar.analytics import scoring
 from ephymeris_sidecar.taskdef import generate
 from ephymeris_sidecar.taskdef.model import TaskDefinition
 from ephymeris_sidecar.tasks import behaviour
@@ -139,7 +140,9 @@ def unhashed(path) -> bool:
     if path[:1] == ("strobes",):
         return True  # left out of every profile's hash
     # A listed path leaves out everything beneath it.
-    return any(len(p) <= len(path) and all(s in (behaviour.ANY, step) for s, step in zip(p, path))
+    # `*` is any list element (an int step); a dict step is always its key.
+    return any(len(p) <= len(path) and all(s == step or (s == behaviour.ANY and isinstance(step, int))
+                                           for s, step in zip(p, path))
                for p in behaviour.UNHASHED)
 
 
@@ -204,6 +207,23 @@ def test_a_metric_label_is_left_out():
     moved = with_metric("P(go)")
     moved["liveMetrics"][0]["windowSize"] = 10
     assert digest(moved) != digest(with_metric("P(go)"))
+
+
+@pytest.mark.parametrize("edit", [
+    "keep row names", "keep metric labels", "keep config labels", "hash rows as a list",
+])
+def test_the_score_canary_sees_every_part_of_the_projection(monkeypatch, edit):
+    """A cached score is served verbatim (`DATA.md#caching`): a change to this
+    projection moves every spine run's scored digest, so it must move the canary."""
+    before = scoring.canary_fingerprint()
+    kept = {"keep row names": ("spine", "rows", "*", "name"),
+            "keep metric labels": ("liveMetrics", "*", "label"),
+            "keep config labels": ("config", "*", "label")}
+    if edit in kept:
+        monkeypatch.setattr(behaviour, "UNHASHED", behaviour.UNHASHED - {kept[edit]})
+    else:
+        monkeypatch.setattr(behaviour, "_keyed_by_id", lambda rows: rows)
+    assert scoring.canary_fingerprint() != before
 
 
 def test_a_profile_without_a_spine_still_hashes_its_words():

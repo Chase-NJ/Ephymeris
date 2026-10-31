@@ -856,6 +856,18 @@ def _canary_runs(
                     **{k: v for k, v in declared.items() if k != "liveMetrics"},
                     "spine": {"interp": spine_stream.rp.INTERP_VERSION},
                 }})),
+            # A spine snapshot with named rows and a labelled metric: its scored
+            # digest is `profile_hash`'s behaviour projection (`tasks/behaviour.py`),
+            # so leaving a word in, or a row unkeyed, moves this.
+            ("spine-run-rows", nothing, document(session, interp=spine_stream.rp.INTERP_VERSION, **{
+                task_profile.SNAPSHOT_KEY: {
+                    **declared,
+                    "liveMetrics": declared["liveMetrics"][:1],
+                    "spine": {"interp": spine_stream.rp.INTERP_VERSION, "rows": [
+                        {"id": "r1", "name": "Odor 1", "bind": {"sample": "odor_line_1"}},
+                        {"id": "r3", "name": "Odor 3", "bind": {"sample": "odor_line_3"}},
+                    ]},
+                }})),
         ]
     ] + [
         # The same single-alternate no-go snapshot, scored under a vocabulary

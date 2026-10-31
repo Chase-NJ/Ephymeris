@@ -728,7 +728,8 @@ def _metric_alternates(entry: dict[str, Any], vocabulary: Vocabulary | None) -> 
     `alternate` is a name or a list of names; `alternateCodes` a list of
     numbers; `alternateCode` the single number every recorded snapshot carries.
     A list wins over the single key so a snapshot written with both (the
-    first code repeated for older readers) reads back whole.
+    first code repeated for older readers) reads back whole. An empty list is
+    refused by `LiveMetric` itself.
     """
     names = entry.get("alternate")
     if isinstance(names, list):
@@ -740,8 +741,6 @@ def _metric_alternates(entry: dict[str, Any], vocabulary: Vocabulary | None) -> 
         codes = tuple(int(code) for code in listed)
     else:
         codes = (_metric_code(entry, "alternate", vocabulary),)
-    if not codes:
-        raise ValueError("a metric needs at least one alternate code")
     return tuple(dict.fromkeys(codes))
 
 

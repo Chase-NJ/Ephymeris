@@ -293,7 +293,7 @@ def _live_metrics(definition, channels, vocab) -> list[dict[str, Any]]:
                 "label": f"P(withhold | {stimulus})",
                 "trigger": onset.name,
                 "success": "WATER_POKE_NONE",
-                "alternate": answered[0] if len(answered) == 1 else answered,
+                "alternate": answered,
                 "windowSize": 20,
             })
             continue

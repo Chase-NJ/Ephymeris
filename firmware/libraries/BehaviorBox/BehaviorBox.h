@@ -281,15 +281,31 @@ inline void syncFall(unsigned long rose)
 #endif
 }
 
-inline void emitStrobe(TrialClock &clock, int eventCode)
+/*  The strobe line and its sync pulse, for a timestamp already taken. */
+inline void strobeLine(int eventCode, unsigned long timestamp)
 {
-  syncGap();
-  unsigned long timestamp = clock.elapsed();
   unsigned long rose = syncRise();
   char buf[16];
   snprintf(buf, sizeof(buf), "%03d	%lu", eventCode, timestamp);
   Serial.println(buf);
   syncFall(rose);
+}
+
+inline void emitStrobe(TrialClock &clock, int eventCode)
+{
+  syncGap();
+  strobeLine(eventCode, clock.elapsed());
+}
+
+/*  void emitStrobeAt(int eventCode, unsigned long timestamp) ->
+    A strobe stamped with a time the caller already holds, rather than the
+    clock's now. The phase interpreter's runner (BoxSpine.h) strobes each event
+    at the TICK it happened, not the moment it is printed, so a burst of
+    strobes in one tick all carry that tick (0003-phase-spine-task-model.md#interpreter-and-firmware). */
+inline void emitStrobeAt(int eventCode, unsigned long timestamp)
+{
+  syncGap();
+  strobeLine(eventCode, timestamp);
 }
 
 /*  bool readLineInto(char* dst, size_t cap) ->
@@ -791,7 +807,9 @@ inline bool escalationArmed(const TaskParams &p, int completedTrials)
 /*  Which firmware interpreter this build is, announced as `INTERP=<n>` before
     READY and recorded in the run's file, so a recorded session says what ran it
     (docs/TASKS.md#the-start-line). The trial runner in this header is
-    interpreter 1. */
+    interpreter 1, and stays 1 for as long as it runs. The phase interpreter
+    (BoxInterp.h) numbers itself from 2 in the same space, so the two can never
+    be confused in a recorded run. */
 #define BOX_INTERP 1
 
 /*  The running audit of what the SET lines delivered: how many keys the board
@@ -1088,16 +1106,46 @@ inline void awaitStart(TaskParams &p)
   }
 }
 
-/*  void announceReady() ->
-    The handshake's opening line: `INTERP=<n>` then `READY`. In this order so the
-    host has the interpreter before it is told it may send anything. */
-inline void announceReady()
+/*  int boxFreeRam() ->
+    Bytes of RAM free between the top of the heap and the stack, now. The
+    board's static data -- a generated state table, the channel rows, the
+    parameter block, the serial buffers -- is resident from reset, so measured
+    in setup() this is what the task leaves for the stack to grow into
+    (0003-phase-spine-task-model.md#open-questions, the RAM budget). Announced
+    as FREE_RAM=<n> and recorded with the run. Off the board there is no such
+    number: a host build reports BOX_HOST_FREE_RAM, 0 unless a test sets it. */
+#if defined(__AVR__)
+extern char *__brkval;    // avr-libc: the heap's top once malloc has run, else 0
+extern char __heap_start; // the linker's end of static data
+inline int boxFreeRam()
 {
-  char buf[16];
-  snprintf(buf, sizeof(buf), "INTERP=%d", BOX_INTERP);
+  char top;
+  return (int)(&top - (__brkval ? __brkval : &__heap_start));
+}
+#else
+#ifndef BOX_HOST_FREE_RAM
+#define BOX_HOST_FREE_RAM 0
+#endif
+inline int boxFreeRam() { return BOX_HOST_FREE_RAM; }
+#endif
+
+/*  void announceReadyAs(int interp) ->
+    The handshake's opening lines: `INTERP=<n>`, `FREE_RAM=<n>`, then `READY`.
+    In this order so the host has both before it is told it may send anything.
+    `interp` names what runs the task: BOX_INTERP for the trial runner here, the
+    state-table core's INTERP_VERSION for a spine task (BoxSpine.h). */
+inline void announceReadyAs(int interp)
+{
+  char buf[24];
+  snprintf(buf, sizeof(buf), "INTERP=%d", interp);
+  Serial.println(buf);
+  snprintf(buf, sizeof(buf), "FREE_RAM=%d", boxFreeRam());
   Serial.println(buf);
   Serial.println("READY");
 }
+
+/*  void announceReady() -> announceReadyAs(BOX_INTERP), for the trial runner. */
+inline void announceReady() { announceReadyAs(BOX_INTERP); }
 
 /*  void applyRewardTimes(const TaskParams&, TrialType*, int) ->
     Copy every reward volume the host sent (RW<i+1> >= 0) onto slot i of the

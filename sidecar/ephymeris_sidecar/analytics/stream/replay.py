@@ -23,8 +23,11 @@ from dataclasses import dataclass, field, replace
 from typing import Iterable, Sequence
 
 #: The `INTERP` versions this replay can run (`INTERP_VERSION` in BoxInterp.h).
-INTERP_VERSIONS = frozenset({1})
-INTERP_VERSION = 1
+#: Not 1: that is BehaviorBox.h's trial runner (`BOX_INTERP`), which every
+#: recorded GRGL run names, and which no table describes. The two share one
+#: numbering space so a run's header alone says which ran it.
+INTERP_VERSIONS = frozenset({2})
+INTERP_VERSION = 2
 
 NONE = 0xFF
 PERMILLE = 1000

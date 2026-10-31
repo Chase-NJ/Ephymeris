@@ -15,7 +15,7 @@ import re
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Literal
 
 import serial
@@ -45,10 +45,20 @@ log = logging.getLogger(__name__)
 #: code 1–3 digits. Anything else is logged but not treated as data.
 STROBE_RE = re.compile(r"^(\d{1,3})\t(\d+)$")
 SEED_RE = re.compile(r"^SEED\t(\d+)$")
-#: Announced before `READY`: which firmware interpreter the sketch is
-#: (`TASKS.md#the-start-line`).
+#: Announced before `READY`: which firmware interpreter the sketch is, and
+#: how many bytes of RAM it has free with its tables loaded
+#: (`TASKS.md#confirming-the-parameters`).
 INTERP_RE = re.compile(r"^INTERP=(\d+)$")
+FREE_RAM_RE = re.compile(r"^FREE_RAM=(\d+)$")
 READY_TOKEN = "READY"
+
+
+@dataclass(frozen=True)
+class Announced:
+    """What a board said about itself before `READY`. None for what it did not say."""
+
+    interp: int | None = None
+    free_ram: int | None = None
 
 #: How long to wait for the board's `READY` after opening (it reboots via the
 #: DTR auto-reset first, so this must cover `setup()`).
@@ -367,7 +377,7 @@ class PortHandler:
         baud: int,
         command: StartCommand,
         seed: int,
-        on_ready: Callable[[int | None, int | None], None],
+        on_ready: Callable[[int | None, Announced], None],
         on_strobe: Callable[[int, int], None],
         on_lost: Callable[[str], None] = lambda _reason: None,
         on_refused: Callable[[StartRefused], None] = lambda _refused: None,
@@ -380,9 +390,9 @@ class PortHandler:
         `READY` → send each `SET` line and hold its `PARAMS` against `command` →
         send `START SEED=<seed>` → optional `SEED` — then runs off the event loop.
 
-        `on_ready(seed, interp)` fires once the handshake resolves, *before* the
+        `on_ready(seed, announced)` fires once the handshake resolves, *before* the
         first strobe, so the caller can open the session file and write its
-        header (`DATA.md#written-live`); `interp` is what the board announced
+        header (`DATA.md#written-live`); `announced` is what the board said
         before `READY`, or None. `on_strobe(code, ts)` fires for each parsed
         strobe. Both run on the session thread, so the caller's file I/O stays
         off the event loop.
@@ -437,7 +447,7 @@ class PortHandler:
         baud: int,
         command: StartCommand,
         seed: int,
-        on_ready: Callable[[int | None, int | None], None],
+        on_ready: Callable[[int | None, Announced], None],
         on_strobe: Callable[[int, int], None],
         on_refused: Callable[[StartRefused], None],
         stop: threading.Event,
@@ -505,7 +515,7 @@ class PortHandler:
                 elif now > seed_deadline:
                     # No SEED arrived — proceed without it.
                     shake.phase = "parse"
-                    on_ready(None, shake.interp)
+                    on_ready(None, shake.announced)
 
     def _refuse_start(
         self,
@@ -528,7 +538,7 @@ class PortHandler:
         line: str,
         shake: "_Handshake",
         port: serial.Serial,
-        on_ready: Callable[[int | None, int | None], None],
+        on_ready: Callable[[int | None, Announced], None],
         on_strobe: Callable[[int, int], None],
     ) -> None:
         """Handle one complete line according to the handshake phase.
@@ -542,8 +552,11 @@ class PortHandler:
 
         if shake.phase == "ready":
             interp = INTERP_RE.match(text)
+            free_ram = FREE_RAM_RE.match(text)
             if interp:
-                shake.interp = int(interp.group(1))
+                shake.announced = replace(shake.announced, interp=int(interp.group(1)))
+            elif free_ram:
+                shake.announced = replace(shake.announced, free_ram=int(free_ram.group(1)))
             elif text.upper() == READY_TOKEN:
                 shake.phase = "params"
                 self._send_line(port, shake.command.begin_line)
@@ -566,13 +579,13 @@ class PortHandler:
         if shake.phase == "seed":
             seed_match = SEED_RE.match(text)
             if seed_match:
-                on_ready(int(seed_match.group(1)), shake.interp)
+                on_ready(int(seed_match.group(1)), shake.announced)
                 shake.phase = "parse"
                 return
             strobe = STROBE_RE.match(text)
             if strobe:
                 # First data line arrived with no SEED — resolve, then process.
-                on_ready(None, shake.interp)
+                on_ready(None, shake.announced)
                 on_strobe(int(strobe.group(1)), int(strobe.group(2)))
                 shake.phase = "parse"
             return
@@ -764,8 +777,8 @@ class _Handshake:
     command: StartCommand
     seed: int
     phase: str = "ready"
-    #: What the board announced before `READY`; None for a board that did not.
-    interp: int | None = None
+    #: What the board announced before `READY`.
+    announced: Announced = field(default_factory=Announced)
     exchange: ParamsExchange = field(init=False)
     params_deadline: float = 0.0
 

@@ -30,7 +30,7 @@ import serial
 from ..boards.tool import BoardTool, DetectedBoard
 from ..settings import BOX_COUNT, SidecarSettings
 from ..tasks.start_command import StartCommand, StartRefused
-from .handler import DEFAULT_LINE_ENDING, OpenSerial, OutputLine, PortHandler, SessionClaim
+from .handler import DEFAULT_LINE_ENDING, Announced, OpenSerial, OutputLine, PortHandler, SessionClaim
 from .states import IDLE_ONLY, IDLE_OR_CONSOLE, IllegalTransition, PortState
 
 log = logging.getLogger(__name__)
@@ -352,7 +352,7 @@ class PortManager:
         command: StartCommand,
         seed: int,
         *,
-        on_ready: Callable[[int | None, int | None], None],
+        on_ready: Callable[[int | None, Announced], None],
         on_strobe: Callable[[int, int], None],
         on_lost: Callable[[str], None],
         on_refused: Callable[[StartRefused], None],

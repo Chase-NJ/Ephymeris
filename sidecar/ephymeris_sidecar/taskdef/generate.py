@@ -26,7 +26,7 @@ from typing import Any
 
 from ..rig import registry
 from ..tasks import profile as task_profile
-from . import fields, rows
+from . import fields, rows, spine
 from .model import TaskDefinition, TrialTypeDef
 
 #: `TrialType`'s no-go sentinel, mirrored from BehaviorBox.h. A no-go type has
@@ -65,7 +65,11 @@ def profile_json(definition: TaskDefinition) -> dict[str, Any]:
     NO `strobes` MAP, and the live metrics name their codes rather than number
     them: the vocabulary fills both in when the profile is loaded
     (`TASKS.md#strobes`), so nothing written here can disagree with it.
+
+    A spine task compiles to its own profile (`spine.profile_json`).
     """
+    if definition.spine is not None:
+        return spine.profile_json(definition)
     channels = registry.channels()
     vocab = registry.vocabulary()
 
@@ -409,6 +413,37 @@ def bundled_pins_h(sketch_name: str) -> str:
     return "\n".join(lines)
 
 
+def _box_pin_lines(channels: Any) -> list[str]:
+    """This rig's pins for `BoxPins.h`'s guarded macros: a task's and a spine's alike."""
+    lines = [
+        "/*  This rig's wiring. Every one of these overrides a guarded default in",
+        "    BoxPins.h; a channel the rig does not declare is simply not mentioned",
+        "    and keeps the shipped number. */",
+    ]
+    for name, macro in _PIN_MACROS:
+        channel = channels.get(name)
+        if channel is not None:
+            lines.append(f"#define {macro} {channel.index}")
+    lines += _sync_lines(channels)
+
+    # DECLARATION order, not pin order. `Odors[i]` is odor line i+1, and the
+    # pins are not monotonic past line 6 -- sorting by pin would put line 7
+    # second and silently swap ten of the twelve lines.
+    emitters = channels.declared_of_kind("emitter")
+    rewards = channels.declared_of_kind("reward")
+    if emitters:
+        lines.append(f"#define BOX_NUM_ODORS {len(emitters)}")
+        lines.append(
+            "#define BOX_ODOR_PINS {" + ", ".join(str(c.index) for c in emitters) + "}"
+        )
+    if rewards:
+        lines.append(f"#define BOX_NUM_FLUIDS {len(rewards)}")
+        lines.append(
+            "#define BOX_FLUID_PINS {" + ", ".join(str(c.index) for c in rewards) + "}"
+        )
+    return lines
+
+
 def _strobe_lines(vocab: registry.Vocabulary) -> list[str]:
     """`#define BF_<NAME> <code>` for every LIVE code, by code.
 
@@ -438,39 +473,16 @@ def task_pins_h(definition: TaskDefinition) -> str:
     `BoxStrobes.h` defines no codes at all, so the vocabulary block below is
     the whole of it. It may not name a type: at the point it is read,
     `TrialType` does not exist yet.
+
+    A spine task's header is the pins and the vocabulary alone: no counts and
+    no selection mode, which are the trial runner's, never the interpreter's.
     """
     channels = registry.channels()
     vocab = registry.vocabulary()
     lines: list[str] = [_banner(definition), "", "#ifndef TASK_PINS_H", "#define TASK_PINS_H", ""]
-
-    lines += [
-        "/*  This rig's wiring. Every one of these overrides a guarded default in",
-        "    BoxPins.h; a channel the rig does not declare is simply not mentioned",
-        "    and keeps the shipped number. */",
-    ]
-    for name, macro in _PIN_MACROS:
-        channel = channels.get(name)
-        if channel is not None:
-            lines.append(f"#define {macro} {channel.index}")
-    lines += _sync_lines(channels)
-
-    # DECLARATION order, not pin order. `Odors[i]` is odor line i+1, and the
-    # pins are not monotonic past line 6 -- sorting by pin would put line 7
-    # second and silently swap ten of the twelve lines.
-    emitters = channels.declared_of_kind("emitter")
-    rewards = channels.declared_of_kind("reward")
-    if emitters:
-        lines.append(f"#define BOX_NUM_ODORS {len(emitters)}")
-        lines.append(
-            "#define BOX_ODOR_PINS {" + ", ".join(str(c.index) for c in emitters) + "}"
-        )
-    if rewards:
-        lines.append(f"#define BOX_NUM_FLUIDS {len(rewards)}")
-        lines.append(
-            "#define BOX_FLUID_PINS {" + ", ".join(str(c.index) for c in rewards) + "}"
-        )
-
-    lines += _strobe_lines(vocab)
+    lines += _box_pin_lines(channels) + _strobe_lines(vocab)
+    if definition.spine is not None:
+        return "\n".join(lines + ["", "#endif // TASK_PINS_H", ""])
 
     stage_keys = " ".join(f"P_STAGE({i})" for i in range(definition.stage_count))
     lines += [
@@ -650,6 +662,11 @@ def task_trials_h(definition: TaskDefinition) -> str:
     return "\n".join(lines)
 
 
+def task_spine_h(definition: TaskDefinition) -> str:
+    """A spine task's state table and channel rows (`spine.task_spine_h`)."""
+    return spine.task_spine_h(definition, _banner(definition))
+
+
 def _banner(definition: TaskDefinition) -> str:
     channels = registry.channels()
     return _GENERATED_BANNER.format(
@@ -666,8 +683,19 @@ def generated_files(definition: TaskDefinition, sketch_source: str) -> dict[str,
     `sketch_source` is the root `GRGL.ino` read from the bundled library — copied
     rather than templated, so there is one trial runner and one session loop in
     the world and a profile cannot fork them.
+
+    A spine task's `.ino` is not copied: its runner is the library's
+    `BoxSpine.h`, and the sketch is the fixed few lines `spine.sketch_ino`
+    writes, so `sketch_source` is not read.
     """
     name = definition.name
+    if definition.spine is not None:
+        return {
+            f"{name}.ino": spine.sketch_ino(definition),
+            "TaskPins.h": task_pins_h(definition),
+            "TaskSpine.h": task_spine_h(definition),
+            "task.json": json.dumps(profile_json(definition), indent=2) + "\n",
+        }
     return {
         f"{name}.ino": sketch_source,
         "TaskPins.h": task_pins_h(definition),

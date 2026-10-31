@@ -65,6 +65,8 @@ CORE_METADATA_KEYS = frozenset(
         # Which channel set the run's sketch was generated against
         # (`DATA.md#the-json-document`): a property of the rig, not the tuning.
         "channel_set_hash",
+        # The board's free RAM with its tables loaded, announced beside `interp`.
+        "free_ram",
         # The run's own profile snapshot, written after the task fields — a
         # field of this name would be silently replaced by it.
         "task_profile",
@@ -300,6 +302,13 @@ class TaskProfile:
     #: by resemblance would be a guess, and a wrong guess decodes real data
     #: with the wrong strobe map.
     legacy_names: list[str] = field(default_factory=list)
+    #: A phase-spine task's snapshot (`TASKS.md#spine-tasks`): the definition,
+    #: the state table as lowered, which channel and edge codes each bit is,
+    #: and which wire key each parameter slot is. Everything replay needs that
+    #: the run's own header does not already hold. Opaque here and passed
+    #: through verbatim; `taskdef/spine.py` writes it. None on every other
+    #: profile, whose `to_json` (and so `profile_hash`) it leaves untouched.
+    spine: dict[str, Any] | None = None
 
     def to_json(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -317,6 +326,8 @@ class TaskProfile:
             out["telemetry"] = self.telemetry.to_json()
         if self.identify is not None:
             out["identify"] = self.identify.to_json()
+        if self.spine is not None:
+            out["spine"] = self.spine
         return out
 
     @property
@@ -544,7 +555,17 @@ def parse_profile(raw: Any, vocabulary: Vocabulary | None = None) -> TaskProfile
         telemetry=_parse_telemetry(raw.get("telemetry")),
         identify=_parse_identify(raw.get("identify")),
         legacy_names=_parse_legacy_names(raw.get("legacyNames")),
+        spine=_parse_spine(raw.get("spine")),
     )
+
+
+def _parse_spine(raw: Any) -> dict[str, Any] | None:
+    """A spine snapshot, kept verbatim; only its outer shape is checked here."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise TaskProfileError("spine must be an object")
+    return raw
 
 
 def _parse_identify(raw: Any) -> Identify | None:

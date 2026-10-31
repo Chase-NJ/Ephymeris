@@ -217,7 +217,8 @@ against a live RHX. Everything else in the Intan suite runs against `tests/fake_
 
 **Firmware: host tests** in `firmware/libraries/BehaviorBox/extras/host_test/`. They compile the
 shared library without `-fpermissive`, which makes them the strictest type check the sketches get.
-`run_diff.sh` is the differential test between the C interpreter core and the Python replay
+`run_diff.sh` is the differential test between the C interpreter core and the Python replay, and
+`run_spine.sh` tests the spine runner around that core
 ([Compiling and the host tests](docs/TASKS.md#compiling-and-the-host-tests)).
 
 > [!CAUTION]
@@ -298,6 +299,11 @@ macOS as run-from-source. Packaged-only path bugs exist (Windows verbatim `\\?\`
   real RHX and real boxes; a complete recording session with an animal has not.
   [Not yet verified](docs/RECORDING.md#not-yet-verified) lists what to watch for on the first one.
   Every rig with a saved wiring document has no sync channel until one is added on the wiring page.
+- **A spine task on a real box.** Spine tasks are proven on the host: the generated sketch on the
+  instrumented shim, through the real session path, replayed from its `.tsv`
+  ([Spine tasks](docs/TASKS.md#spine-tasks)). Not yet done on a Mega: flashing one, running it with an
+  animal or a catch vessel, and recording the `free_ram` it reports with its table loaded
+  (the RAM budget, [ADR 0003](docs/adr/0003-phase-spine-task-model.md#open-questions)).
 
 ### Known bugs
 

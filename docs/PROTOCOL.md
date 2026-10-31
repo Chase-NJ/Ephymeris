@@ -3066,7 +3066,7 @@ This machine's strobe vocabulary (`TASKS.md#strobe-vocabulary`) — the one sour
 |---|---|---|
 | `location` | string | `trials[1].rewardChannel`, `stages[2].trials`. |
 | `message` | string |  |
-| `code` | string | TSK101–TSK111, TSK113 and TSK114 from the sidecar; TSK112 is derived on the Task tab. Each names a failure that is silent without it. |
+| `code` | string | TSK101–TSK111, TSK113 and TSK114 from the sidecar; TSK112 is derived on the Task tab; SPN101–SPN108 for a phase-spine task (`TASKS.md#spine-tasks`). Each names a failure that is silent without it. |
 
 <a id="shape-taskentry"></a>
 #### TaskEntry
@@ -3113,6 +3113,7 @@ Parsed from the sketch's `task.json` sibling (`TASKS.md#task-profile`); passed t
 | `legacyNames` | string[] | Names older software wrote for this same task, so the archive walk can decode historical runs (`TASKS.md#task-profile`). Declared, never inferred. |
 | `telemetry` *(optional)* | [TelemetrySpec](#shape-telemetryspec) | Utility profiles only. |
 | `identify` *(optional)* | [IdentifySpec](#shape-identifyspec) | Utility profiles only — absent means this sketch can't be asked to point at its own box, which the placement walk degrades around rather than refusing. |
+| `spine` *(optional)* | map&lt;string, unknown&gt; | Phase-spine tasks only (`TASKS.md#spine-tasks`): the snapshot replay reads — the definition, the state table as lowered, each bit's channel and edge code names, and each parameter slot's wire key. Absent on every other profile. |
 
 <a id="shape-tasksaved"></a>
 #### TaskSaved

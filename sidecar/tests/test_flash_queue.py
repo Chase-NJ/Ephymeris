@@ -197,7 +197,7 @@ def run_a_session(rig: Rig, box: int):  # noqa: ANN201
     Returns the claim, whose `release` ends it."""
     return rig.ports.claim_session(
         box, build_start_command(None, {}), 1,
-        on_ready=lambda _seed, _interp: None, on_strobe=lambda _code, _ts: None,
+        on_ready=lambda _seed, _announced: None, on_strobe=lambda _code, _ts: None,
         on_lost=lambda _reason: None, on_refused=lambda _refused: None,
     )
 

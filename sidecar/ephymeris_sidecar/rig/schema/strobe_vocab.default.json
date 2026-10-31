@@ -349,6 +349,16 @@
       "since": 2,
       "emitted_on": "entry to a sampling HOLD bound to odor line 12",
       "rationale": "Stimulus identity for odor line 12. Twelve lines have always existed in the pinout but only six could announce an onset, so lines 7-12 were plumbed and unusable as discriminanda. Numbered to continue 101-106 as closely as the reserved block allows -- see ODOR_10_ON for the gap."
+    },
+    "TRIAL_START": {
+      "code": 270,
+      "origin": "ephymeris",
+      "since": 3,
+      "emitted_on": "entry to a spine task's first state: the start of every trial",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "A structural code of the phase spine (docs/adr/0003-phase-spine-task-model.md#the-strobe-stream): the stream otherwise carries only channel edges, so this is what divides it into trials. Emitted by BoxSpine.h at the tick the interpreter enters a state flagged INTERP_STARTS_TRIAL. A spine session opens and closes with the existing START_SESSION and END_SESSION, which mean the same events. Numbered apart from the lowest free codes, which a channel-set save issues to edges, so a machine that already issued edge codes can add it at this same number."
     }
   },
   "port_slots": {

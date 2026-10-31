@@ -65,8 +65,8 @@ class SpineRecord:
 
 #: What a summary says of a spine run until replay scores it.
 REPLAY_PENDING_DETAIL = (
-    "a spine task's run: scoring it by replay is still to come (ADR 0003), so it has no "
-    "numbers yet. Every strobe is recorded"
+    "a spine task's run: scoring it by replay is not available yet, so it has no "
+    "numbers. Every strobe is recorded"
 )
 
 

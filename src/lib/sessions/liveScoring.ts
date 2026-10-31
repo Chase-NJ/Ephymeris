@@ -23,7 +23,7 @@ export function liveScoring(profile: TaskProfile | null | undefined): {
       scored: false,
       note:
         "Live metrics for spine tasks are not available yet. Every strobe is still " +
-        "recorded, and the run's file replays in full afterwards.",
+        "recorded; scoring spine runs is not available in Analytics yet either.",
     };
   }
   return { scored: true, note: "No live metrics yet — they appear once trials start counting." };

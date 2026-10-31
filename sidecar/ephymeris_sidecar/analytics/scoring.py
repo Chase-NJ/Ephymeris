@@ -851,9 +851,11 @@ def _canary_runs(
             ("short", held(snapshot, "snapshot"), document(session[:12])),
             ("unclean", held(snapshot, "snapshot"), unclean),
             # A spine run over the same onset-shaped stream: never inferred.
-            ("spine-run", nothing, document(session, interp=2, **{task_profile.SNAPSHOT_KEY: {
-                **{k: v for k, v in declared.items() if k != "liveMetrics"}, "spine": {"interp": 2},
-            }})),
+            ("spine-run", nothing, document(session, interp=spine_stream.rp.INTERP_VERSION, **{
+                task_profile.SNAPSHOT_KEY: {
+                    **{k: v for k, v in declared.items() if k != "liveMetrics"},
+                    "spine": {"interp": spine_stream.rp.INTERP_VERSION},
+                }})),
         ]
     ] + [
         # The same single-alternate no-go snapshot, scored under a vocabulary

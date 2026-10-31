@@ -276,7 +276,7 @@ CREATE TABLE IF NOT EXISTS run_metrics_cache (
     config_json    TEXT,
     codec_version  INTEGER NOT NULL,
     computed_at    TEXT NOT NULL,
-    status         TEXT NOT NULL,   -- 'ok' | 'no-metrics' | 'missing' | 'unreadable'
+    status         TEXT NOT NULL,   -- 'ok' | 'no-metrics' | 'replay-pending' | 'missing' | 'unreadable'
     detail         TEXT,
     summary_json   TEXT NOT NULL
 );

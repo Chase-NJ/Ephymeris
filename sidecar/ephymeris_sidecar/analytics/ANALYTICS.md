@@ -98,7 +98,7 @@ delivered. `test_analytics_derive.py` scores this exact stream and asserts every
 Everything here is computed from `ts_data`. All of it is derived at read time from the raw codes plus the
 profile that decodes them. Offline scoring **never reimplements the live scorer**: it replays the stream
 through `stream/trials.py`'s `MetricAccumulator`, the same class Mission Control uses. A run's result is a
-`RunSummary`, and its `status` is `ok`, `no-metrics`, `missing` or `unreadable`.
+`RunSummary`, and its `status` is `ok`, `no-metrics`, `replay-pending`, `missing` or `unreadable`.
 
 ### Trials: hits, misses and exclusions
 

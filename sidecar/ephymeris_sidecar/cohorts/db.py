@@ -671,6 +671,18 @@ def _existing_version(conn: sqlite3.Connection) -> int | None:
     return version if version > 0 else 1
 
 
+def _statements(script: str) -> Iterator[str]:
+    """`script`'s statements one at a time, for running inside an open
+    transaction, which `executescript` would commit first. A trailing run of
+    comments is not a statement and is dropped."""
+    pending = ""
+    for line in script.splitlines(keepends=True):
+        pending += line
+        if sqlite3.complete_statement(pending):
+            yield pending
+            pending = ""
+
+
 def _migrate(conn: sqlite3.Connection, found: int) -> None:
     """Bring an existing database up to `SCHEMA_VERSION`. Never commits."""
     if found > SCHEMA_VERSION:
@@ -893,19 +905,30 @@ class Database:
         # is all `CREATE TABLE IF NOT EXISTS`, so it silently leaves an existing
         # table alone — including one missing a column this build expects.
         found = _existing_version(conn)
-        conn.executescript(SCHEMA)
-        if found is not None:
-            _migrate(conn, found)
-        # Indexes last: one of them covers a column a migration just added, and
-        # `CREATE INDEX` cannot name a column that doesn't exist yet.
-        conn.executescript(INDEXES)
 
-        # One commit for the whole of startup, announced once like a unit of
-        # work's (`DATA.md#the-database-copy`): a migration committing per step
-        # would trigger repeated whole-file copies to a possibly-networked
-        # target before the app has even finished starting.
-        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-        conn.commit()
+        # One transaction and one commit for the whole of startup, announced
+        # once like a unit of work's (`DATA.md#the-database-copy`): a migration
+        # committing per step would trigger repeated whole-file copies to a
+        # possibly-networked target before the app has even finished starting,
+        # and a failed one would leave the file half-upgraded. Outside a
+        # transaction every statement is its own commit and its own disk flush,
+        # which on Windows costs more than the rest of startup put together.
+        # `executescript` commits whatever is open before it runs, so the
+        # transaction begins inside the script and the indexes go one by one.
+        conn.executescript("BEGIN;\n" + SCHEMA)
+        try:
+            if found is not None:
+                _migrate(conn, found)
+            # Indexes last: one of them covers a column a migration just added,
+            # and `CREATE INDEX` cannot name a column that doesn't exist yet.
+            for statement in _statements(INDEXES):
+                conn.execute(statement)
+            conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            conn.close()
+            raise
         if self._on_commit is not None:
             self._on_commit()
         # From here the only transactions are the ones `write` begins

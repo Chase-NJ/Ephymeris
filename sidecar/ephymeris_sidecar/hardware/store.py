@@ -150,6 +150,8 @@ class Stored:
     shadows: tuple[str, ...] = ()
     #: `content_digest` of the document as it is on disk, before `upgrade`.
     digest: str | None = None
+    #: `order_blind_digest` of the same: only to carry an older record over.
+    order_blind: str | None = None
     #: Why there is no usable record of the wiring saved here (missing, or
     #: will not read), so nothing stored is trusted; None when there is one.
     record_problem: str | None = None
@@ -343,7 +345,7 @@ class HardwareStore:
         `wiring.json` holds exactly the wiring it was saving: that becomes the
         one recorded, and what it replaced a leftover. Anything else stays held.
         """
-        record = self._record()
+        record = self._carried_over(self._record())
         first = first_start and not self.started_path.exists()
         self._mark_started()
         if record.problem:
@@ -369,6 +371,29 @@ class HardwareStore:
         except OSError as exc:
             log.warning("could not finish recording the last wiring save (%s)", exc)
 
+    def _carried_over(self, record: "_Record") -> "_Record":
+        """A record whose digests are blind to declaration order (written
+        before they covered it) confirms the stored wiring it still matches,
+        and is rewritten in today's form, so it confirms exactly that file and
+        a reorder after today is held. A digest it no longer matches stays as
+        it is, and trusts nothing."""
+        if record.problem or not (_order_blind(record.digest) or _order_blind(record.pending)):
+            return record
+        _, stored = self._present()
+        carry = {d: stored.digest for d in (record.digest, record.pending) if _order_blind(d) and d == stored.order_blind}
+        carried = dataclasses.replace(
+            record,
+            digest=carry.get(record.digest, record.digest),
+            pending=carry.get(record.pending, record.pending),
+        )
+        if carried != record:
+            try:
+                self._write_record(carried)
+            except OSError as exc:
+                log.warning("could not carry the wiring record over (%s); trusted this run only", exc)
+                self._unwritten = carried
+        return carried
+
     def _mark_started(self) -> None:
         if self.started_path.exists():
             return
@@ -381,7 +406,7 @@ class HardwareStore:
     def _seed(self, earlier: "_Record") -> None:
         present, stored = self._present()
         trusted = stored.state == "loads" and (
-            earlier.earlier is None or stored.digest in earlier.earlier
+            earlier.earlier is None or stored.order_blind in earlier.earlier
         )
         beside_wiring = bool(present) and present[0].files[0] == self.path
         leftovers = frozenset(
@@ -639,14 +664,38 @@ def legacy_pair_digest(channel_set: dict) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
+#: The prefix of a digest that covers channel declaration order.
+_ORDERED = "o1:"
+
+
 def content_digest(doc: dict) -> str:
     """What `wiring-confirmed.json` records: the wiring's content, without
     `edited_at`, so identical wiring written at another moment is the same
     wiring. Taken over the document AS STORED, never after `upgrade`: a later
-    release that fills one more default must not hold every untouched file."""
+    release that fills one more default must not hold every untouched file.
+
+    DECLARATION ORDER IS CONTENT. `channels` is a JSON object, and a sorted
+    dump would make two orders one digest -- but the order is the odor index
+    (TASKS.md#order-is-meaning), so channels swapped by hand would load as
+    confirmed and drive the wrong valve under the right code. The order is
+    hashed beside the sorted content."""
+    content = {k: v for k, v in doc.items() if k != "edited_at"}
+    channels = doc.get("channels")
+    order = list(channels) if isinstance(channels, dict) else None
+    canonical = json.dumps({"order": order, "content": content}, sort_keys=True, separators=(",", ":"))
+    return _ORDERED + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def order_blind_digest(doc: dict) -> str:
+    """The digest the record held before it covered declaration order. Read
+    only, to carry a record over (`HardwareStore.settle_record`)."""
     content = {k: v for k, v in doc.items() if k != "edited_at"}
     canonical = json.dumps(content, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _order_blind(digest: str | None) -> bool:
+    return digest is not None and not digest.startswith((_ORDERED, "file:"))
 
 
 def _digest_of(doc: dict | None) -> str | None:
@@ -680,23 +729,23 @@ def _checked(location: str, doc: dict | None, why: str | None, *, sources: tuple
     A hand edit can break any of them as easily as its JSON."""
     if doc is None:
         return Stored(None, [_unloaded(location, why)], "unrepairable", sources)
-    digest = content_digest(doc)
+    digest, blind = content_digest(doc), order_blind_digest(doc)
     doc = upgrade(doc)
     try:
         import jsonschema  # noqa: F401
     except ImportError:  # pragma: no cover - the dependency fence: compose as before
-        return Stored(doc, [], "loads", sources, digest=digest)
+        return Stored(doc, [], "loads", sources, digest=digest, order_blind=blind)
     shape = validate(doc) or _unpinned(doc)
     if shape:
         where, what = shape[0]
-        return Stored(doc, [_unloaded(location, f"{where}: {what}")], "invalid", sources, digest=digest)
+        return Stored(doc, [_unloaded(location, f"{where}: {what}")], "invalid", sources, digest=digest, order_blind=blind)
     from ephymeris_sidecar.rig.rules import rule_problems
 
     rules = rule_problems(doc)
     if rules:
         code, where, what = rules[0]
-        return Stored(doc, [_unloaded(location, f"{code} {where}: {what}")], "invalid", sources, digest=digest)
-    return Stored(doc, [], "loads", sources, digest=digest)
+        return Stored(doc, [_unloaded(location, f"{code} {where}: {what}")], "invalid", sources, digest=digest, order_blind=blind)
+    return Stored(doc, [], "loads", sources, digest=digest, order_blind=blind)
 
 
 def save_problems(doc: Any) -> list[tuple[str, str]]:

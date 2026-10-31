@@ -693,7 +693,7 @@ def test_the_first_start_mark_is_read_before_the_database_connects(tmp_path):
 def _old_record(s: store.HardwareStore, *docs: dict) -> None:
     """The record #132 wrote: a list of digests, any of which it trusted."""
     s.confirmed_path.write_text(
-        json.dumps({"version": 1, "digests": [store.content_digest(d) for d in docs]}),
+        json.dumps({"version": 1, "digests": [store.order_blind_digest(d) for d in docs]}),
         encoding="utf-8",
     )
 
@@ -808,6 +808,59 @@ def test_a_first_start_shows_an_older_layout_beside_the_pair(tmp_path):
     assert store.RIG_FILENAME in rig.notices()
     rig.save(moved(14))
     assert s.legacy_rig_path.exists()
+
+
+def _reordered(doc: dict, a: str, b: str) -> dict:
+    """`doc` with channels `a` and `b` swapped in declaration order only:
+    every key and value the same, so a key-sorted digest cannot see it."""
+    names = list(doc["channels"])
+    i, j = names.index(a), names.index(b)
+    names[i], names[j] = names[j], names[i]
+    return {**doc, "channels": {n: doc["channels"][n] for n in names}}
+
+
+def _reorder_on_disk(s: store.HardwareStore) -> None:
+    on_disk = json.loads(s.path.read_text(encoding="utf-8"))
+    s.path.write_text(json.dumps(_reordered(on_disk, "odor_line_1", "odor_line_2")), encoding="utf-8")
+
+
+def test_a_hand_reordered_channel_set_is_held(tmp_path):
+    """Declaration order is the odor index (TASKS.md#order-is-meaning): odor
+    lines swapped by hand would fire line 2 under line 1's onset code."""
+    Rig(tmp_path).save(store.default_document())
+    _reorder_on_disk(store.HardwareStore(tmp_path))
+    assert_held(Rig(tmp_path, first_start=False))
+
+
+def _order_blind_record(s: store.HardwareStore) -> None:
+    """The record #134 wrote for the file on disk: one digest, blind to
+    declaration order."""
+    on_disk = json.loads(s.path.read_text(encoding="utf-8"))
+    s.confirmed_path.write_text(
+        json.dumps({"version": 1, "digest": store.order_blind_digest(on_disk), "leftovers": []}),
+        encoding="utf-8",
+    )
+
+
+def test_a_record_with_the_order_blind_digest_still_confirms_its_file(tmp_path):
+    Rig(tmp_path).save(moved(12))
+    s = store.HardwareStore(tmp_path)
+    _order_blind_record(s)
+
+    rig = Rig(tmp_path, first_start=False)  # a machine on #134, upgrading
+    assert rig.definition.wiring_problem() is None, "the upgrade asks nothing"
+    assert rig.get()["status"]["notices"] == []
+    _reorder_on_disk(s)  # from then on, order counts
+    assert_held(Rig(tmp_path, first_start=False))
+
+
+def test_an_earlier_record_never_confirms_a_reordered_file_after_the_upgrade(tmp_path):
+    s = store.HardwareStore(tmp_path)
+    write_wiring(s, moved(12))
+    _old_record(s, moved(12))
+    assert Rig(tmp_path).definition.wiring_problem() is None
+    _reorder_on_disk(s)
+    assert_held(Rig(tmp_path, first_start=False))
 
 
 def test_a_record_lost_while_running_never_trusts_a_file_copied_in_after(tmp_path):

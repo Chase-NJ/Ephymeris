@@ -340,7 +340,7 @@ SHAPES: Final[dict[str, Any]] = {
     "PrefixesUpdatedData": ('obj', (('prefixes', ('list', ('ref', 'Prefix')), False),)),
     "SidecarErrorData": ('obj', (('code', 'str', False), ('message', 'str', False), ('detail', 'any', False))),
     "RigProblem": ('obj', (('location', 'str', False), ('message', 'str', False), ('code', ('union', ('str', 'null')), False))),
-    "RigStatus": ('obj', (('custom', 'bool', False), ('derivedFrom', 'str', False), ('board', 'str', False), ('editedAt', ('union', ('str', 'null')), False), ('pinoutHash', 'str', False), ('channelSetHash', 'str', False))),
+    "RigStatus": ('obj', (('custom', 'bool', False), ('derivedFrom', 'str', False), ('board', 'str', False), ('editedAt', ('union', ('str', 'null')), False), ('pinoutHash', 'str', False), ('channelSetHash', 'str', False), ('notices', ('list', ('ref', 'RigProblem')), False), ('canReset', 'bool', False))),
     "RigDocument": ('obj', (('document', 'any', False), ('status', ('ref', 'RigStatus'), False), ('problems', ('list', ('ref', 'RigProblem')), False))),
     "RigImpact": ('obj', (('specId', 'str', False), ('label', ('union', ('str', 'null')), False), ('codes', ('list', 'str'), False))),
     "RigAllocation": ('obj', (('channel', 'str', False), ('edge', 'str', False), ('name', 'str', False), ('code', 'int', False))),

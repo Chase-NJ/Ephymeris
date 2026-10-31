@@ -642,9 +642,10 @@ def test_stored_wiring_that_will_not_load_is_a_problem_never_the_shipped_pins(tm
     assert rig.hardware.load() is None
     problem = rig.definition.wiring_problem()
     assert problem and "did not load" in problem
-    payload = service.document_payload(rig.hardware)
-    assert payload["problems"][0]["location"] == store.WIRING_FILENAME
-    assert payload["status"]["custom"] is True, "Reset must stay reachable"
+    payload = _hardware_get(rig)
+    assert payload["status"]["notices"][0]["location"] == store.WIRING_FILENAME
+    assert payload["status"]["custom"] is False, "the shipped pins are what is in force"
+    assert payload["status"]["canReset"] is True
 
 
 def test_a_file_fixed_by_hand_never_lifts_the_refusal_while_the_shipped_pins_are_in_force(tmp_path):
@@ -664,7 +665,7 @@ def test_a_file_fixed_by_hand_never_lifts_the_refusal_while_the_shipped_pins_are
     assert rig.definition.wiring_problem(), "the shipped pins are still the ones in force"
     assert registry.channels().content_hash() == SHIPPED_PINOUT_HASH
     payload = _hardware_get(rig)
-    assert any(p["location"] == store.WIRING_FILENAME for p in payload["problems"])
+    assert any(p["location"] == store.WIRING_FILENAME for p in payload["status"]["notices"])
 
     rig.save(rig.hardware.load())  # only a save (or a restart) puts it in force
     assert rig.definition.wiring_problem() is None
@@ -717,7 +718,7 @@ def test_hardware_get_shows_the_wiring_in_force_not_a_file_copied_in_since(tmp_p
     payload = _hardware_get(rig)
     assert payload["document"]["pins"]["left_well"]["index"] == 3
     assert registry.channels().get("left_well").index == 3
-    differs = [p for p in payload["problems"] if p["location"] == store.WIRING_FILENAME]
+    differs = payload["status"]["notices"]
     assert differs and "not in force" in differs[0]["message"]
     assert "boxes run the wiring in force" in differs[0]["message"]
 
@@ -729,13 +730,13 @@ def test_hardware_get_after_a_hand_corruption_says_the_wiring_in_force_still_run
 
     payload = _hardware_get(rig)
     assert payload["document"]["pins"]["left_well"]["index"] == 3
-    message = payload["problems"][0]["message"]
+    message = payload["status"]["notices"][0]["message"]
     assert "did not load" in message and "boxes run the wiring in force" in message
     assert "no box can start" not in message
     assert rig.definition.wiring_problem() is None
 
 
-def test_hardware_get_on_unloaded_wiring_shows_the_shipped_pins_and_says_so(tmp_path):
+def test_unloaded_wiring_that_will_not_parse_offers_the_shipped_pins_as_the_draft_and_says_so(tmp_path):
     first = Rig(tmp_path)
     first.save(_swapped_ports())
     first.hardware.path.write_text("{ damaged", encoding="utf-8")
@@ -743,9 +744,48 @@ def test_hardware_get_on_unloaded_wiring_shows_the_shipped_pins_and_says_so(tmp_
 
     payload = _hardware_get(rig)
     assert payload["document"]["pins"]["left_well"]["index"] == 4  # the shipped pin
-    message = payload["problems"][0]["message"]
+    message = payload["status"]["notices"][0]["message"]
     assert "shipped pins are in force" in message and "no box can start" in message
+    assert "starts from the shipped pins" in message
+    assert payload["status"]["custom"] is False
     assert "no box can start" in rig.definition.wiring_problem()
+
+
+def test_unloaded_wiring_serves_the_stored_document_to_repair_and_a_save_lifts_the_refusal(tmp_path):
+    first = Rig(tmp_path)
+    first.save(_swapped_ports())
+    broken = json.loads(first.hardware.path.read_text(encoding="utf-8"))
+    broken["pins"].pop("odor_port")
+    first.hardware.path.write_text(json.dumps(broken), encoding="utf-8")
+    rig = Rig(tmp_path)
+
+    payload = _hardware_get(rig)
+    draft = payload["document"]
+    assert draft["pins"]["left_well"]["index"] == 3, "the operator's own wiring, to repair"
+    assert "odor_port" not in draft["pins"]
+    assert "RIG101" in {p["code"] for p in payload["problems"]}, "the draft's own problem"
+    assert "shipped pins are in force" in payload["status"]["notices"][0]["message"]
+    assert registry.channels().content_hash() == SHIPPED_PINOUT_HASH
+
+    draft["pins"]["odor_port"] = {"index": 2, "watch_bit": 0}
+    saved = rig.save(draft)
+    assert rig.definition.wiring_problem() is None
+    assert saved["status"]["notices"] == [] and saved["status"]["custom"] is True
+    assert registry.channels().get("left_well").index == 3
+
+
+def test_reset_is_offered_whenever_the_refusal_names_it(tmp_path):
+    first = Rig(tmp_path)
+    first.save(_swapped_ports())
+    first.hardware.path.write_text("{ damaged", encoding="utf-8")
+    rig = Rig(tmp_path)
+    rig.hardware.path.unlink()  # deleted by hand after the failed load
+
+    status = _hardware_get(rig)["status"]
+    assert status["custom"] is False
+    assert status["notices"] and "reset" in status["notices"][0]["message"]
+    assert status["canReset"] is True
+    assert service.document_payload(store.HardwareStore(tmp_path / "fresh"))["status"]["canReset"] is False
 
 
 def test_an_identical_copy_with_another_edited_at_is_no_difference(tmp_path):
@@ -754,10 +794,10 @@ def test_an_identical_copy_with_another_edited_at_is_no_difference(tmp_path):
     copied = json.loads(rig.hardware.path.read_text(encoding="utf-8"))
     copied["edited_at"] = "2020-01-01T00:00:00Z"
     rig.hardware.path.write_text(json.dumps(copied), encoding="utf-8")
-    assert [p for p in _hardware_get(rig)["problems"] if p["code"] is None] == []
+    assert _hardware_get(rig)["status"]["notices"] == []
 
 
-# Fix 2: reset can never bring older wiring back into force
+# A reset never brings an older layout back into force
 
 
 def _fail_unlinking(monkeypatch, name: str) -> None:
@@ -793,7 +833,7 @@ def test_a_reset_that_cannot_remove_an_older_layout_never_brings_it_back(tmp_pat
     assert restarted.definition.wiring_problem() is None
 
 
-# Fix 3: a refused save never touches the vocabulary
+# A refused save never touches the vocabulary
 
 
 def test_a_save_refused_for_a_missing_pin_issues_no_code(tmp_path):

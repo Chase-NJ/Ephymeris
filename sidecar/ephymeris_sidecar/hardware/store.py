@@ -24,10 +24,13 @@ committed; the folder fsync after it is best effort, logged if it fails.
 
 STORED WIRING THAT WILL NOT LOAD IS NEVER REPLACED BY THE SHIPPED ONE SILENTLY.
 The registry composes the shipped pinout meanwhile, because the process owns six
-serial ports and must start; but `load_problems` says why, `hardware.get` shows
-it, and no box is started, flashed or identified until the wiring is saved
-again, reset, or the app restarts onto a file that loads
-(`RigDefinition.wiring_problem`, which follows the wiring IN FORCE).
+serial ports and must start; but `load_problems` says why, and no box is
+started, flashed or identified until the wiring is saved again, reset, or the
+app restarts onto a file that loads (`RigDefinition.wiring_problem`, which
+follows the wiring IN FORCE). Meanwhile `hardware.get` serves the stored
+document itself as the editor's draft (`stored_document`), broken, with a
+notice that the shipped pins are in force -- so the operator repairs their own
+wiring and saves it, rather than retyping it over the shipped pins.
 
 TWO OLDER LAYOUTS ARE READ IN PLACE until the next save writes `wiring.json`
 and removes them:
@@ -162,8 +165,9 @@ class HardwareStore:
         return self._stored().problems
 
     def stored_document(self) -> dict | None:
-        """The stored document as parsed, whether or not it loads, so the
-        editor can show the operator the wiring that needs fixing."""
+        """The stored document as parsed, whether or not it loads: the draft
+        `hardware.get` serves while it did not load, so the operator can repair
+        it and save. None when there is none, or it will not even parse."""
         return self._stored().document
 
     def status(self) -> RigStatus:
@@ -267,9 +271,6 @@ class HardwareStore:
             self.pin_map_path.with_suffix(".json.tmp"),
             self.legacy_rig_path.with_suffix(".json.tmp"),
         )
-
-    def _every_layout(self) -> tuple[Path, ...]:
-        return (self.path, self.path.with_name(self.path.name + ".part"), *self._older_layouts())
 
     def _documents(self) -> tuple[Path, ...]:
         """The files that hold wiring; temporary files never do on their own."""

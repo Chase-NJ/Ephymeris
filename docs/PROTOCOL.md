@@ -2523,11 +2523,11 @@ One strobe code a channel-set save issues (`TASKS.md#edge-codes`). Appended to t
 <a id="shape-rigdocument"></a>
 #### RigDocument
 
-The wiring, plus everything wrong with it. `document` is served even when `problems` is non-empty: an editor that refused to show a broken document would be refusing to show the one that needs fixing.
+The draft, plus everything wrong with it. `document` is served even when `problems` is non-empty: an editor that refused to show a broken document would be refusing to show the one that needs fixing. `problems` are the draft's; what is wrong with the rig is `status.notices`.
 
 | Field | Type | Notes |
 |---|---|---|
-| `document` | unknown | The rig document itself — `{rig_version, channels, pins}`, validated against rig/schema/rig_hardware.v1.json. |
+| `document` | unknown | The draft the editor opens — `{rig_version, channels, pins}`, validated against rig/schema/rig_hardware.v1.json. The wiring in force; or, while stored wiring did not load, that stored document itself, broken, so it can be repaired and saved (the shipped pins when it will not even parse). `status.notices` says which. |
 | `status` | [RigStatus](#shape-rigstatus) |  |
 | `problems` | [RigProblem](#shape-rigproblem)[] |  |
 
@@ -2568,12 +2568,14 @@ One thing wrong with a wiring document, located. Every problem is reported rathe
 
 | Field | Type | Notes |
 |---|---|---|
-| `custom` | boolean | False ⇒ this rig runs the wiring its build shipped with. |
-| `derivedFrom` | string | The shipped pinout this document started as. |
+| `custom` | boolean | Of the wiring IN FORCE: false ⇒ this rig runs the wiring its build shipped with, which includes while its stored wiring did not load (`notices` says so). |
+| `derivedFrom` | string | The shipped pinout the wiring in force started as. |
 | `board` | string |  |
 | `editedAt` | string \| null |  |
 | `pinoutHash` | string | The composed wiring's hash, over the fields that can change a compiled byte. Prose and pin notes are excluded: it answers 'could these two produce different firmware?', so a reworded rationale must not move it. |
 | `channelSetHash` | string | The channel set's hash: what every channel is (type, role, edges and their code names), never where it is. Labels and prose are excluded, and so is every pin, so two machines sharing one channel set agree on it whatever their pin maps (`TASKS.md#the-channel-set-and-the-pin-map`). |
+| `notices` | [RigProblem](#shape-rigproblem)[] | Where the wiring in force and the stored file part ways: stored wiring that did not load (the shipped pins are in force and every box is refused), or a file changed on disk since it was installed. Each says what is and is not blocked. About the RIG, never the draft: they stand through every edit, and do not stop a save, which is how one is cleared. |
+| `canReset` | boolean | Reset would change something: the rig has wiring of its own in force or on disk, or a notice offers Reset as the way out. |
 
 <a id="shape-runchange"></a>
 #### RunChange

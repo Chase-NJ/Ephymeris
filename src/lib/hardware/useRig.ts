@@ -6,6 +6,7 @@ import { useSidecar } from "@/lib/ws/context";
 import { EVT } from "@/lib/ws/protocol";
 
 import { getRig, previewRig, resetRig, saveRig } from "./commands";
+import { applyPreview } from "./rigView";
 import type { RigAllocation, RigDocument, RigImpact, RigProblem, RigStatus } from "./types";
 
 /**
@@ -31,7 +32,8 @@ export interface RigSession {
   baseline: RigDocument | null;
   dirty: boolean;
   status: RigStatus | null;
-  /** Schema violations and RIG101–RIG107, for the document as it stands. */
+  /** The DRAFT's schema violations and RIG101–RIG107. What is wrong with the
+   *  rig itself is `status.notices`, which no edit clears (`rigView.ts`). */
   problems: RigProblem[];
   /** Tasks this change would newly stop compiling. */
   breaks: RigImpact[];
@@ -123,9 +125,13 @@ export function useRig(): RigSession {
       void previewRig(client, doc)
         .then((reply) => {
           if (mine !== sequence.current) return;
-          setProblems(reply.problems);
-          setBreaks(reply.breaks);
-          setAllocations(reply.allocations);
+          // The draft's problems are replaced; the rig's notices ride on the
+          // status, which describes the wiring in force (`rigView.ts`).
+          const next = applyPreview({ status, problems, breaks, allocations }, reply);
+          setStatus(next.status);
+          setProblems(next.problems);
+          setBreaks(next.breaks);
+          setAllocations(next.allocations);
         })
         .catch((err) => {
           if (mine === sequence.current) setActionError(errorMessage(err));
@@ -135,6 +141,8 @@ export function useRig(): RigSession {
         });
     }, PREVIEW_DEBOUNCE_MS);
     return () => clearTimeout(timer);
+    // `status`, `problems`, `breaks` and `allocations` are what the reply
+    // replaces, never what triggers a preview.
   }, [client, connected, doc, dirty]);
 
   const setDoc = useCallback((next: RigDocument) => {

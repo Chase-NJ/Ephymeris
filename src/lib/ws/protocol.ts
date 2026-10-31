@@ -1697,9 +1697,12 @@ export interface RigProblem {
 }
 
 export interface RigStatus {
-  /** False ⇒ this rig runs the wiring its build shipped with. */
+  /**
+   * Of the wiring IN FORCE: false ⇒ this rig runs the wiring its build shipped with, which
+   * includes while its stored wiring did not load (`notices` says so).
+   */
   custom: boolean;
-  /** The shipped pinout this document started as. */
+  /** The shipped pinout the wiring in force started as. */
   derivedFrom: string;
   board: string;
   editedAt: string | null;
@@ -1715,17 +1718,31 @@ export interface RigStatus {
    * channel set agree on it whatever their pin maps (`TASKS.md#the-channel-set-and-the-pin-map`).
    */
   channelSetHash: string;
+  /**
+   * Where the wiring in force and the stored file part ways: stored wiring that did not load (the
+   * shipped pins are in force and every box is refused), or a file changed on disk since it was
+   * installed. Each says what is and is not blocked. About the RIG, never the draft: they stand
+   * through every edit, and do not stop a save, which is how one is cleared.
+   */
+  notices: RigProblem[];
+  /**
+   * Reset would change something: the rig has wiring of its own in force or on disk, or a notice
+   * offers Reset as the way out.
+   */
+  canReset: boolean;
 }
 
 /**
- * The wiring, plus everything wrong with it. `document` is served even when `problems` is
+ * The draft, plus everything wrong with it. `document` is served even when `problems` is
  * non-empty: an editor that refused to show a broken document would be refusing to show the one
- * that needs fixing.
+ * that needs fixing. `problems` are the draft's; what is wrong with the rig is `status.notices`.
  */
 export interface RigDocument {
   /**
-   * The rig document itself — `{rig_version, channels, pins}`, validated against
-   * rig/schema/rig_hardware.v1.json.
+   * The draft the editor opens — `{rig_version, channels, pins}`, validated against
+   * rig/schema/rig_hardware.v1.json. The wiring in force; or, while stored wiring did not load,
+   * that stored document itself, broken, so it can be repaired and saved (the shipped pins when
+   * it will not even parse). `status.notices` says which.
    */
   document: unknown;
   status: RigStatus;

@@ -1784,8 +1784,14 @@ SHAPES = (
     Shape(
         "RigStatus",
         obj(
-            f("custom", BOOL, doc="False ⇒ this rig runs the wiring its build shipped with."),
-            f("derivedFrom", STR, doc="The shipped pinout this document started as."),
+            f(
+                "custom",
+                BOOL,
+                doc="Of the wiring IN FORCE: false ⇒ this rig runs the wiring its "
+                "build shipped with, which includes while its stored wiring did not "
+                "load (`notices` says so).",
+            ),
+            f("derivedFrom", STR, doc="The shipped pinout the wiring in force started as."),
             f("board", STR),
             f("editedAt", nullable(STR)),
             f(
@@ -1805,18 +1811,44 @@ SHAPES = (
                 "channel set agree on it whatever their pin maps "
                 "(`TASKS.md#the-channel-set-and-the-pin-map`).",
             ),
+            f(
+                "notices",
+                ListOf(Ref("RigProblem")),
+                doc="Where the wiring in force and the stored file part ways: stored "
+                "wiring that did not load (the shipped pins are in force and every "
+                "box is refused), or a file changed on disk since it was installed. "
+                "Each says what is and is not blocked. About the RIG, never the "
+                "draft: they stand through every edit, and do not stop a save, "
+                "which is how one is cleared.",
+            ),
+            f(
+                "canReset",
+                BOOL,
+                doc="Reset would change something: the rig has wiring of its own in "
+                "force or on disk, or a notice offers Reset as the way out.",
+            ),
         ),
     ),
     Shape(
         "RigDocument",
         obj(
-            f("document", ANY, doc="The rig document itself — `{rig_version, channels, pins}`, validated against rig/schema/rig_hardware.v1.json."),
+            f(
+                "document",
+                ANY,
+                doc="The draft the editor opens — `{rig_version, channels, pins}`, "
+                "validated against rig/schema/rig_hardware.v1.json. The wiring in "
+                "force; or, while stored wiring did not load, that stored document "
+                "itself, broken, so it can be repaired and saved (the shipped pins "
+                "when it will not even parse). `status.notices` says which.",
+            ),
             f("status", Ref("RigStatus")),
             f("problems", ListOf(Ref("RigProblem"))),
         ),
-        doc="The wiring, plus everything wrong with it. `document` is served even "
+        doc="The draft, plus everything wrong with it. `document` is served even "
         "when `problems` is non-empty: an editor that refused to show a broken "
-        "document would be refusing to show the one that needs fixing.",
+        "document would be refusing to show the one that needs fixing. "
+        "`problems` are the draft's; what is wrong with the rig is "
+        "`status.notices`.",
     ),
     Shape(
         "RigImpact",

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import functools
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -286,7 +287,11 @@ class RigDefinition:
             # Install before reporting, or the reply would describe the wiring
             # that was in force a moment ago.
             self._install_wiring()
-            payload = await asyncio.to_thread(hardware_service.saved_payload, self._hardware, stored)
+            payload = await asyncio.to_thread(
+                functools.partial(
+                    hardware_service.saved_payload, self._hardware, stored, in_force=self.in_force()
+                )
+            )
             payload["breaks"] = breaks
             payload["allocations"] = [a.to_json() for a in issued]
             await self._rebuild()

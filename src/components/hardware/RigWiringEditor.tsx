@@ -21,6 +21,7 @@ import {
   type RigChannel,
   type RigDocument,
 } from "@/lib/hardware/types";
+import { canReset, canSave as canSaveView } from "@/lib/hardware/rigView";
 import { useStrobeVocabulary } from "@/lib/strobes/useStrobeVocabulary";
 import { onsetOptions } from "@/lib/taskdef/lines";
 import type { RigSession } from "@/lib/hardware/useRig";
@@ -182,7 +183,8 @@ export function RigWiringEditor({
   }
 
   const errors = rig.problems.length;
-  const canSave = rig.dirty && errors === 0 && !rig.saving;
+  const notices = rig.status?.notices ?? [];
+  const canSave = canSaveView(rig, { dirty: rig.dirty, saving: rig.saving });
 
   return (
     <div>
@@ -211,7 +213,7 @@ export function RigWiringEditor({
         <Button
           variant="ghost"
           onClick={() => void rig.reset()}
-          disabled={rig.saving || !rig.status?.custom}
+          disabled={!canReset(rig.status, rig.saving)}
           title="Discard this rig's wiring and use the pinout the build shipped with"
         >
           <RotateCcw size={12} strokeWidth={1.75} />
@@ -270,6 +272,20 @@ export function RigWiringEditor({
                 Add a channel
               </Button>
             </div>
+
+            {notices.length > 0 && (
+              <Callout
+                title="This rig's wiring"
+                tone="warning"
+                why="About the wiring in force, not this draft: no edit clears these. Saving a draft without problems, or Reset, does."
+              >
+                {notices.map((n, i) => (
+                  <p key={i} className="text-[11px] leading-relaxed">
+                    {n.message}
+                  </p>
+                ))}
+              </Callout>
+            )}
 
             {rig.problems.length > 0 && (
               <Callout title="Problems">

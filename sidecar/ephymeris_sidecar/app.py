@@ -1152,7 +1152,9 @@ class Application:
 
         def preview() -> dict[str, Any]:
             breaks = rig_definition.impact_of(self.task_store, wiring=document)
-            return hardware_service.preview_payload(self.hardware_store, document, breaks)
+            return hardware_service.preview_payload(
+                self.hardware_store, document, breaks, in_force=self.rig_definition.in_force()
+            )
 
         async with self._preview_gate:
             return await asyncio.to_thread(preview)

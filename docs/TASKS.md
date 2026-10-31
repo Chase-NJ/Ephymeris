@@ -713,7 +713,7 @@ Both lab machines must hold one channel set and emit identical codes ([ADR 0003]
 - **`channel_set_hash`** is `ChannelSet.content_hash()` ([Registry rules](#registry-rules)).
 - **Export is refused** in two cases:
   - an edge has no code yet, for example on the shipped set before this machine's first save. The importer would issue its own numbers;
-  - the stored wiring did not load.
+  - the stored wiring is not in force: it did not load, or it is held.
 
 **The import replaces this machine's channel set with the file's and keeps every pin.** It adopts the file's entries verbatim, labels and declaration order included, so the two documents agree beyond the hash. It merges the vocabulary as [a vocabulary import](#moving-codes-between-machines) does. `apply: false` returns the plan and writes nothing.
 
@@ -734,7 +734,7 @@ Besides conflicts:
 
 - **A plan reports `breaks`**, as `hardware.preview` does. Applying it needs `confirm`.
 - **A plan reports `reordered`** when the file declares the channels in another order, because declaration order is the [odor index](#order-is-meaning).
-- **An import is refused** while the stored wiring did not load, while a stored file waits for its pins to be confirmed (RIG108), and while a session is set up or a box is running.
+- **An import is refused** while the stored wiring did not load or is held, while a stored file waits for its pins to be confirmed (RIG108), and while a session is set up or a box is running.
 
 **A clean import is one [rig definition write](#the-rig-definition).** It plans again inside the write, saves the vocabulary (when it changes), then `wiring.json`, then runs one rebuild. The vocabulary goes first, so the wiring never names a code the vocabulary lacks. If the wiring then fails to write, the vocabulary keeps the union, which is append only. The rebuild still runs, and importing again then changes only the wiring. An identical import writes nothing.
 

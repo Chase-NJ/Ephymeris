@@ -217,8 +217,7 @@ def test_a_code_retired_here_that_the_file_names_is_a_conflict(tmp_path):
 
     b = Machine(tmp_path / "b")
     b.save()
-    b.vocabulary.save(strobe_store.retire(b.vocabulary.load_strict(), "TRIAL_LIGHT_ON"))
-    b.use()
+    _retire_trial_light_on(b)
     before = b.files()
 
     plan = b.plan(exported)
@@ -227,6 +226,18 @@ def test_a_code_retired_here_that_the_file_names_is_a_conflict(tmp_path):
     with pytest.raises(transfer.ChannelSetImportConflict):
         b.import_(exported)
     assert b.files() == before
+
+
+def _retire_trial_light_on(m: Machine) -> None:
+    """Retire TRIAL_LIGHT_ON here the way a rig gets there: retired, then the
+    light saved again, which issues it TRIAL_LIGHT_ON_2. This machine's own
+    wiring stays loadable; another machine's still names the old code."""
+    asyncio.run(m.definition.edit_vocabulary(lambda d: strobe_store.retire(d, "TRIAL_LIGHT_ON")))
+    # The file now breaks RIG107 and would not load; the wiring in force holds.
+    doc = m.definition.in_force().document
+    doc["channels"]["trial_light"].pop("edges")
+    m.save(doc)
+    assert m.hardware.load()["channels"]["trial_light"]["edges"]["on"] == "TRIAL_LIGHT_ON_2"
 
 
 def test_a_file_changed_after_export_is_refused_by_its_hash(tmp_path):
@@ -453,8 +464,7 @@ def test_conflicts_of_different_kinds_are_listed_together(tmp_path):
     doc = b.hardware.load()
     del doc["channels"]["door"], doc["pins"]["door"]
     b.save(doc)
-    b.vocabulary.save(strobe_store.retire(b.vocabulary.load_strict(), "TRIAL_LIGHT_ON"))
-    b.use()
+    _retire_trial_light_on(b)
 
     kinds = {(c["kind"], c["channel"]) for c in b.plan(exported)["conflicts"]}
     assert ("vocabulary", None) in kinds

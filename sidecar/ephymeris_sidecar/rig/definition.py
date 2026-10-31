@@ -369,10 +369,12 @@ class RigDefinition:
 
     def export_channel_set(self) -> dict[str, Any]:
         """This rig's channel set and vocabulary, as `hardware.exportChannelSet`
-        sends them. Refused while the stored wiring did not load: the channel
-        set in force is then the shipped one, not this rig's."""
-        if self._unloaded:
-            raise WiringNotLoaded(self._unloaded)
+        sends them. Refused while the stored wiring is not in force (it did not
+        load, or is held): the channel set in force is then the shipped one,
+        not this rig's."""
+        problem = self.wiring_problem()
+        if problem:
+            raise WiringNotLoaded(problem)
         wiring = self._wiring_in_force()
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         return {
@@ -440,8 +442,9 @@ class RigDefinition:
         the rig's state refuses a save: an import over the shipped pins, or over
         a stored file whose pins nobody has confirmed, would put either in force
         unseen."""
-        if self._unloaded:
-            raise WiringNotLoaded(self._unloaded)
+        problem = self.wiring_problem()
+        if problem:
+            raise WiringNotLoaded(problem)
         blocked = self.save_blocked(confirmed_pins=False)
         if blocked:
             raise WiringSaveBlocked(blocked)

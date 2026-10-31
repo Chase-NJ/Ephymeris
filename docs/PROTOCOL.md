@@ -322,7 +322,7 @@ Discard this rig's document and go back to the shipped wiring. A wiring change l
 <a id="cmd-hardware.exportchannelset"></a>
 #### `hardware.exportChannelSet`
 
-The channel set and the vocabulary as they travel to the other lab machine (`TASKS.md#moving-the-channel-set-between-machines`). `CHANNEL_SET_INVALID` while an edge has no code yet (save the wiring first); `RIG_WIRING_UNLOADED` while the stored wiring did not load; `STROBE_VOCABULARY_UNREADABLE` while the vocabulary will not read.
+The channel set and the vocabulary as they travel to the other lab machine (`TASKS.md#moving-the-channel-set-between-machines`). `CHANNEL_SET_INVALID` while an edge has no code yet (save the wiring first); `RIG_WIRING_UNLOADED` while the stored wiring did not load or is held; `STROBE_VOCABULARY_UNREADABLE` while the vocabulary will not read.
 
 **Result**
 

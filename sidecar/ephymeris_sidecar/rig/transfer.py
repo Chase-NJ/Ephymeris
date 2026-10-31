@@ -72,8 +72,6 @@ class ImportPlan:
     conflicts: list[dict[str, Any]] = field(default_factory=list)
     #: Channels on both sides whose entry differs.
     changed: list[str] = field(default_factory=list)
-    #: The declaration order differs: the odor index (TASKS.md#order-is-meaning).
-    reordered: bool = False
     #: Saved tasks the import would newly break; set by the caller, who has them.
     breaks: list[dict[str, Any]] = field(default_factory=list)
 
@@ -84,14 +82,13 @@ class ImportPlan:
     @property
     def identical(self) -> bool:
         """Nothing to write: the two machines already agree."""
-        return not (self.conflicts or self.changed or self.reordered or self.changes_vocabulary)
+        return not (self.conflicts or self.changed or self.changes_vocabulary)
 
     def to_json(self) -> dict[str, Any]:
         return {
             "conflicts": self.conflicts,
             "vocabulary": self.vocabulary.to_json(),
             "changed": self.changed,
-            "reordered": self.reordered,
             "breaks": self.breaks,
             "hereHash": self.here_hash,
             "thereHash": self.there_hash,
@@ -174,7 +171,6 @@ def plan_import(wiring: dict[str, Any], vocabulary: dict[str, Any], other: Any) 
         here_hash=_compose(wiring).channel_set.content_hash(),
         there_hash=stated_hash,
         changed=[n for n in there_channels if n in here_channels and here_channels[n] != there_channels[n]],
-        reordered=set(there_channels) == set(here_channels) and list(there_channels) != list(here_channels),
     )
     conflicts = plan.conflicts
     conflicts += [_conflict("vocabulary", None, c["message"]) for c in vocab_plan.conflicts]
@@ -188,6 +184,7 @@ def plan_import(wiring: dict[str, Any], vocabulary: dict[str, Any], other: Any) 
         for name in here_channels
         if name not in there_channels
     ]
+    conflicts += _order_conflicts(list(here_channels), list(there_channels))
     same_channels = set(there_channels) == set(here_channels)
 
     composed = _compose(joined)
@@ -238,6 +235,26 @@ def plan_import(wiring: dict[str, Any], vocabulary: dict[str, Any], other: Any) 
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
+
+
+def _order_conflicts(here: list[str], there: list[str]) -> list[dict[str, Any]]:
+    """An `order` conflict for every channel both sides have whose place among
+    them differs. Declaration order is the odor index
+    (TASKS.md#order-is-meaning): adopting another order would put another line
+    behind each odor position, with every trial still looking correct."""
+    shared_here = [n for n in here if n in there]
+    shared_there = [n for n in there if n in here]
+    return [
+        _conflict(
+            "order",
+            name,
+            f"{name} is channel {here.index(name) + 1} here and {there.index(name) + 1} in that "
+            "channel set. Declaration order is the odor index, so the two must list their "
+            "channels in one order.",
+        )
+        for name, mine in zip(shared_there, shared_here)
+        if name != mine
+    ]
 
 
 def _conflict(kind: str, channel: str | None, message: str) -> dict[str, Any]:

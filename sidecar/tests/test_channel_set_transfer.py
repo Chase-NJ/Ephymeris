@@ -336,20 +336,33 @@ def test_an_import_that_would_break_a_saved_task_needs_confirm(tmp_path):
     assert registry.channels().get("lever").role == "routing"
 
 
-def test_an_import_reorders_the_channels_as_the_file_declares_them(tmp_path):
+def test_a_channel_order_that_differs_is_a_conflict_naming_each_channel_that_would_move(tmp_path):
+    """Declaration order is the odor index: importing another order would put
+    another line behind each odor position, so it is refused whole."""
     a = Machine(tmp_path / "a")
     a.save()
     doc = a.hardware.load()
-    doc["channels"] = dict(reversed(list(doc["channels"].items())))
+    names = list(doc["channels"])
+    i, j = names.index("odor_line_1"), names.index("odor_line_2")
+    names[i], names[j] = names[j], names[i]
+    doc["channels"] = {n: doc["channels"][n] for n in names}
     a.save(doc)
     exported = a.export()
 
     b = Machine(tmp_path / "b")
     b.save()
+    before = b.files()
+    b.events.clear()
+
     plan = b.plan(exported)
-    assert plan["reordered"] is True and plan["changed"] == []
-    b.import_(exported)
-    assert list(b.hardware.load()["channels"]) == list(doc["channels"])
+    assert plan["hereHash"] != plan["thereHash"]
+    assert {(c["kind"], c["channel"]) for c in plan["conflicts"]} == {
+        ("order", "odor_line_1"), ("order", "odor_line_2"),
+    }
+    assert plan["changed"] == []
+    with pytest.raises(transfer.ChannelSetImportConflict):
+        b.import_(exported, confirm=True)
+    assert b.files() == before and b.events == []
 
 
 def test_an_import_is_refused_while_a_session_is_set_up(tmp_path):

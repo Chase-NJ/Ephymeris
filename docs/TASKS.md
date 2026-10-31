@@ -656,7 +656,7 @@ flowchart TD
 - **`channels()` is cached and cleared only by `set_rig_source`**, which `Application` calls at construction and after a wiring write. Never hang invalidation off `settings.push`: it fires on every reconnect.
 - **`hardware/store.py`'s `default_document()` reads the shipped pair via `shipped_channels()`**, never the wiring in force — otherwise Reset resets to itself. It also keeps declaration order (sorting by pin once re-ordered the odor table on a rig's first save).
 - **`ChannelMap.content_hash()` covers only fields that can change a compiled byte** (name, kind, direction, pin, watch bit, well, port slot). A reworded rationale must not move it, or people learn to ignore it. **`onset_strobe` is excluded for the same reason**: the generator emits the code a trial row stores, so the declaration changes what the editor writes, never a compiled byte. A profile names channels, not pins, so a rewiring moves no `profile_hash`; this hash is what records which wiring a sketch was built against (it is stamped into each generated header).
-- **The channel-set fields stay out of `ChannelMap.content_hash()`.** They have their own hash, `ChannelSet.content_hash()` (`channelSetHash` on the Rig status). It covers what every channel is, and leaves out labels, prose and every pin, so two machines sharing one channel set agree on it whatever their pin maps say. Putting the new fields in the pinout hash would rebuild every sketch for a change no box can observe.
+- **The channel-set fields stay out of `ChannelMap.content_hash()`.** They have their own hash, `ChannelSet.content_hash()` (`channelSetHash` on the Rig status). It covers what every channel is and **the order the channels are declared in**, and leaves out labels, prose and every pin, so two machines sharing one channel set agree on it whatever their pin maps say. Order is in it because declaration order is the [odor index](#order-is-meaning): the same lines in another order are not the same channel set. Putting the new fields in the pinout hash would rebuild every sketch for a change no box can observe.
 
 ### The wiring page
 
@@ -716,7 +716,7 @@ Both lab machines must hold one channel set and emit identical codes ([ADR 0003]
   - an edge has no code yet, for example on the shipped set before this machine's first save. The importer would issue its own numbers;
   - the stored wiring is not in force: it did not load, or it is held.
 
-**The import replaces this machine's channel set with the file's and keeps every pin.** It adopts the file's entries verbatim, labels and declaration order included, so the two documents agree beyond the hash. It merges the vocabulary as [a vocabulary import](#moving-codes-between-machines) does. `apply: false` returns the plan and writes nothing.
+**The import replaces this machine's channel set with the file's and keeps every pin.** It adopts the file's entries verbatim, labels included, so the two documents agree beyond the hash. Declaration order must already agree (an `order` conflict otherwise). It merges the vocabulary as [a vocabulary import](#moving-codes-between-machines) does. `apply: false` returns the plan and writes nothing.
 
 **Any conflict refuses the whole import**, and the plan lists every one (`ChannelSetConflict.kind`):
 
@@ -725,6 +725,7 @@ Both lab machines must hold one channel set and emit identical codes ([ADR 0003]
 | `vocabulary` | One name with two codes, one code with two names, or a code this machine cannot issue |
 | `not_here` | A channel the file has and this rig lacks. It has no pin here |
 | `only_here` | A channel this rig has and the file lacks. Its pin would belong to no channel |
+| `order` | A channel both sides have, declared at another position. Declaration order is the [odor index](#order-is-meaning), so adopting another order would put another line behind each odor position with every trial still looking correct. One conflict per channel that would move |
 | `no_code` | An edge the file names no code for |
 | `rule` | A [wiring rule](#wiring-rules) the joined document breaks against the merged vocabulary. One case is a code retired here that the file's channel names: a merge never reinstates |
 | `hash` | The joined channel set does not hash to the file's `channel_set_hash`: the file changed after export |
@@ -734,7 +735,6 @@ Two kinds are judged only when nothing else already names the problem. `rule` an
 Besides conflicts:
 
 - **A plan reports `breaks`**, as `hardware.preview` does. Applying it needs `confirm`.
-- **A plan reports `reordered`** when the file declares the channels in another order, because declaration order is the [odor index](#order-is-meaning).
 - **An import is refused** while the stored wiring did not load or is held, while a stored file waits for its pins to be confirmed (RIG108), and while a session is set up or a box is running.
 
 **A clean import is one [rig definition write](#the-rig-definition).** It plans again inside the write, saves the vocabulary (when it changes), then `wiring.json`, then runs one rebuild. The vocabulary goes first, so the wiring never names a code the vocabulary lacks. If the wiring then fails to write, the vocabulary keeps the union, which is append only. The rebuild still runs, and importing again then changes only the wiring. An identical import writes nothing.

@@ -80,8 +80,8 @@ export function ChannelSetImportDialog({
         <p className="text-[13px] leading-relaxed text-static">
           Make this rig&rsquo;s channels and strobe codes the other machine&rsquo;s, so both
           record the same task under the same numbers. The pins stay this rig&rsquo;s own. Any
-          disagreement — one name with two codes, a channel one side lacks — refuses the whole
-          import.
+          disagreement — one name with two codes, a channel one side lacks, the channels listed
+          in another order — refuses the whole import.
         </p>
         <label className="flex cursor-pointer items-center gap-2 self-start rounded-sm border border-halo bg-nebula px-3 py-1.5 text-[12px] text-static transition-colors hover:border-static/70 hover:text-starlight">
           <Upload size={13} strokeWidth={1.75} />
@@ -98,7 +98,7 @@ export function ChannelSetImportDialog({
           <Callout
             title={`${plan.conflicts.length} conflict${plan.conflicts.length === 1 ? "" : "s"} — nothing can be imported`}
             tone="error"
-            why="Resolve each on one of the two machines first. Picking a winner here would relabel one machine's recorded data, or leave a channel without a pin."
+            why="Resolve each on one of the two machines first. Picking a winner here would relabel one machine's recorded data, leave a channel without a pin, or put another odor line behind an odor position — channel order is the odor index."
           >
             {plan.conflicts.map((c, i) => (
               <span key={`${c.kind}-${c.channel ?? ""}-${i}`} className="font-mono text-[10.5px] text-static">
@@ -111,13 +111,6 @@ export function ChannelSetImportDialog({
           <Callout title={`${plan.changed.length} channel${plan.changed.length === 1 ? "" : "s"} change`}>
             <span className="font-mono text-[11px] text-starlight">{plan.changed.join(", ")}</span>
           </Callout>
-        )}
-        {plan && !conflicted && plan.reordered && (
-          <Callout
-            title="The channels change order"
-            tone="warning"
-            why="Declaration order is the odor index: each odor line keeps its pin, but its position in the odor table follows the other machine."
-          />
         )}
         {vocab && !conflicted && vocab.adds.length > 0 && (
           <Callout title={`${vocab.adds.length} code${vocab.adds.length === 1 ? "" : "s"} to add`}>

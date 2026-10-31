@@ -1953,7 +1953,9 @@ SHAPES = (
                 doc="`vocabulary` (one name with two codes, one code with two names, "
                 "or a code this machine cannot issue), `not_here` (a channel the file "
                 "has and this rig lacks, so it has no pin here), `only_here` (a "
-                "channel this rig has and the file lacks), `no_code` (an edge the "
+                "channel this rig has and the file lacks), `order` (a channel both "
+                "have, declared at another position: declaration order is the odor "
+                "index, `TASKS.md#order-is-meaning`), `no_code` (an edge the "
                 "file names no code for), `rule` (a wiring rule RIG101–RIG107 the "
                 "imported channel set breaks here, judged against the merged "
                 "vocabulary), or `hash` (the file changed after it was exported).",
@@ -1983,13 +1985,6 @@ SHAPES = (
                 "changed",
                 ListOf(STR),
                 doc="Channels on both sides whose entry the import replaces.",
-            ),
-            f(
-                "reordered",
-                BOOL,
-                doc="The file declares the channels in another order. Declaration "
-                "order is the odor index (`TASKS.md#order-is-meaning`), so it is "
-                "said out loud.",
             ),
             f(
                 "breaks",

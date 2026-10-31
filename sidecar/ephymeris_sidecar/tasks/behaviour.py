@@ -1,29 +1,23 @@
 """What a spine task's `profile_hash` covers: its behaviour, never its words.
 
-`TASKS.md#profile-and-params-hashes`. A spine profile's hash covers what the
-board runs and how replay scores it, so renaming a condition or rewording help
-text keeps one history (ADR 0003, *Hashes and data*).
-
-THE LIST IS OF WHAT IS LEFT OUT, NOT OF WHAT IS KEPT. Anything not named in
-`UNHASHED` is hashed, so a field added to a row, a phase or a block later is
-behaviour by default. A string meant for a person joins the list deliberately,
-by path, and `tests/test_behaviour_hash.py` pins the list and walks every leaf
-of a generated profile against it.
-
-Paths, not key names: a `name` on a row is a person's word, but a `name` added
-anywhere else is hashed until someone says otherwise here.
+`TASKS.md#a-spine-tasks-hash-covers-behaviour-only` says what is left out and
+why (`0003-phase-spine-task-model.md#hashes-and-data`). The list below is of
+what is LEFT OUT, by path: anything not on it is hashed, so a field added to a
+row, a phase or a block later is behaviour until someone lists it here.
 """
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 #: Any list element or dict value, in an `UNHASHED` path.
 ANY = "*"
 
-#: Every string meant for a person in a spine profile's `to_json`, by path.
-#: `strobes` is not here: `profile_hash` leaves it out of every profile, for
-#: a different reason (`TASKS.md#profile-and-params-hashes`).
+#: Every string meant for a person in a spine profile's `to_json`, by path. A
+#: listed path leaves out everything beneath it. Not here: `strobes`, which
+#: `profile_hash` leaves out of every profile, and `taskName`, which is the
+#: task's identity and hashed.
 UNHASHED: frozenset[tuple[str, ...]] = frozenset({
     ("legacyNames",),
     # The generator writes a row's name into its reward fields' labels.
@@ -36,11 +30,11 @@ UNHASHED: frozenset[tuple[str, ...]] = frozenset({
 })
 
 
-def behaviour(declaration: dict[str, Any]) -> dict[str, Any]:
+def behaviour_of(declaration: dict[str, Any]) -> dict[str, Any]:
     """`declaration` less every `UNHASHED` path, with the spine's rows keyed by id.
 
     A new structure; `declaration` is not changed. Keyed by id, reordering
-    rows moves nothing: what a block draws is its own ordered `rows` list.
+    `spine.rows` moves nothing: what a block draws is its own ordered `rows`.
     """
     out = _without(declaration, sorted(UNHASHED))
     spine = out.get("spine")
@@ -50,19 +44,13 @@ def behaviour(declaration: dict[str, Any]) -> dict[str, Any]:
 
 
 def _without(value: Any, paths: list[tuple[str, ...]]) -> Any:
-    """`value`, deep-copied, with each path that ends here removed."""
+    """`value`, deep-copied, with each path that ends at one of its keys removed."""
     if not paths:
-        return _copy(value)
+        return copy.deepcopy(value)
     if isinstance(value, dict):
-        out = {}
-        for key, child in value.items():
-            if (key,) in paths or (ANY,) in paths:
-                continue
-            out[key] = _without(child, _below(paths, key))
-        return out
+        return {key: _without(child, _below(paths, key))
+                for key, child in value.items() if (key,) not in paths}
     if isinstance(value, list):
-        if (ANY,) in paths:
-            return []
         return [_without(child, _below(paths, ANY)) for child in value]
     return value
 
@@ -70,14 +58,6 @@ def _without(value: Any, paths: list[tuple[str, ...]]) -> Any:
 def _below(paths: list[tuple[str, ...]], step: str) -> list[tuple[str, ...]]:
     """The rest of each path whose first step matches `step` (a key, or any)."""
     return [p[1:] for p in paths if len(p) > 1 and p[0] in (step, ANY)]
-
-
-def _copy(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {k: _copy(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_copy(v) for v in value]
-    return value
 
 
 def _keyed_by_id(rows: list[Any]) -> Any:

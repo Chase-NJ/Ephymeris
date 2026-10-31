@@ -1,4 +1,4 @@
-"""A spine task's `profile_hash` covers behaviour only — `TASKS.md#profile-and-params-hashes`.
+"""A spine task's `profile_hash` covers behaviour only — `TASKS.md#a-spine-tasks-hash-covers-behaviour-only`.
 
 What the board runs and how replay scores it moves the hash; every string
 meant for a person does not. The list of what is left out is explicit and
@@ -139,8 +139,13 @@ def unhashed(path) -> bool:
     if path[:1] == ("strobes",):
         return True  # left out of every profile's hash
     # A listed path leaves out everything beneath it.
-    return any(len(p) <= len(path) and all(s == "*" or s == step for s, step in zip(p, path))
+    return any(len(p) <= len(path) and all(s in (behaviour.ANY, step) for s, step in zip(p, path))
                for p in behaviour.UNHASHED)
+
+
+#: Strings the parser checks against a set: each is swapped for another legal one.
+_LEGAL_SWAPS = {"behavior": "utility", "utility": "behavior", "int": "float", "float": "int",
+                "bool": "int", "string": "int"}
 
 
 def changed(value):
@@ -149,11 +154,12 @@ def changed(value):
     if isinstance(value, (int, float)):
         return value + 1
     if isinstance(value, str):
-        return value + "x"
+        return _LEGAL_SWAPS.get(value, value + "x")
     return 0
 
 
-def at(raw, path, value):
+def replaced(raw, path, value):
+    """`raw` with the leaf at `path` set to `value`."""
     edited = copy.deepcopy(raw)
     target = edited
     for step in path[:-1]:
@@ -170,11 +176,7 @@ def test_every_field_not_on_the_list_moves_the_hash_and_every_field_on_it_does_n
     base = digest(raw)
     on_the_list = set()
     for path, value in leaves(raw):
-        try:
-            moved = digest(at(raw, path, changed(value))) != base
-        except task_profile.TaskProfileError:
-            assert not unhashed(path), f"{path} is on the list but its value is checked"
-            continue
+        moved = digest(replaced(raw, path, changed(value))) != base
         assert moved != unhashed(path), (
             f"{path} {'moved' if moved else 'did not move'} the hash"
         )
@@ -187,10 +189,21 @@ def test_the_snapshot_round_trips_byte_for_byte_through_the_parser():
     """Names stay in the snapshot: only the hash leaves them out."""
     raw = generated(rows=renamed_row("Orange"))
     again = task_profile.parse_profile(raw).to_json()
-    assert json.dumps(again, sort_keys=True) == json.dumps(raw, sort_keys=True)
+    assert json.dumps(again) == json.dumps(raw)
     assert again["spine"]["rows"][0]["name"] == "Orange"
-    assert json.dumps(task_profile.parse_profile(raw_spine()).to_json()["spine"], sort_keys=True) == \
-        json.dumps(raw_spine()["spine"], sort_keys=True)
+    hand = task_profile.parse_profile(raw_spine()).to_json()
+    assert json.dumps(task_profile.parse_profile(hand).to_json()) == json.dumps(hand)
+    assert json.dumps(hand["spine"]) == json.dumps(raw_spine()["spine"]), "fields it does not know survive"
+
+
+def test_a_metric_label_is_left_out():
+    def with_metric(label: str) -> dict:
+        return raw_spine() | {"liveMetrics": [{"id": "p_go", "label": label, "triggerCode": 7,
+                                                "successCode": 8, "alternateCode": 9, "windowSize": 5}]}
+    assert digest(with_metric("P(go)")) == digest(with_metric("Hit rate"))
+    moved = with_metric("P(go)")
+    moved["liveMetrics"][0]["windowSize"] = 10
+    assert digest(moved) != digest(with_metric("P(go)"))
 
 
 def test_a_profile_without_a_spine_still_hashes_its_words():
@@ -205,4 +218,13 @@ def test_a_profile_without_a_spine_still_hashes_its_words():
 def test_rows_sharing_an_id_are_both_hashed():
     first = raw_spine()["spine"]["rows"][0]
     twin = first | {"rewardMs": 250}
-    assert digest(raw_spine(rows=[first, twin])) != digest(raw_spine(rows=[first, first]))
+    both = digest(raw_spine(rows=[first, twin]))
+    assert both != digest(raw_spine(rows=[twin])) and both != digest(raw_spine(rows=[first])), (
+        "keyed by a repeated id, one row would replace the other"
+    )
+
+
+def test_rows_without_an_id_are_both_hashed():
+    first = {k: v for k, v in raw_spine()["spine"]["rows"][0].items() if k != "id"}
+    second = first | {"rewardMs": 250}
+    assert digest(raw_spine(rows=[first, second])) != digest(raw_spine(rows=[second]))

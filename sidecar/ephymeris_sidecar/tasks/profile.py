@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Iterable
 
-from .behaviour import behaviour
+from .behaviour import behaviour_of
 
 if TYPE_CHECKING:
     from ..rig.registry import Vocabulary
@@ -373,7 +373,7 @@ def profile_hash(profile: TaskProfile) -> str:
     declaration = profile.to_json()
     declaration.pop("strobes", None)
     if profile.spine is not None:
-        declaration = behaviour(declaration)
+        declaration = behaviour_of(declaration)
     canonical = json.dumps(declaration, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 

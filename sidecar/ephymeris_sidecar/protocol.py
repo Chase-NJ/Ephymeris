@@ -199,6 +199,9 @@ class ErrCode:
     SESSION_INVALID: Final = "SESSION_INVALID"
     SESSION_NOT_READY: Final = "SESSION_NOT_READY"
     TASK_PROFILE_INVALID: Final = "TASK_PROFILE_INVALID"
+    PARAMS_MISMATCH: Final = "PARAMS_MISMATCH"
+    PARAMS_CLAMPED: Final = "PARAMS_CLAMPED"
+    FIRMWARE_OUTDATED: Final = "FIRMWARE_OUTDATED"
     BACKUP_UNAVAILABLE: Final = "BACKUP_UNAVAILABLE"
     UTILITY_UNAVAILABLE: Final = "UTILITY_UNAVAILABLE"
     RIG_INVALID: Final = "RIG_INVALID"
@@ -343,7 +346,7 @@ SHAPES: Final[dict[str, Any]] = {
     "TaskDiagnostic": ('obj', (('location', 'str', False), ('message', 'str', False), ('code', 'str', False))),
     "TaskEntry": ('obj', (('id', 'str', False), ('name', 'str', False), ('category', 'str', False), ('path', 'str', False), ('label', 'str', False), ('editedAt', ('union', ('str', 'null')), False), ('problems', 'int', False), ('trials', 'int', False), ('stages', 'int', False), ('selectionMode', ('lit', ('antibias', 'pool', 'weighted')), False))),
     "TaskSaved": ('obj', (('entry', ('ref', 'TaskEntry'), False), ('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False), ('sketchPath', ('union', ('str', 'null')), False))),
-    "TaskPreview": ('obj', (('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False), ('startLineLength', 'int', False), ('startLineMax', 'int', False), ('profile', ('ref', 'TaskProfile'), False), ('catalogueDefaults', ('map', 'any'), False))),
+    "TaskPreview": ('obj', (('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False), ('profile', ('ref', 'TaskProfile'), False), ('catalogueDefaults', ('map', 'any'), False))),
     "TasksUpdatedData": ('obj', (('tasks', ('list', ('ref', 'TaskEntry')), False),)),
     "StrobeCode": ('obj', (('name', 'str', False), ('code', 'int', False), ('origin', 'str', False), ('emittedOn', 'str', True), ('rationale', 'str', True), ('portSlot', 'int', True))),
     "RetiredStrobe": ('obj', (('name', 'str', False), ('code', 'int', False), ('rationale', 'str', True), ('seenIn', 'str', True), ('retiredAt', 'str', True))),

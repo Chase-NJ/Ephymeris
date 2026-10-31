@@ -922,6 +922,7 @@ ask the lab manager for the new installer instead.
 | A box will not flash | Read the message on its card. If the box shows `ERROR`, click **Acknowledge**, then try again. If it fails again, tell the lab manager |
 | A box is stuck in `ERROR` | Open it from the Dashboard (click its star) and click **Acknowledge**. Reset does not clear an error |
 | A box will not start | Click **Reset**, wait a few seconds, then **Start** again |
+| A box refuses to start and says it did not confirm its parameters, or that it moved a value, or that it carries an older sketch | The box checks its settings before it runs and refuses rather than run on the wrong ones. Nothing was started and no file was written. **Acknowledge** the error, then flash the box's task again and **Start**. If it refuses again, tell the lab manager what the message says |
 | **Stop** seems to do nothing | The box stops at the end of the current trial. If no animal is poking, that can take until the trial times out. Wait |
 | Screens say *Waiting for the backend* or *The backend isn't connected*, or Debug Mode shows *sidecar down* | The app lost its connection to its own background process. Close Ephymeris and open it again. It does not restart this by itself |
 | **backup failing** on Mission Control, or a warning under **Backup directory** in Settings | Data is still saved locally; the backup copy is not being made. Tell the lab manager. The refresh button beside the warning copies anything missing once the backup drive is back |

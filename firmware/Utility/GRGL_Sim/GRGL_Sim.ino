@@ -3,8 +3,8 @@ GRGL_Sim.ino -- rig simulator for the GRGL 2-odor task.
 Author: Chase Johnston
 
 Emits the strobe stream the real GRGL sketch would, over the same serial
-protocol (announce "READY", wait for a "START" line, emit a "SEED<TAB>value"
-line, then send tab-separated "CODE<TAB>MS" lines), so the app can be exercised
+protocol (announce "INTERP=<n>" and "READY", answer SET lines with PARAMS,
+wait for a "START" line, emit a "SEED<TAB>value" line, then send tab-separated "CODE<TAB>MS" lines), so the app can be exercised
 end-to-end with no animal in the box.
 
 IT DRIVES THE REAL HARDWARE. Odor valves open, the trial light comes on, the
@@ -29,11 +29,11 @@ ends early with BF_END_SESSION -- so the host's Stop button and the session time
 limit both work against the sim.
 
 IT RUNS ON THE REAL PARAMETERS. Every phase duration below is read from the same
-TaskParams the real firmware fills from the START line, and the anti-bias draw
+TaskParams the real firmware fills from its SET lines, and the anti-bias draw
 is the firmware's own AntiBiasSelector rather than a copy of it. That is the
 point of the sim: it is the one sketch you can flash to a bare board and use to
 prove the app's whole parameter path -- a fully-declared task.json, a ~500-char
-START line, every token landing on the value the operator typed -- without an
+parameter block, every token landing on the value the operator typed -- without an
 animal, a solenoid or a drop of fluid. A sim carrying its own private constants
 would pass while the rig's parameter path was broken. It also walks the stage
 ramp, so a ramped profile's stage boundaries are visible in the stream.
@@ -459,16 +459,21 @@ void earlyOdorSampling(bool goRight)
   emit(BF_INVALID_TRIAL, 0);
 }
 
-/* Mirror the real handshake: announce READY, block until a "START" line, and
-   parse its key=value config exactly as the real firmware does -- one buffer,
-   one cap, the shared parser. */
+/* Mirror the real handshake: announce INTERP and READY, answer each SET line
+   with the running PARAMS total, and block until "START SEED=<n>", parsing
+   exactly as the real firmware does -- one buffer, one cap, the shared parser. */
 void waitForStart(TaskParams &p)
 {
-  char buf[START_LINE_MAX]; // the firmware's cap, from the shared header
-  Serial.println("READY");
+  char buf[SET_LINE_MAX]; // the firmware's cap, from the shared header
+  ParamAudit audit;
+  announceReady();
   while (true)
   {
-    if (readLineInto(buf, sizeof(buf)) && strncmp(buf, "START", 5) == 0 && (buf[5] == '\0' || buf[5] == ' '))
+    if (!readLineInto(buf, sizeof(buf)))
+      continue;
+    if (lineIsCommand(buf, "SET"))
+      applySetLine(buf, p, audit);
+    else if (lineIsCommand(buf, "START"))
     {
       parseStartCommand(buf, p);
       return;

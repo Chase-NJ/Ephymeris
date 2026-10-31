@@ -143,7 +143,7 @@ flowchart LR
 
 | Header | Holds | Notes |
 |---|---|---|
-| `BehaviorBox.h` | The serial protocol shared with the app (`emitStrobe`, the `START` reader, `STOP`, `CommandReader`, `emitStatus`); `TaskParams` and `TASK_PARAM_LIST`, the one key list the `START` parser is generated from; the trial primitives, selection policies, and **one** trial runner | Everything every sketch needs. `START_LINE_MAX` here must equal the app's; a test fails if it doesn't |
+| `BehaviorBox.h` | The serial protocol shared with the app (`emitStrobe`, the `START` reader, `STOP`, `CommandReader`, `emitStatus`, `applySetLine` and its `PARAMS`/`CLAMPED` answers, `announceReady`); `TaskParams` and `TASK_PARAM_LIST`, the one key list the `SET`/`START` parser is generated from; the trial primitives, selection policies, and **one** trial runner | Everything every sketch needs. `SET_LINE_MAX` here must equal the app's; a test fails if it doesn't |
 | `BoxPins.h` | The box as built, every pin `#ifndef`-guarded | The generated `TaskPins.h` wins wherever it speaks |
 | `BoxStrobes.h` | Nothing but a guard | Every `BF_*` code comes from the generated `TaskPins.h` ([TASKS.md › Strobe vocabulary](../docs/TASKS.md#strobe-vocabulary)) |
 | `BoxUtility.h` | The box utility: commands, pulses, `STATUS`, the self-test | Knows no box. Reads the generated `UtilityChannels.h` ([TASKS.md › The box utility](../docs/TASKS.md#the-box-utility)) |

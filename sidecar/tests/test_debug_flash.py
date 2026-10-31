@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import zlib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -30,6 +31,8 @@ from ephymeris_sidecar import app as app_module
 from ephymeris_sidecar.app import Application
 from ephymeris_sidecar.rig.definition import RigDefinition
 from ephymeris_sidecar.debug_run import DebugRuns
+from ephymeris_sidecar.ports import handler as handler_module
+from ephymeris_sidecar.ports import manager as manager_module
 from ephymeris_sidecar.ports.flashing import FlashJob, FlashQueue
 from ephymeris_sidecar.ports.handler import OutputLine
 from ephymeris_sidecar.ports.manager import FQBN, PortManager
@@ -51,6 +54,7 @@ from .test_utility import (  # noqa: F401 - fake_serial is an autouse fixture
     UTILITY_PATH,
     UTILITY_PROFILE,
     FakeDiscovery,
+    FakeSerial,
     FakeTool,
     _noop_output,
     _noop_presence,
@@ -82,6 +86,47 @@ TASK_PROFILE = parse_profile(
         ],
     }
 )
+
+
+class ParamsSerial(FakeSerial):
+    """`FakeSerial`, and a firmware that speaks `SET`: every key is one it parses,
+    unless a test says otherwise, and the answer is the running `PARAMS`."""
+
+    known: set[str] | None = None  # None: every key is one it parses
+    clamps: set[str] = set()
+    cap = 127
+    silent = False
+
+    def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+        super().__init__(*args, **kwargs)
+        self._tokens: list[str] = []
+
+    def write(self, data: bytes) -> int:
+        line = data.decode().strip()
+        written = super().write(data)
+        if ParamsSerial.silent or not (line == "SET" or line.startswith("SET ")):
+            return written
+        for token in line[: ParamsSerial.cap].split()[1:]:
+            key, eq, _ = token.partition("=")
+            if eq and (ParamsSerial.known is None or key in ParamsSerial.known):
+                self._tokens.append(token)
+        moved = [t.partition("=")[0] for t in self._tokens if t.partition("=")[0] in ParamsSerial.clamps]
+        crc = zlib.crc32(" ".join(self._tokens).encode())
+        answer = "".join(f"CLAMPED {key}\n" for key in moved) + f"PARAMS {len(self._tokens)} {crc}\n"
+        self._pending.extend(answer.encode())
+        return written
+
+
+@pytest.fixture(autouse=True)
+def params_serial(monkeypatch: pytest.MonkeyPatch, fake_serial):  # noqa: ANN001, F811
+    monkeypatch.setattr(ParamsSerial, "known", None)
+    monkeypatch.setattr(ParamsSerial, "clamps", set())
+    monkeypatch.setattr(ParamsSerial, "cap", 127)
+    monkeypatch.setattr(ParamsSerial, "silent", False)
+    monkeypatch.setattr(handler_module.serial, "Serial", ParamsSerial)
+    monkeypatch.setattr(manager_module.serial, "Serial", ParamsSerial)
+    monkeypatch.setattr(handler_module, "SESSION_PARAMS_TIMEOUT_S", 0.5)
+    return ParamsSerial
 
 
 async def make_app(rig_definition: RigDefinition) -> SimpleNamespace:
@@ -335,8 +380,8 @@ async def send_start(app: SimpleNamespace, **args) -> dict:  # noqa: ANN003
     return await dispatch(app, "port.sendStart", box=1, **args)
 
 
-async def test_send_start_writes_the_line_a_session_would_build(
-    rig_definition, task_profile_on_disk, fake_serial,  # noqa: ANN001
+async def test_send_start_sends_the_set_lines_a_session_would_build_then_a_bare_start(
+    rig_definition, task_profile_on_disk, params_serial,  # noqa: ANN001
 ) -> None:
     app = await make_app(rig_definition)
     app.ports.open_passthrough(1)
@@ -344,19 +389,48 @@ async def test_send_start_writes_the_line_a_session_would_build(
     reply = await send_start(app, sketchPath=TASK_PATH, config={"iti": 2500})
 
     expected = build_start_command(TASK_PROFILE, {"iti": 2500})
-    assert expected == "START ITI=2500 RW=40"
-    assert reply["command"] == expected
-    assert fake_serial.instances[-1].written[-1] == expected
+    assert expected.set_lines == ("SET ITI=2500 RW=40",)
+    assert params_serial.instances[-1].written[-2:] == [*expected.set_lines, "START"]
+    assert reply["command"] == "START"
     assert "SEED" not in reply["command"]
 
 
+async def test_send_start_refuses_a_block_the_board_does_not_confirm(
+    rig_definition, task_profile_on_disk, params_serial,  # noqa: ANN001
+) -> None:
+    """The same checks as a session's start, with nothing started: a key the
+    board does not parse, a value it clamps, a line cut short, a silent sketch."""
+    cases = [
+        ({"known": {"ITI"}}, ErrCode.PARAMS_MISMATCH, "count"),
+        ({"clamps": {"RW"}}, ErrCode.PARAMS_CLAMPED, "clamped"),
+        ({"cap": 14}, ErrCode.PARAMS_MISMATCH, "count"),
+        ({"cap": 17}, ErrCode.PARAMS_MISMATCH, "crc"),
+        ({"silent": True}, ErrCode.FIRMWARE_OUTDATED, "no_reply"),
+    ]
+    for board, code, reason in cases:
+        for name, value in board.items():
+            setattr(params_serial, name, value)
+        app = await make_app(rig_definition)
+        app.ports.open_passthrough(1)
+        with pytest.raises(Refused) as err:
+            await send_start(app, sketchPath=TASK_PATH)
+        assert err.value.code == code, board
+        assert err.value.detail["reason"] == reason, board
+        assert err.value.detail["box"] == 1
+        assert "START" not in params_serial.instances[-1].written, board
+        assert app.debug_runs.running(1) is False
+        app.ports.close_passthrough(1)
+        for name in board:
+            setattr(params_serial, name, {"known": None, "clamps": set(), "cap": 127, "silent": False}[name])
+
+
 async def test_send_start_without_config_uses_the_profile_defaults(
-    rig_definition, task_profile_on_disk,  # noqa: ANN001
+    rig_definition, task_profile_on_disk, params_serial,  # noqa: ANN001
 ) -> None:
     app = await make_app(rig_definition)
     app.ports.open_passthrough(1)
-    reply = await send_start(app, sketchPath=TASK_PATH)
-    assert reply["command"] == "START ITI=4000 RW=40"
+    await send_start(app, sketchPath=TASK_PATH)
+    assert params_serial.instances[-1].written[-2:] == ["SET ITI=4000 RW=40", "START"]
 
 
 async def test_send_start_needs_an_open_console(rig_definition, task_profile_on_disk) -> None:  # noqa: ANN001

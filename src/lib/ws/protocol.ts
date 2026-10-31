@@ -181,6 +181,9 @@ export const ERR = {
   SESSION_INVALID: "SESSION_INVALID",
   SESSION_NOT_READY: "SESSION_NOT_READY",
   TASK_PROFILE_INVALID: "TASK_PROFILE_INVALID",
+  PARAMS_MISMATCH: "PARAMS_MISMATCH",
+  PARAMS_CLAMPED: "PARAMS_CLAMPED",
+  FIRMWARE_OUTDATED: "FIRMWARE_OUTDATED",
   BACKUP_UNAVAILABLE: "BACKUP_UNAVAILABLE",
   UTILITY_UNAVAILABLE: "UTILITY_UNAVAILABLE",
   RIG_INVALID: "RIG_INVALID",
@@ -1787,14 +1790,6 @@ export interface TaskSaved {
 /** A pure compile of an unsaved definition. Writes nothing. */
 export interface TaskPreview {
   diagnostics: TaskDiagnostic[];
-  /** Bytes the built START line would occupy, seed included. */
-  startLineLength: number;
-  /**
-   * The firmware's cap, so the editor can show headroom without hardcoding it. At or over it is
-   * TSK107 and a refused generation — `readLineInto()` truncates in silence, so this is checked
-   * rather than trusted.
-   */
-  startLineMax: number;
   /** What this definition compiles to. */
   profile: TaskProfile;
   /**

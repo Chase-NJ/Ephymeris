@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from ephymeris_sidecar.tasks.start_command import build_start_command
 from ephymeris_sidecar.analytics.repository import AnalyticsRepository
 from ephymeris_sidecar.cohorts.db import Database
 from ephymeris_sidecar.cohorts.repository import CohortRepository
@@ -709,7 +710,7 @@ async def test_a_run_that_lands_after_the_session_let_go_is_still_recorded(rig) 
         animal_name="remy1",
         sketch_path="/sk",
         sketch_name="sk",
-        start_command="START",
+        start_command=build_start_command(None, {}),
         config_metadata={},
         profile=None,
     )
@@ -772,7 +773,7 @@ async def test_a_run_never_names_a_profile_another_writers_rollback_threw_away(
         animal_name="remy1",
         sketch_path="/sk",
         sketch_name="sk",
-        start_command="START",
+        start_command=build_start_command(None, {}),
         config_metadata={},
         profile=profile,
     )
@@ -818,7 +819,7 @@ async def test_a_run_whose_profile_snapshot_aborts_the_unit_is_still_recorded_an
     db.on_commit(lambda: commits.append(1))
     config = BoxConfig(
         box=1, animal_id="C1-1", animal_name="remy1", sketch_path="/sk", sketch_name="sk",
-        start_command="START", config_metadata={},
+        start_command=build_start_command(None, {}), config_metadata={},
         profile=parse_profile({"taskName": "Snapshot me"}),
     )
     run = ActiveRun(
@@ -1424,7 +1425,7 @@ def _real_runner(ports):  # noqa: ANN001, ANN202
 def _box(box: int) -> BoxConfig:
     return BoxConfig(
         box=box, animal_id=f"a{box}", animal_name=f"remy{box}", sketch_path="/sk/GRGL",
-        sketch_name="GRGL", start_command="START", config_metadata={}, profile=None,
+        sketch_name="GRGL", start_command=build_start_command(None, {}), config_metadata={}, profile=None,
     )
 
 

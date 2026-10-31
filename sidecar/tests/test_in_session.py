@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+import zlib
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,25 @@ import pytest
 from ephymeris_sidecar.ports import handler as handler_module
 from ephymeris_sidecar.ports.handler import PortHandler
 from ephymeris_sidecar.ports.states import IllegalTransition, PortState
+from ephymeris_sidecar.tasks.profile import parse_profile
+from ephymeris_sidecar.tasks.start_command import build_start_command
+
+#: A run with nothing to set: one bare `SET`, answered `PARAMS 0 0`.
+CMD = build_start_command(None, {})
+#: One with two parameters, for the tests that look at what went out.
+TOKENS = build_start_command(
+    parse_profile(
+        {
+            "taskName": "T",
+            "config": [
+                {"metadataKey": "cl", "wireKey": "CL", "label": "CL", "type": "int", "default": 0},
+                {"metadataKey": "lazy", "wireKey": "LAZY", "label": "LAZY", "type": "bool", "default": True},
+            ],
+        }
+    ),
+    {},
+)
+SEED = 777
 
 
 class ScriptedSerial:
@@ -35,6 +55,7 @@ class ScriptedSerial:
         self._out = bytearray()
         self._lock = threading.Lock()
         self._fail = False
+        self._tokens: list[str] = []
         ScriptedSerial.instances.append(self)
 
     def feed(self, text: str) -> None:
@@ -63,6 +84,14 @@ class ScriptedSerial:
 
     def write(self, data: bytes) -> int:
         self.written.extend(data)
+        # A board that speaks `SET` confirms what it received, so the tests that
+        # are about something else get through the parameter handshake
+        # (`test_params_handshake.py` is about the handshake).
+        for line in data.decode().splitlines():
+            if line == "SET" or line.startswith("SET "):
+                self._tokens.extend(line.split()[1:])
+                crc = zlib.crc32(" ".join(self._tokens).encode())
+                self.feed(f"PARAMS {len(self._tokens)} {crc}\r\n")
         return len(data)
 
     def flush(self) -> None:
@@ -127,7 +156,7 @@ def test_entry_requires_idle() -> None:
     handler, _ = make_handler()
     handler.open_passthrough("/dev/fake", 115200)
     with pytest.raises(IllegalTransition):
-        handler.claim_session("/dev/fake", 115200, "START", lambda s: None, lambda c, t: None)
+        handler.claim_session("/dev/fake", 115200, CMD, SEED, lambda s, i: None, lambda c, t: None)
 
 
 def test_start_is_sent_only_after_ready(fake_serial) -> None:
@@ -135,7 +164,7 @@ def test_start_is_sent_only_after_ready(fake_serial) -> None:
     handler, _ = make_handler()
     ready_seeds: list = []
     handler.claim_session(
-        "/dev/fake", 115200, "START CL=0 LAZY=1", ready_seeds.append, lambda c, t: None
+        "/dev/fake", 115200, TOKENS, SEED, lambda s, i: ready_seeds.append(s), lambda c, t: None
     )
     port = wait_for(lambda: ScriptedSerial.instances) and ScriptedSerial.instances[0]
 
@@ -145,14 +174,15 @@ def test_start_is_sent_only_after_ready(fake_serial) -> None:
 
     port.feed("READY\n")
     assert wait_for(lambda: b"START" in bytes(port.written))
-    assert bytes(port.written) == b"START CL=0 LAZY=1\n"
+    # The parameters first, as one capped SET line, and only then START.
+    assert bytes(port.written) == b"SET CL=0 LAZY=1\nSTART SEED=777\n"
 
 
 def test_seed_line_is_captured_when_present(fake_serial) -> None:
     """`ARCHITECTURE.md#entering-in_session` step 5 / `TASKS.md#seed` — `SEED\\t<int>` right after START becomes trial_seed."""
     handler, _ = make_handler()
     seeds: list = []
-    handler.claim_session("/dev/fake", 115200, "START", seeds.append, lambda c, t: None)
+    handler.claim_session("/dev/fake", 115200, CMD, SEED, lambda s, i: seeds.append(s), lambda c, t: None)
     port = ScriptedSerial.instances[0]
     port.feed("READY\n")
     assert wait_for(lambda: b"START" in bytes(port.written))
@@ -165,7 +195,7 @@ def test_seed_line_is_captured_when_present(fake_serial) -> None:
 def test_a_missing_seed_resolves_after_the_window(fake_serial) -> None:
     handler, _ = make_handler()
     seeds: list = []
-    handler.claim_session("/dev/fake", 115200, "START", seeds.append, lambda c, t: None)
+    handler.claim_session("/dev/fake", 115200, CMD, SEED, lambda s, i: seeds.append(s), lambda c, t: None)
     port = ScriptedSerial.instances[0]
     port.feed("READY\n")
 
@@ -178,7 +208,7 @@ def test_a_first_strobe_resolves_the_seed_window_immediately(fake_serial) -> Non
     seeds: list = []
     strobes: list = []
     handler.claim_session(
-        "/dev/fake", 115200, "START", seeds.append, lambda c, t: strobes.append((c, t))
+        "/dev/fake", 115200, CMD, SEED, lambda s, i: seeds.append(s), lambda c, t: strobes.append((c, t))
     )
     port = ScriptedSerial.instances[0]
     port.feed("READY\n")
@@ -192,7 +222,7 @@ def test_a_first_strobe_resolves_the_seed_window_immediately(fake_serial) -> Non
 
 def test_never_seeing_ready_lands_in_error(fake_serial) -> None:
     handler, changes = make_handler()
-    handler.claim_session("/dev/fake", 115200, "START", lambda s: None, lambda c, t: None)
+    handler.claim_session("/dev/fake", 115200, CMD, SEED, lambda s, i: None, lambda c, t: None)
     # READY timeout is patched to 2s.
     assert wait_for(lambda: handler.state is PortState.ERROR, timeout=4.0)
 
@@ -204,10 +234,12 @@ def test_strobe_lines_parse_into_code_and_timestamp(fake_serial) -> None:
     handler, _ = make_handler()
     strobes: list = []
     handler.claim_session(
-        "/dev/fake", 115200, "START", lambda s: None, lambda c, t: strobes.append((c, t))
+        "/dev/fake", 115200, CMD, SEED, lambda s, i: None, lambda c, t: strobes.append((c, t))
     )
     port = ScriptedSerial.instances[0]
-    port.feed("READY\nSEED\t42\n")
+    port.feed("READY\n")
+    assert wait_for(lambda: b"START" in bytes(port.written))
+    port.feed("SEED\t42\n")
     assert wait_for(lambda: handler.state is PortState.IN_SESSION)
     port.feed("221\t0\n222\t1000\n246\t3523555\n")
 
@@ -220,10 +252,12 @@ def test_non_strobe_lines_are_logged_but_not_data(fake_serial) -> None:
     handler, _ = make_handler()
     strobes: list = []
     handler.claim_session(
-        "/dev/fake", 115200, "START", lambda s: None, lambda c, t: strobes.append((c, t))
+        "/dev/fake", 115200, CMD, SEED, lambda s, i: None, lambda c, t: strobes.append((c, t))
     )
     port = ScriptedSerial.instances[0]
-    port.feed("READY\nSEED\t42\n")
+    port.feed("READY\n")
+    assert wait_for(lambda: b"START" in bytes(port.written))
+    port.feed("SEED\t42\n")
     assert wait_for(lambda: handler.state is PortState.IN_SESSION)
     # Chatter, a 4-digit code, and a missing timestamp — none are data.
     port.feed("hello world\n1234\t5\n99\n221\t7\n")
@@ -241,7 +275,7 @@ def test_non_strobe_lines_are_logged_but_not_data(fake_serial) -> None:
 
 def test_stop_writes_the_literal_stop_line(fake_serial) -> None:
     handler, _ = make_handler()
-    claim = handler.claim_session("/dev/fake", 115200, "START", lambda s: None, lambda c, t: None)
+    claim = handler.claim_session("/dev/fake", 115200, CMD, SEED, lambda s, i: None, lambda c, t: None)
     port = ScriptedSerial.instances[0]
     port.feed("READY\n")
     assert wait_for(lambda: b"START" in bytes(port.written))
@@ -256,7 +290,7 @@ def test_a_stop_after_the_session_ended_is_not_sent_and_does_not_raise(fake_seri
     """`request_stop` never raises: End sends STOP to every running box, and a
     box whose port has already left the session must not stop the others."""
     handler, _ = make_handler()
-    claim = handler.claim_session("/dev/fake", 115200, "START", lambda s: None, lambda c, t: None)
+    claim = handler.claim_session("/dev/fake", 115200, CMD, SEED, lambda s, i: None, lambda c, t: None)
     port = ScriptedSerial.instances[0]
     port.feed("READY\n")
     assert wait_for(lambda: b"START" in bytes(port.written))
@@ -269,7 +303,7 @@ def test_a_stop_after_the_session_ended_is_not_sent_and_does_not_raise(fake_seri
 
 def test_clean_end_returns_to_idle(fake_serial) -> None:
     handler, _ = make_handler()
-    claim = handler.claim_session("/dev/fake", 115200, "START", lambda s: None, lambda c, t: None)
+    claim = handler.claim_session("/dev/fake", 115200, CMD, SEED, lambda s, i: None, lambda c, t: None)
     # IN_SESSION is set before the port even opens, so it says nothing about the
     # handshake; START going out does.
     assert wait_for(lambda: ScriptedSerial.instances)
@@ -303,7 +337,7 @@ def test_ending_while_the_port_opens_neither_stalls_nor_leaves_it_open(monkeypat
     for the whole join timeout, and return IDLE with the port still open."""
     monkeypatch.setattr(handler_module.serial, "Serial", SlowOpen)
     handler, _ = make_handler()
-    claim = handler.claim_session("/dev/fake", 115200, "START", lambda s: None, lambda c, t: None)
+    claim = handler.claim_session("/dev/fake", 115200, CMD, SEED, lambda s, i: None, lambda c, t: None)
     assert wait_for(lambda: SlowOpen.instances)
 
     started = time.monotonic()
@@ -318,7 +352,7 @@ def test_a_failure_after_the_session_ended_changes_nothing(monkeypatch) -> None:
     fails late must not turn a cleanly ended box into ERROR."""
     monkeypatch.setattr(handler_module.serial, "Serial", SlowFailingOpen)
     handler, _ = make_handler()
-    claim = handler.claim_session("/dev/fake", 115200, "START", lambda s: None, lambda c, t: None)
+    claim = handler.claim_session("/dev/fake", 115200, CMD, SEED, lambda s, i: None, lambda c, t: None)
     assert wait_for(lambda: SlowFailingOpen.instances)
 
     claim.release("operator ended")
@@ -332,7 +366,7 @@ def test_a_failure_after_the_session_ended_changes_nothing(monkeypatch) -> None:
 def test_a_board_drop_mid_session_goes_to_error(fake_serial) -> None:
     """`ARCHITECTURE.md#board-drop` — always a hard stop, reusing the existing ERROR state."""
     handler, changes = make_handler()
-    handler.claim_session("/dev/fake", 115200, "START", lambda s: None, lambda c, t: None)
+    handler.claim_session("/dev/fake", 115200, CMD, SEED, lambda s, i: None, lambda c, t: None)
     port = ScriptedSerial.instances[0]
     port.feed("READY\n")
     assert wait_for(lambda: handler.state is PortState.IN_SESSION)
@@ -349,7 +383,7 @@ def test_a_board_drop_mid_session_goes_to_error(fake_serial) -> None:
 def test_error_clears_through_the_existing_ack(fake_serial) -> None:
     """`ARCHITECTURE.md#board-drop` — no new recovery logic; the ordinary port.error.ack path clears it."""
     handler, _ = make_handler()
-    handler.claim_session("/dev/fake", 115200, "START", lambda s: None, lambda c, t: None)
+    handler.claim_session("/dev/fake", 115200, CMD, SEED, lambda s, i: None, lambda c, t: None)
     port = ScriptedSerial.instances[0]
     port.feed("READY\n")
     assert wait_for(lambda: handler.state is PortState.IN_SESSION)
@@ -366,7 +400,7 @@ def test_a_refused_claim_starts_nothing(fake_serial) -> None:
     handler, _ = make_handler()
     handler.force_error("board never reported READY")
     with pytest.raises(IllegalTransition):
-        handler.claim_session("/dev/fake", 115200, "START", lambda s: None, lambda c, t: None)
+        handler.claim_session("/dev/fake", 115200, CMD, SEED, lambda s, i: None, lambda c, t: None)
     time.sleep(0.1)
     assert ScriptedSerial.instances == []  # no session thread, no port opened
     assert handler.state is PortState.ERROR
@@ -376,7 +410,7 @@ def test_a_lost_session_is_told_to_its_claim_once(fake_serial) -> None:
     handler, _ = make_handler()
     lost: list[str] = []
     claim = handler.claim_session(
-        "/dev/fake", 115200, "START", lambda s: None, lambda c, t: None, lost.append
+        "/dev/fake", 115200, CMD, SEED, lambda s, i: None, lambda c, t: None, lost.append
     )
     port = ScriptedSerial.instances[0]
     port.feed("READY\n")
@@ -396,7 +430,7 @@ def test_release_is_idempotent_and_never_loses(fake_serial) -> None:
     handler, changes = make_handler()
     lost: list[str] = []
     claim = handler.claim_session(
-        "/dev/fake", 115200, "START", lambda s: None, lambda c, t: None, lost.append
+        "/dev/fake", 115200, CMD, SEED, lambda s, i: None, lambda c, t: None, lost.append
     )
     claim.release("done")
     claim.release("done again")
@@ -412,9 +446,9 @@ def test_release_is_idempotent_and_never_loses(fake_serial) -> None:
 def test_an_old_claim_cannot_end_a_newer_run(fake_serial) -> None:
     """A late release from a finished run must not end the box's next one."""
     handler, _ = make_handler()
-    first = handler.claim_session("/dev/fake", 115200, "START", lambda s: None, lambda c, t: None)
+    first = handler.claim_session("/dev/fake", 115200, CMD, SEED, lambda s, i: None, lambda c, t: None)
     first.release("first run over")
-    second = handler.claim_session("/dev/fake", 115200, "START", lambda s: None, lambda c, t: None)
+    second = handler.claim_session("/dev/fake", 115200, CMD, SEED, lambda s, i: None, lambda c, t: None)
     port = ScriptedSerial.instances[-1]
     port.feed("READY\n")
     assert wait_for(lambda: b"START" in bytes(port.written))

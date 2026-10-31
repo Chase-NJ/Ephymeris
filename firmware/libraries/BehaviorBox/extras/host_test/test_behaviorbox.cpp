@@ -9,10 +9,21 @@
     is what collapsed the old double length cap. Tests hand it string literals,
     so copy into a scratch buffer of the real firmware size first. */
 static void parseStart(const char *line, TaskParams &p) {
-  char buf[START_LINE_MAX];
+  char buf[1024];  // a hand-typed START may be long; only a SET line is capped
   strncpy(buf, line, sizeof(buf) - 1);
   buf[sizeof(buf) - 1] = '\0';
   parseStartCommand(buf, p);
+}
+
+/*  applySetLine() parses IN PLACE too, and prints its reply to Serial. Hand it a
+    buffer of the real firmware size and reset the capture first, so a test reads
+    exactly the lines that one SET produced. */
+static void setLine(const char *line, TaskParams &p, ParamAudit &a) {
+  char buf[SET_LINE_MAX];
+  strncpy(buf, line, sizeof(buf) - 1);
+  buf[sizeof(buf) - 1] = '\0';
+  _serialOutLen = 0; _serialOut[0] = '\0';
+  applySetLine(buf, p, a);
 }
 
 int main() {
@@ -301,43 +312,91 @@ int main() {
     assert(outcomeDelay(OUTCOME_ERROR, p)==4000);
     assert(OUTCOME_CORRECT != OUTCOME_ERROR); }             // still distinguishable
 
-  // --- a fully-declared eased task must fit the shared line cap ---
-  { char line[START_LINE_MAX];
-    int n = snprintf(line, sizeof(line),
-      "START ERR=20000 NWP=2000 LZD=6000 LZS=6000 LZM=30000 NPH=10000 ITI=4000 "
-      "PRM=1000 POL=5 RW1=100 RW2=100 RW3=100 RW4=100 CL=0 CR=0 LZG=4 NT=1000 "
-      "BS=30 PW1=1 PW2=0 PW3=0 PW4=0 BW=20 MCS=6 DBS=0.5 PMN=0.05 PMX=0.95 LAZY=1 "
-      "S0T=0 S0P=10 S0H=10 S0W=10000 S0O=8000 S1T=15 S1P=100 S1H=50 S1W=10000 S1O=8000 "
-      "S2T=30 S2P=200 S2H=200 S2W=5000 S2O=6000 S3T=50 S3P=350 S3H=350 S3W=3000 S3O=4000 "
-      "S4T=80 S4P=500 S4H=200 S4W=2000 S4O=4000 SEED=2147483646");
-    assert(n > 0 && (size_t)n < sizeof(line));   // fits, un-truncated
-    TaskParams p; parseStartCommand(line, p);    // and every token lands
-    assert(p.lazyEscalationStage==4 && p.trialSeed==2147483646UL);
-    assert(p.stage[2].fluidWellPoll==5000 && p.stage[4].odorPokeHold==500);
-    assert(p.maxConsecutiveSide==6 && p.rewardTimes[3]==100); }
+  // --- SET / PARAMS: the host sends capped SET lines, the board answers with
+  //     what it accepted, and the host refuses the start on a disagreement
+  //     (docs/TASKS.md#the-length-cap). The CRC is the standard CRC-32 -- the
+  //     one Python's zlib.crc32 computes -- over the accepted tokens exactly as
+  //     received, joined by single spaces. The literals below come from zlib,
+  //     not from this code; sidecar/tests/test_start_command.py pins the same ones.
+  { ParamAudit a; crc32Feed(a, "123456789", 9);
+    assert(a.finalCrc() == 0xCBF43926UL); }                           // the CRC-32 check value
+  { ParamAudit a;
+    assert(a.accepted == 0 && a.finalCrc() == 0UL); }                 // nothing accepted: crc of ""
 
-  // --- THE CROSS-REPO CHECK: the exact line Ephymeris builds for the shipped
-  //     GRGL profile, parsed by the parser that will receive it.
+  { TaskParams p; ParamAudit a;
+    setLine("SET ITI=4000 PRM=1000", p, a);
+    assert(strcmp(_serialOut, "PARAMS 2 3324716134\r\n") == 0);
+    assert(p.standardITI==4000 && p.primingDelay==1000); }            // and the values landed
+
+  { TaskParams p; ParamAudit a;                                       // a bare SET: zero keys
+    setLine("SET", p, a);
+    assert(strcmp(_serialOut, "PARAMS 0 0\r\n") == 0); }
+
+  { TaskParams p; ParamAudit a;                                       // the running total, across lines
+    setLine("SET ITI=4000", p, a);
+    assert(strcmp(_serialOut, "PARAMS 1 1462853793\r\n") == 0);
+    setLine("SET PRM=1000", p, a);
+    assert(strcmp(_serialOut, "PARAMS 2 3324716134\r\n") == 0); }
+
+  { TaskParams p; ParamAudit a;                                       // a key it does not parse is
+    setLine("SET ITI=4000 FOO=9 PRM=1000", p, a);                     // neither counted nor hashed, so
+    assert(strcmp(_serialOut, "PARAMS 2 3324716134\r\n") == 0); }     // the host's count disagrees
+
+  { TaskParams p; ParamAudit a;                                       // a truncated value: counted, but
+    setLine("SET ITI=4000 PRM=10", p, a);                             // the CRC is over what arrived
+    assert(strncmp(_serialOut, "PARAMS 2 ", 9) == 0);
+    assert(strcmp(_serialOut, "PARAMS 2 3324716134\r\n") != 0); }
+
+  { TaskParams p; ParamAudit a;                                       // a clamped value is named, before the
+    setLine("SET POL=0", p, a);                                       // reply that carries it
+    assert(strncmp(_serialOut, "CLAMPED POL\r\nPARAMS 1 ", 22) == 0);
+    assert(p.pollingRate==0);                                         // the SET itself changes nothing...
+    parseStart("START", p);
+    assert(p.pollingRate==1); }                                       // ...the clamp lands at START
+
+  { TaskParams p; ParamAudit a;                                       // clamps are judged on the state so far:
+    setLine("SET PMN=0.99", p, a);                                    // PMX (0.98 default) would be pulled up
+    assert(strstr(_serialOut, "CLAMPED PMX") != NULL);
+    setLine("SET PMX=0.995", p, a);                                   // ...and is not once the next line sets it
+    assert(strstr(_serialOut, "CLAMPED") == NULL);
+    assert(strncmp(_serialOut, "PARAMS 2 ", 9) == 0); }
+
+  { TaskParams p; ParamAudit a;                                       // START SEED=<n> is not a parameter
+    setLine("SET ITI=4000", p, a);
+    parseStart("START SEED=77", p);
+    assert(p.trialSeed==77UL && p.standardITI==4000 && a.accepted==1); }
+
+  { assert(lineIsCommand("SET", "SET") && lineIsCommand("SET A=1", "SET"));
+    assert(!lineIsCommand("SETUP", "SET") && !lineIsCommand("START", "SET"));
+    assert(lineIsCommand("START SEED=1", "START") && !lineIsCommand("STARTED", "START")); }
+
+  // --- THE CROSS-REPO CHECK: the exact SET lines Ephymeris builds for the
+  //     shipped GRGL profile, taken by the parser that will receive them, and
+  //     the PARAMS reply the host will hold against its own count and CRC.
   //
-  //     These two repos agree by convention and nothing enforces it: the app
-  //     reads wire keys out of task.json, this parser reads them out of
-  //     TASK_PARAM_LIST, and START_LINE_MAX is written down twice. A key the app
-  //     sends and the firmware does not know is ignored in silence -- the
-  //     session simply runs on the compiled-in value. Pasting the real line here
-  //     is the cheapest thing that would notice.
+  //     These two sides agree by convention and nothing else enforces it: the
+  //     app reads wire keys out of task.json, this parser reads them out of
+  //     TASK_PARAM_LIST, and SET_LINE_MAX is written down twice. A key the app
+  //     sends and the firmware does not know is not counted, so the host would
+  //     refuse every start -- which is the right outcome, and this is the
+  //     cheapest thing that notices it before a rig does.
   //
   //     Regenerate after editing GRGL/task.json, which the sidecar's
-  //     test_the_firmware_parses_the_start_line_the_app_builds_for_grgl fails
+  //     test_the_firmware_confirms_the_set_lines_the_app_builds_for_grgl fails
   //     until you do:
-  //       build_start_command(load_profile(<GRGL>), {f.metadata_key: f.default})
-  { char line[START_LINE_MAX];
-    int n = snprintf(line, sizeof(line),
-      "START ERR=20000 ITI=4000 NPH=10000 NWP=2000 PRM=1000 POL=5 LZD=6000 "
-      "LAZY=1 LZS=6000 LZM=30000 LZG=0 RW1=100 RW2=100 NT=1000 "
-      "PW1=1 PW2=1 BS=30 CL=0 CR=0 BW=20 MCS=10 DBS=0.5 PMN=0.02 PMX=0.98 "
-      "S0P=500 S0H=200 S0W=2000 S0O=4000 SEED=2147483646");
-    assert(n > 0 && (size_t)n < sizeof(line));
-    TaskParams p; parseStartCommand(line, p);
+  //       build_start_command(load_profile(<GRGL>), {})   -> .set_lines, .count, .crc32
+  { static const char *const kGrglSetLines[] = {
+      "SET ERR=20000 ITI=4000 NPH=10000 NWP=2000 PRM=1000 POL=5 LZD=6000 LAZY=1 LZS=6000 LZM=30000 LZG=0 RW1=100 RW2=100 NT=1000 PW1=1",
+      "SET PW2=1 BS=30 CL=0 CR=0 BW=20 MCS=10 DBS=0.5 PMN=0.02 PMX=0.98 S0P=500 S0H=200 S0W=2000 S0O=4000",
+    };
+    static const char kGrglParams[] = "PARAMS 28 2184481299\r\n";
+    TaskParams p; ParamAudit a;
+    for (size_t i = 0; i < sizeof(kGrglSetLines) / sizeof(kGrglSetLines[0]); i++) {
+      assert(strlen(kGrglSetLines[i]) < SET_LINE_MAX);   // each fits the buffer, whole
+      setLine(kGrglSetLines[i], p, a);
+    }
+    assert(strcmp(_serialOut, kGrglParams) == 0);        // 28 keys, none clamped, same CRC
+    parseStart("START SEED=2147483646", p);
     // One assertion per group, so a dropped token names which one went.
     assert(p.errorDelay==20000 && p.standardITI==4000);          // trial timing
     assert(p.lazyRatDelay==6000 && p.lazyEscalationEnabled);     // abstention
@@ -347,32 +406,56 @@ int main() {
     assert(p.correctionLeft==0 && p.correctionRight==0);         // correction
     assert(p.biasWindow==20 && p.maxConsecutiveSide==10);        // anti-bias
     assert(p.odorPokeHold==500 && p.fluidWellPoll==2000);        // holds, via row 0
-    assert(p.trialSeed==2147483646UL); }
+    assert(p.trialSeed==2147483646UL); }                         // and START carried only the seed
 
-  // --- readLineInto: what a sketch's char cmd[START_LINE_MAX] keeps whole ---
+  // --- INTERP: announced before READY, so the run can record which interpreter
+  //     it ran under. This firmware is interpreter 1.
+  { assert(BOX_INTERP == 1);
+    _serialOutLen = 0; _serialOut[0] = '\0';
+    announceReady();
+    assert(strcmp(_serialOut, "INTERP=1\r\nREADY\r\n") == 0); }
+
+  // --- readLineInto: what a sketch's char cmd[SET_LINE_MAX] keeps whole ---
   //
-  //     One byte goes to the terminator, so START_LINE_MAX - 1 characters is the
-  //     longest line read intact, and the host refuses to build anything longer
-  //     (sidecar test_a_line_the_firmware_buffer_cannot_hold_whole_is_refused).
-  //     A line of exactly START_LINE_MAX loses its last character -- on a START
-  //     line, the seed's last digit, and the board runs a seed nobody drew.
-  { static char sent[START_LINE_MAX + 2];
-    char cmd[START_LINE_MAX];
-    memset(sent, '7', START_LINE_MAX - 1);
-    sent[START_LINE_MAX - 1] = '\n'; sent[START_LINE_MAX] = '\0';
+  //     One byte goes to the terminator, so SET_LINE_MAX - 1 characters is the
+  //     longest SET line read intact, and the host never builds a longer one
+  //     (sidecar test_start_command.py). A line of exactly SET_LINE_MAX loses its
+  //     last character, which the CRC then reports.
+  { static char sent[SET_LINE_MAX + 2];
+    char cmd[SET_LINE_MAX];
+    memset(sent, '7', SET_LINE_MAX - 1);
+    sent[SET_LINE_MAX - 1] = '\n'; sent[SET_LINE_MAX] = '\0';
     _serialIn = sent;
     assert(readLineInto(cmd, sizeof(cmd)));
-    assert(strlen(cmd) == START_LINE_MAX - 1);              // whole
+    assert(strlen(cmd) == SET_LINE_MAX - 1);                // whole
     assert(*_serialIn == '\0');                             // terminator consumed
 
-    memset(sent, '7', START_LINE_MAX - 1);
-    sent[START_LINE_MAX - 1] = '9';                          // one more: the last digit
-    sent[START_LINE_MAX] = '\n'; sent[START_LINE_MAX + 1] = '\0';
+    memset(sent, '7', SET_LINE_MAX - 1);
+    sent[SET_LINE_MAX - 1] = '9';                            // one more: the last digit
+    sent[SET_LINE_MAX] = '\n'; sent[SET_LINE_MAX + 1] = '\0';
     _serialIn = sent;
     assert(readLineInto(cmd, sizeof(cmd)));
-    assert(strlen(cmd) == START_LINE_MAX - 1);              // truncated...
-    assert(cmd[START_LINE_MAX - 2] == '7');                  // ...and the '9' is gone
+    assert(strlen(cmd) == SET_LINE_MAX - 1);                // truncated...
+    assert(cmd[SET_LINE_MAX - 2] == '7');                    // ...and the '9' is gone
     assert(*_serialIn == '\0'); }                           // tail drained, not left queued
+
+  // --- a truncated SET line is caught end to end: the board reads the capped
+  //     line and answers for what survived, so its answer cannot match the
+  //     host's. Here the cut lands inside the second token's value.
+  { static char sent[SET_LINE_MAX + 16];
+    int n = snprintf(sent, sizeof(sent), "SET ITI=4000 PRM=");
+    while (n < SET_LINE_MAX + 4) sent[n++] = '1';            // a value running past the cap
+    sent[n++] = '\n'; sent[n] = '\0';
+    _serialIn = sent;
+    char cmd[SET_LINE_MAX];
+    assert(readLineInto(cmd, sizeof(cmd)));
+    assert(strlen(cmd) == SET_LINE_MAX - 1);
+    TaskParams p; ParamAudit a;
+    _serialOutLen = 0; _serialOut[0] = '\0';
+    applySetLine(cmd, p, a);
+    assert(a.accepted == 2);                                 // both keys counted...
+    assert(strstr(_serialOut, "PARAMS 2 ") != NULL);
+    assert(strcmp(_serialOut, "PARAMS 2 3324716134\r\n") != 0); }  // ...but not the host's CRC
 
   // --- emitStrobe: one sync pulse per strobe, and never two fused into one ---
   //

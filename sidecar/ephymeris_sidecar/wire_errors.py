@@ -45,6 +45,7 @@ from .sessions.models import PrefixNameTaken, SessionNotFound
 from .strobes.store import StrobeRefused
 from .taskdef.model import TaskDefinitionError
 from .tasks.profile import TaskProfileError
+from .tasks.start_command import StartRefused
 from .utility import UtilityUnavailable
 
 
@@ -127,6 +128,16 @@ def _task_profile(exc: TaskProfileError, args: Args) -> CommandError:
     )
 
 
+def _start_refused(exc: StartRefused, args: Args) -> CommandError:
+    """A board's answer to the parameter block refused the start. The code is the
+    refusal's own; `detail` names the box and the reason beneath it."""
+    box = _box(exc, args)
+    detail: dict[str, Any] = {"reason": exc.reason, **exc.detail}
+    if box is not None:
+        detail["box"] = box
+    return CommandError(exc.code, str(exc), detail)
+
+
 _STROBE_CODES = {
     "invalid": ErrCode.STROBE_INVALID,
     "required": ErrCode.STROBE_REQUIRED,
@@ -145,6 +156,7 @@ def _strobe_refused(exc: StrobeRefused, _args: Args) -> CommandError:
 ERRORS: ErrorTable = [
     # --- ports (ARCHITECTURE.md#port-state-machine) ---
     (BoxRefused, _box_refused),
+    (StartRefused, _start_refused),
     # Asked to stop a run its port has left: the port's state didn't allow it.
     (StopRefused, _boxed(ErrCode.ILLEGAL_TRANSITION)),
     (PortNotBound, _boxed(ErrCode.PORT_NOT_BOUND)),

@@ -52,6 +52,10 @@ class BoxConfig:
     start_command: StartCommand
     config_metadata: dict[str, Any]
     profile: TaskProfile | None
+    #: `ChannelSet.content_hash()` of the channel set this box's sketch was
+    #: generated against, read at mapping inside the rig definition's read
+    #: hold (`DATA.md#the-tsv-log`). None when nobody read one (a test).
+    channel_set_hash: str | None = None
 
 
 @dataclass
@@ -313,6 +317,11 @@ class SessionRunner:
             # `READY` (`TASKS.md#the-start-line`). Core, not config: it describes
             # the build, not the tuning, so it stays out of `params_hash`.
             core["interp"] = interp
+        if run.config.channel_set_hash is not None:
+            # Which channel set the sketch was generated against: the codes
+            # each edge strobes and what each channel is (ADR 0003). Core, not
+            # config: it describes the rig, not the tuning.
+            core["channel_set_hash"] = run.config.channel_set_hash
         if self.recording_fields is not None:
             # Which recording this run is inside, and which digital input and
             # headstage port carry it (`RECORDING.md#what-is-written`). Core rather than

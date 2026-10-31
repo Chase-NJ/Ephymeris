@@ -4,7 +4,7 @@ import type { SidecarPort } from "@/lib/ws/port";
 import type { RigDocument } from "./types";
 
 /**
- * The four `hardware.*` calls.
+ * The `hardware.*` calls.
  *
  * `preview` and `save` take the whole document rather than a patch: the checks
  * that matter run over the document as a whole — two channels sharing a pin,
@@ -33,6 +33,23 @@ export async function saveRig(
 
 export async function resetRig(client: SidecarPort) {
   return client.call(CMD.HARDWARE_RESET, {});
+}
+
+/** The channel set and vocabulary as they travel to the other lab machine
+ *  (`TASKS.md#moving-the-channel-set-between-machines`). */
+export async function exportChannelSet(client: SidecarPort) {
+  return client.call(CMD.HARDWARE_EXPORT_CHANNEL_SET, {});
+}
+
+/** Plan (`apply: false`) or apply another machine's export. The sidecar decides
+ *  every conflict; `confirm` passes a plan's `breaks`, as for `saveRig`. */
+export async function importChannelSet(
+  client: SidecarPort,
+  document: unknown,
+  apply: boolean,
+  confirm = false,
+) {
+  return client.call(CMD.HARDWARE_IMPORT_CHANNEL_SET, { document, apply, confirm });
 }
 
 /**

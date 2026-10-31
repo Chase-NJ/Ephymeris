@@ -54,6 +54,8 @@ class Cmd:
     HARDWARE_PREVIEW: Final = "hardware.preview"
     HARDWARE_SAVE: Final = "hardware.save"
     HARDWARE_RESET: Final = "hardware.reset"
+    HARDWARE_EXPORT_CHANNEL_SET: Final = "hardware.exportChannelSet"
+    HARDWARE_IMPORT_CHANNEL_SET: Final = "hardware.importChannelSet"
 
     # Strobe vocabulary
     STROBES_GET: Final = "strobes.get"
@@ -209,6 +211,8 @@ class ErrCode:
     RIG_WOULD_BREAK_TASKS: Final = "RIG_WOULD_BREAK_TASKS"
     RIG_WIRING_UNLOADED: Final = "RIG_WIRING_UNLOADED"
     RIG_SAVE_BLOCKED: Final = "RIG_SAVE_BLOCKED"
+    CHANNEL_SET_INVALID: Final = "CHANNEL_SET_INVALID"
+    CHANNEL_SET_IMPORT_CONFLICT: Final = "CHANNEL_SET_IMPORT_CONFLICT"
     STROBE_INVALID: Final = "STROBE_INVALID"
     STROBE_REQUIRED: Final = "STROBE_REQUIRED"
     STROBE_IN_RECORDED_SESSION: Final = "STROBE_IN_RECORDED_SESSION"
@@ -346,6 +350,8 @@ SHAPES: Final[dict[str, Any]] = {
     "RigImpact": ('obj', (('specId', 'str', False), ('label', ('union', ('str', 'null')), False), ('codes', ('list', 'str'), False))),
     "RigAllocation": ('obj', (('channel', 'str', False), ('edge', 'str', False), ('name', 'str', False), ('code', 'int', False))),
     "RigSaved": ('obj', (('status', ('ref', 'RigStatus'), False), ('problems', ('list', ('ref', 'RigProblem')), False), ('breaks', ('list', ('ref', 'RigImpact')), False), ('allocations', ('list', ('ref', 'RigAllocation')), False))),
+    "ChannelSetConflict": ('obj', (('kind', 'str', False), ('channel', ('union', ('str', 'null')), False), ('message', 'str', False))),
+    "ChannelSetImportPlan": ('obj', (('conflicts', ('list', ('ref', 'ChannelSetConflict')), False), ('vocabulary', ('ref', 'StrobeImportPlan'), False), ('changed', ('list', 'str'), False), ('reordered', 'bool', False), ('breaks', ('list', ('ref', 'RigImpact')), False), ('hereHash', 'str', False), ('thereHash', 'str', False), ('identical', 'bool', False))),
     "TaskDiagnostic": ('obj', (('location', 'str', False), ('message', 'str', False), ('code', 'str', False))),
     "TaskEntry": ('obj', (('id', 'str', False), ('name', 'str', False), ('category', 'str', False), ('path', 'str', False), ('label', 'str', False), ('editedAt', ('union', ('str', 'null')), False), ('problems', 'int', False), ('trials', 'int', False), ('stages', 'int', False), ('selectionMode', ('lit', ('antibias', 'pool', 'weighted')), False))),
     "TaskSaved": ('obj', (('entry', ('ref', 'TaskEntry'), False), ('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False), ('sketchPath', ('union', ('str', 'null')), False))),
@@ -403,6 +409,8 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "hardware.preview": ('obj', (('document', 'any', False), ('confirmedPins', 'bool', True))),
     "hardware.save": ('obj', (('document', 'any', False), ('confirm', 'bool', False), ('confirmedPins', 'bool', True))),
     "hardware.reset": ('obj', ()),
+    "hardware.exportChannelSet": ('obj', ()),
+    "hardware.importChannelSet": ('obj', (('document', 'any', False), ('apply', 'bool', False), ('confirm', 'bool', True))),
     "strobes.get": ('obj', ()),
     "strobes.usage": ('obj', (('name', 'str', False), ('scan', 'bool', True))),
     "strobes.add": ('obj', (('name', 'str', False), ('code', 'int', False), ('rationale', 'str', False), ('emittedOn', 'str', True))),
@@ -492,6 +500,8 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "hardware.preview": ('ref', 'RigSaved'),
     "hardware.save": ('ref', 'RigSaved'),
     "hardware.reset": ('ref', 'RigDocument'),
+    "hardware.exportChannelSet": ('obj', (('document', 'any', False), ('filename', 'str', False))),
+    "hardware.importChannelSet": ('obj', (('plan', ('ref', 'ChannelSetImportPlan'), False), ('applied', 'bool', False))),
     "strobes.get": ('ref', 'StrobeVocabulary'),
     "strobes.usage": ('ref', 'StrobeUsage'),
     "strobes.add": ('ref', 'StrobeVocabulary'),

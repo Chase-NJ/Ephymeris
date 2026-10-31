@@ -26,6 +26,8 @@ CORE = {
     "serial_port": "COM3",
     "session_id": "2O-Bdisc_25",
     "sketch": "GRGL_2-Odor",
+    # A hex digest that happens to be all digits must come back a string.
+    "channel_set_hash": "0123456789012345",
 }
 CONFIG = {"correction_left": 0, "lazy_escalation": True, "trial_seed": 288577176}
 STROBES = [(101, 0), (249, 500), (103, 900), (248, 1400)]

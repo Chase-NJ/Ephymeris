@@ -41,6 +41,7 @@ Everything between "a box runs firmware that emits strobes" and "the app draws i
   - [The wiring page](#the-wiring-page)
   - [Wiring rules](#wiring-rules)
   - [The sync channel](#the-sync-channel)
+  - [Moving the channel set between machines](#moving-the-channel-set-between-machines)
 - [Strobe vocabulary](#strobe-vocabulary)
   - [Append only](#append-only)
   - [Editing the vocabulary](#editing-the-vocabulary)
@@ -669,6 +670,8 @@ not pin order.*
 
 **The inspector edits what a channel is.** Beside its kind, it edits the channel's type and role; for an input, its active level and debounce; for a reward line, the port it serves. A channel's edge codes are shown read-only, and an edge with no code yet reads "issued on save".
 
+**Export channel set** and **Import channel set** move the channel set and the vocabulary to and from the other lab machine ([Moving the channel set between machines](#moving-the-channel-set-between-machines)). The import dialog renders the sidecar's plan, and holds Import on any conflict.
+
 **Saving previews what it would issue.** `hardware.preview` returns `allocations`, the [edge codes](#edge-codes) a save would issue. The page lists them above Save, so a new code is never a surprise in the vocabulary.
 
 **Saving previews what it would break.** `hardware.preview` validates as the operator types and reports `breaks` — the saved tasks this wiring would *newly* break, computed by validating each definition under both wirings ([The rig definition](#the-rig-definition)). `hardware.save` without `confirm` refuses such a change with `RIG_WOULD_BREAK_TASKS`; with `confirm: true` it writes anyway. Rewiring is the operator's call; the app only refuses to let it happen unnoticed. A document that fails validation is never written.
@@ -691,6 +694,51 @@ A well-formed document describing an impossible box is a successful reply carryi
 ### The sync channel
 
 `sync` is the seventh kind: one output that pulses on every strobe into a recording controller's digital input ([RECORDING.md](RECORDING.md#the-sync-line)). It is resolved by kind, so a rig may name it anything. `BOX_PIN_SYNC_OUT` is **the one pin always emitted** — `-1` when the rig declares no sync channel — because every other undeclared pin keeps `BoxPins.h`'s default, and here that default would pulse a pin the operator never declared while the app reports the box has no sync line. Since a saved rig replaces the shipped pair, a rig document saved without a sync channel has none until one is added.
+
+### Moving the channel set between machines
+
+Both lab machines must hold one channel set and emit identical codes ([ADR 0003](adr/0003-phase-spine-task-model.md)). One machine edits it and exports it from the Wiring page; the other imports it (`hardware.exportChannelSet`, `hardware.importChannelSet`; rules in `rig/transfer.py`, the write in `RigDefinition.import_channel_set`).
+
+**The export** is one file:
+
+```json
+{"channel_set_export_version": 1,
+ "channel_set_hash": "3f0c…",
+ "channel_set": {"channel_set_version": 1, "channels": {"odor_port": {…}, …}},
+ "vocabulary": {"vocab_version": 3, "codes": {…}, "retired": {…}, …}}
+```
+
+- **`channel_set`** is the channel set in force: every channel entry whole, in declaration order. It has no pins.
+- **`vocabulary`** is the whole vocabulary, as `strobes.export` sends it.
+- **`channel_set_hash`** is `ChannelSet.content_hash()` ([Registry rules](#registry-rules)).
+- **Export is refused** in two cases:
+  - an edge has no code yet, for example on the shipped set before this machine's first save. The importer would issue its own numbers;
+  - the stored wiring is not in force: it did not load, or it is held.
+
+**The import replaces this machine's channel set with the file's and keeps every pin.** It adopts the file's entries verbatim, labels and declaration order included, so the two documents agree beyond the hash. It merges the vocabulary as [a vocabulary import](#moving-codes-between-machines) does. `apply: false` returns the plan and writes nothing.
+
+**Any conflict refuses the whole import**, and the plan lists every one (`ChannelSetConflict.kind`):
+
+| Kind | When |
+|---|---|
+| `vocabulary` | One name with two codes, one code with two names, or a code this machine cannot issue |
+| `not_here` | A channel the file has and this rig lacks. It has no pin here |
+| `only_here` | A channel this rig has and the file lacks. Its pin would belong to no channel |
+| `no_code` | An edge the file names no code for |
+| `rule` | A [wiring rule](#wiring-rules) the joined document breaks against the merged vocabulary. One case is a code retired here that the file's channel names: a merge never reinstates |
+| `hash` | The joined channel set does not hash to the file's `channel_set_hash`: the file changed after export |
+
+Two kinds are judged only when nothing else already names the problem. `rule` and `hash` are judged only once both sides have the same channels, because a channel one side lacks would come back as RIG101. `hash` is also skipped over a `rule` or `no_code` conflict. A code in a `vocabulary` conflict is left out of the merge the rules are judged against, so a rule it breaks is still listed beside it.
+
+Besides conflicts:
+
+- **A plan reports `breaks`**, as `hardware.preview` does. Applying it needs `confirm`.
+- **A plan reports `reordered`** when the file declares the channels in another order, because declaration order is the [odor index](#order-is-meaning).
+- **An import is refused** while the stored wiring did not load or is held, while a stored file waits for its pins to be confirmed (RIG108), and while a session is set up or a box is running.
+
+**A clean import is one [rig definition write](#the-rig-definition).** It plans again inside the write, saves the vocabulary (when it changes), then `wiring.json`, then runs one rebuild. The vocabulary goes first, so the wiring never names a code the vocabulary lacks. If the wiring then fails to write, the vocabulary keeps the union, which is append only. The rebuild still runs, and importing again then changes only the wiring. An identical import writes nothing.
+
+**Adding a channel lab-wide is not covered yet.** The file's new channel has no pin on the importing machine, so the import refuses it as `not_here`.
 
 ## Strobe vocabulary
 
@@ -743,7 +791,7 @@ Every edit is a `strobes.*` command (`app.py`, rules in `strobes/store.py`, evid
 
 ### Moving codes between machines
 
-Vocabularies are per machine, so a lab with two rigs keeps them in step by **Export** and **Import** on the page (`strobes.export`, `strobes.import`). An import is a **union**: it adds codes this machine lacks, and a code retired there and live here is retired here too (some session there contains it). It never removes a code, and never reinstates one. Any **conflict** — one name with two numbers, or one number with two names — refuses the whole import: picking a winner would relabel one machine's recorded data. `strobes.import` with `apply: false` returns the plan and writes nothing; the dialog shows it before applying. A v2 export (stored `free_ranges`) is read as v3.
+Vocabularies are per machine, so a lab with two rigs keeps them in step by **Export** and **Import** on the page (`strobes.export`, `strobes.import`). An import is a **union**: it adds codes this machine lacks, and a code retired there and live here is retired here too (some session there contains it). It never removes a code, and never reinstates one. Any **conflict** — one name with two numbers, or one number with two names — refuses the whole import: picking a winner would relabel one machine's recorded data. `strobes.import` with `apply: false` returns the plan and writes nothing; the dialog shows it before applying. A v2 export (stored `free_ranges`) is read as v3. A [channel-set import](#moving-the-channel-set-between-machines) carries the vocabulary too, and merges it by the same rules.
 
 ### Every declared code is emitted
 

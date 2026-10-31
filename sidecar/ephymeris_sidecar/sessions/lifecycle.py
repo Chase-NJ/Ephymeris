@@ -27,6 +27,7 @@ from ..cohorts.db import NestedWrite, TransactionAborted
 from ..ports.flashing import FlashJob, FlashQueue
 from ..ports.manager import CarriedSketch, sketch_fingerprint
 from ..protocol import Evt, event
+from ..rig import registry
 from ..rig.definition import WiringNotLoaded
 from ..tasks import profile as task_profile
 from ..tasks.start_command import build_start_command
@@ -299,6 +300,11 @@ class SessionLifecycle:
             # just read from (`TASKS.md#the-rig-definition`).
             async with self._rig_reading():
                 names = {a.id: a.name for a in cohort.animals}
+                # The channel set every folder this mapping reads was
+                # generated against; no write can land until the session ends.
+                channel_set_hash = await asyncio.to_thread(
+                    lambda: registry.channel_set().content_hash()
+                )
                 box_configs: list[BoxConfig] = []
                 for entry in entries:
                     if entry.box is None or entry.animal_id not in names or not entry.sketch_path:
@@ -332,6 +338,7 @@ class SessionLifecycle:
                             start_command=start_command,
                             config_metadata=dict(entry.config),
                             profile=profile,
+                            channel_set_hash=channel_set_hash,
                         )
                     )
 

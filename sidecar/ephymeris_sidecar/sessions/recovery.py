@@ -77,6 +77,8 @@ _STRING_FIELDS = frozenset(
         "rat", "serial_port", "session_id", "sketch",
         # An RHX base filename like "0423_7" must not come back as a number.
         "intan_recording", "intan_path", "intan_port", "intan_channels",
+        # A hex digest can be all digits, and a leading zero would be lost.
+        "channel_set_hash",
     }
 )
 

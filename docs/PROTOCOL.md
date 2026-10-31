@@ -319,6 +319,38 @@ Discard this rig's document and go back to the shipped wiring. A wiring change l
 
 **Result:** [RigDocument](#shape-rigdocument)
 
+<a id="cmd-hardware.exportchannelset"></a>
+#### `hardware.exportChannelSet`
+
+The channel set and the vocabulary as they travel to the other lab machine (`TASKS.md#moving-the-channel-set-between-machines`). `CHANNEL_SET_INVALID` while an edge has no code yet (save the wiring first); `RIG_WIRING_UNLOADED` while the stored wiring did not load or is held; `STROBE_VOCABULARY_UNREADABLE` while the vocabulary will not read.
+
+**Result**
+
+| Field | Type | Notes |
+|---|---|---|
+| `document` | unknown | `{channel_set_export_version, channel_set_hash, channel_set, vocabulary}`: the channel set in force, with no pins, and this machine's whole vocabulary. |
+| `filename` | string | `channel-set-<YYYY-MM-DD>.json`, the save dialog's default. |
+
+<a id="cmd-hardware.importchannelset"></a>
+#### `hardware.importChannelSet`
+
+Make this machine's channel set and vocabulary the other machine's, keeping this machine's pins. One rig definition write: the vocabulary union, then the wiring, then one rebuild, broadcasting `strobes.updated` (when the vocabulary changed) and `hardware.updated`. `CHANNEL_SET_IMPORT_CONFLICT` applying a plan with conflicts (`detail.conflicts`); `CHANNEL_SET_INVALID` for a file that is not an export; `RIG_WOULD_BREAK_TASKS` without `confirm`; `RIG_IN_USE`, `RIG_WIRING_UNLOADED` and `RIG_SAVE_BLOCKED` as for `hardware.save`. Nothing is written on any of them.
+
+**Args**
+
+| Field | Type | Notes |
+|---|---|---|
+| `document` | unknown | Another machine's `hardware.exportChannelSet` document. |
+| `apply` | boolean | False ⇒ plan only, write nothing. |
+| `confirm` *(optional)* | boolean | As `hardware.save`'s: needed to apply a plan with `breaks`. |
+
+**Result**
+
+| Field | Type | Notes |
+|---|---|---|
+| `plan` | [ChannelSetImportPlan](#shape-channelsetimportplan) |  |
+| `applied` | boolean | Something was written. False for a plan, and for an identical import. |
+
 ### Strobe vocabulary
 
 <a id="cmd-strobes.get"></a>
@@ -1561,6 +1593,8 @@ One live view's payload, only while that scope is open (`RECORDING.md#live-windo
 | `RIG_WOULD_BREAK_TASKS` | `hardware.save` without `confirm` on a change that would stop a saved task profile generating. `detail.breaks` lists them. Retry with `confirm: true` to proceed — the app does not veto a rewiring, it refuses to let one happen unnoticed. |
 | `RIG_WIRING_UNLOADED` | `port.startSession`, `sessions.startAll`, `sessions.flash`, `flash.enqueue` or `utility.identify` while the wiring in force is the shipped one because the rig's stored wiring was not put in force when it was installed: it did not load (unreadable, unparseable, out of shape, a channel without a pin, a wiring rule broken, or an older layout that disagrees with itself), or it is held because nobody saved or confirmed it on this machine (copied in, or changed by hand). A box started, flashed or identified would drive pins the operator never declared. `hardware.get` names the problem. Saving the wiring (its pins confirmed) or resetting it clears it; a file fixed by hand meanwhile does not, and a restart does only onto the wiring last saved here (`TASKS.md#the-channel-set-and-the-pin-map`). |
 | `RIG_SAVE_BLOCKED` | `hardware.save` that the rig's state does not allow yet: stored wiring that did not load and has nothing to repair (unreadable, unparseable, not a JSON object, or one half of a two-file pair alone), which only `hardware.reset` replaces; a draft read from a stored file not in force, sent without `confirmedPins`; or a draft with a wiring-rule problem (RIG101–RIG107), which the editor holds Save on too. Nothing was written and no code was issued (`TASKS.md#the-channel-set-and-the-pin-map`). |
+| `CHANNEL_SET_INVALID` | `hardware.importChannelSet` with a file that is not an exported channel set (another version, no vocabulary, a channel set out of shape), or `hardware.exportChannelSet` while an edge has no code yet. Nothing was written. |
+| `CHANNEL_SET_IMPORT_CONFLICT` | `hardware.importChannelSet` applied with a plan that has conflicts. Nothing was written; `detail.conflicts` lists every one (`ChannelSetConflict`). |
 | `STROBE_INVALID` | A strobe edit the vocabulary cannot take: a malformed or duplicate name, a code that is not free, a blank meaning, an unknown name, or an import file that is not a vocabulary. |
 | `STROBE_REQUIRED` | Retiring or removing a code a response-port slot reports with, or one the shared firmware library names. Never passable with `confirm`. |
 | `STROBE_IN_RECORDED_SESSION` | `strobes.remove` on a code a recorded session contains. Never passable: retire it instead. `detail` carries `count`, `sample` and `scanned`. |
@@ -1791,6 +1825,33 @@ The kind of answer a condition rewards. `port` is a rig whose response ports car
 | `box` | number |  |
 | `animalId` | string |  |
 | `metrics` | [TelemetryMetric](#shape-telemetrymetric)[] |  |
+
+<a id="shape-channelsetconflict"></a>
+#### ChannelSetConflict
+
+One way another machine's channel set disagrees with this one (`TASKS.md#moving-the-channel-set-between-machines`). Any one refuses the whole import.
+
+| Field | Type | Notes |
+|---|---|---|
+| `kind` | string | `vocabulary` (one name with two codes, one code with two names, or a code this machine cannot issue), `not_here` (a channel the file has and this rig lacks, so it has no pin here), `only_here` (a channel this rig has and the file lacks), `no_code` (an edge the file names no code for), `rule` (a wiring rule RIG101–RIG107 the imported channel set breaks here, judged against the merged vocabulary), or `hash` (the file changed after it was exported). |
+| `channel` | string \| null | The channel it is about, when it is about one. |
+| `message` | string | The difference, in words, naming both sides. |
+
+<a id="shape-channelsetimportplan"></a>
+#### ChannelSetImportPlan
+
+What importing another machine's channel set and vocabulary would do here. The pin map is never imported.
+
+| Field | Type | Notes |
+|---|---|---|
+| `conflicts` | [ChannelSetConflict](#shape-channelsetconflict)[] | Every disagreement, not the first. Non-empty means the import is refused whole and nothing is written. |
+| `vocabulary` | [StrobeImportPlan](#shape-strobeimportplan) | The vocabulary half: the codes the import adds and retires here. |
+| `changed` | string[] | Channels on both sides whose entry the import replaces. |
+| `reordered` | boolean | The file declares the channels in another order. Declaration order is the odor index (`TASKS.md#order-is-meaning`), so it is said out loud. |
+| `breaks` | [RigImpact](#shape-rigimpact)[] | Saved tasks the import would newly break. Applying needs `confirm` when non-empty. |
+| `hereHash` | string | This rig's `channelSetHash` now. |
+| `thereHash` | string | The exporting machine's `channelSetHash`: this rig's after a clean import. |
+| `identical` | boolean | The two machines already agree: applying writes nothing. |
 
 <a id="shape-cohort"></a>
 #### Cohort

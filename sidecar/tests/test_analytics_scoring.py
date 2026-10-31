@@ -313,7 +313,7 @@ async def test_a_change_to_the_recorded_config_reaches_a_warm_row(
 # --- the one pin (`DATA.md#caching`) ---------------------------------------
 
 #: What today's scoring answers for the canary runs (`scoring.canary_fingerprint`).
-CANARY = "5e2ede04597c06f1c2eb8d2981404a48260140167910217718550bf6836fb8d7"
+CANARY = "afec8b793e8509d5ba063d10f4defb980ee71f79a1609ed309db7bf79794fb23"
 
 # --- a snapshot recorded before a no-go metric listed every port ------------
 
@@ -321,17 +321,22 @@ CANARY = "5e2ede04597c06f1c2eb8d2981404a48260140167910217718550bf6836fb8d7"
 def _pre_fix_no_go_snapshot() -> dict:
     """What every no-go run recorded before the fix carries: the miss is ONE
     port, `alternateCode` alone."""
+    code = scoring._seed_vocabulary().code_of
     return {
         "taskName": "Go / no-go",
-        "strobes": {"101": "ODOR_1_ON", "103": "ODOR_3_ON", "105": "ODOR_5_ON",
-                    "248": "WATER_POKE_L", "249": "WATER_POKE_R", "256": "WATER_POKE_NONE"},
+        "strobes": {str(code(n)): n for n in (
+            "ODOR_1_ON", "ODOR_3_ON", "ODOR_5_ON",
+            "WATER_POKE_L", "WATER_POKE_R", "WATER_POKE_NONE")},
         "liveMetrics": [
-            {"id": "p_correct_1", "label": "P(right well | Go right)", "triggerCode": 101,
-             "successCode": 249, "alternateCode": 248, "windowSize": 20},
-            {"id": "p_correct_2", "label": "P(left well | Go left)", "triggerCode": 103,
-             "successCode": 248, "alternateCode": 249, "windowSize": 20},
-            {"id": "p_withhold_3", "label": "P(withhold | Withhold)", "triggerCode": 105,
-             "successCode": 256, "alternateCode": 249, "windowSize": 20},
+            {"id": "p_correct_1", "label": "P(right well | Go right)",
+             "triggerCode": code("ODOR_1_ON"), "successCode": code("WATER_POKE_R"),
+             "alternateCode": code("WATER_POKE_L"), "windowSize": 20},
+            {"id": "p_correct_2", "label": "P(left well | Go left)",
+             "triggerCode": code("ODOR_3_ON"), "successCode": code("WATER_POKE_L"),
+             "alternateCode": code("WATER_POKE_R"), "windowSize": 20},
+            {"id": "p_withhold_3", "label": "P(withhold | Withhold)",
+             "triggerCode": code("ODOR_5_ON"), "successCode": code("WATER_POKE_NONE"),
+             "alternateCode": code("WATER_POKE_R"), "windowSize": 20},
         ],
     }
 
@@ -362,7 +367,7 @@ def test_a_run_recorded_before_the_fix_re_scores_correctly() -> None:
     assert (withhold["hits"], withhold["counted"], withhold["excluded"]) == (3, 7, 0)
     assert entry.profile_hash == digest
     assert snapshot.to_json() == stored
-    assert [m.alternate_codes for m in snapshot.live_metrics][-1] == (249,)
+    assert snapshot.live_metrics[-1].alternate_codes == (seed.code_of("WATER_POKE_R"),)
 
 
 
@@ -380,13 +385,14 @@ def test_the_score_version_pins_every_input() -> None:
     the canary is blind to it: add a case to `scoring._canary_runs` that shows
     it (or, failing that, bump `SCORE_VERSION`).
     """
-    assert scoring.SCORE_VERSION == 9
+    assert scoring.SCORE_VERSION == 10
     assert scoring.canary_fingerprint() == CANARY, (
         "scoring's answers changed: every cache re-reads once (DATA.md#caching)"
     )
     version = scoring.current_version()
     assert version >> 32 == scoring.SCORE_VERSION
     assert version != 8, "every row cached before v9 is recomputed"
+    assert version >> 32 != 9, "a row main cached at 9 may hold an inflated P(withhold)"
 
 
 def _set(owner: object, name: str, value: object):

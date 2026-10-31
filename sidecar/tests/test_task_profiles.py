@@ -405,13 +405,17 @@ def test_a_miss_is_a_response_at_the_other_well() -> None:
     assert compute_series(m, [101, 248]) == [0.0]
 
 
-# A no-go metric: trigger 105, success 256 (withheld), and a miss at EITHER port.
+# A no-go metric: trigger, success (withheld), and a miss at EITHER port. Codes
+# come from the default vocabulary by name, never as numbers.
+_SEED = Vocabulary(default_vocabulary_document())
+_ODOR_5, _NONE = _SEED.code_of("ODOR_5_ON"), _SEED.code_of("WATER_POKE_NONE")
+_POKE_L, _POKE_R = _SEED.code_of("WATER_POKE_L"), _SEED.code_of("WATER_POKE_R")
 NO_GO = {
     **GRGL,
-    "strobes": {**GRGL["strobes"], "105": "ODOR_5_ON", "256": "WATER_POKE_NONE"},
+    "strobes": {**GRGL["strobes"], str(_ODOR_5): "ODOR_5_ON", str(_NONE): "WATER_POKE_NONE"},
     "liveMetrics": [{
         "id": "p_withhold_1", "label": "P(withhold | Odor 5)",
-        "triggerCode": 105, "successCode": 256, "alternateCodes": [248, 249],
+        "triggerCode": _ODOR_5, "successCode": _NONE, "alternateCodes": [_POKE_L, _POKE_R],
         "windowSize": 20,
     }],
 }
@@ -420,7 +424,9 @@ NO_GO = {
 def test_a_poke_at_any_alternate_is_a_miss() -> None:
     m = metric(NO_GO)
     # withheld (hit), left (miss), right (miss): every answered trial counts.
-    assert compute_series(m, [105, 256, 105, 248, 105, 249]) == [1.0, 0.5, 1 / 3]
+    assert compute_series(
+        m, [_ODOR_5, _NONE, _ODOR_5, _POKE_L, _ODOR_5, _POKE_R]
+    ) == [1.0, 0.5, 1 / 3]
 
 
 def test_a_metric_names_its_alternates_in_every_spelling() -> None:
@@ -434,18 +440,18 @@ def test_a_metric_names_its_alternates_in_every_spelling() -> None:
             "alternate": ["WATER_POKE_L", "WATER_POKE_R"]}],
     }, vocabulary)
     numbered_many = parse_profile(NO_GO)
-    assert named_many.live_metrics[0].alternate_codes == (248, 249)
-    assert numbered_many.live_metrics[0].alternate_codes == (248, 249)
+    assert named_many.live_metrics[0].alternate_codes == (_POKE_L, _POKE_R)
+    assert numbered_many.live_metrics[0].alternate_codes == (_POKE_L, _POKE_R)
     assert named_many.live_metrics[0].to_json() == {
-        "id": "m", "label": "m", "triggerCode": 105, "successCode": 256,
-        "alternateCode": 248, "alternateCodes": [248, 249], "windowSize": 20,
+        "id": "m", "label": "m", "triggerCode": _ODOR_5, "successCode": _NONE,
+        "alternateCode": _POKE_L, "alternateCodes": [_POKE_L, _POKE_R], "windowSize": 20,
     }
 
     named_one = parse_profile({
         "taskName": "T", "liveMetrics": [{
             **entry, "trigger": "ODOR_1_ON", "success": "WATER_POKE_R", "alternate": "WATER_POKE_L"}],
     }, vocabulary)
-    assert named_one.live_metrics[0].alternate_codes == (248,)
+    assert named_one.live_metrics[0].alternate_codes == (_POKE_L,)
 
 
 def test_a_single_alternate_serializes_exactly_as_it_always_did() -> None:
@@ -460,8 +466,8 @@ def test_a_single_alternate_serializes_exactly_as_it_always_did() -> None:
 def test_several_alternates_survive_a_round_trip_and_still_show_the_first() -> None:
     profile = parse_profile(NO_GO)
     out = profile.live_metrics[0].to_json()
-    assert out["alternateCodes"] == [248, 249]
-    assert out["alternateCode"] == 248  # a reader that knows only the old key
+    assert out["alternateCodes"] == [_POKE_L, _POKE_R]
+    assert out["alternateCode"] == _POKE_L  # a reader that knows only the old key
     assert parse_profile(json.loads(json.dumps(profile.to_json()))).to_json() == profile.to_json()
 
 

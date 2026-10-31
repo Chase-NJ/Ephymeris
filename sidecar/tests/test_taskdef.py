@@ -426,11 +426,16 @@ def test_a_no_go_metric_misses_at_every_response_port():
                      label="Go right"),
         TrialTypeDef("odor_line_5", "ODOR_5_ON", is_go=False, label="Withhold"),
     ])
+    from ephymeris_sidecar.rig.registry import Vocabulary
+
+    seed = Vocabulary(registry.default_vocabulary_document())
+    code = seed.code_of
     metrics = {m.trigger_code: m for m in generate.build_profile(definition).live_metrics}
-    assert metrics[105].success_code == 256
-    assert metrics[105].alternate_codes == (248, 249)
+    no_go = metrics[code("ODOR_5_ON")]
+    assert no_go.success_code == code("WATER_POKE_NONE")
+    assert no_go.alternate_codes == (code("WATER_POKE_L"), code("WATER_POKE_R"))
     # A go type still has exactly one: the other well.
-    assert metrics[101].alternate_codes == (248,)
+    assert metrics[code("ODOR_1_ON")].alternate_codes == (code("WATER_POKE_L"),)
 
 
 # --------------------------------------------------------------------------- #

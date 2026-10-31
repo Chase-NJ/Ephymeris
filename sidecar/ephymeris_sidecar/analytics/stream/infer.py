@@ -116,7 +116,7 @@ def infer_profile(
                 label=f"P(withhold | {stimulus})",
                 trigger_code=code,
                 success_code=withhold,
-                alternate_codes=_enter_codes(slots),
+                alternate_codes=no_go_alternates(vocab),
                 window_size=INFERRED_WINDOW,
             ))
             continue
@@ -231,33 +231,57 @@ def _infer_sides(
     return out
 
 
-def _enter_codes(slots: list[_Slot]) -> tuple[int, ...]:
-    """Every response port's enter code, in slot order: the alternates of a
-    no-go metric. The generator (`taskdef/generate.py` `_enter_codes`) writes
-    the same list in the same order, so a declared and an inferred no-go
-    profile are the same document."""
-    return tuple(slot.enter for slot in slots)
+def no_go_alternates(vocab: Vocabulary) -> tuple[int, ...]:
+    """Every response port's enter code, in port-slot order: the alternates of
+    a no-go metric.
+
+    Needs only what the generator needs (`taskdef/generate.py` `_enter_codes`):
+    a slot's enter code, however its error, break or reward codes resolve. The
+    generator writes the same list in the same order, so a declared and an
+    inferred no-go profile are the same document.
+    """
+    out: list[int] = []
+    for number in sorted(vocab.port_slots):
+        entry = vocab.get(vocab.port_slots[number].get("enter_code", ""))
+        if entry is not None:
+            out.append(entry.code)
+    return tuple(out)
+
+
+def _withhold_code(vocab: Vocabulary) -> int | None:
+    """`WATER_POKE_NONE`'s code, retired or not.
+
+    A snapshot recorded under the code keeps naming it after the Strobes page
+    retires the name, and retired codes are never reissued, so the number still
+    means "withheld" in every recorded run.
+    """
+    entry = vocab.get("WATER_POKE_NONE")
+    if entry is not None:
+        return entry.code
+    retired = vocab.retired_entry("WATER_POKE_NONE")
+    return retired.code if retired is not None else None
 
 
 def widen_no_go(profile: TaskProfile, vocabulary: Vocabulary) -> TaskProfile:
     """The profile as it is SCORED: a no-go metric that lists one alternate
     misses at every response port.
 
-    A snapshot recorded before a no-go metric listed every port holds the one
-    `alternateCode`, so a poke at another port matched neither code and the
-    trial dropped out of P(withhold). The snapshot is the record of what
-    decoded the run and must stay byte for byte as recorded, and its
-    `profile_hash` must not move, so the widening is applied to the copy that
-    is scored and never to the stored profile.
+    Applied wherever a profile is settled for scoring (`MetricSet` for a live
+    session, `scoring._settle` for the archive), so Mission Control and
+    Analytics score the same metric. A snapshot recorded before a no-go metric
+    listed every port, and a hand-written `task.json`, hold one alternate, so a
+    poke at another port matched neither code and the trial dropped out of
+    P(withhold). The stored profile is the record of what decoded the run and
+    must stay byte for byte as recorded, and its `profile_hash` must not move,
+    so the widening is applied to the copy that is scored and never to it.
 
     A no-go metric is one whose success code is `WATER_POKE_NONE` in
     `vocabulary`; a metric that already lists several alternates is left alone.
     """
-    withhold = _code_of(vocabulary, "WATER_POKE_NONE")
-    slots = _slots(vocabulary)
-    if withhold is None or not slots:
+    withhold = _withhold_code(vocabulary)
+    every = no_go_alternates(vocabulary)
+    if withhold is None or not every:
         return profile
-    every = _enter_codes(slots)
     widened = False
     metrics: list[LiveMetric] = []
     for metric in profile.live_metrics:

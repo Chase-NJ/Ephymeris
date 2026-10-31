@@ -473,7 +473,7 @@ function conditionsOf(profile: TaskProfile | null, names: Set<string>): Conditio
  * > The obvious convenience — falling back to `alternateCode` when the success
  * > code is not a well — is wrong in a way that prints a confident lie. A no-go
  * > type's alternates are every response port (the generator's `_enter_codes`,
- * > `infer.py`'s slots), so that
+ * > `infer.no_go_alternates`), so that
  * > fallback renders *"Odor 4 → left well"* for a condition whose correct answer
  * > is to poke nothing at all. This is the only figure the diagram ADDS rather
  * > than rearranges, so it is the only one that can be false — and it would be

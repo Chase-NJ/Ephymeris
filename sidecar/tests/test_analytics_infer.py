@@ -13,6 +13,7 @@ from __future__ import annotations
 from ephymeris_sidecar.analytics import stream
 from ephymeris_sidecar.analytics.stream import infer
 from ephymeris_sidecar.rig import registry
+from ephymeris_sidecar.rig.registry import Vocabulary
 from ephymeris_sidecar.tasks.profile import TaskProfile, parse_profile
 
 from tests.test_analytics_derive import GRGL_FULL, document
@@ -181,9 +182,14 @@ def declared_with_a_no_go() -> TaskProfile:
 
 #: Odor 5 is a no-go. Three withholds, two false alarms at the left port and
 #: two at the right: a poke at EITHER port is the wrong answer.
-WITHHELD_5 = [105, 226, 256]
-FALSE_ALARM_5_L = [105, 226, 248]
-FALSE_ALARM_5_R = [105, 226, 249]
+#: Codes by name from the default vocabulary, never copied as numbers.
+SEED = Vocabulary(registry.default_vocabulary_document())
+ODOR_5, UNPOKE = SEED.code_of("ODOR_5_ON"), SEED.code_of("ODOR_UNPOKE")
+POKE_L, POKE_R = SEED.code_of("WATER_POKE_L"), SEED.code_of("WATER_POKE_R")
+POKE_NONE = SEED.code_of("WATER_POKE_NONE")
+WITHHELD_5 = [ODOR_5, UNPOKE, POKE_NONE]
+FALSE_ALARM_5_L = [ODOR_5, UNPOKE, POKE_L]
+FALSE_ALARM_5_R = [ODOR_5, UNPOKE, POKE_R]
 NO_GO_SESSION = (
     REWARDED_1 * 2 + REWARDED_3 * 2
     + WITHHELD_5 * 3 + FALSE_ALARM_5_L * 2 + FALSE_ALARM_5_R * 2
@@ -270,3 +276,74 @@ def test_the_registry_agrees_with_the_evidence_rules() -> None:
     assert vocab.code_of(slots[1]["break_code"]) == 250
     assert vocab.code_of(slots[2]["break_code"]) == 251
     assert vocab.code_of("WATER_POKE_NONE") == 256
+
+
+# --- the widening, applied wherever a profile is scored ---------------------
+
+
+def a_hand_written_no_go(alternate: str = "WATER_POKE_L") -> TaskProfile:
+    """What an author writes: a no-go metric naming ONE port as its miss."""
+    return parse_profile({
+        "taskName": "Hand-written go / no-go",
+        "liveMetrics": [{
+            "id": "p_withhold", "label": "P(withhold | Odor 5)", "trigger": "ODOR_5_ON",
+            "success": "WATER_POKE_NONE", "alternate": alternate, "windowSize": 20,
+        }],
+    }, SEED)
+
+
+def test_live_and_offline_score_a_hand_written_no_go_identically() -> None:
+    """Mission Control and Analytics cannot disagree: three withholds and two
+    pokes at the port the author did NOT name are 3 of 5 on both."""
+    from ephymeris_sidecar.analytics import scoring
+
+    codes = WITHHELD_5 * 3 + FALSE_ALARM_5_R * 2
+    profile = a_hand_written_no_go()
+
+    live = stream.MetricSet(profile)
+    for code in codes:
+        live.offer(code)
+    (live_value,) = live.values()
+
+    entry = scoring._scored(
+        "r1",
+        scoring._Resolved(profile, "snapshot", "digest"),
+        document(codes),
+        scoring.CacheKey("", None, None, None, 0),
+        stream.DEFAULT_MIN_COUNTED,
+        scoring._Pass(registry.vocabulary(), remember=None),
+    )
+    (offline,) = entry.summary["metrics"]
+
+    assert (live_value.value, live_value.n) == (0.6, 5)
+    assert (offline["hits"], offline["counted"]) == (3, 5)
+    assert live_value.value == offline["pSession"]
+
+
+def a_vocabulary(edit) -> Vocabulary:
+    import copy
+
+    document = copy.deepcopy(registry.default_vocabulary_document())
+    edit(document)
+    return Vocabulary(document)
+
+
+def test_the_widening_survives_the_withhold_code_being_retired() -> None:
+    """Retiring `WATER_POKE_NONE` must not send every old no-go run back to the
+    inflated figure: a retired code is still the code its snapshot names."""
+    def retire(document: dict) -> None:
+        entry = document["codes"].pop("WATER_POKE_NONE")
+        document["retired"]["WATER_POKE_NONE"] = {"code": entry["code"], "rationale": "test"}
+
+    widened = infer.widen_no_go(a_hand_written_no_go(), a_vocabulary(retire))
+    assert widened.live_metrics[0].alternate_codes == (POKE_L, POKE_R)
+
+
+def test_the_widening_needs_only_what_the_generator_needs() -> None:
+    """A slot whose error, break or reward code does not resolve still has an
+    enter code, and the generator lists it. The widening must too."""
+    def damage(document: dict) -> None:
+        document["port_slots"]["2"]["error_code"] = "NO_SUCH_CODE"
+
+    widened = infer.widen_no_go(a_hand_written_no_go(), a_vocabulary(damage))
+    assert widened.live_metrics[0].alternate_codes == (POKE_L, POKE_R)

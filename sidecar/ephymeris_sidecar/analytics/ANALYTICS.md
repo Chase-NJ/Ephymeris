@@ -123,10 +123,13 @@ are `alternateCodes` on the wire, with `alternateCode` repeating the first; a ge
 profile list the same ports in the same order (port-slot order, [inference](#which-profile-decodes-a-run)).
 
 > [!NOTE]
-> **A run recorded before a no-go metric listed every port re-scores correctly.** Its snapshot holds a
-> single `alternateCode`, so scoring widens any metric whose success code is `WATER_POKE_NONE` and which
-> lists one alternate to every response port (`infer.widen_no_go`, applied in `scoring._settle`). Only the
-> scored copy is widened: the stored snapshot, its `to_json` and its `profile_hash` stay as recorded.
+> **A profile that lists one alternate for a no-go metric still scores at every port.** That covers a run
+> recorded before metrics listed every port and a hand-written `task.json`. Scoring widens any metric whose
+> success code is `WATER_POKE_NONE` (retired or not) and which lists one alternate to the enter code of every
+> response port (`infer.widen_no_go`), once, where a profile is settled for scoring: `scoring._settle` for the
+> archive and `MetricSet` for a live session and a debug run. Only the scored copy is widened: the stored
+> snapshot, its `to_json` and its `profile_hash` stay as recorded, and Mission Control and Analytics show
+> the same figure.
 
 The metric is **response-conditional and reward-unconditional**: the firmware strobes the well poke the
 instant it is detected, before any hold check. The rolling window is the last `windowSize` **counted**
@@ -580,6 +583,7 @@ from a half-written archive:
 | `strategy_trail(document, profile)` | `stream/curves.py` | a run's document → the within-session strategy walk |
 | `wilson_interval(hits, n)` | `stream/stats.py` | counts → 95% interval |
 | `infer_profile(codes)` | `stream/infer.py` | strobes → a profile, when none is declared |
+| `widen_no_go(profile, vocabulary)` | `stream/infer.py` | a profile → the copy scored, with every no-go metric missing at every port |
 | `false_starts.classify(facts)` | `stream/false_starts.py` | runs → which are set aside |
 | `reader.read_run(path)` | `reader.py` | a path → the document, or `missing`/`unreadable` |
 | `RunScorer.score(runs)` / `decode(run)` | `scoring.py` | runs → cached summaries / one decoded run for a chart |
@@ -589,10 +593,15 @@ To score a file by hand:
 ```python
 import json
 from ephymeris_sidecar.analytics import stream
+from ephymeris_sidecar.rig import registry
 from ephymeris_sidecar.tasks.profile import embedded_profile
 
 document = json.load(open("remy1_….json"))
-summary = stream.summarize(document, embedded_profile(document))
+profile = embedded_profile(document)
+# Widen as the scorer does, or an old no-go run gets its old, inflated number.
+if profile is not None:
+    profile = stream.infer.widen_no_go(profile, registry.vocabulary())
+summary = stream.summarize(document, profile)
 print(summary.to_json())
 ```
 

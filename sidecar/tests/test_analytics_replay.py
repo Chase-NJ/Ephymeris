@@ -146,6 +146,16 @@ def test_an_unknown_interpreter_version_is_refused() -> None:
         rp.replay(TRIAL, PARAMS, seed=1, events=[], ticks=10, interp=99)
 
 
+def test_the_trial_runner_s_interpreter_is_never_replayed_as_a_table() -> None:
+    """One numbering space: INTERP 1 is BehaviorBox.h's trial runner, which every
+    recorded GRGL run names, and the state-table interpreter is 2. So a run's
+    header alone tells a spine run from a legacy one, and replay never walks a
+    legacy run's strobes as if a table had produced them."""
+    assert rp.INTERP_VERSIONS == {2}
+    with pytest.raises(ValueError, match="INTERP 1"):
+        rp.replay(TRIAL, PARAMS, seed=1, events=[], ticks=10, interp=1)
+
+
 def test_a_parameter_slot_past_the_params_is_refused() -> None:
     with pytest.raises(ValueError, match="slot 5"):
         rp.replay(TRIAL, PARAMS[:5], seed=1, events=[], ticks=10)

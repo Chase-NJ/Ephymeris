@@ -871,6 +871,12 @@ export interface TaskProfile {
    * which the placement walk degrades around rather than refusing.
    */
   identify?: IdentifySpec;
+  /**
+   * Phase-spine tasks only (`TASKS.md#spine-tasks`): the snapshot replay reads — the definition,
+   * the state table as lowered, each bit's channel and edge code names, and each parameter slot's
+   * wire key. Absent on every other profile.
+   */
+  spine?: Record<string, unknown>;
 }
 
 /** One box's session-local mapping + task config (`ARCHITECTURE.md#session-lifecycle`). */
@@ -1158,7 +1164,11 @@ export interface ConditionOutcomes {
   outcomes: TrialOutcomes;
 }
 
-export type RunStatus = "ok" | "no-metrics" | "missing" | "unreadable";
+/**
+ * Why a run has numbers or not (`ANALYTICS.md#why-a-run-has-no-numbers`). `replay-pending` is a
+ * spine task's run: recorded, and scored by replay once that exists.
+ */
+export type RunStatus = "ok" | "no-metrics" | "replay-pending" | "missing" | "unreadable";
 
 /**
  * How much the decoding can be trusted (`DATA.md#reading-the-archive`). Four states —
@@ -1891,8 +1901,9 @@ export interface TaskDiagnostic {
   location: string;
   message: string;
   /**
-   * TSK101–TSK111, TSK113 and TSK114 from the sidecar; TSK112 is derived on the Task tab. Each
-   * names a failure that is silent without it.
+   * TSK101–TSK111, TSK113 and TSK114 from the sidecar; TSK112 is derived on the Task tab;
+   * SPN101–SPN108 for a phase-spine task (`TASKS.md#spine-tasks`). Each names a failure that is
+   * silent without it.
    */
   code: string;
 }

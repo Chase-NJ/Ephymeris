@@ -1,7 +1,8 @@
 """Hold BoxInterp.h and replay.py equal: the differential test (run_diff.sh).
 
-Generates state tables (lowered spines of the first phases, and raw tables
-that stress the format), randomized input logs with simultaneous edges, seeds
+Generates state tables (spines lowered by the generator itself,
+`taskdef/lowering.py`; spines of the first phases lowered here; and raw
+tables that stress the format), randomized input logs with simultaneous edges, seeds
 and start times near the millis() wrap. Runs every case through the C core
 (`interp_driver`, stepping every tick as a board does) and through the Python
 replay (jumping between edges and timers), and fails on the first tick where
@@ -9,7 +10,9 @@ their actions differ.
 
 Then it checks itself: with the Python tie rule deliberately changed, the same
 cases must differ. A differential test that cannot see a changed tie rule is
-generating too few ties to be trusted.
+generating too few ties to be trusted. The generator's own tables hold no ties
+(a lowered state has at most one exit), so their family has a check of its
+own: with every RNG draw reflected, those cases alone must differ.
 
 Usage:  python3 differential.py --driver ./interp_driver [--cases N] [--seed S]
 """
@@ -24,19 +27,23 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-REPLAY = HERE.parents[4] / "sidecar" / "ephymeris_sidecar" / "analytics" / "stream" / "replay.py"
+SIDECAR = HERE.parents[4] / "sidecar" / "ephymeris_sidecar"
+REPLAY = SIDECAR / "analytics" / "stream" / "replay.py"
+LOWERING = SIDECAR / "taskdef" / "lowering.py"
 
 
-def load_replay():
-    """replay.py by path: it imports only the standard library, so no sidecar install is needed."""
-    spec = importlib.util.spec_from_file_location("replay", REPLAY)
+def load(name: str, path: Path):
+    """A module by path: replay.py and lowering.py import only the standard
+    library, so no sidecar install is needed."""
+    spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["replay"] = module
+    sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
 
 
-rp = load_replay()
+rp = load("replay", REPLAY)
+lowering = load("lowering", LOWERING)
 NONE, RISE, FALL = rp.NONE, rp.RISE, rp.FALL
 
 
@@ -146,6 +153,36 @@ def spine_table(rng: random.Random, n_params: int) -> rp.Table:
     return rp.Table(states=tuple(rows), edges=tuple(edge_rows))
 
 
+def generated_table(rng: random.Random, n_params: int) -> tuple[rp.Table, int]:
+    """A random spine DEFINITION, lowered by the generator's own `lowering.lower()`:
+    the tables a saved spine task compiles into its `TaskSpine.h`. Returns the
+    table and how many parameter slots it reads, which the generator decides."""
+    del n_params  # lowering assigns the slots
+    inputs = [f"in{i}" for i in range(rng.randint(1, 4))]
+    outputs = [f"out{j}" for j in range(rng.randint(1, 6))]
+
+    def some_outputs():
+        return rng.sample(outputs, rng.randint(0, min(3, len(outputs))))
+
+    phases = []
+    for _ in range(rng.randint(1, 5)):
+        kind = rng.choice(("wait", "present", "delay", "outcome"))
+        p = {"phase": kind, "outputs": some_outputs()}
+        if kind == "wait":
+            p["on"] = rng.choice(inputs)
+            if rng.random() < 0.5:
+                p["timeoutMs"] = 1
+        elif kind == "present" and rng.random() < 0.6:
+            p["abortOnRelease"] = rng.choice(inputs)
+        elif kind == "outcome":
+            p["line"] = rng.choice(outputs)
+        phases.append(p)
+    phases.append({"phase": "iti", "outputs": some_outputs() if rng.random() < 0.2 else []})
+    low = lowering.lower(phases, inputs=inputs, outputs=outputs)
+    table = rp.Table(states=[rp.StateRow(*s) for s in low.states], edges=[rp.EdgeRow(*e) for e in low.edges])
+    return table, len(low.params)
+
+
 # --- cases --------------------------------------------------------------------
 
 
@@ -186,7 +223,10 @@ def make_cases(seed: int, count: int) -> list[dict]:
     cases = []
     for i in range(count):
         n_params = rng.randint(2, 6)
-        table = (spine_table if i % 2 else raw_table)(rng, n_params)
+        if i % 3 == 2:
+            table, n_params = generated_table(rng, n_params)
+        else:
+            table = (spine_table if i % 3 else raw_table)(rng, n_params)
         params = params_for(rng, n_params)
         r = rng.random()
         start = 0 if r < 0.4 else 0xFFFFFFFF - rng.randint(0, 3000) if r < 0.7 else rng.getrandbits(32)
@@ -287,7 +327,30 @@ def main() -> int:
         print("differential: a reversed tie rule went unnoticed; the cases hold too few ties")
         return 1
 
-    print(f"differential: {len(cases)} cases, {actions} actions equal; a changed tie rule is caught")
+    # The lowering gives a state at most one exit, so the generator's tables
+    # hold no ties and the check above cannot see them. Their own check: with
+    # every RNG draw reflected (k -> n-1-k), the generated cases alone must now
+    # differ, through their Outcome phases' chance states.
+    family = [i for i in range(len(cases)) if i % 3 == 2]
+    honest_draw = rp.draw
+
+    def reflected(ctx, n):
+        value, ctx = honest_draw(ctx, n)
+        return ((n & 0xFFFFFFFF) - 1 - value if n & 0xFFFFFFFF else value), ctx
+
+    rp.draw = reflected
+    try:
+        caught = first_difference([c_runs[i] for i in family], [cases[i] for i in family])
+    finally:
+        rp.draw = honest_draw
+    if not caught:
+        print("differential: a changed draw went unnoticed on the generator's tables; they reach "
+              "too few chance states")
+        return 1
+
+    generated = len(family)
+    print(f"differential: {len(cases)} cases ({generated} lowered by the generator), "
+          f"{actions} actions equal; a changed tie rule and a changed draw are caught")
     return 0
 
 

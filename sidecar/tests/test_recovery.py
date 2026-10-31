@@ -119,6 +119,45 @@ def test_a_torn_final_line_costs_only_itself(tmp_path: Path) -> None:
     assert document["ts_data"] == [[code, ts] for code, ts in STROBES]
 
 
+def _complete_lines(data: bytes) -> bytes:
+    """What a cut file holds whole: everything up to its last newline."""
+    end = data.rfind(b"\n")
+    return data[: end + 1] if end >= 0 else b""
+
+
+def test_a_cut_at_any_byte_costs_only_the_torn_line(tmp_path: Path) -> None:
+    """`DATA.md#crash-recovery`: a torn final line costs only itself. A power cut
+    can land on any byte, so the run is cut at every one. Whatever the cut, the
+    recovered document is exactly the one its complete lines make: a strobe cut
+    mid-timestamp (`249\\t5` of `249\\t500`) is never read as a strobe, and a
+    header line cut mid-value is never read as its value."""
+    tsv = crash_a_run(tmp_path)
+    with open(tsv, "a", encoding="utf-8", newline="\n") as fh:
+        fh.write("# stop_reason: BF_END_SESSION received\n# n_events: 4\n")
+    data = tsv.read_bytes()
+    cut, whole = tmp_path / "cut.tsv", tmp_path / "whole.tsv"
+    for k in range(1, len(data) + 1):
+        cut.write_bytes(data[:k])
+        whole.write_bytes(_complete_lines(data[:k]))
+        got = recovery.recovered_document(recovery.parse_tsv(cut))
+        assert got == recovery.recovered_document(recovery.parse_tsv(whole)), k
+    # And through the real entry point, on a cut mid-timestamp.
+    cut.write_bytes(data[: data.index(b"249\t500") + 5])
+    entry = recovery.recover_file(cut)
+    assert entry["status"] == "recovered" and entry["nEvents"] == 1
+
+
+def test_a_legacy_logs_unterminated_last_line_is_still_read(tmp_path: Path) -> None:
+    """The pre-Ephymeris software may not have ended its last line, and its
+    archive is fixed: a whole strobe there is still a strobe."""
+    folder = tmp_path / "recovery_tsv"
+    folder.mkdir()
+    path = folder / "remy2_shaping_43_06_12_26_121104.tsv"
+    path.write_bytes(LEGACY_LOG.rstrip(b"\r\n"))
+    parsed = recovery.parse_tsv(path)
+    assert parsed.events[-1] == [246, 106721]
+
+
 def test_n_events_is_recomputed_never_copied(tmp_path: Path) -> None:
     """A footer's count describes the run `finalize` saw, which a torn file no
     longer is — the recovered document must not claim events it doesn't hold."""

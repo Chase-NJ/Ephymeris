@@ -48,6 +48,7 @@ import { missionControlHint, stepUrl } from "@/lib/sessions/flow";
 import type { SessionBox } from "@/lib/sessions/types";
 import { useBoxAccuracies } from "@/lib/sessions/useBoxAccuracies";
 import { useSessionFlow } from "@/lib/sessions/useSessionFlow";
+import { liveScoring } from "@/lib/sessions/liveScoring";
 import { metricLabels, useTaskProfiles } from "@/lib/sessions/useTaskProfiles";
 import { useLastRuns } from "@/lib/analytics/useLastRuns";
 import { resolveFlag } from "@/lib/logbook/commands";
@@ -643,6 +644,7 @@ export function MissionControl() {
                     box={box}
                     busy={busy || !connected}
                     metricLabels={labelsFor[box.sketchPath] ?? {}}
+                    metricsNote={liveScoring(profiles[box.sketchPath]).note}
                     triggers={isRecording ? (triggersFor[box.sketchPath] ?? []) : null}
                     durationMinutes={session?.durationMinutes ?? null}
                     onOpen={() => setFocusedId(box.animalId)}
@@ -898,6 +900,7 @@ function BoxCard({
   box,
   busy,
   metricLabels,
+  metricsNote,
   triggers,
   durationMinutes,
   onOpen,
@@ -911,6 +914,8 @@ function BoxCard({
    *  shows the condition's name rather than the slot number telemetry sends.
    *  Empty until the profile arrives, or when the sketch has none. */
   metricLabels: Record<string, string>;
+  /** What the strip says before it has a value, from the profile (`liveScoring`). */
+  metricsNote: string;
   /** This box's strobe vocabulary, for its PSTH — null when the session is not
    *  a recording, which is also what hides the scope buttons. */
   triggers: ScopeTrigger[] | null;
@@ -981,7 +986,7 @@ function BoxCard({
           Finished — <span className="text-starlight">{ended.stopReason}</span>
         </p>
       ) : (
-        <MetricStrip box={box.box} metrics={metrics} labels={metricLabels} />
+        <MetricStrip box={box.box} metrics={metrics} labels={metricLabels} note={metricsNote} />
       )}
       {triggers && <ScopeButtons box={box.box} animalName={box.animalName} triggers={triggers} />}
     </section>

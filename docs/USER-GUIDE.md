@@ -511,7 +511,8 @@ under the session controls: click **Resolve** once you have dealt with it.
 - **The state chip** shows the box's state. `IN_SESSION` (green) means running. `IDLE` means not running.
   `FLASHING` and `RESETTING` are brief. `ERROR` (red) means something went wrong; hover over it to read why.
 - **Live metrics** show how the animal is doing, such as the rolling chance of a correct answer for each
-  odor, with a small trend line. They fill in as trials complete.
+  odor, with a small trend line. They fill in as trials complete. A spine task has none yet, and its tile
+  says so; every event is still recorded.
 - **Finished — …** replaces the metrics when the box's run is over, with the reason. *Finished —
   BF_END_SESSION received* means the box ended on its own; *Finished — board disconnected* means it lost
   its connection (see below).

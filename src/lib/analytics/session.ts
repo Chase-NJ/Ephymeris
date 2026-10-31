@@ -264,6 +264,7 @@ export function unscoredReason(run: RunSummary): string | null {
   if (run.status === "ok") return null;
   if (run.detail) return run.detail;
   if (run.status === "no-metrics") return "no task profile — nothing to score";
+  if (run.status === "replay-pending") return "spine task — scoring by replay is not available yet";
   if (run.status === "missing") return "session file is missing";
   return "session file could not be read";
 }

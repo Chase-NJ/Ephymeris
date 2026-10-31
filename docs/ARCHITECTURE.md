@@ -1147,7 +1147,8 @@ Per box (`ports/handler.py`, `sessions/runner.py`):
    before anything is recorded, and leaves nothing for End to stop.
 2. Open the port, which pulls DTR and resets the Mega.
 3. Wait `SESSION_READY_TIMEOUT_S` for `READY`, else `ERROR`. An `INTERP=<n>` line before it names the
-   firmware interpreter and is kept for the file header.
+   firmware interpreter, and a `FREE_RAM=<n>` line the RAM the board has free with its tables loaded;
+   both are kept for the file header ([TASKS.md](TASKS.md#confirming-the-parameters)).
 4. Send `BEGIN`, then the built `SET` lines one at a time, waiting up to `SESSION_PARAMS_TIMEOUT_S` for each `PARAMS` answer,
    and hold the last answer against what was sent ([TASKS.md](TASKS.md#confirming-the-parameters)). A mismatch,
    a `CLAMPED` key or silence refuses the start: `START` is never sent, the box is told why in a
@@ -1189,7 +1190,7 @@ sequenceDiagram
     Port-->>Runner: SessionClaim
     Runner->>Runner: record the run, arm the time limit
     Port->>Board: open the port, DTR resets the Mega
-    Board-->>Port: INTERP=n, then READY
+    Board-->>Port: INTERP=n, FREE_RAM=n, then READY
     Note over Port,Board: no READY within SESSION_READY_TIMEOUT_S → ERROR
     Port->>Board: BEGIN
     loop each SET line

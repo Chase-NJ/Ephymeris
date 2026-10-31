@@ -31,7 +31,7 @@ from .paths import AnimalFilePaths, resolve_animal_files
 from .writer import AnimalWriter
 
 if TYPE_CHECKING:
-    from ..ports.handler import SessionClaim
+    from ..ports.handler import Announced, SessionClaim
     from ..ports.manager import PortManager
 
 log = logging.getLogger(__name__)
@@ -268,7 +268,7 @@ class SessionRunner:
             box,
             config.start_command,
             host_seed,
-            on_ready=lambda seed, interp: self._on_ready(run, seed, interp),
+            on_ready=lambda seed, announced: self._on_ready(run, seed, announced),
             on_strobe=lambda code, ts: self._on_strobe(run, code, ts),
             on_lost=lambda reason: self._on_lost(run, reason),
             on_refused=lambda refused: self._on_refused(run, refused),
@@ -292,7 +292,7 @@ class SessionRunner:
         run.refusal = refused
         self._schedule(self._emit_start_refused(run.box, refused))
 
-    def _on_ready(self, run: ActiveRun, seed: int | None, interp: int | None) -> None:
+    def _on_ready(self, run: ActiveRun, seed: int | None, announced: Announced) -> None:
         """Handshake resolved — open the file and write its header (`DATA.md#the-tsv-log`)."""
         if run.resolved or self._session_folder is None:
             return
@@ -315,11 +315,16 @@ class SessionRunner:
             "session_id": run.session_id_label,
             "sketch": run.config.sketch_name,
         }
-        if interp is not None:
+        if announced.interp is not None:
             # Which firmware interpreter ran this session, announced before
             # `READY` (`TASKS.md#the-start-line`). Core, not config: it describes
             # the build, not the tuning, so it stays out of `params_hash`.
-            core["interp"] = interp
+            core["interp"] = announced.interp
+        if announced.free_ram is not None:
+            # The board's free RAM with its tables loaded, measured before
+            # `READY` (`TASKS.md#confirming-the-parameters`). Core for the same
+            # reason: a fact about the build on this board.
+            core["free_ram"] = announced.free_ram
         if run.config.channel_set_hash is not None:
             # Which channel set the sketch was generated against: the codes
             # each edge strobes and what each channel is (ADR 0003). Core, not

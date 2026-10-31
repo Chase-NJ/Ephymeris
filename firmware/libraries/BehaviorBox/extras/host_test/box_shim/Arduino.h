@@ -32,6 +32,8 @@
 #include <iostream>
 #include <string>
 #include <deque>
+#include <utility> // test_spine.cpp
+#include <vector>  // test_spine.cpp
 // strcasecmp/strncasecmp: avr-libc puts them in <string.h>, POSIX hosts in
 // <strings.h>. The sketch uses them, so the shim has to supply them too.
 #ifndef _WIN32

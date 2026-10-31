@@ -20,6 +20,8 @@ rather than a warning:
   TSK113  a go condition paying 0 ms           -> a dry well scored as rewarded
   TSK114  an onset code not its line's own      -> a condition labelled as another odor
 
+A spine task (`model.Spine`) is judged by `spine.py` instead, as SPN101-SPN108.
+
 (TSK112 is the Task tab's own, derived client-side: an onset code no live
 metric scores.)
 
@@ -61,6 +63,12 @@ def validate(definition: TaskDefinition) -> list[Diagnostic]:
     Fixing a new task should be one pass rather than a game of whack-a-mole —
     the same argument `ChannelMap.disagreements()` makes.
     """
+    if definition.spine is not None:
+        # A spine task is judged by its own rules (SPN101-SPN108). Imported here
+        # because `spine` builds on this module's `Diagnostic`.
+        from . import spine
+
+        return spine.diagnostics(definition)
     out: list[Diagnostic] = []
     channels = registry.channels()
     vocab = registry.vocabulary()

@@ -13,6 +13,7 @@ from typing import Any
 
 from ...tasks.profile import LiveMetric, TaskProfile
 from .document import _duration_ms, codes_of
+from .spine import REPLAY_PENDING_DETAIL, is_spine_run
 from .engagement import TrialEngagement, engagement_of
 from .outcomes import ConditionOutcomes, TrialOutcomes, conditions_of, outcomes_of
 from .stats import _round, wilson_interval
@@ -73,7 +74,7 @@ class MetricSummary:
 class RunSummary:
     """Everything the cohort-scale panels need about one animal's run."""
 
-    status: str  # 'ok' | 'no-metrics' | 'missing' | 'unreadable'
+    status: str  # 'ok' | 'no-metrics' | 'replay-pending' | 'missing' | 'unreadable'
     metrics: list[MetricSummary] = field(default_factory=list)
     #: Accuracy pooled across every metric — see `_overall`. The honest single
     #: number for a run, and every per-run readout's default.
@@ -155,6 +156,12 @@ def summarize(
         "clean": stop_reason == CLEAN_STOP_REASON,
         "seed": seed,
     }
+
+    # A spine run is scored by replay, which is still to come: never by the
+    # legacy scorer, whose onset-shaped names its edge codes would only mimic
+    # (`ANALYTICS.md#why-a-run-has-no-numbers`).
+    if is_spine_run(document):
+        return RunSummary(status="replay-pending", detail=REPLAY_PENDING_DETAIL, **base)
 
     # A sketch with no Task Profile is fully supported (`ANALYTICS.md#edge-cases`)
     # and still worth listing — it has a real duration, event count and stop

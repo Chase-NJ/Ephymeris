@@ -156,13 +156,31 @@ async def test_a_run_writes_its_tsv_with_the_seed_captured(tmp_path: Path, bench
     assert "249\t500" in text
 
 
-async def test_each_start_draws_its_own_seed(tmp_path: Path, bench: Bench) -> None:
+async def test_each_start_draws_its_own_seed(
+    tmp_path: Path, bench: Bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Stop → Start on the same box must not replay the same trial sequence.
 
     The seed is drawn on the click and not with the mapping, precisely so that
     a box restarted after a false start gets a fresh stream rather than the one
     the animal already ran through.
     """
+    # Each start in a second of its own, as on the rig. Two starts inside one
+    # second share a file name, so the second run's exclusive open is refused
+    # and the run finalized at once, and that can stop its port before the
+    # handshake below sees the board read again.
+    from datetime import datetime, timedelta
+
+    from ephymeris_sidecar.sessions import runner as runner_module
+
+    clock = iter(datetime(2026, 10, 31, 12, 0, 0) + timedelta(seconds=n) for n in range(1000))
+
+    class _Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):  # noqa: ANN001, ANN206
+            return next(clock) if tz is None else datetime.now(tz)
+
+    monkeypatch.setattr(runner_module, "datetime", _Clock)
     runner, _events, _ended = make_runner(tmp_path, bench)
     runner.start_box(1)
     board = await bench.run_handshake(1)
@@ -234,6 +252,26 @@ async def test_a_board_that_announced_no_interpreter_records_none(tmp_path: Path
     await board.said("101\t0")
 
     assert "# interp" not in tsv_text(tmp_path)
+
+
+async def test_the_free_ram_the_board_measured_is_recorded_in_the_header_and_the_document(
+    tmp_path: Path, bench: Bench
+) -> None:
+    """The board measures its free RAM with its table loaded and announces it
+    before READY (`TASKS.md#confirming-the-parameters`). Kept with the run, beside the
+    interpreter, so a table's RAM cost is on record from every box it ran on."""
+    runner, _events, _ended = make_runner(tmp_path, bench)
+    runner.start_box(1)
+    board = await bench.run_handshake(1, seed=5, interp=1, free_ram=4321)
+    await board.said("101\t0", "246\t10")
+
+    text = tsv_text(tmp_path)
+    assert "# free_ram: 4321\n" in text
+    assert text.index("# free_ram: 4321") < text.index("101\t0")
+    # The run leaves `running_boxes()` before its `.json` is written: wait for the file.
+    await wait_until(lambda: any((tmp_path / "behavior.json").glob("*.json")))
+    document = json.loads(next((tmp_path / "behavior.json").glob("*.json")).read_text(encoding="utf-8"))
+    assert document["free_ram"] == 4321
 
 
 @pytest.mark.parametrize(

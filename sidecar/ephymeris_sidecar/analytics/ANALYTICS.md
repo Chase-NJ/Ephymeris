@@ -33,6 +33,7 @@ The [worked example](#a-worked-example) shows all of it on thirty strobes.
 | [`stream/infer.py`](stream/infer.py) | Which conditions ran, when no profile says | strobes → a `TaskProfile` |
 | [`stream/false_starts.py`](stream/false_starts.py) | Which restarted runs to set aside | run facts → verdicts |
 | [`stream/replay.py`](stream/replay.py) | What did the board do at each tick? The Python port of the firmware's interpreter ([ADR 0003](../../../docs/adr/0003-phase-spine-task-model.md)); nothing scores with it yet | state table + params + seed + input edges → actions per tick |
+| [`stream/spine.py`](stream/spine.py) | What must a spine run's board have sent? Reads the table, parameters, seed and input edges out of the run's own document, and predicts every strobe from the inputs alone ([TASKS.md](../../../docs/TASKS.md#the-snapshot)); nothing scores with it yet | a spine run's document → its expected stream |
 | [`stream/stats.py`](stream/stats.py), [`stream/document.py`](stream/document.py) | The Wilson interval; reading `ts_data` out of a file | |
 
 **The plumbing**: files, cache and commands. You need these only to change how runs are found or stored.
@@ -97,7 +98,7 @@ delivered. `test_analytics_derive.py` scores this exact stream and asserts every
 Everything here is computed from `ts_data`. All of it is derived at read time from the raw codes plus the
 profile that decodes them. Offline scoring **never reimplements the live scorer**: it replays the stream
 through `stream/trials.py`'s `MetricAccumulator`, the same class Mission Control uses. A run's result is a
-`RunSummary`, and its `status` is `ok`, `no-metrics`, `missing` or `unreadable`.
+`RunSummary`, and its `status` is `ok`, `no-metrics`, `replay-pending`, `missing` or `unreadable`.
 
 ### Trials: hits, misses and exclusions
 
@@ -398,7 +399,9 @@ and 4 need the file open and live in `scoring._settle`. `analytics.summary` (`Ru
 `analytics.series` (`RunScorer.decode`) climb the same ladder, so a chart draws the trials the summary
 counted. A malformed `task.json` or a damaged embedded snapshot degrades to the next rung rather than
 raising: a file with a broken declaration is still a file full of real strobes. So does a declaration with
-no `liveMetrics`: a rung is taken only if its profile declares something to score.
+no `liveMetrics`: a rung is taken only if its profile declares something to score. A **spine run** climbs no
+ladder: it decodes by its own snapshot, or by nothing, and is `replay-pending`
+([Why a run has no numbers](#why-a-run-has-no-numbers)).
 
 ```mermaid
 flowchart TD
@@ -490,6 +493,7 @@ A run's `status` (with a `detail` that says what to do):
 |---|---|---|
 | `ok` | Scored | |
 | `no-metrics` | Read fine, but no profile declares anything to score. Still listed with duration, events and stop reason | Why no profile resolved, for example the sketch name matched nothing |
+| `replay-pending` | A [spine task](../../../docs/TASKS.md#spine-tasks)'s run: its snapshot carries a `spine` key, or its header an `interp` replay runs. Recorded in full, scored by replay once that exists, and **never inferred** (its edge code names would only mimic the trial runner's onsets). Still listed with duration, events and stop reason | That replay scoring is still to come |
 | `missing` | No file was recorded, or it is not on disk | "the .tsv is on disk but the .json was never written — the data is recoverable" ([crash recovery](../../../docs/DATA.md#crash-recovery)) |
 | `unreadable` | The file is there but is not a JSON object, or the path can't be read | The parser's message |
 

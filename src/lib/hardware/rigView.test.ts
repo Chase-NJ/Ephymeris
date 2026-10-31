@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { applyPreview, canReset, canSave, servedView, type RigView } from "./rigView";
+import { afterSave, applyPreview, canReset, canSave, servedView, type RigView } from "./rigView";
 import type { RigProblem, RigStatus } from "./types";
 
 const unloaded: RigProblem = {
@@ -75,6 +75,34 @@ describe("servedView", () => {
   it("leaves any draft a preview will describe to that preview", () => {
     expect(servedView({ dirty: true, confirmedPins: false }, baseline)).toBeNull();
     expect(servedView({ dirty: false, confirmedPins: true }, baseline)).toBeNull();
+  });
+});
+
+describe("afterSave", () => {
+  // The draft that was held behind RIG108, confirmed and saved.
+  const before: RigView = {
+    ...loaded,
+    problems: [{ location: "pins", message: "These pins come from …", code: "RIG108" }],
+    status: status({ needsPinConfirmation: true, canSave: false }),
+  };
+  const reply = {
+    status: status({ custom: true, notices: [], needsPinConfirmation: false, canSave: false }),
+    problems: [],
+    breaks: [],
+    allocations: [{ channel: "trial_light", edge: "on", name: "TRIAL_LIGHT_ON", code: 40 }],
+  };
+
+  it("makes the save reply the served draft's view at once, before any reload", () => {
+    const next = afterSave(reply);
+    // The saved draft is the served draft now, with no confirmation pending:
+    // what the editor shows must be the reply, never the pre-save baseline.
+    const shown = servedView({ dirty: false, confirmedPins: next.confirmedPins }, next.baseline);
+    expect(shown?.status).toEqual(reply.status);
+    expect(shown?.problems).toEqual([]);
+    expect(shown?.status?.needsPinConfirmation).toBe(false);
+    expect(next.view.status).toEqual(reply.status);
+    expect(next.issued).toEqual(reply.allocations);
+    expect(next.baseline).not.toEqual(before);
   });
 });
 

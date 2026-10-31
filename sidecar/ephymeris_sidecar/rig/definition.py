@@ -87,17 +87,19 @@ def impact_of(
 
 
 class WiringNotLoaded(Exception):
-    """The rig's stored wiring did not load when it was installed, so the pins
-    in force are the shipped ones, not the rig's
+    """The rig's stored wiring was not put in force when it was installed --
+    it did not load, or it was held because nobody saved or confirmed it on
+    this machine -- so the pins in force are the shipped ones, not the rig's
     (`TASKS.md#the-channel-set-and-the-pin-map`). Nothing was started, flashed
     or identified. The message says why."""
 
 
 class WiringSaveBlocked(Exception):
-    """A wiring save the rig's state does not allow yet
-    (`hardware_service.save_blocked`): stored wiring with nothing to repair,
-    which only Reset replaces, or pins from a mismatched pin map not confirmed.
-    Nothing was written. The message says what to do."""
+    """A wiring save refused before anything is written: the rig's state does
+    not allow one yet (`hardware_service.save_blocked`: stored wiring with
+    nothing to repair, which only Reset replaces, or pins read from a stored
+    file that were not confirmed, RIG108), or the draft breaks a wiring rule
+    (RIG101-RIG107). The message says what to do."""
 
 
 class RigInUse(Exception):
@@ -224,13 +226,14 @@ class RigDefinition:
         self._after_rebuild = after_rebuild
         self._broadcast = broadcast
         self._lock = _ReadWriteLock()
-        #: Why the stored wiring did not load when it was last installed, or
-        #: None. Set only by `_install_wiring`, from the same read that chose
+        #: The wiring in force and, when stored wiring was not put in force,
+        #: why. Set only by `_install_wiring`, from the same read that chose
         #: the pins in force, so the refusal and the pins never disagree.
-        self._unloaded: str | None = None
-        self._in_force: dict[str, Any] | None = None
-        self._install_wiring()
+        self._installed = hardware_service.InForce(None, None)
+        # The vocabulary first: installing the wiring checks its rules, and
+        # RIG104/RIG106/RIG107 read codes from the vocabulary in force.
         registry.set_vocabulary_source(vocabulary.load)
+        self._install_wiring()
 
     # -- the lock ------------------------------------------------------------ #
 
@@ -261,9 +264,12 @@ class RigDefinition:
     async def save_wiring(
         self, document: dict[str, Any], *, confirm: bool, confirmed_pins: bool = False
     ) -> dict[str, Any]:
-        """Raises `RigInUse`, `WiringWouldBreakTasks` without `confirm`,
-        `hardware.store.RigInvalid` for a document that is not one, or
-        `StrobeRefused` when its edge codes cannot be issued.
+        """Raises `RigInUse`; `WiringSaveBlocked` when the rig's state refuses
+        a save or the draft breaks a wiring rule; `hardware.store.RigInvalid`
+        for a document that is not one; `WiringWouldBreakTasks` without
+        `confirm`; or `StrobeRefused` when its edge codes cannot be issued.
+        In that order, so a draft that is going to be refused never asks the
+        operator to accept the tasks it would break first.
 
         Issuing the channel set's new edge codes (TASKS.md#edge-codes) is part
         of this one write: the vocabulary gains them, then the wiring names
@@ -275,13 +281,6 @@ class RigDefinition:
             blocked = await asyncio.to_thread(self.save_blocked, confirmed_pins=confirmed_pins)
             if blocked:
                 raise WiringSaveBlocked(blocked)
-            breaks = await asyncio.to_thread(impact_of, self._tasks, wiring=document)
-            if breaks and not confirm:
-                # Not an error the operator cannot pass -- it is the "shown
-                # loudly" half of "a pin change applies to everything". The app
-                # does not veto a rewiring; it refuses to let one happen
-                # unnoticed. Nothing is written on this path.
-                raise WiringWouldBreakTasks(breaks)
             problems = hardware_store.save_problems(document)
             if problems:
                 # Before any code is issued: a refused wiring issues nothing.
@@ -295,6 +294,13 @@ class RigDefinition:
                     "This wiring has problems a save does not take: "
                     + "; ".join(f"{p['code'] or 'shape'} {p['location']}: {p['message']}" for p in rules[:5])
                 )
+            breaks = await asyncio.to_thread(impact_of, self._tasks, wiring=document)
+            if breaks and not confirm:
+                # Not an error the operator cannot pass -- it is the "shown
+                # loudly" half of "a pin change applies to everything". The app
+                # does not veto a rewiring; it refuses to let one happen
+                # unnoticed. Nothing is written on this path.
+                raise WiringWouldBreakTasks(breaks)
             filled, issued = await asyncio.to_thread(self._issue_edge_codes, document)
             try:
                 stored = await asyncio.to_thread(self._hardware.save, filled)
@@ -379,17 +385,19 @@ class RigDefinition:
     # -- reads that need no lock --------------------------------------------- #
 
     def wiring_problem(self) -> str | None:
-        """Why the rig's stored wiring did not load when it was installed, or
-        None while the rig's own wiring (or none) is in force.
+        """Why the rig's stored wiring was not put in force when it was
+        installed -- it did not load, or nobody saved or confirmed it on this
+        machine -- or None while the rig's own wiring (or none) is in force.
 
         THE WIRING IN FORCE, NEVER A FRESH READ. The registry composes from the
         document `_install_wiring` read, until the next install: a save, a
         reset or a restart. A file fixed or copied in by hand meanwhile changes
         no pin, so it must not lift the refusal either -- that is how a box
-        once started on the shipped pins with every check passing. The session
+        once started on the shipped pins with every check passing. And a
+        restart onto it holds it, since nobody saved it here. The session
         lifecycle and the utility baseline ask this before they drive a box.
         """
-        return self._unloaded
+        return self._installed.problem
 
     def save_blocked(self, *, confirmed_pins: bool) -> str | None:
         """Why the rig's state refuses a wiring save now, or None."""
@@ -403,16 +411,16 @@ class RigDefinition:
         The registry gets a snapshot rather than a reader of the file, so what
         it composes, and when, cannot drift from what this read decided.
         """
-        document, problems = self._hardware.snapshot()
-        self._in_force = document
-        self._unloaded = hardware_service.unloaded_message(problems[0][1]) if problems else None
+        installed = hardware_service.installed(self._hardware.inspect())
+        self._installed = installed
+        document = installed.document
         registry.set_rig_source(lambda: copy.deepcopy(document))
 
     def in_force(self) -> hardware_service.InForce:
         """The wiring in force -- the stored document installed, or None for
-        the shipped one -- and why stored wiring did not load, if it did not.
+        the shipped one -- and why stored wiring is not in force, if it is not.
         What `hardware.get` describes."""
-        return hardware_service.InForce(copy.deepcopy(self._in_force), self._unloaded)
+        return self._installed._replace(document=copy.deepcopy(self._installed.document))
 
     def load_vocabulary_strict(self) -> dict[str, Any]:
         """Raises `StrobeRefused("unreadable")` for a document that won't read."""

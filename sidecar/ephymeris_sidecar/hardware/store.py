@@ -4,6 +4,7 @@ Layout, under the sidecar's own data dir (beside `ephymeris.db` — these are
 sidecar-side writes, no Tauri fs capability involved):
 
     <data_dir>/hardware/wiring.json
+    <data_dir>/wiring-confirmed.json      the digests of wiring saved here
 
 TWO DOCUMENTS, ONE FILE (TASKS.md#the-channel-set-and-the-pin-map). The channel
 set (what each channel IS, lab-wide) and the pin map (where each one is on THIS
@@ -22,15 +23,25 @@ and renamed over the old one (`_write_atomic`) cannot tear: a reader sees the
 old wiring or the new, never a mix. Once the rename lands the save is
 committed; the folder fsync after it is best effort, logged if it fails.
 
-STORED WIRING THAT WILL NOT LOAD IS NEVER REPLACED BY THE SHIPPED ONE SILENTLY.
+STORED WIRING NOBODY SAVED OR CONFIRMED HERE IS HELD (#131). The store keeps
+the content digest of the wiring last saved on this machine, which is also how
+a confirmed "I've checked every pin" lands: as a save. Stored wiring that
+passes every check but whose digest is not recorded is `held`: copied in,
+edited by hand, or fixed by hand after a failed load. It is never put in
+force, however many restarts pass, until it is saved. The digests live OUTSIDE
+`hardware/`, so copying that folder from the other lab machine never brings
+its confirmation along. A machine with no digest file yet (an upgrade from
+main, or a fresh install) records, on its first read, the stored wiring it
+would have run anyway, so a normal upgrade asks nothing (`_recorded`).
+
+STORED WIRING THAT IS NOT IN FORCE IS NEVER REPLACED BY THE SHIPPED ONE SILENTLY.
 The registry composes the shipped pinout meanwhile, because the process owns six
-serial ports and must start; but `load_problems` says why, and no box is
-started, flashed or identified until the wiring is saved again, reset, or the
-app restarts onto a file that loads (`RigDefinition.wiring_problem`, which
-follows the wiring IN FORCE). Meanwhile `hardware.get` serves the stored
-document itself as the editor's draft (`stored_document`), broken, with a
-notice that the shipped pins are in force -- so the operator repairs their own
-wiring and saves it, rather than retyping it over the shipped pins.
+serial ports and must start; but `inspect` says why, and no box is started,
+flashed or identified until the wiring is saved again or reset
+(`RigDefinition.wiring_problem`, which follows the wiring IN FORCE).
+Meanwhile `hardware.get` serves the stored document itself as the editor's
+draft, broken or held, so the operator repairs or checks their own wiring and
+saves it, rather than retyping it over the shipped pins.
 
 TWO OLDER LAYOUTS ARE READ IN PLACE until the next save writes `wiring.json`
 and removes them:
@@ -40,9 +51,11 @@ and removes them:
     pin map naming its channel set by `channel_set_digest`. A pair whose digests
     disagree is a load problem, never a guess.
 
-`wiring.json` wins over both, so a save stopped before its cleanup still has
-its wiring in force. A stray temporary file (`*.part`, `*.json.tmp`) on its own
-is no wiring at all.
+`wiring.json` wins over both, and the pair over `rig.json`. A layout beside
+the one read is a SHADOW: if its digest is recorded it is this app's own
+leftover of a save stopped before its cleanup, and the next save removes it;
+otherwise it was copied in, `inspect` names it, and no save deletes it. A stray
+temporary file (`*.part`, `*.json.tmp`) on its own is no wiring at all.
 
 A RIG DOCUMENT REPLACES THE SHIPPED PAIR, it does not merge with it. A merge
 would mean an operator who deleted a channel got it back, and there would be no
@@ -66,6 +79,8 @@ import hashlib
 import json
 import logging
 import os
+from collections.abc import Callable
+import dataclasses
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -83,6 +98,8 @@ WIRING_FILENAME = "wiring.json"
 RIG_FILENAME = "rig.json"
 CHANNEL_SET_FILENAME = "channel_set.json"
 PIN_MAP_FILENAME = "pin_map.json"
+#: The digests of the wiring saved on this machine, in the data dir itself.
+CONFIRMED_FILENAME = "wiring-confirmed.json"
 
 #: The keys of the joined document that belong to the pin map, beside `pins`.
 #: `edited_at` belongs to neither: it says when a FILE was written, and two
@@ -114,34 +131,61 @@ class RigStatus:
 
 
 @dataclass(frozen=True)
-class _Stored:
-    #: The document as parsed, even if it will not load; None if unparseable.
+class Stored:
+    """The stored wiring now, from one read (`HardwareStore.inspect`)."""
+
+    #: The document as parsed and upgraded, even if it will not load; None if
+    #: unparseable.
     document: dict | None
-    #: (location, message) for why it will not load; empty when it loads.
+    #: (location, message) for why it will not load; empty when it loads, and
+    #: when it is held (it would load, but nobody saved it here).
     problems: list[tuple[str, str]]
     #: Which of `DISK_STATES` the stored wiring is in.
     state: str = "none"
+    #: The files it was read from, by name, temporary files left out.
+    sources: tuple[str, ...] = ()
+    #: Older layouts beside it, not read and not recorded as saved here: copied
+    #: in. Named so the operator sees them; no save removes them.
+    shadows: tuple[str, ...] = ()
+    #: `content_digest` of the document as it is on disk, before `upgrade`.
+    digest: str | None = None
 
 
 #: What the stored wiring on disk is, as `hardware/service.py` acts on it:
 #:   none          no stored wiring
-#:   loads         it loads
-#:   invalid       it parses but is out of shape (or a channel lacks a pin):
-#:                 there is a document to repair
+#:   loads         it passes every check and was saved here: it may be in force
+#:   held          it passes every check but was not saved or confirmed here:
+#:                 copied in, or changed by hand. Its pins must be confirmed
+#:   invalid       it parses but is out of shape, a channel lacks a pin, or it
+#:                 breaks a wiring rule (RIG101-RIG107): a document to repair
 #:   mismatched    a two-file pair whose pin map was not written with its
 #:                 channel set: a document whose PINS must be confirmed
 #:   unrepairable  nothing to repair: unreadable, too large, unparseable, not
-#:                 a JSON object, or a pin map with no channel set
-DISK_STATES = ("none", "loads", "invalid", "mismatched", "unrepairable")
+#:                 a JSON object, or one half of a pair alone
+DISK_STATES = ("none", "loads", "held", "invalid", "mismatched", "unrepairable")
+
+
+@dataclass(frozen=True)
+class _Layout:
+    """One way wiring can be stored: the files it owns, and how to read it."""
+
+    files: tuple[Path, ...]
+    present: bool
+    read: Callable[[], Stored]
+    #: The digest of what it holds, read quietly, or None if it holds nothing
+    #: whole -- for a shadow, which is never composed.
+    digest: Callable[[], str | None]
 
 
 class HardwareStore:
-    """Reads and writes `<data_dir>/hardware/wiring.json`.
+    """Reads and writes `<data_dir>/hardware/wiring.json`, and the record of
+    which wiring was saved here (`<data_dir>/wiring-confirmed.json`).
 
-    Owns the file and nothing else. Composing it into a `ChannelMap`, and
-    invalidating the cached registries when it changes, is `rig/registry.py`'s
-    job — this class must not reach for a composed map at import time, so that a
-    broken rig document is a diagnostic rather than an import error.
+    Owns those files and nothing else. Composing the wiring into a
+    `ChannelMap`, and invalidating the cached registries when it changes, is
+    `rig/registry.py`'s job — this class must not reach for a composed map at
+    import time, so that a broken rig document is a diagnostic rather than an
+    import error.
     """
 
     def __init__(self, data_dir: Path) -> None:
@@ -150,6 +194,8 @@ class HardwareStore:
         self.legacy_rig_path = self.root / RIG_FILENAME
         self.channel_set_path = self.root / CHANNEL_SET_FILENAME
         self.pin_map_path = self.root / PIN_MAP_FILENAME
+        #: Beside `hardware/`, never in it (module docstring).
+        self.confirmed_path = Path(data_dir) / CONFIRMED_FILENAME
 
     # -- reading ----------------------------------------------------------- #
 
@@ -157,35 +203,23 @@ class HardwareStore:
         """Whether this rig has stored wiring of its own, loaded or not."""
         return any(p.is_file() for p in self._documents())
 
+    def inspect(self) -> Stored:
+        """The stored wiring now, from ONE read: its document (even broken or
+        held), why it does not load, which of `DISK_STATES` it is in, and the
+        copies beside it that are not read."""
+        return self._survey()[0]
+
     def load(self) -> dict | None:
-        """The wiring in force: the rig's own, or None for the shipped pinout.
-
-        None ALSO when stored wiring will not load, so the registry still
-        composes a working rig for a process that owns six serial ports -- but
-        that case is never silent: `load_problems` names it, and the session
-        lifecycle refuses to start or flash a box while it lasts.
-        """
-        stored = self._stored()
-        return stored.document if not stored.problems else None
-
-    def snapshot(self) -> tuple[dict | None, list[tuple[str, str]]]:
-        """`(load(), load_problems())` from ONE read, for installing the wiring
-        in force: two reads could straddle a change to the file."""
-        stored = self._stored()
-        return (stored.document if not stored.problems else None), stored.problems
+        """The stored wiring if it may be put in force now (`loads`), else None
+        for the shipped pinout. None ALSO when stored wiring is held or will not
+        load -- never silent: `inspect` says so, and the session lifecycle
+        refuses to start or flash a box while it lasts."""
+        stored = self.inspect()
+        return stored.document if stored.state == "loads" else None
 
     def load_problems(self) -> list[tuple[str, str]]:
         """(location, message) for why stored wiring exists and did not load."""
-        return self._stored().problems
-
-    def inspect(self) -> "_Stored":
-        """The stored wiring now, from ONE read: its document (even broken),
-        why it does not load, and which of `DISK_STATES` it is in."""
-        return self._stored()
-
-    def disk_state(self) -> str:
-        """Which of `DISK_STATES` the stored wiring is in now."""
-        return self._stored().state
+        return self.inspect().problems
 
     def stored_paths(self) -> list[Path]:
         """Every file Reset would remove now, in the order it removes them --
@@ -195,9 +229,10 @@ class HardwareStore:
 
     def stored_document(self) -> dict | None:
         """The stored document as parsed, whether or not it loads: the draft
-        `hardware.get` serves while it did not load, so the operator can repair
-        it and save. None when there is none, or it will not even parse."""
-        return self._stored().document
+        `hardware.get` serves while it is not in force, so the operator can
+        repair or check it and save. None when there is none, or it will not
+        even parse."""
+        return self.inspect().document
 
     def status(self) -> RigStatus:
         doc = self.stored_document()
@@ -207,53 +242,134 @@ class HardwareStore:
             edited_at=(doc or {}).get("edited_at"),
         )
 
-    def _stored(self) -> _Stored:
-        if self.path.is_file():
-            return _checked(WIRING_FILENAME, *_read(self.path))
-        if self.channel_set_path.is_file():
-            return self._two_file_pair()
-        if self.legacy_rig_path.is_file():
-            return _checked(RIG_FILENAME, *_read(self.legacy_rig_path))
-        if self.pin_map_path.is_file():
-            return _Stored(
-                None,
-                [_unloaded(PIN_MAP_FILENAME, f"it has no {CHANNEL_SET_FILENAME} beside it")],
-                "unrepairable",
-            )
-        return _Stored(None, [], "none")
+    def _layouts(self) -> tuple[_Layout, ...]:
+        """Every layout, highest precedence first: the first present is read."""
+        pair = (
+            self.channel_set_path,
+            self.pin_map_path,
+            self.channel_set_path.with_suffix(".json.tmp"),
+            self.pin_map_path.with_suffix(".json.tmp"),
+        )
+        return (
+            _Layout(
+                (self.path,),
+                self.path.is_file(),
+                lambda: _checked(WIRING_FILENAME, *_read(self.path), sources=(WIRING_FILENAME,)),
+                lambda: _digest_of(_read(self.path, quiet=True)[0]),
+            ),
+            _Layout(
+                pair,
+                self.channel_set_path.is_file() or self.pin_map_path.is_file(),
+                self._two_file_pair,
+                lambda: self._two_file_pair(quiet=True).digest,
+            ),
+            _Layout(
+                (self.legacy_rig_path, self.legacy_rig_path.with_suffix(".json.tmp")),
+                self.legacy_rig_path.is_file(),
+                lambda: _checked(RIG_FILENAME, *_read(self.legacy_rig_path), sources=(RIG_FILENAME,)),
+                lambda: _digest_of(_read(self.legacy_rig_path, quiet=True)[0]),
+            ),
+        )
 
-    def _two_file_pair(self) -> _Stored:
+    def _survey(self) -> tuple[Stored, frozenset[str], list[_Layout]]:
+        """(the stored wiring, the digests recorded as saved here, the older
+        layouts a save replaces) -- everything one read of the disk says."""
+        present = [layout for layout in self._layouts() if layout.present]
+        stored = present[0].read() if present else Stored(None, [], "none")
+        recorded = self._recorded(stored)
+        if stored.state == "loads" and stored.digest not in recorded:
+            stored = dataclasses.replace(stored, state="held")
+        shadows = [s for s in present[1:] if s.digest() not in recorded]
+        stored = dataclasses.replace(stored, shadows=tuple(
+            p.name for s in shadows for p in s.files if p.is_file() and not p.name.endswith(".tmp")
+        ))
+        replaced = [s for s in present if s.files[0] != self.path and s not in shadows]
+        return stored, recorded, replaced
+
+    def _recorded(self, stored: Stored) -> frozenset[str]:
+        """The digests of the wiring saved (or confirmed) on this machine.
+
+        NO FILE YET is the upgrade from main, or a fresh install: what is
+        stored is recorded if it passes every check -- it is what main would
+        have put in force at this start -- and the file is written now, even
+        empty, so wiring copied in after today is held. A file that exists but
+        will not read is never "no file": it records nothing, so everything is
+        held until saved, and the log says why.
+        """
+        try:
+            raw = self.confirmed_path.read_bytes()
+        except FileNotFoundError:
+            seed = [stored.digest] if stored.state == "loads" and stored.digest else []
+            try:
+                self._write_recorded(seed)
+            except OSError as exc:
+                log.warning("could not record the wiring in force (%s); it is trusted this run only", exc)
+            return frozenset(seed)
+        except OSError as exc:
+            log.error("%s is unreadable (%s): every stored wiring is held", CONFIRMED_FILENAME, exc)
+            return frozenset()
+        try:
+            digests = json.loads(raw)["digests"]
+            if not isinstance(digests, list) or not all(isinstance(d, str) for d in digests):
+                raise TypeError("digests is not a list of strings")
+        except (ValueError, KeyError, TypeError) as exc:
+            log.error("%s will not read (%s): every stored wiring is held", CONFIRMED_FILENAME, exc)
+            return frozenset()
+        return frozenset(digests)
+
+    def _write_recorded(self, digests: list[str]) -> None:
+        self.confirmed_path.parent.mkdir(parents=True, exist_ok=True)
+        _write_atomic(self.confirmed_path, json.dumps({"version": 1, "digests": sorted(set(digests))}) + "\n")
+
+    def _two_file_pair(self, *, quiet: bool = False) -> Stored:
         """The two-file layout: `channel_set.json` and `pin_map.json`.
 
         The pin map names its channel set by digest. A pin map staged as
         `pin_map.json.tmp` with the channel set's digest is the second half of
         a save that stopped between its two renames, and completes the pair.
-        Anything else that disagrees is a load problem.
+        Either half alone is nothing to repair; a pair that disagrees is a
+        load problem.
         """
-        channel_set, why = _read(self.channel_set_path)
+        names = tuple(p.name for p in (self.channel_set_path, self.pin_map_path) if p.is_file())
+        staged = self.pin_map_path.with_suffix(".json.tmp")
+        if not self.channel_set_path.is_file():
+            return Stored(
+                None,
+                [_unloaded(PIN_MAP_FILENAME, f"it has no {CHANNEL_SET_FILENAME} beside it")],
+                "unrepairable",
+                names,
+            )
+        channel_set, why = _read(self.channel_set_path, quiet=quiet)
         if channel_set is None:
-            return _Stored(None, [_unloaded(CHANNEL_SET_FILENAME, why)], "unrepairable")
+            return Stored(None, [_unloaded(CHANNEL_SET_FILENAME, why)], "unrepairable", names)
+        if not (self.pin_map_path.is_file() or staged.is_file()):
+            return Stored(
+                None,
+                [_unloaded(CHANNEL_SET_FILENAME, f"it has no {PIN_MAP_FILENAME} beside it")],
+                "unrepairable",
+                names,
+            )
         digest = legacy_pair_digest(channel_set)
-        candidates = (self.pin_map_path, self.pin_map_path.with_suffix(".json.tmp"))
-        for candidate in candidates:
+        for candidate in (self.pin_map_path, staged):
             pin_map, _ = _read(candidate, quiet=True)
             if pin_map is not None and pin_map.get("channel_set_digest") == digest:
-                joined = join(channel_set, pin_map)
-                return _checked(PIN_MAP_FILENAME, joined, None)
-        return _Stored(
-            join(channel_set, _read(self.pin_map_path, quiet=True)[0] or {"pins": {}}),
+                return _checked(PIN_MAP_FILENAME, join(channel_set, pin_map), None, sources=names)
+        joined = join(channel_set, _read(self.pin_map_path, quiet=True)[0] or {"pins": {}})
+        return Stored(
+            joined,
             [_unloaded(
                 PIN_MAP_FILENAME,
                 f"it does not belong to {CHANNEL_SET_FILENAME} (they were not written by "
                 "one save), so its pins could put a port under another port's codes",
             )],
             "mismatched",
+            names,
         )
 
     # -- writing ----------------------------------------------------------- #
 
     def save(self, doc: dict) -> dict:
-        """Validate, stamp and write. Returns the document as stored.
+        """Validate, stamp, record and write. Returns the document as stored.
 
         Validation is the whole point of this method and it happens BEFORE the
         write, not after: a rig document that fails is not written at all, so
@@ -261,6 +377,19 @@ class HardwareStore:
         Every problem is reported, not just the first — fixing new wiring should
         be one pass rather than a game of whack-a-mole, which is the same
         argument `ChannelMap.disagreements()` makes.
+
+        A save records the wiring as saved here, in an order no crash can turn
+        into trusting wiring nobody saved, or holding wiring that was:
+
+          1. record the new digest BESIDE the ones already recorded;
+          2. write `wiring.json` (the commit);
+          3. remove the older layouts it replaces -- never a shadow copied in;
+          4. record the new digest alone, unless a removal failed: then the
+             digests recorded before stay, so a leftover this app recorded is
+             removed silently by the next save (one never recorded is shown).
+
+        A failure at 1 writes nothing; at 2, the previous wiring is still
+        recorded; after 2 the save has landed, and step 4 is logged if it fails.
         """
         problems = save_problems(doc)
         if problems:
@@ -268,22 +397,31 @@ class HardwareStore:
 
         stored = dict(doc)
         stored["edited_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        new = content_digest(stored)
+        _, recorded, replaced = self._survey()
+        self._write_recorded([*recorded, new])
         self.root.mkdir(parents=True, exist_ok=True)
         _write_atomic(self.path, json.dumps(stored, indent=2) + "\n")
         # Only once the new file is whole: an older layout left behind by a
         # failure here is harmless, because `wiring.json` wins over it.
-        self._remove(self._older_layouts())
+        if self._remove(p for layout in replaced for p in layout.files):
+            try:
+                self._write_recorded([new])
+            except OSError as exc:
+                log.warning("%s was saved, but recording it alone failed (%s)", WIRING_FILENAME, exc)
         return stored
 
     def reset(self) -> None:
         """Back to the shipped pinout. The files go; nothing else does.
 
-        LOWEST PRECEDENCE FIRST, and the first file that will not go stops it
-        (raised). `_stored` reads `wiring.json`, then the pair, then `rig.json`;
-        removing them in that order would let a failure part-way put an older
-        wiring back in force with nothing to say so. In this order a failure
-        leaves either the wiring that was in force or a load problem.
+        NOTHING RECORDED FIRST, so a Reset that stops part-way holds whatever
+        it left behind rather than trusting it at the next start. Then LOWEST
+        PRECEDENCE FIRST, and the first file that will not go stops it
+        (raised): removing `wiring.json` first would let a failure part-way put
+        an older wiring back. In this order a failure leaves either the wiring
+        that was in force or a load problem, and either is held at a restart.
         """
+        self._write_recorded([])
         for path in self.removal_order():
             path.unlink(missing_ok=True)
 
@@ -300,27 +438,21 @@ class HardwareStore:
             self.path,
         )
 
-    def _older_layouts(self) -> tuple[Path, ...]:
-        return (
-            self.legacy_rig_path,
-            self.channel_set_path,
-            self.pin_map_path,
-            self.channel_set_path.with_suffix(".json.tmp"),
-            self.pin_map_path.with_suffix(".json.tmp"),
-            self.legacy_rig_path.with_suffix(".json.tmp"),
-        )
-
     def _documents(self) -> tuple[Path, ...]:
         """The files that hold wiring; temporary files never do on their own."""
         return (self.path, self.legacy_rig_path, self.channel_set_path, self.pin_map_path)
 
     @staticmethod
-    def _remove(paths) -> None:  # noqa: ANN001 - an iterable of Path
+    def _remove(paths) -> bool:  # noqa: ANN001 - an iterable of Path
+        """Remove each; True when every one is gone."""
+        whole = True
         for path in paths:
             try:
                 path.unlink(missing_ok=True)
             except OSError as exc:
+                whole = False
                 log.warning("could not remove %s (%s); %s still wins", path.name, exc, WIRING_FILENAME)
+        return whole
 
 
 def split(doc: dict) -> tuple[dict, dict]:
@@ -355,33 +487,82 @@ def legacy_pair_digest(channel_set: dict) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
+def content_digest(doc: dict) -> str:
+    """What `wiring-confirmed.json` records: the wiring's content, without
+    `edited_at`, so identical wiring written at another moment is the same
+    wiring. Taken over the document AS STORED, never after `upgrade`: a later
+    release that fills one more default must not hold every untouched file."""
+    content = {k: v for k, v in doc.items() if k != "edited_at"}
+    canonical = json.dumps(content, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _digest_of(doc: dict | None) -> str | None:
+    return None if doc is None else content_digest(doc)
+
+
 def _unloaded(location: str, why: str | None) -> tuple[str, str]:
     """What is wrong with the FILE, and nothing about its consequence: that
     depends on what is in force, which `hardware/service.py` says."""
     return location, f"{location} did not load: {why or 'it could not be read'}."
 
 
-def _checked(location: str, doc: dict | None, why: str | None) -> _Stored:
-    """A stored document that read, checked against the schema before it may
-    be composed -- a hand edit can break its shape as easily as its JSON."""
+def _checked(location: str, doc: dict | None, why: str | None, *, sources: tuple[str, ...]) -> Stored:
+    """A stored document that read, checked as a save checks it before it may
+    be composed: its shape, a pin for every channel, and every wiring rule.
+    A hand edit can break any of them as easily as its JSON."""
     if doc is None:
-        return _Stored(None, [_unloaded(location, why)], "unrepairable")
+        return Stored(None, [_unloaded(location, why)], "unrepairable", sources)
+    digest = content_digest(doc)
     doc = upgrade(doc)
     try:
         import jsonschema  # noqa: F401
     except ImportError:  # pragma: no cover - the dependency fence: compose as before
-        return _Stored(doc, [], "loads")
+        return Stored(doc, [], "loads", sources, digest=digest)
     shape = validate(doc) or _unpinned(doc)
     if shape:
         where, what = shape[0]
-        return _Stored(doc, [_unloaded(location, f"{where}: {what}")], "invalid")
-    return _Stored(doc, [], "loads")
+        return Stored(doc, [_unloaded(location, f"{where}: {what}")], "invalid", sources, digest=digest)
+    rules = rule_problems(doc)
+    if rules:
+        code, where, what = rules[0]
+        return Stored(doc, [_unloaded(location, f"{code} {where}: {what}")], "invalid", sources, digest=digest)
+    return Stored(doc, [], "loads", sources, digest=digest)
 
 
 def save_problems(doc: Any) -> list[tuple[str, str]]:
     """Why `save` would refuse this document: its shape, then a channel with
     no pin. Checked by the rig definition before it issues any edge code."""
     return validate(doc) or (_unpinned(doc) if isinstance(doc, dict) else [])
+
+
+def rule_problems(document: Any) -> list[tuple[str, str, str]]:
+    """(code, location, message) for every wiring rule (RIG101-RIG107) a
+    document that passed the schema breaks, against the vocabulary in force.
+
+    Here rather than in `hardware/service.py` because a load runs them too:
+    a stored file that breaks one is never put in force."""
+    from ephymeris_sidecar.rig import registry
+
+    try:
+        chans = registry.ChannelMap(*registry.split_rig(document))
+    except (KeyError, TypeError) as exc:  # pragma: no cover - schema catches these
+        return [("RIG101", WIRING_FILENAME, str(exc))]
+
+    vocab = registry.vocabulary()
+    return [
+        (code, loc, msg)
+        for code, pairs in (
+            ("RIG101", chans.disagreements()),
+            ("RIG102", chans.pin_problems()),
+            ("RIG103", chans.duplicate_pins()),
+            ("RIG104", chans.slot_problems(vocab)),
+            ("RIG105", chans.sync_problems()),
+            ("RIG106", chans.onset_problems(vocab)),
+            ("RIG107", chans.edge_problems(vocab)),
+        )
+        for loc, msg in pairs
+    ]
 
 
 def _unpinned(doc: dict) -> list[tuple[str, str]]:

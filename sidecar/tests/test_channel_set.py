@@ -223,7 +223,9 @@ def test_a_retired_or_deleted_channel_s_code_is_never_reissued(tmp_path):
     rig.vocabulary.save(raw)
     registry.set_vocabulary_source(rig.vocabulary.load)
 
-    stored = rig.hardware.load()
+    # The wiring in force: the stored file now breaks RIG107 (a retired code),
+    # so a restart would hold it, but this run still composes it.
+    stored = rig.definition.in_force().document
     stored["channels"]["trial_light"].pop("edges")
     _, allocations = allocation.plan(stored, registry.vocabulary())
     assert [a.name for a in allocations] == ["TRIAL_LIGHT_ON_2"]
@@ -576,11 +578,13 @@ def test_a_folder_fsync_failure_after_the_rename_still_commits_the_save(tmp_path
 
 def test_a_save_fsyncs_the_file_and_the_folder(tmp_path, monkeypatch):
     s = store.HardwareStore(tmp_path)
+    s.inspect()  # the first read records what is confirmed here
     synced: list[int] = []
     real = store.os.fsync
     monkeypatch.setattr(store.os, "fsync", lambda fd: (synced.append(fd), real(fd))[1])
     s.save(store.default_document())
-    assert len(synced) == (1 if store.os.name == "nt" else 2)
+    # Three atomic writes: the digests beside the old, wiring.json, the digest alone.
+    assert len(synced) == 3 * (1 if store.os.name == "nt" else 2)
 
 
 def test_two_failed_saves_then_a_good_one_lose_nothing(tmp_path, monkeypatch):
@@ -614,14 +618,17 @@ def test_an_identical_copy_from_another_machine_loads_and_compares_equal(tmp_pat
     assert composed[0].channel_set.content_hash() == composed[1].channel_set.content_hash()
 
 
-def test_a_hand_edited_label_still_loads(tmp_path):
+def test_a_hand_edited_label_is_held_not_broken(tmp_path):
+    """Any hand edit is held (#131): nothing is wrong with it, but nobody
+    saved it here."""
     s = store.HardwareStore(tmp_path)
     s.save(_swapped_ports())
     doc = json.loads(s.path.read_text(encoding="utf-8"))
     doc["channels"]["right_well"]["label"] = "right"
     s.path.write_text(json.dumps(doc), encoding="utf-8")
     assert s.load_problems() == []
-    assert s.load()["pins"]["right_well"]["index"] == 4
+    assert s.inspect().state == "held" and s.load() is None
+    assert s.stored_document()["pins"]["right_well"]["index"] == 4
 
 
 @pytest.mark.parametrize(
@@ -667,9 +674,10 @@ def test_a_file_fixed_by_hand_never_lifts_the_refusal_while_the_shipped_pins_are
     payload = _hardware_get(rig)
     assert any(p["location"] == store.WIRING_FILENAME for p in payload["status"]["notices"])
 
-    with pytest.raises(definition.WiringSaveBlocked):
-        rig.save(rig.hardware.load())  # pins nobody on this rig has looked at
-    asyncio.run(rig.definition.save_wiring(rig.hardware.load(), confirm=True, confirmed_pins=True))
+    # Put back exactly as it was saved here, so its pins need no confirming
+    # (#131); a save is still what puts it in force.
+    assert payload["status"]["needsPinConfirmation"] is False
+    rig.save(payload["document"])
     assert rig.definition.wiring_problem() is None
     assert registry.channels().get("left_well").index == 3
 
@@ -733,7 +741,7 @@ def test_unloaded_wiring_that_will_not_parse_offers_the_shipped_pins_as_the_draf
     assert payload["document"]["pins"]["left_well"]["index"] == 4  # the shipped pin
     notices = [n["message"] for n in payload["status"]["notices"]]
     assert "shipped pins are in force" in notices[0] and "no box can start" in notices[0]
-    assert "the draft is the shipped pins and Save is off" in notices[1]
+    assert "the editor shows the shipped pins and Save is off" in notices[1]
     assert payload["status"]["custom"] is False
     assert "no box can start" in rig.definition.wiring_problem()
 
@@ -818,9 +826,12 @@ def test_a_reset_that_cannot_remove_an_older_layout_never_brings_it_back(tmp_pat
 
     assert rig.hardware.path.exists(), "wiring.json goes last, so it still wins"
     assert registry.channels().get("left_well").index == 3
+    # The reset forgot the confirmation before it removed anything, so a
+    # restart holds what it left rather than trusting it (#131).
     restarted = Rig(tmp_path)
-    assert restarted.hardware.load()["pins"]["left_well"]["index"] == 3
-    assert restarted.definition.wiring_problem() is None
+    assert restarted.hardware.stored_document()["pins"]["left_well"]["index"] == 3
+    assert "not saved or confirmed" in restarted.definition.wiring_problem()
+    assert registry.channels().content_hash() == SHIPPED_PINOUT_HASH
 
 
 # A refused save never touches the vocabulary
@@ -1036,9 +1047,10 @@ def test_a_file_fixed_after_a_failed_load_is_described_as_it_is_now(tmp_path):
     assert not any("parse" in n for n in notices), "the file parses now"
     assert any(n.startswith("Now wiring.json loads") for n in notices)
     served = _hardware_get(rig)
-    assert served["status"]["needsPinConfirmation"] is True
-    assert served["status"]["canSave"] is False
-    assert _preview(rig, served["document"], confirmed=True)["status"]["canSave"] is True
+    # Exactly the wiring last saved here, so nothing to confirm (#131): a
+    # save of it is offered as it stands.
+    assert served["status"]["needsPinConfirmation"] is False
+    assert served["status"]["canSave"] is True
 
 
 # --------------------------------------------------------------------------- #

@@ -262,7 +262,8 @@ def test_a_rig_saved_before_onsets_existed_is_filled_from_the_shipped_wiring(tmp
     s.root.mkdir(parents=True)
     s.path.write_text(json.dumps(doc), encoding="utf-8")
 
-    loaded = s.load()
+    loaded = s.stored_document()  # RIG106 keeps it out of force, but it is filled
+    assert s.load() is None
     assert loaded["channels"]["odor_line_3"]["onset_strobe"] == "ODOR_3_ON"
     assert "onset_strobe" not in loaded["channels"]["channel_99"]
     assert "RIG106" in codes_for(loaded)

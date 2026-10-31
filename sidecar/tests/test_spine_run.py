@@ -237,6 +237,30 @@ async def test_a_crashed_runs_tsv_alone_replays_as_far_as_it_goes(tmp_path, monk
     assert spine_stream.expected_stream(record) == [tuple(s) for s in document["ts_data"]]
 
 
+async def test_a_run_cut_inside_one_ticks_burst_replays_what_it_holds(tmp_path, monkeypatch):
+    """The power can fail between two strobes of the same tick: the port's enter
+    code written, the odor's on code not. What the file holds still replays;
+    what it never got to hold is not demanded of it."""
+    folder = save_tracer(tmp_path)
+    port = registry.channels().get("odor_port").index
+    transcript = run_board(folder, host_lines(folder), animal(port), 16000, tmp_path)
+    tsv = await run_session(tmp_path, folder, transcript, monkeypatch)
+
+    lines = tsv.read_text(encoding="utf-8").splitlines(keepends=True)
+    body = [i for i, line in enumerate(lines) if not line.startswith("#")]
+    ticks = [lines[i].split("\t")[1] for i in body]
+    # The first strobe that shares its tick with the one after it, past trial 1.
+    cut = next(body[k] for k in range(3, len(body) - 1) if ticks[k] == ticks[k + 1])
+    json_of(tsv).unlink()
+    tsv.write_text("".join(lines[: cut + 1]), encoding="utf-8")
+
+    assert recovery.recover_file(tsv)["status"] == "recovered"
+    document = json.loads(json_of(tsv).read_text(encoding="utf-8"))
+    assert spine_stream.expected_stream(spine_stream.decode(document)) == [
+        tuple(s) for s in document["ts_data"]
+    ]
+
+
 async def test_an_edited_output_strobe_is_not_what_replay_predicts(tmp_path, monkeypatch):
     folder = save_tracer(tmp_path)
     port = registry.channels().get("odor_port").index

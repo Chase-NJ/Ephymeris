@@ -153,8 +153,19 @@ def expected_stream(record: SpineRecord) -> list[tuple[int, int]]:
     The board's order within a tick (BoxSpine.h, THE STREAM): START_SESSION,
     inputs that rose, that fell, TRIAL_START, outputs off, outputs on; and its
     session end rule. A run cut off before END_SESSION is predicted up to its
-    last recorded strobe.
+    last recorded strobe: a power cut can fall between two strobes of one tick,
+    so its last tick is held only to as many strobes as the file recorded there.
     """
+    out = _predict(record)
+    if record.end_tick is None:
+        held = sum(1 for _, t in record.recorded if t == record.last_tick)
+        before = [s for s in out if s[1] < record.last_tick]
+        out = before + [s for s in out if s[1] == record.last_tick][:held]
+    return out
+
+
+def _predict(record: SpineRecord) -> list[tuple[int, int]]:
+    """Every strobe of every tick through the end, or through the last recorded one."""
     ticks = record.end_tick if record.end_tick is not None else record.last_tick
     actions = rp.replay(record.table, record.params, record.seed, record.events, ticks,
                         start=0, interp=record.interp)

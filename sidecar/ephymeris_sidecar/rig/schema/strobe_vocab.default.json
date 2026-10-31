@@ -95,7 +95,7 @@
       "since": 1,
       "emitted_on": "entry to the no-engagement penalty",
       "paired_with": "LIGHTS_OFF",
-      "pair_order": "LIGHTS_OFF first",
+      "pair_order": "LAZY_RAT first",
       "rationale": "Abstention. No stimulus was presented, so the trial carries no evidence about discrimination and is scored invalid. See BehaviorBox.h:1158-1159."
     },
     "ODOR_POKE": {
@@ -111,7 +111,7 @@
       "since": 1,
       "emitted_on": "entry to the broken-hold penalty",
       "paired_with": "LIGHTS_OFF",
-      "pair_order": "LIGHTS_OFF first",
+      "pair_order": "ODOR_UNPOKE_EARLY first",
       "rationale": "A commitment or sampling hold released early. Emitted from two distinct firmware sites (BehaviorBox.h:1181 pre-odor, :1197 sampling) with the same code, so the two are indistinguishable downstream. See open question in docs/spikes/avr-ram.md."
     },
     "ODOR_UNPOKE": {
@@ -121,14 +121,14 @@
       "emitted_on": "entry to the response window, after a complete sample",
       "paired_with": "LIGHTS_OFF",
       "pair_order": "ODOR_UNPOKE first",
-      "rationale": "Withdrawal from the odor port is the sampling/response boundary. The pair order is INVERTED relative to the three abort paths (BehaviorBox.h:1210 then :1213) -- this is why paired strobes are modelled as ordered nodes rather than as a set. See docs/decisions.md D2."
+      "rationale": "Withdrawal from the odor port is the sampling/response boundary. LIGHTS_OFF follows it at once, exactly as it follows each abort path's own code: the behavioural code is first on all four paths (runTrial() in BehaviorBox.h)."
     },
     "LIGHTS_OFF": {
       "code": 233,
       "origin": "firmware",
       "since": 1,
       "emitted_on": "entry to a zero-duration node that clears the trial light",
-      "rationale": "Always co-emitted with a behavioural code, never alone, and its ORDER relative to that partner varies by path. Modelled as its own zero-duration node so the order is authored rather than implicit."
+      "rationale": "Always co-emitted with a behavioural code, never alone, and always second: LAZY_RAT, ODOR_UNPOKE_EARLY (two sites) or ODOR_UNPOKE comes first on every path through runTrial(). Modelled as its own zero-duration node so the order is authored rather than implicit."
     },
     "INVALID_TRIAL": {
       "code": 234,

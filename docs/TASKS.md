@@ -785,7 +785,7 @@ Every behaviour sketch runs one shared `runTrial()`, so the topology is identica
 
 ### The model
 
-`taskGraph(profile)` returns `{nodes, edges, conditions, congruent, usable}`. A node has a `kind` (`state`, `outcome` — coloured to match Analytics' outcome palette — or `abort`), authored `column`/`row` in a 100-wide frame, `governedBy` (config `group` names that tune it), `entryNames` (strobe names that put the live token there), optional `variants` (a collapsed node's conditions) and `settlesToIti`. Edges carry a `kind` and an optional `countKey` naming the `analytics/stream/` count drawn on them.
+`taskGraph(profile)` returns `{nodes, edges, conditions, congruent, usable}`. A node has a `kind` (`state`, `outcome` — coloured to match Analytics' outcome palette — or `abort`), authored `column`/`row` in a 100-wide frame, `governedBy` (config `group` names that tune it), `entryNames` (strobe names that put the live token there), optional `variants` (a collapsed node's conditions) and `settlesToIti`. Edges carry a `kind` and an optional `label`. **The model carries no counts**: the only place a graph and a live run coexist is Mission Control, and a partial mid-session tally reads as a result while its trials are still arriving. Analytics owns recorded figures.
 
 ### Gates
 
@@ -815,12 +815,12 @@ Outcomes, best to worst, each with exactly one inbound edge (never a condition �
 | Outcome | Gate | From | Note |
 |---|---|---|---|
 | Reward | `FLUID_L` or `FLUID_R` | answer | Settles to ITI on a timer **only** if `WATER_UNPOKE_L/R` are undeclared; otherwise the animal's withdrawal moves the token |
-| Withheld | `WATER_POKE_NONE` **and** scored | window | **No `countKey` on purpose**: `stream/outcomes.py` has no no-go bucket, and borrowing `noResponse` would double-count |
+| Withheld | `WATER_POKE_NONE` **and** scored | window | The gate is a metric scoring the withhold (see the note above). The scorer has no no-go bucket: [ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#rewarded-and-response-accuracy) |
 | No hold | `WATER_UNPOKE_EARLY_L/R` | answer | |
 | Wrong well | `WATER_POKE_ERROR_L/R` | answer | |
 | No answer | always | window | |
 
-With more than one condition on a fan, edge labels and counts are dropped: one figure drawn N times would read as each arm's own.
+With more than one condition on a fan, edge labels are dropped: one label drawn N times is clutter, and collided with the lower arm.
 
 What `taskGraph` returns for the bundled `GRGL/task.json`, with the same labels. Its two conditions are congruent, so they collapse into one "Odor" node; it declares `WATER_POKE_NONE` but no metric scores it, so there is no Withheld outcome. Dashed nodes are aborts:
 
@@ -864,7 +864,7 @@ The conditions are **one node carrying `variants`**, drawn as a tick strip, not 
 
 ### Live token
 
-`liveNodeId` walks the codes newest-first and returns the first node whose `entryNames` contains the code's name; `useLiveNode` scans the last `TAIL` strobes, and the condition lookup a wider `CONDITION_TAIL`, because a correction trial's repeated pokes can push the onset out of the short window. The newest-first walk is what disambiguates `LIGHTS_OFF`, which every path emits: each abort strobes its own code and then `INVALID_TRIAL` immediately after. On error paths the outcome strobe *is* the start of a long silent delay, so an outcome marked `settlesToIti` hands the token to `iti` after `OUTCOME_SETTLE_MS`.
+`liveNodeId` walks the codes newest-first and returns the first node whose `entryNames` contains the code's name; `useLiveNode` scans the last `TAIL` strobes, and the condition lookup a wider `CONDITION_TAIL`, because a correction trial's repeated pokes can push the onset out of the short window. The newest-first walk is what disambiguates `LIGHTS_OFF`, which every path emits: each abort strobes its own code and then `LIGHTS_OFF`, serves its penalty delay in silence (`lazyRatDelay`, the escalating abstention delay, or `noPokeHoldTimeout`), and only then does the sketch loop strobe `INVALID_TRIAL`. So an aborted trial's token rests on `lights-off` for the whole penalty and moves to `repeat` when `INVALID_TRIAL` arrives; `LAZY_RAT` (the `lazy` node's entry) is shadowed by the `LIGHTS_OFF` after it, and is the newest code only when a profile does not declare `LIGHTS_OFF`. On error paths the outcome strobe *is* the start of a long silent delay, so an outcome marked `settlesToIti` hands the token to `iti` after `OUTCOME_SETTLE_MS`.
 
 ![A running box's panel in Mission Control: the Trial flow diagram with the live token on ITI, the collapsed condition node labelled Odor 3 with its tick lit, a status line reading "ITI · Odor 3 → left well", and below it a P(right | odor) chart, an outcome mix, live metrics and recent strobes](images/box-panel.webp)
 

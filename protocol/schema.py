@@ -1158,9 +1158,84 @@ SHAPES = (
     ),
     Shape(
         "RunStatus",
-        lit("ok", "no-metrics", "replay-pending", "missing", "unreadable"),
-        doc="Why a run has numbers or not (`ANALYTICS.md#why-a-run-has-no-numbers`). "
-        "`replay-pending` is a spine task's run: recorded, and scored by replay once that exists.",
+        lit("ok", "no-metrics", "diverged", "unreplayable", "missing", "unreadable"),
+        doc="Why a run has numbers or not (`ANALYTICS.md#why-a-run-has-no-numbers`). A spine "
+        "task's run is `ok` when replay scored it, `diverged` when its recorded outputs are not "
+        "what replay predicts (flagged, never scored), and `unreplayable` when replay cannot run "
+        "it at all, an unknown `INTERP` among them (`ANALYTICS.md#how-a-spine-run-is-scored`).",
+    ),
+    Shape(
+        "Proportion",
+        obj(
+            f("n", INT),
+            f("of", INT),
+            f("p", nullable(FLOAT), doc="n / of; null when `of` is 0, never 0.0."),
+            f("low", nullable(FLOAT), doc="95% Wilson interval (`ANALYTICS.md#uncertainty`)."),
+            f("high", nullable(FLOAT)),
+        ),
+        doc="A count out of a total, with its interval.",
+    ),
+    Shape(
+        "OutcomeTally",
+        obj(
+            f(
+                "outcomeClass",
+                STR,
+                doc="An outcome class's name (`taskdef/lowering.py`'s `OUTCOME_CLASSES`), or "
+                "`outcome_<n>` for a number this build has no name for. An open set: a class "
+                "added later needs no wire change.",
+            ),
+            f("n", INT),
+            f("of", INT, doc="Every complete trial of the scope, unclassified ones included."),
+            f("p", nullable(FLOAT)),
+            f("low", nullable(FLOAT)),
+            f("high", nullable(FLOAT)),
+        ),
+        doc="How many of a scope's trials ended in one outcome class "
+        "(`ANALYTICS.md#metrics-from-the-trial-table`).",
+    ),
+    Shape(
+        "RowOutcomes",
+        obj(
+            f("rowId", nullable(STR), doc="Null for trials the table names no row for."),
+            f("name", nullable(STR)),
+            f("trials", INT),
+            f("unclassified", INT, doc="Trials that reached no outcome-bearing state."),
+            f("classes", ListOf(Ref("OutcomeTally"))),
+        ),
+        doc="P(outcome | row): one row's trials by outcome class.",
+    ),
+    Shape(
+        "ReplayScore",
+        obj(
+            f("interp", INT, doc="The interpreter version the run was replayed under."),
+            f("trials", INT, doc="Complete trials: a crashed run's cut-off last trial is left out."),
+            f("unclassified", INT),
+            f("classes", ListOf(Ref("OutcomeTally")), doc="By class number; with `unclassified` "
+              "they partition `trials`."),
+            f("rows", ListOf(Ref("RowOutcomes")), doc="In the task's row order."),
+            f("rewarded", Ref("Proportion"), doc="Trials whose reward line opened, of `trials`."),
+        ),
+        doc="A replayed spine run's tallies, each a function of its trial table "
+        "(`ANALYTICS.md#metrics-from-the-trial-table`).",
+    ),
+    Shape(
+        "ReplayDivergence",
+        obj(
+            f("detail", STR),
+            f(
+                "index",
+                nullable(INT),
+                doc="0-based position in the recorded stream of the first strobe replay did not "
+                "predict. Null when the recorded inputs could not be fed to replay at all.",
+            ),
+            f("atMs", nullable(INT)),
+            f("expected", nullable(STR), doc="What replay predicts there, `NAME at <ms> ms`; "
+              "null past its end."),
+            f("recorded", nullable(STR), doc="What the file records there; null past its end."),
+        ),
+        doc="Where a `diverged` run's recorded strobes first leave what replay predicts "
+        "(`ANALYTICS.md#how-a-spine-run-is-scored`).",
     ),
     Shape(
         "ProfileSource",
@@ -1267,6 +1342,18 @@ SHAPES = (
             f("seed", nullable(INT)),
             f("detail", nullable(STR)),
             f("excludedByDefault", BOOL),
+            f(
+                "replay",
+                nullable(Ref("ReplayScore")),
+                doc="A spine run's tallies from its trial table, when replay scored it. Its "
+                "`metrics` are then P(correct | row) and `overall` their pooled figure. Null for "
+                "every other run.",
+            ),
+            f(
+                "divergence",
+                nullable(Ref("ReplayDivergence")),
+                doc="Set exactly when `status` is `diverged`.",
+            ),
         ),
     ),
     Shape(
@@ -1434,6 +1521,50 @@ SHAPES = (
         "being summed away.",
     ),
     Shape(
+        "InputCount",
+        obj(f("phase", INT), f("channel", STR), f("count", INT)),
+        doc="Watched rises of one input channel during one phase of a trial.",
+    ),
+    Shape(
+        "ReplayTrial",
+        obj(
+            f("index", INT, doc="0-based, in the run's order."),
+            f("atMs", INT, doc="The trial's start, in ms from the session's first tick."),
+            f("block", nullable(STR), doc="The block's id, when the table can say."),
+            f("row", nullable(STR), doc="The row's id, when the table can say."),
+            f("rowName", nullable(STR)),
+            f("level", nullable(FLOAT)),
+            f(
+                "phaseEntries",
+                ListOf(nullable(INT)),
+                doc="The first ms the trial entered each phase, aligned to "
+                "`TrialTable.phases`; null for a phase it never reached. Empty when the "
+                "snapshot cannot map states to phases.",
+            ),
+            f("response", nullable(STR), doc="The input channel whose edge was the response."),
+            f("responseEdge", nullable(lit("rise", "fall"))),
+            f("responseMs", nullable(INT)),
+            f("latencyMs", nullable(INT), doc="Response ms minus the ms its phase was entered."),
+            f("outcome", nullable(STR), doc="Its outcome class; null when it reached none."),
+            f("rewarded", BOOL),
+            f("rewardLine", nullable(STR), doc="The output channel that paid."),
+            f("rewardMs", nullable(INT), doc="How long the line was open."),
+            f("correction", BOOL, doc="A correction trial; always false until blocks have a "
+              "correction rule."),
+            f("inputCounts", ListOf(Ref("InputCount")), doc="Non-zero counts only."),
+            f("complete", BOOL, doc="False only for a crashed run's cut-off last trial."),
+        ),
+        doc="One trial of a spine run, read off its replay (`ANALYTICS.md#the-trial-table`).",
+    ),
+    Shape(
+        "TrialTable",
+        obj(
+            f("phases", ListOf(STR), doc="Each phase's kind, in spine order, for labels only."),
+            f("trials", ListOf(Ref("ReplayTrial"))),
+        ),
+        doc="A spine run's trial table (`ANALYTICS.md#the-trial-table`).",
+    ),
+    Shape(
         "RunSeries",
         obj(
             f("runId", STR),
@@ -1459,6 +1590,13 @@ SHAPES = (
                 "Tallying this list reproduces the run's `TrialOutcomes` and, "
                 "grouped by `triggerCode`, its `ConditionOutcomes` — pinned by "
                 "test, so the tape and the tallies can never disagree.",
+            ),
+            f(
+                "trialTable",
+                nullable(Ref("TrialTable")),
+                doc="A spine run's trial table, computed from its replay on each request and "
+                "never cached (`DATA.md#caching`). Null for a legacy run, a diverged one and "
+                "one replay cannot run.",
             ),
         ),
     ),

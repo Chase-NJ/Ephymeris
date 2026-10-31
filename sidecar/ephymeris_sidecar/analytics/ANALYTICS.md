@@ -9,7 +9,9 @@ report.
 1. **Nothing on disk is a trial.** A run's file holds only raw strobes: `[code, timestamp]` pairs, in the
    order the box sent them. Every trial, accuracy and count is derived from them each time they are read.
 2. **A task profile says what the strobes mean.** It lists the conditions (for example odor 1, answered at
-   the right well), and the strobe names that mark a trial's start, its answer and its outcome.
+   the right well), and the strobe names that mark a trial's start, its answer and its outcome. A
+   [spine task](../../../docs/TASKS.md#spine-tasks)'s profile carries its state table instead, and its
+   trials are read out of a replay of that table ([how](#how-a-spine-run-is-scored)).
 3. **One scorer defines a trial**, and the same code scores a session live in Mission Control and
    afterwards in Analytics, so the two cannot disagree.
 4. **To check the science, read [`stream/`](stream/) and nothing else.** It is pure: a document and a
@@ -32,9 +34,11 @@ The [worked example](#a-worked-example) shows all of it on thirty strobes.
 | [`stream/curves.py`](stream/curves.py) | The run trial by trial: learning curves, strategy walk | document + profile → series |
 | [`stream/infer.py`](stream/infer.py) | Which conditions ran, when no profile says | strobes → a `TaskProfile` |
 | [`stream/false_starts.py`](stream/false_starts.py) | Which restarted runs to set aside | run facts → verdicts |
-| [`stream/replay.py`](stream/replay.py) | What did the board do at each tick? The Python port of the firmware's interpreter ([ADR 0003](../../../docs/adr/0003-phase-spine-task-model.md)); nothing scores with it yet | state table + params + seed + input edges → actions per tick |
-| [`stream/spine.py`](stream/spine.py) | What must a spine run's board have sent? Reads the table, parameters, seed and input edges out of the run's own document, and predicts every strobe from the inputs alone ([TASKS.md](../../../docs/TASKS.md#the-snapshot)); nothing scores with it yet | a spine run's document → its expected stream |
-| [`stream/stats.py`](stream/stats.py), [`stream/document.py`](stream/document.py) | The Wilson interval; reading `ts_data` out of a file | |
+| [`stream/replay.py`](stream/replay.py) | What did the board do at each tick? The Python port of the firmware's interpreter ([ADR 0003](../../../docs/adr/0003-phase-spine-task-model.md)) | state table + params + seed + input edges → actions per tick |
+| [`stream/spine.py`](stream/spine.py) | What must a spine run's board have sent, and did it? Reads the table, parameters, seed and input edges out of the run's own document ([TASKS.md](../../../docs/TASKS.md#the-snapshot)), predicts every strobe from the inputs alone, and compares | a spine run's document → its divergence, or its trial table |
+| [`stream/trial_table.py`](stream/trial_table.py) | What happened in each trial of a spine run? ([the trial table](#the-trial-table)) | state table + replayed actions → one row per trial |
+| [`stream/table_metrics.py`](stream/table_metrics.py) | A spine run's numbers ([metrics](#metrics-from-the-trial-table)) | trial table → outcome tallies, P(correct \| row), rewarded |
+| [`stream/stats.py`](stream/stats.py), [`stream/document.py`](stream/document.py), [`stream/metric_summary.py`](stream/metric_summary.py) | The Wilson interval; reading `ts_data` out of a file; the one metric shape both scorers build | |
 
 **The plumbing**: files, cache and commands. You need these only to change how runs are found or stored.
 
@@ -98,7 +102,8 @@ delivered. `test_analytics_derive.py` scores this exact stream and asserts every
 Everything here is computed from `ts_data`. All of it is derived at read time from the raw codes plus the
 profile that decodes them. Offline scoring **never reimplements the live scorer**: it replays the stream
 through `stream/trials.py`'s `MetricAccumulator`, the same class Mission Control uses. A run's result is a
-`RunSummary`, and its `status` is `ok`, `no-metrics`, `replay-pending`, `missing` or `unreadable`.
+`RunSummary`, and its `status` is `ok`, `no-metrics`, `missing` or `unreadable`; a spine run is scored by
+[replay](#how-a-spine-run-is-scored) instead, and can also be `diverged` or `unreplayable`.
 
 ### Trials: hits, misses and exclusions
 
@@ -374,6 +379,83 @@ The within-session curves (`stream/curves.py`) replay the stream the same way; t
 are [learning curves](../../../docs/DATA.md#learning-curves) and the [strategy
 plane](../../../docs/DATA.md#strategy-plane).
 
+## How a spine run is scored
+
+A [spine task](../../../docs/TASKS.md#spine-tasks)'s run records only what the board observed and what it
+did, so nothing in its strobes says what a trial was. Instead its file carries its state table, parameters
+and seed ([the snapshot](../../../docs/TASKS.md#the-snapshot)), and Analytics **replays** it: the input
+edges drive `stream/replay.py`, the port of the board's interpreter, which says what the board did at every
+tick ([ADR 0003](../../../docs/adr/0003-phase-spine-task-model.md#replay-and-analytics)). One replay
+gives two things (`spine.replayed`):
+
+1. **The check.** Every output, `START_SESSION`, `TRIAL_START` and `END_SESSION` the board strobed is
+   predicted, and must equal what was recorded, strobe for strobe. A run where it does not is
+   [diverged](#diverged-and-unreplayable-runs), and is not scored.
+2. **The trial table**, read off the same replay, and every number a function of it.
+
+A spine run is recognised by its own file: its snapshot's `spine` key, or a header `interp` other than the
+trial runner's `1`. Never by a task name, and never by inference, which its edge code names would only fool.
+A legacy run (`interp` absent or `1`) is scored exactly as the rest of this file describes.
+
+> [!CAUTION]
+> **Read a trial off the table's own fields, never a phase kind or a code name.** A phase or an outcome
+> class added later must score with no change here, and `test_replay_trial_table.py` feeds a table with an
+> outcome number no task has used to prove it. A scorer that matched `"outcome"` phases or `FLUID_*` codes
+> would silently miss the first new one.
+
+### The trial table
+
+One row per trial (`stream/trial_table.py`, `ReplayTrial` on the wire). Columns, and where each is read:
+
+| Column | Read from |
+|---|---|
+| `index`, `atMs` | Each tick a state flagged `STARTS_TRIAL` is entered. The trial start the session ends on (trial NT+1, or the first after `STOP`) is not a trial |
+| `block`, `row`, `rowName`, `level` | The snapshot's `table.rows` (each state's row index) when it carries one; otherwise the task's only row and block, when it has exactly one; otherwise null |
+| `phaseEntries` | The first tick the trial entered a state of each phase, by the snapshot's `table.phases` (each state's phase index). A snapshot without it is lowered again from its own definition, and that map is used only if it gives back exactly the recorded table; otherwise the column is empty |
+| `outcome` | The outcome class of the **last** outcome-bearing state (`outcome` ≠ 0) the trial entered, named by `taskdef/lowering.py`'s `OUTCOME_CLASSES`, or `outcome_<n>` for a number this build has no name for. Null when it entered none, as an abort to the ITI does |
+| `response`, `responseEdge`, `responseMs`, `latencyMs` | Let P be the phase of the state the trial was in when it first entered an outcome-bearing state. The response is the first edge exit the trial took out of a state of phase P; its latency runs from the trial's first entry into P. A window and the hold after it are one phase, so a held response is timed from the window opening, not from the end of the hold. Null when the trial left P by its timer (an omission, or the tracer's Delay). Without a phase map each state is its own phase |
+| `rewarded`, `rewardLine`, `rewardMs` | The trial took the `on_hit` branch of a chance state that bears an outcome. The line is the outputs `on_hit` drives and `on_miss` does not; the time is the ticks actually spent in `on_hit` |
+| `correction` | Always false: no block has a correction rule yet |
+| `inputCounts` | Each watched input's rises per phase, attributed to the state held before the tick, as the interpreter attributes them. Non-zero counts only |
+| `complete` | The next trial started, or the session ended at a trial start. Only a crashed run's last trial is incomplete |
+
+The table rides on `analytics.series` (`RunSeries.trialTable`), computed from the file on each request and
+never cached, like every per-trial series ([DATA.md](../../../docs/DATA.md#caching)).
+
+### Metrics from the trial table
+
+Over **complete** trials only (`stream/table_metrics.py`), each proportion with its [Wilson
+interval](#uncertainty):
+
+| Figure | Definition |
+|---|---|
+| `replay.classes` | For each outcome class, n and n / trials. With `replay.unclassified` (trials that reached no outcome-bearing state) they partition the trials |
+| `replay.rows` | The same per row: P(outcome \| row) |
+| `replay.rewarded` | Trials whose reward line opened / trials |
+| `metrics` | One per row, **P(correct \| row)**: hits are its `correct` trials, counted its classified ones, and its unclassified ones excluded, as an unanswered trial is on a legacy run ([trials](#trials-hits-misses-and-exclusions)) |
+| `overall` | P(correct) pooled over every row, by summing counts ([pooled accuracy](#pooled-accuracy)) |
+
+Because `metrics` and `overall` keep the legacy shape, a spine run appears in the session table, the cards
+and the cohort trends like any run. P(correct | row) and `replay.classes` answer different questions: the
+first leaves out trials with no class, the second keeps them in the denominator.
+
+The tracer's Outcome records `correct` before it draws the reward, so a trial can be `correct` and not
+`rewarded` when the reward probability is below 1000‰.
+
+### Diverged and unreplayable runs
+
+- **`diverged`**: replay ran, and the first recorded strobe it did not predict is named in `divergence`
+  (its position, what replay predicts there and what the file records). A recorded stream that cannot be
+  fed to replay at all (strobes out of order, an edge after the end) is diverged too. A diverged run has no
+  metrics and no trial table: its outputs are not what this table, seed and inputs produce, so any number
+  read from it would describe a session that did not happen.
+- **`unreplayable`**: replay cannot start. Its `INTERP` is not one `replay.INTERP_VERSIONS` knows, its
+  snapshot carries no table, or the snapshot is malformed. An unknown `INTERP` is **never replayed**:
+  running a table under the wrong interpreter's rules would score a session that did not happen.
+
+Each read of a run with a run record also writes its verdict to `session_animal_runs.diverged`
+([DATA.md](../../../docs/DATA.md#run-records)).
+
 ## Which profile decodes a run
 
 `profileSource` on each run says which declaration decoded it:
@@ -400,8 +482,8 @@ and 4 need the file open and live in `scoring._settle`. `analytics.summary` (`Ru
 counted. A malformed `task.json` or a damaged embedded snapshot degrades to the next rung rather than
 raising: a file with a broken declaration is still a file full of real strobes. So does a declaration with
 no `liveMetrics`: a rung is taken only if its profile declares something to score. A **spine run** climbs no
-ladder: it decodes by its own snapshot, or by nothing, and is `replay-pending`
-([Why a run has no numbers](#why-a-run-has-no-numbers)).
+ladder: it decodes by its own snapshot, or by nothing, and is [scored by
+replay](#how-a-spine-run-is-scored).
 
 ```mermaid
 flowchart TD
@@ -493,7 +575,8 @@ A run's `status` (with a `detail` that says what to do):
 |---|---|---|
 | `ok` | Scored | |
 | `no-metrics` | Read fine, but no profile declares anything to score. Still listed with duration, events and stop reason | Why no profile resolved, for example the sketch name matched nothing |
-| `replay-pending` | A [spine task](../../../docs/TASKS.md#spine-tasks)'s run: its snapshot carries a `spine` key, or its header an `interp` replay runs. Recorded in full, scored by replay once that exists, and **never inferred** (its edge code names would only mimic the trial runner's onsets). Still listed with duration, events and stop reason | That replay scoring is still to come |
+| `diverged` | A [spine run](#how-a-spine-run-is-scored) whose recorded outputs are not what replay predicts. Flagged, never scored. Still listed with duration, events and stop reason | Which strobe first differs, and what replay predicted there |
+| `unreplayable` | A spine run replay cannot start: an unknown `INTERP`, no table in its snapshot, or a malformed one. Never replayed and never inferred. Still listed with duration, events and stop reason | Why, for example "the header says INTERP 3, not a version this replay knows" |
 | `missing` | No file was recorded, or it is not on disk | "the .tsv is on disk but the .json was never written — the data is recoverable" ([crash recovery](../../../docs/DATA.md#crash-recovery)) |
 | `unreadable` | The file is there but is not a JSON object, or the path can't be read | The parser's message |
 
@@ -589,6 +672,9 @@ from a half-written archive:
 | `infer_profile(codes)` | `stream/infer.py` | strobes → a profile, when none is declared |
 | `widen_no_go(profile, vocabulary)` | `stream/infer.py` | a profile → the copy scored, with every no-go metric missing at every port |
 | `false_starts.classify(facts)` | `stream/false_starts.py` | runs → which are set aside |
+| `spine.replayed(document)` | `stream/spine.py` | a spine run's document → its divergence, or its trial table |
+| `trial_table.trials_of(table, actions, end=…)` | `stream/trial_table.py` | a replay's actions → one `Trial` per trial |
+| `table_metrics.score(trials, rows=…)` | `stream/table_metrics.py` | a trial table → `ReplayScore` |
 | `reader.read_run(path)` | `reader.py` | a path → the document, or `missing`/`unreadable` |
 | `RunScorer.score(runs)` / `decode(run)` | `scoring.py` | runs → cached summaries / one decoded run for a chart |
 
@@ -625,3 +711,6 @@ print(summary.to_json())
   - `test_analytics_infer.py`: an inferred profile scores identically to the declared one.
   - `test_task_profiles.py`: the trial definition and boundary codes.
   - `test_false_starts.py`: the false-start rule.
+  - `test_replay_trial_table.py`: every trial-table column read off the table's own fields, including an
+    outcome class no task has used, and the metrics as functions of the table.
+  - `test_spine_analytics.py`: a spine run scored, diverged and unreplayable through `analytics.summary`.

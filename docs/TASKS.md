@@ -575,7 +575,7 @@ The tracer has limits, and each is diagnosed rather than guessed around:
 
 - the phases are Wait, Present, Delay, Outcome and ITI;
 - a task has one row and one block;
-- nothing is scored live yet: Mission Control says so, from the profile (`src/lib/sessions/liveScoring.ts`);
+- nothing is scored live yet: Mission Control says so, from the profile (`src/lib/sessions/liveScoring.ts`). Analytics scores a finished run by replaying it ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#how-a-spine-run-is-scored));
 - it is proven on the host, not yet on a Mega: the free RAM a board reports with a table loaded is still to be measured ([README.md](../README.md#not-yet-done)).
 
 ### What a spine task holds

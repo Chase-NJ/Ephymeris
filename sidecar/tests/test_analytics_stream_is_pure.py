@@ -23,9 +23,11 @@ FORBIDDEN_STDLIB = {
 }
 
 #: The sidecar packages a pure module may lean on: the profile it decodes with,
-#: the vocabulary inference reads, and the session-name parser false starts
-#: order runs by. All three are pure functions of their arguments.
-ALLOWED_SIDECAR = {"tasks.profile", "rig", "rig.registry", "sessions.paths"}
+#: the vocabulary inference reads, the session-name parser false starts order
+#: runs by, and the lowering whose outcome classes and phase map a spine run's
+#: replay is named by (standard library only, by its own rule). All are pure
+#: functions of their arguments.
+ALLOWED_SIDECAR = {"tasks.profile", "rig", "rig.registry", "sessions.paths", "taskdef.lowering"}
 
 
 def _imports(path: Path) -> list[tuple[int, str]]:

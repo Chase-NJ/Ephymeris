@@ -302,7 +302,8 @@ macOS as run-from-source. Packaged-only path bugs exist (Windows verbatim `\\?\`
 - **A spine task on a real box.** Spine tasks are proven on the host: the generated sketch on the
   instrumented shim, through the real session path, replayed from its `.tsv`
   ([Spine tasks](docs/TASKS.md#spine-tasks)). Not yet done on a Mega: flashing one, running it with an
-  animal or a catch vessel, and recording the `free_ram` it reports with its table loaded
+  animal or a catch vessel, reading that run's trial table in Analytics, and recording the `free_ram` it
+  reports with its table loaded
   (the RAM budget, [ADR 0003](docs/adr/0003-phase-spine-task-model.md#open-questions)).
 
 ### Known bugs

@@ -78,7 +78,11 @@ DB_FILENAME = "ephymeris.db"
 #: migration, v11's pattern.
 #: v15 added folder_moves (`DATA.md#data-folder`) — the journal that lets a
 #: relocate move a cohort's files and its records' paths together. A table only.
-SCHEMA_VERSION = 15
+#: v16 added session_animal_runs.interp / channel_set_hash / diverged
+#: (`DATA.md#run-records`) -- which interpreter ran a run, which channel set its
+#: sketch was generated against, and whether its replay diverged
+#: (`ANALYTICS.md#how-a-spine-run-is-scored`).
+SCHEMA_VERSION = 16
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS cohorts (
@@ -226,7 +230,19 @@ CREATE TABLE IF NOT EXISTS session_animal_runs (
     -- these two columns are what make them queryable. NULL on any run that
     -- predates the change, which is honest — those values are only on disk.
     config_json TEXT,
-    params_hash TEXT
+    params_hash TEXT,
+    -- What the board announced as `INTERP=<n>` (TASKS.md#the-start-line) and
+    -- the channel set the sketch was generated against (DATA.md#the-tsv-log),
+    -- written at finalization. NULL on a run recorded before v16, or on one
+    -- whose board announced no interpreter.
+    interp           INTEGER,
+    channel_set_hash TEXT,
+    -- Written by the analytics pass that reads the file
+    -- (ANALYTICS.md#how-a-spine-run-is-scored): 1 when replay could not predict
+    -- the run's recorded outputs, 0 when it replayed and was scored, NULL when
+    -- replay has not scored it (a legacy run, an unreplayable one, or one not
+    -- read since v16).
+    diverged         INTEGER
 );
 
 -- Content-addressed Task Profile snapshots
@@ -276,7 +292,7 @@ CREATE TABLE IF NOT EXISTS run_metrics_cache (
     config_json    TEXT,
     codec_version  INTEGER NOT NULL,
     computed_at    TEXT NOT NULL,
-    status         TEXT NOT NULL,   -- 'ok' | 'no-metrics' | 'replay-pending' | 'missing' | 'unreadable'
+    status         TEXT NOT NULL,   -- 'ok' | 'no-metrics' | 'diverged' | 'unreplayable' | 'missing' | 'unreadable'
     detail         TEXT,
     summary_json   TEXT NOT NULL
 );
@@ -639,6 +655,20 @@ def _to_v13(conn: sqlite3.Connection) -> None:
         log.info("v13: re-keyed %d stored task profile(s)", len(remap))
 
 
+def _to_v16(conn: sqlite3.Connection) -> None:
+    """v15 → v16: a run record's interpreter, channel set and replay verdict
+    (`DATA.md#run-records`).
+
+    NULL on every existing row, which is honest: `interp` and
+    `channel_set_hash` are on disk in each run's file, and `diverged` is
+    written the next time Analytics reads it. Nothing is backfilled here, so a
+    startup never reads an archive.
+    """
+    add_column(conn, "session_animal_runs", "interp", "INTEGER")
+    add_column(conn, "session_animal_runs", "channel_set_hash", "TEXT")
+    add_column(conn, "session_animal_runs", "diverged", "INTEGER")
+
+
 #: Migrations, keyed by the version they upgrade **to**, applied in ascending
 #: order.
 #:
@@ -659,6 +689,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     10: _to_v10,
     12: _to_v12,
     13: _to_v13,
+    16: _to_v16,
 }
 
 

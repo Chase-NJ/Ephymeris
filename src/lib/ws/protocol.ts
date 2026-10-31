@@ -1165,10 +1165,88 @@ export interface ConditionOutcomes {
 }
 
 /**
- * Why a run has numbers or not (`ANALYTICS.md#why-a-run-has-no-numbers`). `replay-pending` is a
- * spine task's run: recorded, and scored by replay once that exists.
+ * Why a run has numbers or not (`ANALYTICS.md#why-a-run-has-no-numbers`). A spine task's run is
+ * `ok` when replay scored it, `diverged` when its recorded outputs are not what replay predicts
+ * (flagged, never scored), and `unreplayable` when replay cannot run it at all, an unknown
+ * `INTERP` among them (`ANALYTICS.md#how-a-spine-run-is-scored`).
  */
-export type RunStatus = "ok" | "no-metrics" | "replay-pending" | "missing" | "unreadable";
+export type RunStatus = "ok" | "no-metrics" | "diverged" | "unreplayable" | "missing" | "unreadable";
+
+/** A count out of a total, with its interval. */
+export interface Proportion {
+  n: number;
+  of: number;
+  /** n / of; null when `of` is 0, never 0.0. */
+  p: number | null;
+  /** 95% Wilson interval (`ANALYTICS.md#uncertainty`). */
+  low: number | null;
+  high: number | null;
+}
+
+/**
+ * How many of a scope's trials ended in one outcome class
+ * (`ANALYTICS.md#metrics-from-the-trial-table`).
+ */
+export interface OutcomeTally {
+  /**
+   * An outcome class's name (`taskdef/lowering.py`'s `OUTCOME_CLASSES`), or `outcome_<n>` for a
+   * number this build has no name for. An open set: a class added later needs no wire change.
+   */
+  outcomeClass: string;
+  n: number;
+  /** Every complete trial of the scope, unclassified ones included. */
+  of: number;
+  p: number | null;
+  low: number | null;
+  high: number | null;
+}
+
+/** P(outcome | row): one row's trials by outcome class. */
+export interface RowOutcomes {
+  /** Null for trials the table names no row for. */
+  rowId: string | null;
+  name: string | null;
+  trials: number;
+  /** Trials that reached no outcome-bearing state. */
+  unclassified: number;
+  classes: OutcomeTally[];
+}
+
+/**
+ * A replayed spine run's tallies, each a function of its trial table
+ * (`ANALYTICS.md#metrics-from-the-trial-table`).
+ */
+export interface ReplayScore {
+  /** The interpreter version the run was replayed under. */
+  interp: number;
+  /** Complete trials: a crashed run's cut-off last trial is left out. */
+  trials: number;
+  unclassified: number;
+  /** By class number; with `unclassified` they partition `trials`. */
+  classes: OutcomeTally[];
+  /** In the task's row order. */
+  rows: RowOutcomes[];
+  /** Trials whose reward line opened, of `trials`. */
+  rewarded: Proportion;
+}
+
+/**
+ * Where a `diverged` run's recorded strobes first leave what replay predicts
+ * (`ANALYTICS.md#how-a-spine-run-is-scored`).
+ */
+export interface ReplayDivergence {
+  detail: string;
+  /**
+   * 0-based position in the recorded stream of the first strobe replay did not predict. Null when
+   * the recorded inputs could not be fed to replay at all.
+   */
+  index: number | null;
+  atMs: number | null;
+  /** What replay predicts there, `NAME at <ms> ms`; null past its end. */
+  expected: string | null;
+  /** What the file records there; null past its end. */
+  recorded: string | null;
+}
 
 /**
  * How much the decoding can be trusted (`DATA.md#reading-the-archive`). Four states —
@@ -1249,6 +1327,13 @@ export interface RunSummary {
   seed: number | null;
   detail: string | null;
   excludedByDefault: boolean;
+  /**
+   * A spine run's tallies from its trial table, when replay scored it. Its `metrics` are then
+   * P(correct | row) and `overall` their pooled figure. Null for every other run.
+   */
+  replay: ReplayScore | null;
+  /** Set exactly when `status` is `diverged`. */
+  divergence: ReplayDivergence | null;
 }
 
 export interface AnalyticsAnimal {
@@ -1393,6 +1478,58 @@ export interface TrialRecord {
   latencyMs: number | null;
 }
 
+/** Watched rises of one input channel during one phase of a trial. */
+export interface InputCount {
+  phase: number;
+  channel: string;
+  count: number;
+}
+
+/** One trial of a spine run, read off its replay (`ANALYTICS.md#the-trial-table`). */
+export interface ReplayTrial {
+  /** 0-based, in the run's order. */
+  index: number;
+  /** The trial's start, in ms from the session's first tick. */
+  atMs: number;
+  /** The block's id, when the table can say. */
+  block: string | null;
+  /** The row's id, when the table can say. */
+  row: string | null;
+  rowName: string | null;
+  level: number | null;
+  /**
+   * The first ms the trial entered each phase, aligned to `TrialTable.phases`; null for a phase
+   * it never reached. Empty when the snapshot cannot map states to phases.
+   */
+  phaseEntries: Array<number | null>;
+  /** The input channel whose edge was the response. */
+  response: string | null;
+  responseEdge: "rise" | "fall" | null;
+  responseMs: number | null;
+  /** Response ms minus the ms its phase was entered. */
+  latencyMs: number | null;
+  /** Its outcome class; null when it reached none. */
+  outcome: string | null;
+  rewarded: boolean;
+  /** The output channel that paid. */
+  rewardLine: string | null;
+  /** How long the line was open. */
+  rewardMs: number | null;
+  /** A correction trial; always false until blocks have a correction rule. */
+  correction: boolean;
+  /** Non-zero counts only. */
+  inputCounts: InputCount[];
+  /** False only for a crashed run's cut-off last trial. */
+  complete: boolean;
+}
+
+/** A spine run's trial table (`ANALYTICS.md#the-trial-table`). */
+export interface TrialTable {
+  /** Each phase's kind, in spine order, for labels only. */
+  phases: string[];
+  trials: ReplayTrial[];
+}
+
 export interface RunSeries {
   runId: string;
   mode: "rolling" | "cumulative";
@@ -1413,6 +1550,11 @@ export interface RunSeries {
    * tallies can never disagree.
    */
   trials: TrialRecord[];
+  /**
+   * A spine run's trial table, computed from its replay on each request and never cached
+   * (`DATA.md#caching`). Null for a legacy run, a diverged one and one replay cannot run.
+   */
+  trialTable: TrialTable | null;
 }
 
 export interface SeriesResult {

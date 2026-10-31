@@ -87,6 +87,10 @@ class ActiveRun:
     #: different number, and that difference is the only signal a box is still
     #: carrying an old sketch.
     host_seed: int | None = None
+    #: What the board announced as `INTERP=<n>` before `READY`, recorded on the
+    #: run record at finalization (`DATA.md#run-records`). `None` when it
+    #: announced none.
+    interp: int | None = None
     #: Why the board refused this run's start, once it has. Read by the port's
     #: loss, which then finalizes the run for that reason rather than as a drop.
     refusal: StartRefused | None = None
@@ -298,6 +302,7 @@ class SessionRunner:
             return
         box = run.box
         run.seed = seed
+        run.interp = announced.interp
 
         when = datetime.now()
         files = resolve_animal_files(

@@ -256,15 +256,17 @@ export function outcomeParts(outcomes: TrialOutcomes): OutcomePart[] {
 
 /**
  * Why a run can't be scored, in words an operator can act on. `run.detail`
- * carries the reader's own message for a damaged file; `no-metrics` means the
- * sketch has no task profile, which is a fact about the task rather than a
- * fault in the data.
+ * carries the reader's own message for a damaged file, and replay's for a
+ * spine run (`ANALYTICS.md#diverged-and-unreplayable-runs`); `no-metrics`
+ * means the sketch has no task profile, which is a fact about the task rather
+ * than a fault in the data.
  */
 export function unscoredReason(run: RunSummary): string | null {
   if (run.status === "ok") return null;
   if (run.detail) return run.detail;
   if (run.status === "no-metrics") return "no task profile — nothing to score";
-  if (run.status === "replay-pending") return "spine task — scoring by replay is not available yet";
+  if (run.status === "diverged") return "spine task — its recorded outputs are not what replay predicts, so it is not scored";
+  if (run.status === "unreplayable") return "spine task — replay cannot run it";
   if (run.status === "missing") return "session file is missing";
   return "session file could not be read";
 }

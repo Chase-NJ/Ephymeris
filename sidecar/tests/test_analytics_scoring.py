@@ -313,7 +313,7 @@ async def test_a_change_to_the_recorded_config_reaches_a_warm_row(
 # --- the one pin (`DATA.md#caching`) ---------------------------------------
 
 #: What today's scoring answers for the canary runs (`scoring.canary_fingerprint`).
-CANARY = "cd32c86ca6c07f292fb6e2fb022dde51cad64ef7056020d7dbc1b5d5e7da8044"
+CANARY = "64b97921d8ddad58fed3eed7e0d568178b5fbdf4b3b039e430b0ab3a294f284d"
 
 # --- a snapshot recorded before a no-go metric listed every port ------------
 
@@ -385,7 +385,7 @@ def test_the_score_version_pins_every_input() -> None:
     the canary is blind to it: add a case to `scoring._canary_runs` that shows
     it (or, failing that, bump `SCORE_VERSION`).
     """
-    assert scoring.SCORE_VERSION == 10
+    assert scoring.SCORE_VERSION == 11
     assert scoring.canary_fingerprint() == CANARY, (
         "scoring's answers changed: every cache re-reads once (DATA.md#caching)"
     )

@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 
 from ephymeris_sidecar.analytics.stream import spine as spine_stream
+from ephymeris_sidecar.analytics.stream.summary import summarize
 from ephymeris_sidecar.ports import handler as handler_module
 from ephymeris_sidecar.rig import registry
 from ephymeris_sidecar.sessions import recovery
@@ -214,6 +215,18 @@ async def test_a_saved_spine_task_runs_a_session_and_its_tsv_alone_replays(tmp_p
     record = spine_stream.decode(document)
     assert spine_stream.expected_stream(record) == [tuple(s) for s in document["ts_data"]], \
         "replay predicts every strobe the board sent, at its tick"
+
+    # And Analytics scores it from that replay (`ANALYTICS.md#how-a-spine-run-is-scored`):
+    # trials 1 and 3 held through the odor, trial 2 let go during it.
+    summary = summarize(document, None)
+    assert summary.status == "ok" and summary.divergence is None
+    [metric] = summary.metrics
+    assert (metric.hits, metric.counted, metric.triggered) == (2, 2, 3)
+    table = spine_stream.trial_table(document)
+    assert [t["outcome"] for t in table["trials"]] == ["correct", None, "correct"]
+    assert [t["phaseEntries"][1] for t in table["trials"]] == [200, 5000, 8500], \
+        "the present begins at each poke, on the board's own clock"
+    assert summary.replay.rewarded.n == sum(t["rewarded"] for t in table["trials"])
 
 
 async def test_a_crashed_runs_tsv_alone_replays_as_far_as_it_goes(tmp_path, monkeypatch):

@@ -3,7 +3,7 @@
   "$id": "rig_hardware.v1.json",
   "title": "Rig wiring",
   "_readme": [
-    "THE OPERATOR'S OWN WIRING, stored as <data_dir>/hardware/channel_set.json + pin_map.json. It REPLACES the",
+    "THE OPERATOR'S OWN WIRING, stored as <data_dir>/hardware/wiring.json. It REPLACES the",
     "shipped pair (schema/channels.v1.json + hardware/<pinout>.json) rather than",
     "merging with it -- a merge would mean a channel you deleted came back, and",
     "there would be no way to say 'this box has no vacuum line'.",

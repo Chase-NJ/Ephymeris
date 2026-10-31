@@ -112,7 +112,7 @@ def test_a_saved_document_round_trips_and_carries_a_stamp(tmp_path):
     stored = s.save(rig())
     assert s.exists()
     assert stored["edited_at"]
-    assert json.loads(s.channel_set_path.read_text(encoding="utf-8"))["channels"] == stored["channels"]
+    assert json.loads(s.path.read_text(encoding="utf-8"))["channels"] == stored["channels"]
     assert s.load() == stored
     assert s.status().custom is True
 

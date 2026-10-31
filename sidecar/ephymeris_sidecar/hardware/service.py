@@ -31,9 +31,10 @@ def document_payload(rig: store.HardwareStore) -> dict[str, Any]:
     nothing, so the editor opens something real. The operator's first save turns
     that into their own; until then nothing is written.
     """
-    doc = rig.load() or store.default_document()
-    # Stored wiring that did not load comes first: the document below is the
-    # shipped one standing in for it, and the operator must be told so.
+    # The stored document even when it did not load (when it parses at all),
+    # so the operator is shown the wiring that needs fixing, not the shipped one.
+    doc = rig.stored_document() or store.default_document()
+    # Why it did not load comes first: until it is fixed, no box may start.
     stored = [
         {"location": loc, "message": msg, "code": None} for loc, msg in rig.load_problems()
     ]
@@ -94,7 +95,7 @@ def _rule_problems(document: Any) -> list[dict[str, Any]]:
     try:
         chans = registry.ChannelMap(*registry.split_rig(document))
     except (KeyError, TypeError) as exc:  # pragma: no cover - schema catches these
-        return [{"location": "rig.json", "message": str(exc), "code": None}]
+        return [{"location": "wiring.json", "message": str(exc), "code": None}]
 
     vocab = registry.vocabulary()
     return [

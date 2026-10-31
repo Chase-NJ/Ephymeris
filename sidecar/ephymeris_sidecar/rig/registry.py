@@ -1103,8 +1103,10 @@ def _compose_channels(rig: dict | None) -> ChannelMap:
             # A rig document that got past the schema and still cannot compose is
             # a bug, not an operator error -- but falling back to a working rig
             # beats refusing to start with six serial ports open.
-            log.warning(
-                "rig document could not be composed (%s); using the shipped pinout", exc
+            log.error(
+                "the stored rig wiring failed to compose (%s); the shipped pinout is "
+                "composed meanwhile",
+                exc,
             )
     return ChannelMap(_load("channels.v1.json"), _pinout())
 
@@ -1166,7 +1168,7 @@ def split_rig(rig: dict) -> tuple[dict, dict]:
         "pinout_id": rig.get("derived_from") or "rig",
         "pinout_version": int(rig.get("rig_version", 1)),
         "board": rig.get("board", ""),
-        "transcribed_from": "<data_dir>/hardware/pin_map.json",
+        "transcribed_from": "<data_dir>/hardware/wiring.json",
         "source_label": "pins",
         "pins": rig["pins"],
         **({"pin_range": rig["pin_range"]} if rig.get("pin_range") else {}),

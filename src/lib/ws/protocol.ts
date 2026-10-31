@@ -186,6 +186,7 @@ export const ERR = {
   RIG_INVALID: "RIG_INVALID",
   RIG_IN_USE: "RIG_IN_USE",
   RIG_WOULD_BREAK_TASKS: "RIG_WOULD_BREAK_TASKS",
+  RIG_WIRING_UNLOADED: "RIG_WIRING_UNLOADED",
   STROBE_INVALID: "STROBE_INVALID",
   STROBE_REQUIRED: "STROBE_REQUIRED",
   STROBE_IN_RECORDED_SESSION: "STROBE_IN_RECORDED_SESSION",
@@ -1853,7 +1854,8 @@ export interface StrobeCode {
   code: number;
   /**
    * History, not authority: `firmware` (numbered by the lab's recorded sessions before the app),
-   * `ephymeris` (declared by the app), `operator` (added on the Strobes page).
+   * `ephymeris` (declared by the app), `operator` (added on the Strobes page), `channel_set`
+   * (issued to a channel's edge by a wiring save, `TASKS.md#edge-codes`).
    */
   origin: string;
   emittedOn?: string;

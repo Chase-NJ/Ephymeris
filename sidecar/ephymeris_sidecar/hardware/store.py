@@ -1,42 +1,42 @@
-"""The rig wiring document: the operator's, validated on the way in.
+"""The rig wiring: the operator's, validated on the way in.
 
 Layout, under the sidecar's own data dir (beside `ephymeris.db` — these are
 sidecar-side writes, no Tauri fs capability involved):
 
-    <data_dir>/hardware/channel_set.json   what each channel IS (lab-wide)
-    <data_dir>/hardware/pin_map.json       where each one is on THIS box (local)
+    <data_dir>/hardware/wiring.json
 
-TWO FILES, mirroring the shipped pair they override
-(TASKS.md#the-channel-set-and-the-pin-map):
+TWO DOCUMENTS, ONE FILE (TASKS.md#the-channel-set-and-the-pin-map). The channel
+set (what each channel IS, lab-wide) and the pin map (where each one is on THIS
+box) are separate documents in code -- `split` and `join` -- and the file holds
+both, as the wire's `{rig_version, channels, pins, …}`:
 
-    channel_set.json  {"channel_set_version": 1,
-                       "channels": {"<name>": {"kind", "type", "role", "edges?", ...}}}
-    pin_map.json      {"pin_map_version": 1, "derived_from", "board", "pin_range",
-                       "pins": {"<name>": {"index", "watch_bit?", "note?"}}}
+    {"rig_version": 1, "derived_from", "board", "pin_range", "edited_at",
+     "channels": {"<name>": {"kind", "type", "role", "edges?", ...}},   the channel set
+     "pins":     {"<name>": {"index", "watch_bit?", "note?"}}}          the pin map
 
-The channel set is the document both lab machines will share; the pin map
-never leaves the machine. They are still EDITED as one document -- the wire's
-`{rig_version, channels, pins}`, which `load` joins and `save` splits -- because
-an operator adding a channel gives it a meaning and a pin in one gesture. Keeping
-the halves apart is what lets a box generation be swapped without touching what
-a channel MEANS, and it is what `ChannelMap.disagreements()` checks.
+ONE FILE BECAUSE A SAVE MUST BE WHOLE OR ABSENT. A channel set and a pin map
+written as two files can be torn by a failure between them, and a new channel
+set read against old pins records every poke on a swapped port under the wrong
+family with no error anywhere. One file written to `wiring.json.part`, fsync'd,
+renamed over the old one and the folder fsync'd (`_write_atomic`) cannot tear:
+a reader sees the old wiring or the new, never a mix.
 
-THE PAIR COMMITS OR FAILS AS ONE. Two files cannot be replaced atomically, and
-a new channel set loaded against the old pins records every poke on a swapped
-port under the wrong family with no error anywhere. So the pin map names the
-channel set it was written beside (`channel_set_digest`), and a save:
+STORED WIRING THAT WILL NOT LOAD IS NEVER REPLACED BY THE SHIPPED ONE SILENTLY.
+The registry composes the shipped pinout meanwhile, because the process owns six
+serial ports and must start; but `load_problems` says why, `hardware.get` shows
+it, and the session lifecycle refuses to start or flash a box until the wiring
+is saved again or reset (`RigDefinition.wiring_problem`).
 
-  1. stages both files (`*.json.tmp`), complete;
-  2. replaces the channel set;
-  3. replaces the pin map -- and if that fails, puts the old channel set back.
+OLDER LAYOUTS MIGRATE LOSSLESSLY, read in place until the next save writes
+`wiring.json` and removes them:
 
-A save stopped between 2 and 3 (a power cut, or a rollback that failed too)
-leaves the staged pin map behind, and it is the commit record: `load` pairs
-the new channel set with it. Any other pair whose digests disagree does not
-load at all; `load_problems` says why and `hardware.get` shows it.
+  * `rig.json` -- the same document, under its old name;
+  * `channel_set.json` + `pin_map.json` -- the pair `main` wrote briefly, the pin
+    map naming its channel set by `channel_set_digest`. A pair whose digests
+    disagree is a load problem, never a guess.
 
-A RIG SAVED AS ONE FILE (`rig.json`, before the split) is read as both, and the
-next save writes the pair and removes it.
+`wiring.json` wins over both, so a migrating save stopped before its cleanup
+still has the new wiring in force.
 
 A RIG DOCUMENT REPLACES THE SHIPPED PAIR, it does not merge with it. A merge
 would mean an operator who deleted a channel got it back, and there would be no
@@ -72,14 +72,16 @@ log = logging.getLogger(__name__)
 #: one expensive.
 MAX_RIG_BYTES = 256 * 1024
 
-#: The single document a rig was saved as before the channel set and the pin
-#: map were split. Read when the pair is absent; removed by the next save.
+WIRING_FILENAME = "wiring.json"
+#: Older layouts, read until the next save (module docstring).
 RIG_FILENAME = "rig.json"
 CHANNEL_SET_FILENAME = "channel_set.json"
 PIN_MAP_FILENAME = "pin_map.json"
 
 #: The keys of the joined document that belong to the pin map, beside `pins`.
-_PIN_MAP_KEYS = ("derived_from", "board", "pin_range", "edited_at")
+#: `edited_at` belongs to neither: it says when a FILE was written, and two
+#: machines holding identical wiring must compare equal.
+_PIN_MAP_KEYS = ("derived_from", "board", "pin_range")
 
 
 class RigInvalid(ValueError):
@@ -94,8 +96,9 @@ class RigInvalid(ValueError):
 class RigStatus:
     """What the editor needs to know about where the wiring came from."""
 
-    #: True when this rig has its own document; False when it is running the
-    #: shipped pinout untouched.
+    #: True when this rig has its own stored wiring, loaded or not; False when
+    #: it is running the shipped pinout untouched. A stored wiring that did not
+    #: load is still the rig's own -- and Reset must stay reachable for it.
     custom: bool
     #: The shipped pinout this rig derives from, named even when custom — a
     #: rig document is a copy of one, and saying which answers "a Mega, wired
@@ -104,10 +107,18 @@ class RigStatus:
     edited_at: str | None
 
 
-class HardwareStore:
-    """Reads and writes `<data_dir>/hardware/channel_set.json` and `pin_map.json`.
+@dataclass(frozen=True)
+class _Stored:
+    #: The document as parsed, even if it will not load; None if unparseable.
+    document: dict | None
+    #: (location, message) for why it will not load; empty when it loads.
+    problems: list[tuple[str, str]]
 
-    Owns the files and nothing else. Composing it into a `ChannelMap`, and
+
+class HardwareStore:
+    """Reads and writes `<data_dir>/hardware/wiring.json`.
+
+    Owns the file and nothing else. Composing it into a `ChannelMap`, and
     invalidating the cached registries when it changes, is `rig/registry.py`'s
     job — this class must not reach for a composed map at import time, so that a
     broken rig document is a diagnostic rather than an import error.
@@ -115,74 +126,80 @@ class HardwareStore:
 
     def __init__(self, data_dir: Path) -> None:
         self.root = Path(data_dir) / "hardware"
-        #: The one-file document a rig saved before the split; see RIG_FILENAME.
-        self.path = self.root / RIG_FILENAME
+        self.path = self.root / WIRING_FILENAME
+        self.legacy_rig_path = self.root / RIG_FILENAME
         self.channel_set_path = self.root / CHANNEL_SET_FILENAME
         self.pin_map_path = self.root / PIN_MAP_FILENAME
 
     # -- reading ----------------------------------------------------------- #
 
     def exists(self) -> bool:
-        return any(p.is_file() for p in (self.channel_set_path, self.pin_map_path, self.path))
+        return any(p.is_file() for p in self._every_layout())
 
     def load(self) -> dict | None:
-        """The rig document, or None when this rig has never been edited.
+        """The wiring in force: the rig's own, or None for the shipped pinout.
 
-        A file that will not parse, or a pair that does not belong together, is
-        reported as None with a logged warning rather than raised: the compiler
-        falls back to the shipped pinout, which is a working rig, and the
-        editor's own `hardware.get` reports the problem (`load_problems`).
-        Refusing to start would be worse than running the wiring the box
-        shipped with.
+        None ALSO when stored wiring will not load, so the registry still
+        composes a working rig for a process that owns six serial ports -- but
+        that case is never silent: `load_problems` names it, and the session
+        lifecycle refuses to start or flash a box while it lasts.
         """
-        return self._load()[0]
+        stored = self._stored()
+        return stored.document if not stored.problems else None
 
     def load_problems(self) -> list[tuple[str, str]]:
         """(location, message) for why stored wiring exists and did not load."""
-        return self._load()[1]
+        return self._stored().problems
 
-    def _load(self) -> tuple[dict | None, list[tuple[str, str]]]:
-        if self.channel_set_path.is_file():
-            channel_set = _read(self.channel_set_path)
-            if channel_set is None:
-                return None, [(CHANNEL_SET_FILENAME, "the channel set will not read; see the log")]
-            digest = channel_set_digest(channel_set)
-            pin_map = _read(self.pin_map_path) if self.pin_map_path.is_file() else None
-            if pin_map is None or pin_map.get("channel_set_digest") != digest:
-                # The save that wrote this channel set stopped before its pin
-                # map landed. The staged one is that save's commit record.
-                staged = _read(self._staged(self.pin_map_path), quiet=True)
-                if staged is not None and staged.get("channel_set_digest") == digest:
-                    pin_map = staged
-            if pin_map is not None and pin_map.get("channel_set_digest") == digest:
-                return upgrade(join(channel_set, pin_map)), []
-            message = (
-                f"{PIN_MAP_FILENAME} does not belong to {CHANNEL_SET_FILENAME}: they were "
-                "not written by one save, so its pins could put a port under another "
-                "port's codes. Running the shipped pinout until this rig's wiring is "
-                "saved again."
-            )
-            log.error(message)
-            return None, [(PIN_MAP_FILENAME, message)]
-        if self.path.is_file():
-            # Saved as one file before the split -- or the first save after it
-            # stopped and rolled back, since the old file goes last.
-            doc = _read(self.path)
-            if doc is None:
-                return None, [(RIG_FILENAME, "the rig document will not read; see the log")]
-            return upgrade(doc), []
-        if self.pin_map_path.is_file():
-            message = f"{PIN_MAP_FILENAME} has no {CHANNEL_SET_FILENAME} beside it."
-            log.warning("%s Using the shipped pinout.", message)
-            return None, [(PIN_MAP_FILENAME, message)]
-        return None, []
+    def stored_document(self) -> dict | None:
+        """The stored document as parsed, whether or not it loads, so the
+        editor can show the operator the wiring that needs fixing."""
+        return self._stored().document
 
     def status(self) -> RigStatus:
-        doc = self.load()
+        doc = self.stored_document()
         return RigStatus(
-            custom=doc is not None,
+            custom=self.exists(),
             derived_from=str((doc or {}).get("derived_from", "")),
             edited_at=(doc or {}).get("edited_at"),
+        )
+
+    def _stored(self) -> _Stored:
+        if self.path.is_file():
+            return _checked(WIRING_FILENAME, *_read(self.path))
+        if self.channel_set_path.is_file():
+            return self._main_era_pair()
+        if self.legacy_rig_path.is_file():
+            return _checked(RIG_FILENAME, *_read(self.legacy_rig_path))
+        if self.pin_map_path.is_file():
+            return _Stored(None, [_unloaded(PIN_MAP_FILENAME, f"it has no {CHANNEL_SET_FILENAME} beside it")])
+        return _Stored(None, [])
+
+    def _main_era_pair(self) -> _Stored:
+        """The two files `main` wrote between #123 and the one-file layout.
+
+        Read the way `main` read them, including its recovery: the pin map
+        names its channel set by digest, and a save stopped between its two
+        renames left the new pin map staged as `pin_map.json.tmp`. Anything
+        else that disagrees is a load problem.
+        """
+        channel_set, why = _read(self.channel_set_path)
+        if channel_set is None:
+            return _Stored(None, [_unloaded(CHANNEL_SET_FILENAME, why)])
+        digest = legacy_pair_digest(channel_set)
+        candidates = (self.pin_map_path, self.pin_map_path.with_suffix(".json.tmp"))
+        for candidate in candidates:
+            pin_map, _ = _read(candidate, quiet=True)
+            if pin_map is not None and pin_map.get("channel_set_digest") == digest:
+                joined = join(channel_set, pin_map)
+                return _checked(PIN_MAP_FILENAME, joined, None)
+        return _Stored(
+            join(channel_set, _read(self.pin_map_path, quiet=True)[0] or {"pins": {}}),
+            [_unloaded(
+                PIN_MAP_FILENAME,
+                f"it does not belong to {CHANNEL_SET_FILENAME} (they were not written by "
+                "one save), so its pins could put a port under another port's codes",
+            )],
         )
 
     # -- writing ----------------------------------------------------------- #
@@ -203,121 +220,152 @@ class HardwareStore:
 
         stored = dict(doc)
         stored["edited_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-        channel_set, pin_map = split(stored)
-        pin_map["channel_set_digest"] = channel_set_digest(channel_set)
         self.root.mkdir(parents=True, exist_ok=True)
-        previous = self.channel_set_path.read_bytes() if self.channel_set_path.is_file() else None
-        staged_set = _stage(self.channel_set_path, channel_set)
-        staged_pins = _stage(self.pin_map_path, pin_map)
-        os.replace(staged_set, self.channel_set_path)
-        try:
-            os.replace(staged_pins, self.pin_map_path)
-        except OSError:
-            try:
-                self._restore(previous)
-            except OSError as exc:
-                # The staged pin map stays, and `load` completes this save
-                # from it: the pair is the new one, whole, rather than torn.
-                log.error("could not put the old channel set back (%s)", exc)
-            raise
-        # The old one-file document goes last, so a save that rolled back still
-        # has a whole document to read.
-        self.path.unlink(missing_ok=True)
+        _write_atomic(self.path, json.dumps(stored, indent=2) + "\n")
+        # Only once the new file is whole: an older layout left behind by a
+        # failure here is harmless, because `wiring.json` wins over it.
+        self._remove(self._older_layouts())
         return stored
-
-    def _restore(self, previous: bytes | None) -> None:
-        """Undo step 2 of a save whose pin map did not land (module docstring)."""
-        if previous is None:
-            self.channel_set_path.unlink(missing_ok=True)
-        else:
-            staged = self._staged(self.channel_set_path)
-            staged.write_bytes(previous)
-            os.replace(staged, self.channel_set_path)
-        self._staged(self.pin_map_path).unlink(missing_ok=True)
-
-    @staticmethod
-    def _staged(path: Path) -> Path:
-        return path.with_suffix(".json.tmp")
 
     def reset(self) -> None:
         """Back to the shipped pinout. The files go; nothing else does."""
-        for path in (
+        self._remove(self._every_layout())
+
+    def _older_layouts(self) -> tuple[Path, ...]:
+        return (
+            self.legacy_rig_path,
             self.channel_set_path,
             self.pin_map_path,
-            self.path,
-            self._staged(self.channel_set_path),
-            self._staged(self.pin_map_path),
-        ):
-            path.unlink(missing_ok=True)
+            self.channel_set_path.with_suffix(".json.tmp"),
+            self.pin_map_path.with_suffix(".json.tmp"),
+            self.legacy_rig_path.with_suffix(".json.tmp"),
+        )
 
+    def _every_layout(self) -> tuple[Path, ...]:
+        return (self.path, *self._older_layouts())
 
-def channel_set_digest(channel_set: dict) -> str:
-    """The channel set's exact content, as the pin map written beside it
-    records it. Not `ChannelSet.content_hash()`: that leaves labels out on
-    purpose, and pairing two files needs every byte."""
-    canonical = json.dumps(channel_set, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+    @staticmethod
+    def _remove(paths) -> None:  # noqa: ANN001 - an iterable of Path
+        for path in paths:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError as exc:
+                log.warning("could not remove %s (%s); %s still wins", path.name, exc, WIRING_FILENAME)
 
 
 def split(doc: dict) -> tuple[dict, dict]:
-    """The joined wire document -> (channel set, pin map), as stored on disk."""
-    channel_set = {
-        "channel_set_version": 1,
-        **({"edited_at": doc["edited_at"]} if "edited_at" in doc else {}),
-        "channels": doc["channels"],
-    }
+    """The joined document -> (channel set, pin map): the two documents the
+    file holds. Neither carries `edited_at` (see `_PIN_MAP_KEYS`)."""
+    channel_set = {"channel_set_version": 1, "channels": doc["channels"]}
     pin_map = {
         "pin_map_version": 1,
         **{k: doc[k] for k in _PIN_MAP_KEYS if k in doc},
         "pins": doc["pins"],
     }
-    # `save` adds `channel_set_digest`; a split for export carries none.
     return channel_set, pin_map
 
 
 def join(channel_set: dict, pin_map: dict) -> dict:
-    """(channel set, pin map) -> the one document the editor and the wire see."""
+    """(channel set, pin map) -> the one document the file, the editor and the
+    wire hold. A main-era pair's `edited_at` is kept, for the status line."""
+    edited_at = pin_map.get("edited_at") or channel_set.get("edited_at")
     return {
         "rig_version": 1,
         **{k: pin_map[k] for k in _PIN_MAP_KEYS if k in pin_map},
+        **({"edited_at": edited_at} if edited_at else {}),
         "channels": channel_set.get("channels"),
         "pins": pin_map.get("pins"),
     }
 
 
-def _read(path: Path, *, quiet: bool = False) -> dict | None:
-    """One stored file, or None with a logged warning: the compiler falls back
-    to the shipped pinout and `hardware.get` reports why. `quiet` for a staged
-    file, which is usually absent."""
+def legacy_pair_digest(channel_set: dict) -> str:
+    """How `main`'s two-file layout named a pin map's channel set. Read-only:
+    nothing writes it any more."""
+    canonical = json.dumps(channel_set, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+def _unloaded(location: str, why: str | None) -> tuple[str, str]:
+    message = (
+        f"{location} did not load: {why or 'it could not be read'}. This rig is not "
+        "using it, so no box can start or be flashed until its wiring is saved "
+        "again or reset."
+    )
+    return location, message
+
+
+def _checked(location: str, doc: dict | None, why: str | None) -> _Stored:
+    """A stored document that read, checked against the schema before it may
+    be composed -- a hand edit can break its shape as easily as its JSON."""
+    if doc is None:
+        return _Stored(None, [_unloaded(location, why)])
+    doc = upgrade(doc)
+    try:
+        import jsonschema  # noqa: F401
+    except ImportError:  # pragma: no cover - the dependency fence: compose as before
+        return _Stored(doc, [])
+    shape = validate(doc)
+    if shape:
+        where, what = shape[0]
+        return _Stored(doc, [_unloaded(location, f"{where}: {what}")])
+    return _Stored(doc, [])
+
+
+def _read(path: Path, *, quiet: bool = False) -> tuple[dict | None, str | None]:
+    """(document, None), or (None, why it would not read) -- logged as an
+    error unless `quiet`: a stored wiring that will not read stops the rig."""
     try:
         raw = path.read_bytes()
     except OSError as exc:
-        if not quiet:
-            log.warning("%s unreadable (%s); using the shipped pinout", path.name, exc)
-        return None
-    if len(raw) > MAX_RIG_BYTES:
-        log.warning(
-            "%s is %d bytes, over the %d limit; using the shipped pinout",
-            path.name,
-            len(raw),
-            MAX_RIG_BYTES,
-        )
-        return None
+        why = f"it is unreadable ({exc})"
+    else:
+        if len(raw) > MAX_RIG_BYTES:
+            why = f"it is {len(raw)} bytes, over the {MAX_RIG_BYTES} limit"
+        else:
+            try:
+                doc = json.loads(raw)
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                why = f"it will not parse ({exc})"
+            else:
+                if isinstance(doc, dict):
+                    return doc, None
+                why = "it is not a JSON object"
+    if not quiet:
+        log.error("stored rig wiring %s did not load: %s", path.name, why)
+    return None, why
+
+
+def _write_atomic(path: Path, text: str) -> None:
+    """Write, fsync, rename over, fsync the folder -- `strobes/store.py`'s order
+    plus the folder. Without the file fsync the rename can reach the disk
+    before the bytes, and a power cut leaves an empty file under the real
+    name; without the folder fsync the rename itself can be lost. Any failure
+    removes the part file and leaves the previous `wiring.json` as it was."""
+    part = path.with_name(path.name + ".part")
     try:
-        doc = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        log.warning("%s will not parse (%s); using the shipped pinout", path.name, exc)
-        return None
-    return doc if isinstance(doc, dict) else None
+        fd = os.open(part, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), 0o644)
+        try:
+            data = memoryview(text.encode("utf-8"))
+            while data:
+                data = data[os.write(fd, data):]
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.replace(part, path)
+    except BaseException:
+        part.unlink(missing_ok=True)
+        raise
+    _fsync_directory(path.parent)
 
 
-def _stage(path: Path, doc: dict) -> Path:
-    """Write `doc` complete beside `path`, for a rename to put in place: a
-    reader composing the wiring mid-save (a worker thread's cache miss) never
-    reads half a file."""
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
-    return tmp
+def _fsync_directory(folder: Path) -> None:
+    if os.name == "nt":  # Windows cannot open a directory to fsync it
+        return
+    fd = os.open(folder, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 # --------------------------------------------------------------------------- #
@@ -336,13 +384,13 @@ def validate(doc: Any) -> list[tuple[str, str]]:
     this the right shape.
     """
     if not isinstance(doc, dict):
-        return [("rig.json", "the rig document must be a JSON object")]
+        return [("wiring.json", "the rig document must be a JSON object")]
 
     try:
         import jsonschema
     except ImportError:  # pragma: no cover - the dependency fence
         return [(
-            "rig.json",
+            "wiring.json",
             "jsonschema is not installed, so a rig document cannot be validated. "
             "The shipped pinout is still available.",
         )]
@@ -365,7 +413,7 @@ def _json_path(path) -> str:
     """
     parts = list(path)
     if not parts:
-        return "rig.json"
+        return "wiring.json"
     out = str(parts[0])
     for part in parts[1:]:
         out += f"[{part}]" if isinstance(part, int) else f".{part}"

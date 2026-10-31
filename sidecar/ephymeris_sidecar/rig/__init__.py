@@ -1,12 +1,11 @@
 """The rig's own description of itself: what each channel means, and where it is.
 
-Two registries and the operator's own pair of documents:
+Two registries and the operator's own two documents, in one file:
 
   * `schema/channels.v1.json` -- WHAT a channel is (kind, type, role, slot).
   * `hardware/<pinout>.json`  -- WHERE it is on this box generation.
-  * `<data_dir>/hardware/channel_set.json` + `pin_map.json` -- the operator's
-    own wiring, when they have edited one: the channel set (lab-wide) and the
-    pin map (this box). It REPLACES the shipped pair rather than merging with
+  * `<data_dir>/hardware/wiring.json` -- the operator's own wiring, when they
+    have edited one: the channel set (lab-wide) and the pin map (this box). It REPLACES the shipped pair rather than merging with
     it (`hardware/store.py` says why), and is composed here by `channels()`.
 
 Plus the strobe vocabulary: `<data_dir>/strobes/vocabulary.json`, seeded from

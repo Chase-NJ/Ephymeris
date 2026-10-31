@@ -39,6 +39,7 @@ from .sessions.lifecycle import (
     MappingRefused,
     SessionRefused,
     SketchNotCarried,
+    WiringNotLoaded,
     StopRefused,
 )
 from .sessions.models import PrefixNameTaken, SessionNotFound
@@ -154,6 +155,7 @@ ERRORS: ErrorTable = [
     (UtilityUnavailable, _boxed(ErrCode.UTILITY_UNAVAILABLE)),
     # --- sessions ---
     (SketchNotCarried, _listing_boxes(ErrCode.SESSION_INVALID)),
+    (WiringNotLoaded, _fixed(ErrCode.RIG_WIRING_UNLOADED)),
     # `intan.configure` naming boxes outside the held mapping. The client
     # reads `detail.boxes` as "flash these" only on a Start's refusal.
     (BoxesNotMapped, _listing_boxes(ErrCode.SESSION_INVALID)),

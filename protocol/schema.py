@@ -1989,7 +1989,9 @@ SHAPES = (
                 STR,
                 doc="History, not authority: `firmware` (numbered by the lab's "
                 "recorded sessions before the app), `ephymeris` (declared by the "
-                "app), `operator` (added on the Strobes page).",
+                "app), `operator` (added on the Strobes page), `channel_set` "
+                "(issued to a channel's edge by a wiring save, "
+                "`TASKS.md#edge-codes`).",
             ),
             f("emittedOn", STR, optional=True),
             f("rationale", STR, optional=True),
@@ -3968,6 +3970,16 @@ ERRORS = (
         "task profile generating. `detail.breaks` lists them. Retry with "
         "`confirm: true` to proceed — the app does not veto a rewiring, it "
         "refuses to let one happen unnoticed.",
+    ),
+    ErrorCode(
+        "RIG_WIRING_UNLOADED",
+        "`port.startSession`, `sessions.startAll` or `sessions.flash` while the "
+        "rig's stored wiring did not load (unreadable, unparseable, out of shape, "
+        "or an older layout that disagrees with itself). The shipped pins are in "
+        "force meanwhile, so a box started or flashed would drive pins the "
+        "operator never declared. `hardware.get` names the problem; saving the "
+        "wiring again or resetting it clears it "
+        "(`TASKS.md#the-channel-set-and-the-pin-map`).",
     ),
     ErrorCode(
         "STROBE_INVALID",

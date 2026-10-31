@@ -335,6 +335,13 @@ class RigDefinition:
 
     # -- reads that need no lock --------------------------------------------- #
 
+    def wiring_problem(self) -> str | None:
+        """Why the rig's stored wiring did not load, or None while it is in
+        force (or the rig has none). The session lifecycle asks this before it
+        starts or flashes a box: meanwhile the shipped pins are composed."""
+        problems = self._hardware.load_problems()
+        return problems[0][1] if problems else None
+
     def load_vocabulary_strict(self) -> dict[str, Any]:
         """Raises `StrobeRefused("unreadable")` for a document that won't read."""
         return self._vocabulary.load_strict()

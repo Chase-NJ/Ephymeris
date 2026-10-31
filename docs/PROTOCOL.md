@@ -1554,6 +1554,7 @@ One live view's payload, only while that scope is open (`RECORDING.md#live-windo
 | `RIG_INVALID` | The wiring document is not a wiring document — wrong shape, or too large. NOT a wiring MISTAKE: a document that is well-formed and describes an impossible box is a successful `hardware.preview` reply carrying located problems. |
 | `RIG_IN_USE` | `hardware.save`, `hardware.reset`, `tasks.save` or `tasks.delete` while a session is set up or a box is running. Each regenerates sketch folders a box was or will be flashed from, under a session whose profiles were read from the old ones (`TASKS.md#the-rig-definition`). Also an archive write the rig refuses (`DATA.md#the-cohort-archive`): `cohorts.setDataFolder` moving the contents while a session is set up or a box is running, and `analytics.rescan` or `sessions.recover` while a box is running. |
 | `RIG_WOULD_BREAK_TASKS` | `hardware.save` without `confirm` on a change that would stop a saved task profile generating. `detail.breaks` lists them. Retry with `confirm: true` to proceed — the app does not veto a rewiring, it refuses to let one happen unnoticed. |
+| `RIG_WIRING_UNLOADED` | `port.startSession`, `sessions.startAll` or `sessions.flash` while the rig's stored wiring did not load (unreadable, unparseable, out of shape, or an older layout that disagrees with itself). The shipped pins are in force meanwhile, so a box started or flashed would drive pins the operator never declared. `hardware.get` names the problem; saving the wiring again or resetting it clears it (`TASKS.md#the-channel-set-and-the-pin-map`). |
 | `STROBE_INVALID` | A strobe edit the vocabulary cannot take: a malformed or duplicate name, a code that is not free, a blank meaning, an unknown name, or an import file that is not a vocabulary. |
 | `STROBE_REQUIRED` | Retiring or removing a code a response-port slot reports with, or one the shared firmware library names. Never passable with `confirm`. |
 | `STROBE_IN_RECORDED_SESSION` | `strobes.remove` on a code a recorded session contains. Never passable: retire it instead. `detail` carries `count`, `sample` and `scanned`. |
@@ -2896,7 +2897,7 @@ What the archive scan could see. Only this machine: another rig's archive is nev
 |---|---|---|
 | `name` | string |  |
 | `code` | number |  |
-| `origin` | string | History, not authority: `firmware` (numbered by the lab's recorded sessions before the app), `ephymeris` (declared by the app), `operator` (added on the Strobes page). |
+| `origin` | string | History, not authority: `firmware` (numbered by the lab's recorded sessions before the app), `ephymeris` (declared by the app), `operator` (added on the Strobes page), `channel_set` (issued to a channel's edge by a wiring save, `TASKS.md#edge-codes`). |
 | `emittedOn` *(optional)* | string |  |
 | `rationale` *(optional)* | string |  |
 | `portSlot` *(optional)* | number | The response-port slot that reports with this code. Such a code can be neither retired nor removed. |

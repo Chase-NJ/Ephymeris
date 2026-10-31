@@ -339,44 +339,97 @@ def test_rig107_two_edges_on_one_code_are_reported():
 
 
 # --------------------------------------------------------------------------- #
-# On disk: two documents
+# On disk: two documents, one file
 # --------------------------------------------------------------------------- #
 
 
-def test_a_save_writes_the_channel_set_and_the_pin_map_as_two_files(tmp_path):
+def test_a_save_writes_both_documents_into_one_file(tmp_path):
     s = store.HardwareStore(tmp_path)
     stored = s.save(store.default_document())
-    channel_set = json.loads(s.channel_set_path.read_text(encoding="utf-8"))
-    pin_map = json.loads(s.pin_map_path.read_text(encoding="utf-8"))
-    assert not s.path.exists()
-
-    assert set(channel_set["channels"]) == set(stored["channels"])
-    assert "pins" not in channel_set and "board" not in channel_set
-    assert "channels" not in pin_map
-    assert pin_map["pins"] == stored["pins"]
+    on_disk = json.loads(s.path.read_text(encoding="utf-8"))
+    assert s.path.name == store.WIRING_FILENAME
+    assert on_disk["channels"] == stored["channels"] and on_disk["pins"] == stored["pins"]
+    channel_set, pin_map = store.split(s.load())
+    assert "pins" not in channel_set and "channels" not in pin_map
     assert s.load() == stored
 
 
-def test_a_rig_saved_as_one_file_is_read_and_replaced_on_the_next_save(tmp_path):
+def _legacy_rig_json(s: store.HardwareStore, doc: dict) -> None:
+    s.root.mkdir(parents=True, exist_ok=True)
+    s.legacy_rig_path.write_text(json.dumps(doc), encoding="utf-8")
+
+
+def _main_era_pair(s: store.HardwareStore, doc: dict, *, torn: bool = False) -> None:
+    """What `main` wrote between #123 and this fix: two files, the pin map
+    naming its channel set by a digest that included `edited_at`."""
+    doc = {**doc, "edited_at": "2026-10-31T05:00:00Z"}
+    channel_set, pin_map = store.split(doc)
+    pin_map["channel_set_digest"] = store.legacy_pair_digest(channel_set)
+    if torn:
+        channel_set = copy.deepcopy(channel_set)
+        channel_set["channels"]["left_well"]["port_slot"] = 2
+    s.root.mkdir(parents=True, exist_ok=True)
+    s.channel_set_path.write_text(json.dumps(channel_set), encoding="utf-8")
+    s.pin_map_path.write_text(json.dumps(pin_map), encoding="utf-8")
+
+
+def test_a_rig_saved_as_rig_json_migrates_losslessly(tmp_path):
     s = store.HardwareStore(tmp_path)
-    s.root.mkdir(parents=True)
     doc = store.default_document()
     doc["pins"]["left_well"]["index"] = 12
-    s.path.write_text(json.dumps(doc), encoding="utf-8")
-    assert s.exists() and s.load()["pins"]["left_well"]["index"] == 12
+    _legacy_rig_json(s, doc)
+    before = s.load()
+    assert before["pins"]["left_well"]["index"] == 12 and s.load_problems() == []
 
-    s.save(s.load())
-    assert not s.path.exists()
+    s.save(before)
+    assert not s.legacy_rig_path.exists()
+    after = s.load()
+    assert after["channels"] == before["channels"] and after["pins"] == before["pins"]
+
+
+def test_a_main_era_pair_migrates_losslessly(tmp_path):
+    s = store.HardwareStore(tmp_path)
+    doc = store.default_document()
+    doc["pins"]["left_well"]["index"] = 12
+    doc["channels"]["odor_port"]["label"] = "nose poke"
+    _main_era_pair(s, doc)
+    before = s.load()
+    assert before["pins"]["left_well"]["index"] == 12
+    assert before["channels"]["odor_port"]["label"] == "nose poke"
+
+    s.save(before)
+    assert not (s.channel_set_path.exists() or s.pin_map_path.exists())
+    after = s.load()
+    assert after["channels"] == before["channels"] and after["pins"] == before["pins"]
+
+
+def test_a_torn_main_era_pair_blocks_rather_than_loading(tmp_path):
+    s = store.HardwareStore(tmp_path)
+    _main_era_pair(s, store.default_document(), torn=True)
+    assert s.load() is None
+    assert s.load_problems()
+
+
+def test_the_one_file_wins_over_anything_older_left_beside_it(tmp_path):
+    """A migrating save writes the file first and deletes the old ones after,
+    so a stop in between must leave the new wiring in force."""
+    s = store.HardwareStore(tmp_path)
+    new = store.default_document()
+    new["pins"]["left_well"]["index"] = 12
+    s.save(new)
+    _main_era_pair(s, store.default_document())
+    _legacy_rig_json(s, store.default_document())
     assert s.load()["pins"]["left_well"]["index"] == 12
 
 
-def test_reset_removes_both_documents_and_any_old_one(tmp_path):
+def test_reset_removes_every_stored_wiring(tmp_path):
     s = store.HardwareStore(tmp_path)
     s.save(store.default_document())
-    s.path.write_text("{}", encoding="utf-8")
+    _main_era_pair(s, store.default_document())
+    _legacy_rig_json(s, store.default_document())
     s.reset()
-    assert not (s.path.exists() or s.channel_set_path.exists() or s.pin_map_path.exists())
-    assert s.load() is None
+    assert not s.exists()
+    assert s.load() is None and s.load_problems() == []
 
 
 # --------------------------------------------------------------------------- #
@@ -444,14 +497,14 @@ def test_after_allocation_a_header_differs_only_by_the_new_codes_and_the_stamp(t
 
 
 # --------------------------------------------------------------------------- #
-# The pair commits or fails as one
+# A save commits whole or not at all; stored wiring that will not load blocks
 # --------------------------------------------------------------------------- #
 
 
 def _swapped_ports() -> dict:
     """Left and right swapped in BOTH halves: the slots in the channel set and
     the pins in the pin map. Either half alone records a left poke under the
-    right family -- the torn pair the reviewer built."""
+    right family -- the torn pair round 1's reviewer built."""
     doc = store.default_document()
     left, right = doc["channels"]["left_well"], doc["channels"]["right_well"]
     left["port_slot"], right["port_slot"] = right["port_slot"], left["port_slot"]
@@ -471,51 +524,130 @@ def _fail_replacing(monkeypatch, target_name: str) -> None:
     monkeypatch.setattr(store.os, "replace", replace)
 
 
-def test_a_save_whose_pin_map_cannot_be_written_leaves_the_old_pair(tmp_path, monkeypatch):
+@pytest.mark.parametrize("step", ["write", "fsync", "replace", "directory"])
+def test_a_failure_at_any_write_step_never_leaves_a_torn_or_lost_wiring(tmp_path, monkeypatch, step):
     s = store.HardwareStore(tmp_path)
     s.save(store.default_document())
     before = s.load()
+    new = _swapped_ports()
+    fsyncs = {"n": 0}
 
-    _fail_replacing(monkeypatch, store.PIN_MAP_FILENAME)
-    with pytest.raises(PermissionError):
-        s.save(_swapped_ports())
+    if step == "write":
+        def boom(fd, data):
+            raise OSError("disk full")
+        monkeypatch.setattr(store.os, "write", boom)
+    elif step == "fsync":
+        def boom(fd):
+            raise OSError("fsync failed")
+        monkeypatch.setattr(store.os, "fsync", boom)
+    elif step == "replace":
+        _fail_replacing(monkeypatch, store.WIRING_FILENAME)
+    else:
+        real_fsync = store.os.fsync
+
+        def boom(fd):
+            fsyncs["n"] += 1
+            if fsyncs["n"] == 2:  # the file's fsync passes; the directory's fails
+                raise OSError("directory fsync failed")
+            return real_fsync(fd)
+        monkeypatch.setattr(store.os, "fsync", boom)
+
+    if step == "directory" and store.os.name == "nt":
+        pytest.skip("Windows cannot fsync a directory")
+    with pytest.raises(OSError):
+        s.save(new)
     monkeypatch.undo()
 
     after = s.load()
-    assert after["channels"] == before["channels"]
-    assert after["pins"] == before["pins"]
-
-
-def test_a_save_stopped_between_the_two_replaces_loads_as_the_new_pair(tmp_path, monkeypatch):
-    """A power cut after the channel set landed: the pin map written beside it
-    is the commit record, so the load finishes the save rather than pairing
-    the new channel set with the old pins."""
-    s = store.HardwareStore(tmp_path)
-    s.save(store.default_document())
-
-    _fail_replacing(monkeypatch, store.PIN_MAP_FILENAME)
-    monkeypatch.setattr(s, "_restore", lambda *a: (_ for _ in ()).throw(OSError("power cut")))
-    with pytest.raises(PermissionError):
-        s.save(_swapped_ports())
-    monkeypatch.undo()
-
-    loaded = s.load()
-    assert loaded["channels"]["left_well"]["port_slot"] == 2
-    assert loaded["pins"]["left_well"]["index"] == 3
     assert s.load_problems() == []
+    whole = [(after["channels"], after["pins"])]
+    assert whole[0] in [(before["channels"], before["pins"]), (new["channels"], new["pins"])]
+    if step != "directory":
+        assert (after["channels"], after["pins"]) == (before["channels"], before["pins"])
+    assert not list(s.root.glob("*.part")), "a failed save leaves nothing staged behind"
 
 
-def test_a_torn_pair_never_loads_silently(tmp_path):
+def test_a_save_fsyncs_the_file_and_the_folder(tmp_path, monkeypatch):
+    s = store.HardwareStore(tmp_path)
+    synced: list[int] = []
+    real = store.os.fsync
+    monkeypatch.setattr(store.os, "fsync", lambda fd: (synced.append(fd), real(fd))[1])
+    s.save(store.default_document())
+    assert len(synced) == (1 if store.os.name == "nt" else 2)
+
+
+def test_two_failed_saves_then_a_good_one_lose_nothing(tmp_path, monkeypatch):
+    """Round 2's commit record could be deleted by the next save. There is no
+    record now: every save is whole or absent."""
     s = store.HardwareStore(tmp_path)
     s.save(store.default_document())
-    channel_set, _ = store.split(_swapped_ports())
-    s.channel_set_path.write_text(json.dumps(channel_set), encoding="utf-8")
+    _fail_replacing(monkeypatch, store.WIRING_FILENAME)
+    for _ in range(2):
+        with pytest.raises(PermissionError):
+            s.save(_swapped_ports())
+    monkeypatch.undo()
+    s.save(_swapped_ports())
+    assert s.load()["channels"]["left_well"]["port_slot"] == 2
+    assert s.load()["pins"]["left_well"]["index"] == 3
 
-    assert s.load() is None
-    problems = s.load_problems()
-    assert problems and "pin_map.json" in problems[0][0]
+
+def test_an_identical_copy_from_another_machine_loads_and_compares_equal(tmp_path):
+    a = store.HardwareStore(tmp_path / "a")
+    b = store.HardwareStore(tmp_path / "b")
+    doc = _swapped_ports()
+    a.save(doc)
+    copied = json.loads(a.path.read_text(encoding="utf-8"))
+    copied["edited_at"] = "2020-01-01T00:00:00Z"
+    b.root.mkdir(parents=True)
+    b.path.write_text(json.dumps(copied), encoding="utf-8")
+
+    assert b.load_problems() == []
+    composed = [registry.ChannelMap(*registry.split_rig(x.load())) for x in (a, b)]
+    assert composed[0].content_hash() == composed[1].content_hash()
+    assert composed[0].channel_set.content_hash() == composed[1].channel_set.content_hash()
+
+
+def test_a_hand_edited_label_still_loads(tmp_path):
+    s = store.HardwareStore(tmp_path)
+    s.save(_swapped_ports())
+    doc = json.loads(s.path.read_text(encoding="utf-8"))
+    doc["channels"]["right_well"]["label"] = "right"
+    s.path.write_text(json.dumps(doc), encoding="utf-8")
+    assert s.load_problems() == []
+    assert s.load()["pins"]["right_well"]["index"] == 4
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        lambda text: text[: len(text) // 2],  # cut off mid-write by something else
+        lambda text: text.replace('"index": 4', '"index": "four"', 1),  # hand-edited out of shape
+        lambda text: "[]",
+    ],
+)
+def test_stored_wiring_that_will_not_load_is_a_problem_never_the_shipped_pins(tmp_path, damage):
+    rig = Rig(tmp_path)
+    rig.save(_swapped_ports())
+    rig.hardware.path.write_text(damage(rig.hardware.path.read_text(encoding="utf-8")), encoding="utf-8")
+    registry.set_rig_source(rig.hardware.load)
+
+    assert rig.hardware.load() is None
+    problem = rig.definition.wiring_problem()
+    assert problem and "did not load" in problem
+    payload = service.document_payload(rig.hardware)
+    assert payload["problems"][0]["location"] == store.WIRING_FILENAME
+    assert payload["status"]["custom"] is True, "Reset must stay reachable"
+
+
+def test_a_parseable_but_broken_wiring_is_what_hardware_get_shows(tmp_path):
+    s = store.HardwareStore(tmp_path)
+    s.save(_swapped_ports())
+    doc = json.loads(s.path.read_text(encoding="utf-8"))
+    doc["pins"]["left_well"]["index"] = "three"
+    s.path.write_text(json.dumps(doc), encoding="utf-8")
     payload = service.document_payload(s)
-    assert any("does not belong" in p["message"] for p in payload["problems"])
+    assert payload["document"]["pins"]["left_well"]["index"] == "three"
+    assert payload["document"]["channels"]["left_well"]["port_slot"] == 2
 
 
 def test_a_wiring_save_that_fails_after_issuing_codes_still_rebuilds(tmp_path, monkeypatch):
@@ -524,7 +656,7 @@ def test_a_wiring_save_that_fails_after_issuing_codes_still_rebuilds(tmp_path, m
     rig = Rig(tmp_path)
     rebuilt: list[int] = []
     rig.definition._tasks.regenerate_all = lambda: rebuilt.append(1) or 0
-    _fail_replacing(monkeypatch, store.PIN_MAP_FILENAME)
+    _fail_replacing(monkeypatch, store.WIRING_FILENAME)
     with pytest.raises(PermissionError):
         rig.save(store.default_document())
     monkeypatch.undo()

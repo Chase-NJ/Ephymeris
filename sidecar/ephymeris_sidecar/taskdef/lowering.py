@@ -61,6 +61,9 @@ OUTCOME_CLASSES = (
 )
 OUTCOME_CORRECT = 1
 
+#: Where `flags` sits in a state row (`Lowered.states`).
+_FLAGS = 10
+
 #: The tracer's phases. Hold, Counter and the response window are #101 and #102.
 PHASES = ("wait", "present", "delay", "outcome", "iti")
 
@@ -184,7 +187,7 @@ def lower(phases: Sequence[dict[str, Any]], inputs: Sequence[str], outputs: Sequ
     if len(states) >= NONE or len(edges) >= NONE:
         raise LoweringError(f"the table has {len(states)} states and {len(edges)} edge rows; "
                             f"each is at most {NONE - 1}")
-    states[0][10] |= STARTS_TRIAL
+    states[0][_FLAGS] |= STARTS_TRIAL
     return Lowered(
         states=tuple(tuple(s) for s in states),
         edges=tuple(edges),

@@ -569,13 +569,14 @@ Two orderings carry meaning and both are emitted from a single pass so they cann
 
 ## Spine tasks
 
-A **spine task** is ADR 0003's model, one tracer ahead of the rest: an ordered spine of phases, lowered by the generator to a state table that one interpreter walks ([ADR 0003](adr/0003-phase-spine-task-model.md)). It needs no firmware written for it. The definition is saved with `tasks.save` like any task, and its folder is generated, flashed and run through the ordinary session flow; nothing in the app tests whether a sketch is a spine task. The Task editor does not edit one yet, so today a spine definition is written as JSON.
+A **spine task** is ADR 0003's model, one tracer ahead of the rest: an ordered spine of phases, lowered by the generator to a state table that one interpreter walks ([ADR 0003](adr/0003-phase-spine-task-model.md)). It needs no firmware written for it. The definition is saved with `tasks.save` like any task, and its folder is generated, flashed and run through the ordinary session flow. Nothing in the app names a sketch: what a spine task does differently is read from its definition and its profile. The Task editor does not edit one yet, so today a spine definition is written as JSON.
 
 The tracer has limits, and each is diagnosed rather than guessed around:
 
 - the phases are Wait, Present, Delay, Outcome and ITI;
 - a task has one row and one block;
-- nothing is scored live yet: Mission Control says so, from the profile (`src/lib/sessions/liveScoring.ts`).
+- nothing is scored live yet: Mission Control says so, from the profile (`src/lib/sessions/liveScoring.ts`);
+- it is proven on the host, not yet on a Mega: the free RAM a board reports with a table loaded is still to be measured ([README.md](../README.md#not-yet-done)).
 
 ### What a spine task holds
 

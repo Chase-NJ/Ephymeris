@@ -392,7 +392,7 @@ class PortHandler:
 
         `on_ready(seed, announced)` fires once the handshake resolves, *before* the
         first strobe, so the caller can open the session file and write its
-        header (`DATA.md#written-live`); `interp` is what the board announced
+        header (`DATA.md#written-live`); `announced` is what the board said
         before `READY`, or None. `on_strobe(code, ts)` fires for each parsed
         strobe. Both run on the session thread, so the caller's file I/O stays
         off the event loop.

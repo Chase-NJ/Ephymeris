@@ -721,7 +721,7 @@ A finalization snapshots the run's [profile](../sidecar/ephymeris_sidecar/analyt
 
 | Mark | Set | Means |
 |---|---|---|
-| `wiring_record` | Once the first start connects | That start, the only one that may seed the wiring record, has happened ([TASKS.md](TASKS.md#the-channel-set-and-the-pin-map)) |
+| `wiring_record` | Once the first start connects | That start, the only one that may seed the wiring record, has happened ([TASKS.md](TASKS.md#the-channel-set-and-the-pin-map)). A restored database can lack it, so the data dir keeps a witness of its own |
 
 ### Changing the schema
 

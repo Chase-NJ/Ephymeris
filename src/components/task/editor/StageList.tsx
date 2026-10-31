@@ -188,8 +188,8 @@ export function StageList({
       ))}
 
       <p className="text-[10px] leading-relaxed text-static/70">
-        Milliseconds. Every value rides the <span className="font-mono">START</span> line, so a
-        box can be tuned at mapping without a rebuild — each stage costs five of its tokens.
+        Milliseconds. Every value is sent to the box when a run starts, so a box can be tuned at
+        mapping without a rebuild — each stage adds five of them.
       </p>
     </div>
   );

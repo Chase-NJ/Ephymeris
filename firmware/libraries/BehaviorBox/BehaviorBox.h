@@ -11,14 +11,14 @@
       emitter, the blocking START reader, the non-blocking STOP poll, and (for
       utility sketches) a non-blocking command reader + a STATUS emitter;
     * TaskParams -- EVERY operator-tunable parameter, and the one declarative
-      list (TASK_PARAM_LIST) from which the START-line parser is generated. The
+      list (TASK_PARAM_LIST) from which the SET/START parser is generated. The
       app fills this from the task profile's task.json, so a parameter is tuned
       per profile and per run instead of being recompiled;
     * the reusable TRIAL primitives (TrialClock, TrialType, TrialWeight +
       generateTrials) and the session POLICY classes (anti-bias selection,
       plain and weighted, the lazy-penalty escalator, per-side correction
       budgets). A trial type carries its own reward volume, overwritten per
-      run from the START line (applyRewardTimes);
+      run from the SET lines (applyRewardTimes);
     * the TRIAL RUNNER -- one loop for every behavior task. A weighted pool and
       live anti-bias selection run the same trial and differ only in which
       policies they hand it, which is why GRGL.ino covers both in ~110 lines.
@@ -118,7 +118,7 @@ struct TrialType
   const int stopFluidCode;  // host code for fluid stop
   /*  Solenoid open time when this type is answered correctly (ms) -- the open
       time IS the delivered volume. The one member that is NOT const: the value
-      compiled here is the profile's default, and the START line overwrites it
+      compiled here is the profile's default, and the SET lines overwrite it
       per run through applyRewardTimes() (wire key RW<slot+1>). It lives on the
       type rather than on the fluid line because two conditions that pay from
       the same line may pay different volumes -- a newly introduced odor is
@@ -170,7 +170,7 @@ inline void generateTrials(const TrialType *trials[], int numTrials, int blockSi
   for (int i = 0; i < poolSize; i++)
     totalWeight += pool[i].weight;
 
-  /* Pool weights are operator-typed now (PW1..PW4 on the START line), and an
+  /* Pool weights are operator-typed now (PW1..PW4 on the SET lines), and an
      all-zero pool would divide by zero below -- on AVR that is a silent wrong
      answer, not a trap. Fall back to equal weights: a uniform pool is a defined
      session, where a hung box mid-shaping is not. */
@@ -491,7 +491,7 @@ inline void flashLight(int duration, int pollMs)
     what a sketch with no generated header still gets.
 
     IT MUST MOVE WITH BOX_STAGE_KEY_LIST BELOW. The count sizes `stage[]`; the
-    key list decides which rows the START parser can reach. A count of 5 with a
+    key list decides which rows the SET parser can reach. A count of 5 with a
     key list of 3 leaves rows 3 and 4 unreachable but allocated -- harmless. The
     reverse silently writes past the end of the array. */
 #ifndef NUM_STAGES
@@ -572,7 +572,7 @@ struct StageStep
     This replaces the old split between SessionConfig (three GUI fields) and
     ShapingTimings (twelve compile-time ones shared by both shaping sketches, so
     that retuning shaping_GR silently retuned shaping_GL too). Each sketch now
-    owns its own instance and the host fills it from the START line, which is
+    owns its own instance and the host fills it from the SET lines, which is
     what makes the values per-sketch, per-run, and recorded with the data.
 
     The in-class defaults are the FULL-TASK values, so a bare "START" with no
@@ -697,7 +697,7 @@ inline bool escalationArmed(const TaskParams &p, int completedTrials)
   return liveStage(p, completedTrials) >= p.lazyEscalationStage;
 }
 
-/*  Which pool slots, which reward slots and which ramp rows the START grammar
+/*  Which pool slots, which reward slots and which ramp rows the SET grammar
     can reach.
 
     GUARDED, and each must agree with its count above -- BOX_MAX_TRIAL_TYPES
@@ -732,7 +732,7 @@ inline bool escalationArmed(const TaskParams &p, int completedTrials)
 
 /*  TASK_PARAM_LIST -- the single declarative list of wire keys.
 
-    Every key the START grammar accepts appears here exactly once, and the parser
+    Every key the SET grammar accepts appears here exactly once, and the parser
     below is generated from it. Adding a parameter means adding one row; there is
     no second place that can fall out of sync.
 
@@ -805,36 +805,38 @@ struct ParamAudit
   uint32_t crc = 0xFFFFFFFFUL; // the running CRC-32, before the final inversion
   int accepted = 0;            // keys parsed; an unknown key is neither counted nor hashed
 
-  /*  Keys whose value does not fit the board's int, which the CRC cannot see:
-      it is over the TEXT, so ITI=40000 hashes the same whether the board holds
-      40000 or wraps it to -25536. They are named (by the key's literal) so the
-      reply can say CLAMPED for them. A key set right on a later line leaves the
-      list. More than fit are not named but still counted in `wideLost`, which
-      makes the reply carry a nameless CLAMPED -- the start is refused either way. */
-  static const int WIDE_MAX = 16;
-  const char *wide[WIDE_MAX];
-  int wideCount = 0;
-  bool wideLost = false;
+  /*  Keys whose value the board did not hold as written, which the CRC cannot
+      see: it is over the TEXT, so ITI=40000 hashes the same whether the board
+      holds 40000 or wraps it to -25536, and ITI=4.9, ITI=abc, LAZY=true and
+      DBS=1e40 hash the same however they are read (as 4, 0, 0 and infinity). They
+      are named (by the key's literal) so the reply can say CLAMPED for them. A
+      key set right on a later line leaves the list. More than fit are not named
+      but still counted in `inexactLost`, which makes the reply carry a nameless
+      CLAMPED -- the start is refused either way. */
+  static const int INEXACT_MAX = 16;
+  const char *inexact[INEXACT_MAX];
+  int inexactCount = 0;
+  bool inexactLost = false;
 
-  void noteWide(const char *key)
+  void noteInexact(const char *key)
   {
-    if (isWide(key)) return;
-    if (wideCount < WIDE_MAX) wide[wideCount++] = key;
-    else wideLost = true;
+    if (isInexact(key)) return;
+    if (inexactCount < INEXACT_MAX) inexact[inexactCount++] = key;
+    else inexactLost = true;
   }
-  void noteFits(const char *key)
+  void noteExact(const char *key)
   {
-    for (int i = 0; i < wideCount; i++)
-      if (strcmp(wide[i], key) == 0)
+    for (int i = 0; i < inexactCount; i++)
+      if (strcmp(inexact[i], key) == 0)
       {
-        wide[i] = wide[--wideCount];
+        inexact[i] = inexact[--inexactCount];
         return;
       }
   }
-  bool isWide(const char *key) const
+  bool isInexact(const char *key) const
   {
-    for (int i = 0; i < wideCount; i++)
-      if (strcmp(wide[i], key) == 0) return true;
+    for (int i = 0; i < inexactCount; i++)
+      if (strcmp(inexact[i], key) == 0) return true;
     return false;
   }
 
@@ -848,13 +850,35 @@ struct ParamAudit
 #define BOX_INT_MIN (-32768L)
 #define BOX_INT_MAX 32767L
 
-inline int parseIntField(const char *v, bool &fits)
+/*  The three number parsers a SET value goes through. Each returns what the board
+    will hold and sets `exact` only when that is exactly what was written: all of
+    the text is a number, it is in the type's range, and a float is finite. Junk
+    after the digits, a fraction for an int, a word where a number belongs and an
+    infinity all leave `exact` false -- the caller reports them as CLAMPED. */
+inline int parseIntField(const char *v, bool &exact)
 {
-  long x = strtol(v, NULL, 10);
-  fits = x >= BOX_INT_MIN && x <= BOX_INT_MAX;
+  char *end;
+  long x = strtol(v, &end, 10);
+  exact = end != v && *end == '\0' && x >= BOX_INT_MIN && x <= BOX_INT_MAX;
   if (x < BOX_INT_MIN) x = BOX_INT_MIN;
   if (x > BOX_INT_MAX) x = BOX_INT_MAX;
   return (int)x;
+}
+
+inline float parseFloatField(const char *v, bool &exact)
+{
+  char *end;
+  float f = (float)strtod(v, &end);
+  exact = end != v && *end == '\0' && (f - f) == 0.0f; // finite: infinity and NaN fail this
+  return f;
+}
+
+inline unsigned long parseUlongField(const char *v, bool &exact)
+{
+  char *end;
+  unsigned long x = strtoul(v, &end, 10);
+  exact = end != v && *end == '\0' && v[0] != '-';
+  return x;
 }
 
 /*  void crc32Feed(ParamAudit&, const char*, size_t) ->
@@ -938,15 +962,18 @@ inline void parseParamTokens(char *line, TaskParams &p, ParamAudit *audit)
     const char *k = tok;
     const char *v = eq + 1;
 
-// An int field is a 16-bit int on the board: a value outside BOX_INT_MIN..MAX
-// is held at the edge, not wrapped, and the audit names it so the reply says
-// CLAMPED (a hand-typed START is held the same way, silently). SEED is the one
-// value that spans the full 31-bit Park-Miller range, so it -- and only it --
-// needs strtoul.
-#define P_INT(key, field)   if (strcmp(k, key) == 0) { bool fits; p.field = parseIntField(v, fits); if (audit) { if (fits) audit->noteFits(key); else audit->noteWide(key); auditAccept(*audit, k, v); } continue; }
-#define P_FLOAT(key, field) if (strcmp(k, key) == 0) { p.field = (float)atof(v); if (audit) auditAccept(*audit, k, v); continue; }
-#define P_BOOL(key, field)  if (strcmp(k, key) == 0) { bool fits; p.field = (parseIntField(v, fits) != 0); if (audit) { if (fits) audit->noteFits(key); else audit->noteWide(key); auditAccept(*audit, k, v); } continue; }
-#define P_ULONG(key, field) if (strcmp(k, key) == 0) { p.field = strtoul(v, NULL, 10); if (audit) auditAccept(*audit, k, v); continue; }
+// A value is held as the number the board read, and `note()` records whether that
+// is exactly what was written: an int field is a 16-bit int (a value outside
+// BOX_INT_MIN..MAX is held at the edge, not wrapped), and text that is not a
+// whole number, or a float that is not finite, is not exact either. The audit
+// names such a key so the reply says CLAMPED (a hand-typed START is held the
+// same way, silently). SEED is the one value that spans the full 31-bit
+// Park-Miller range, so it -- and only it -- needs strtoul.
+#define PARAM_NOTE(key, exact) if (audit) { if (exact) audit->noteExact(key); else audit->noteInexact(key); auditAccept(*audit, k, v); }
+#define P_INT(key, field)   if (strcmp(k, key) == 0) { bool exact; p.field = parseIntField(v, exact); PARAM_NOTE(key, exact) continue; }
+#define P_FLOAT(key, field) if (strcmp(k, key) == 0) { bool exact; p.field = parseFloatField(v, exact); PARAM_NOTE(key, exact) continue; }
+#define P_BOOL(key, field)  if (strcmp(k, key) == 0) { bool exact; p.field = (parseIntField(v, exact) != 0); PARAM_NOTE(key, exact) continue; }
+#define P_ULONG(key, field) if (strcmp(k, key) == 0) { bool exact; p.field = parseUlongField(v, exact); PARAM_NOTE(key, exact) continue; }
 #define P_STAGE(n)          TASK_STAGE_KEYS(n)
     TASK_PARAM_LIST
 #undef P_INT
@@ -954,6 +981,7 @@ inline void parseParamTokens(char *line, TaskParams &p, ParamAudit *audit)
 #undef P_BOOL
 #undef P_ULONG
 #undef P_STAGE
+#undef PARAM_NOTE
   }
 }
 
@@ -968,8 +996,8 @@ inline bool lineIsCommand(const char *line, const char *verb)
 
 /*  void reportClamped(const TaskParams& p, const ParamAudit& audit) ->
     Print `CLAMPED <KEY>` for every value the board could not hold as sent: one
-    clampTaskParams() would change in p as it stands, or one too wide for its int
-    (ParamAudit::wide). Judged on a COPY, so p keeps what the host sent until
+    clampTaskParams() would change in p as it stands, or one it read differently
+    from how it was written (ParamAudit::inexact). Judged on a COPY, so p keeps what the host sent until
     START -- the verdict is on the whole block so far, and the last SET line's
     reply is the one that counts. Each key is named once. */
 inline void reportClamped(const TaskParams &p, const ParamAudit &audit)
@@ -977,7 +1005,7 @@ inline void reportClamped(const TaskParams &p, const ParamAudit &audit)
   TaskParams c = p;
   clampTaskParams(c);
   char buf[24];
-#define P_INT(key, field)   if (p.field != c.field || audit.isWide(key)) { snprintf(buf, sizeof(buf), "CLAMPED %s", key); Serial.println(buf); }
+#define P_INT(key, field)   if (p.field != c.field || audit.isInexact(key)) { snprintf(buf, sizeof(buf), "CLAMPED %s", key); Serial.println(buf); }
 #define P_FLOAT(key, field) P_INT(key, field)
 #define P_BOOL(key, field)  P_INT(key, field)
 #define P_ULONG(key, field) P_INT(key, field)
@@ -988,7 +1016,7 @@ inline void reportClamped(const TaskParams &p, const ParamAudit &audit)
 #undef P_BOOL
 #undef P_ULONG
 #undef P_STAGE
-  if (audit.wideLost)
+  if (audit.inexactLost)
     Serial.println("CLAMPED *"); // too many to name, and still not the values sent
 }
 
@@ -1021,6 +1049,43 @@ inline void parseStartCommand(char *line, TaskParams &p)
   parseParamTokens(line, p, NULL);
   clampTaskParams(p);
   applyStage(p, 0); // the live holds must reflect row 0 before trial 1 runs
+}
+
+/*  void awaitStart(TaskParams& p) ->
+    The loop every behavior sketch runs between READY and its first trial, in one
+    place: read lines, take each SET into p and answer it, and return once a START
+    line has been parsed. Blocks.
+
+    A block of SET lines opens with BEGIN, which puts p back to what it held on
+    entry (the sketch's own fallbacks) and clears the audit. That is what lets a
+    refused start be corrected and sent again on the same open console -- Debug
+    Mode does exactly that -- instead of the second block being added to the
+    first, which would make every retry a count mismatch. A hand-typed console
+    needs no BEGIN. */
+inline void awaitStart(TaskParams &p)
+{
+  const TaskParams entry = p;
+  char cmd[SET_LINE_MAX]; // must hold the WHOLE line: readLineInto() truncates
+                          // at this cap, and the PARAMS reply is how the host
+                          // finds out when it did.
+  ParamAudit audit;
+  while (true)
+  {
+    if (!readLineInto(cmd, sizeof(cmd)))
+      continue;
+    if (lineIsCommand(cmd, "BEGIN"))
+    {
+      p = entry;
+      audit = ParamAudit();
+    }
+    else if (lineIsCommand(cmd, "SET"))
+      applySetLine(cmd, p, audit); // fill p, then answer for what arrived
+    else if (lineIsCommand(cmd, "START"))
+    {
+      parseStartCommand(cmd, p); // SEED, then the clamp (anything unsent keeps its default)
+      return;
+    }
+  }
 }
 
 /*  void announceReady() ->
@@ -1155,7 +1220,7 @@ public:
     }
   }
 
-  /*  Adopt the run's tuning from the parsed START line. Necessary because the
+  /*  Adopt the run's tuning from the parsed SET lines. Necessary because the
       selector is a global, constructed long before START arrives; call once,
       after parseStartCommand(), and before the first selectNext(). Safe to call
       on a fresh selector only -- it resizes the ring, so it discards history. */
@@ -1275,7 +1340,7 @@ private:
     drawn in proportion to its pool weight (poolWeights[slot], wire key
     PW<slot+1>), the same numbers a pool task uses. An operator raises a new
     odor's weight and lowers it again as the animal learns, per box, on the
-    START line, with no rebuild.
+    SET lines, with no rebuild.
 
     The overall share of a type is therefore P(its side) x its share WITHIN the
     side. The side draw does not see the weights, so a heavily weighted type
@@ -1297,7 +1362,7 @@ public:
   WeightedAntiBiasSelector(const TrialType *types, int count)
       : AntiBiasSelector(types, count) {}
 
-  /*  Adopt the tuning AND the weights from the parsed START line. Copied rather
+  /*  Adopt the tuning AND the weights from the parsed SET lines. Copied rather
       than pointed at so the selector cannot see a later change to params. */
   void configure(const TaskParams &p)
   {
@@ -1353,7 +1418,7 @@ public:
   AbstentionPenalty(long baseDelay = 6000, long step = 6000, long maxDelay = 30000)
       : _base(baseDelay), _step(step), _max(maxDelay) {}
 
-  /* Adopt the run's tuning + the GUI toggle from the parsed START line. */
+  /* Adopt the run's tuning + the GUI toggle from the parsed SET lines. */
   void configure(const TaskParams &p)
   {
     _base = p.lazyRatDelay;

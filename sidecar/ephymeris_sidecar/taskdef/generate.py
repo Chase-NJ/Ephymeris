@@ -1,7 +1,7 @@
 """A task definition + this rig's wiring -> a compilable sketch folder.
 
 Four files, and which of them a value lands in is decided by whether it fits on
-a `START` line (`TASKS.md#two-places-a-value-can-come-from`):
+a capped `SET` line (`TASKS.md#two-places-a-value-can-come-from`):
 
     <name>.ino      the root GRGL sketch, copied verbatim from the bundle
     TaskPins.h      pins, strobe codes, counts, selection mode  (preprocessor)
@@ -475,7 +475,7 @@ def task_pins_h(definition: TaskDefinition) -> str:
     stage_keys = " ".join(f"P_STAGE({i})" for i in range(definition.stage_count))
     lines += [
         "",
-        "/*  How many ramp rows exist, and which of them the START grammar can",
+        "/*  How many ramp rows exist, and which of them the SET grammar can",
         "    reach. The two must agree: a key list longer than the count writes",
         "    past the end of stage[]. */",
         f"#define NUM_STAGES {definition.stage_count}",
@@ -599,7 +599,7 @@ def task_trials_h(definition: TaskDefinition) -> str:
         "",
         "    NOT const: each row's last argument is its reward volume, the",
         "    profile's default, and applyRewardTimes() overwrites it from the",
-        "    START line before the first trial. */",
+        "    SET lines before the first trial. */",
         "static TrialType kTrials[] = {",
     ]
 

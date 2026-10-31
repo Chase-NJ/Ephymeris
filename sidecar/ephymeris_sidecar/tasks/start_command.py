@@ -16,6 +16,7 @@ sends a bare `SET`, so even an empty block is confirmed.
 
 from __future__ import annotations
 
+import math
 import re
 import zlib
 from dataclasses import dataclass, field
@@ -44,6 +45,11 @@ SEED_WIRE_KEY = "SEED"
 SET_LINE_MAX = 128
 
 _SET_VERB = "SET"
+
+#: Opens every parameter block. The board forgets whatever an earlier attempt
+#: left, so a refused Debug Mode start can be corrected and sent again on the
+#: same open console (`TASKS.md#confirming-the-parameters`).
+BEGIN_LINE = "BEGIN"
 
 #: The board's answer to a `SET` line, and the keys it moved, which precede it.
 PARAMS_RE = re.compile(r"^PARAMS (\d+) (\d+)$")
@@ -91,6 +97,11 @@ class StartCommand:
     set_lines: tuple[str, ...] = field(default=("SET",))
 
     @property
+    def begin_line(self) -> str:
+        """The line that opens the block, sent before the first `SET`."""
+        return BEGIN_LINE
+
+    @property
     def count(self) -> int:
         """How many keys the board should report accepting."""
         return len(self.tokens)
@@ -105,8 +116,7 @@ class StartCommand:
         """The line that starts the run, sent only once the block is confirmed.
 
         Drawn per box at the instant the operator starts it (`seed.py`), which is
-        why it is not part of the block. A board that predates the convention
-        ignores the unknown key and seeds itself, and the seed echoed back says so.
+        why it is not part of the block.
         """
         return f"START {SEED_WIRE_KEY}={seed}"
 
@@ -129,9 +139,10 @@ class StartCommand:
             raise StartRefused(
                 ErrCode.PARAMS_CLAMPED,
                 "clamped",
-                f"The board could not hold {named} as chosen (out of the range it "
-                f"can run), so it would not run the value that was chosen. Change "
-                f"the value and start again.",
+                f"The board could not hold {named} exactly as chosen (outside the range "
+                f"it can run, or not a number of the kind the setting takes), so it "
+                f"would not run the value that was chosen. Change the value and start "
+                f"again.",
                 {"keys": keys},
             )
         if reply.count != self.count:
@@ -199,7 +210,13 @@ class ParamsExchange:
 
 
 def _format_value(field: ConfigField, value: Any) -> str:
-    """Render one config value for the wire.
+    """Render one config value for the wire, or raise `ValueError`.
+
+    A value is rendered only if the board will read exactly what is written. The
+    board's CRC is over the text it is sent, so a value it reads as something else
+    (`4.9` as 4, `abc` as 0, `true` as 0, `1e999` as infinity) would match the
+    host's and start the run on the wrong number. So the type is checked here,
+    and nothing that does not fit its field reaches the wire.
 
     Bools go to the firmware as `1`/`0`, matching the Mega's integer-flag
     convention rather than the JSON literals `true`/`false`.
@@ -207,26 +224,64 @@ def _format_value(field: ConfigField, value: Any) -> str:
     if field.type == "bool":
         return "1" if _as_bool(value) else "0"
     if field.type == "int":
-        return str(int(value))
+        return str(_as_int(value))
     if field.type == "float":
-        return _trim_float(float(value))
-    rendered = str(value)
-    if rendered != rendered.strip() or any(c.isspace() for c in rendered):
+        return _trim_float(_as_float(value))
+    if not isinstance(value, str):
+        raise ValueError(f"{value!r} is not a string")
+    if value != value.strip() or any(c.isspace() for c in value):
         # The grammar is space-separated, so an embedded space would split one
         # value into two tokens -- the firmware would then parse the tail as a
         # bare word and drop it, silently.
         raise ValueError(f"string value for {field.wire_key} contains whitespace")
-    return rendered
+    return value
+
+
+_BOOL_WORDS = {"1": True, "true": True, "yes": True, "on": True,
+               "0": False, "false": False, "no": False, "off": False}
 
 
 def _as_bool(value: Any) -> bool:
     if isinstance(value, bool):
         return value
-    if isinstance(value, (int, float)):
-        return value != 0
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str) and value.strip().lower() in _BOOL_WORDS:
+        return _BOOL_WORDS[value.strip().lower()]
+    raise ValueError(f"{value!r} is not a boolean")
+
+
+def _as_int(value: Any) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"{value!r} is not an integer")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and math.isfinite(value) and value.is_integer():
+        return int(value)
     if isinstance(value, str):
-        return value.strip().lower() in ("1", "true", "yes", "on")
-    return bool(value)
+        try:
+            return int(value.strip(), 10)
+        except ValueError:
+            pass
+    raise ValueError(f"{value!r} is not a whole number")
+
+
+def _as_float(value: Any) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"{value!r} is not a number")
+    if isinstance(value, (int, float)):
+        number = float(value)
+    elif isinstance(value, str):
+        try:
+            number = float(value.strip())
+        except ValueError:
+            raise ValueError(f"{value!r} is not a number") from None
+    else:
+        raise ValueError(f"{value!r} is not a number")
+    # 1e999 is infinity once parsed; the board's float holds at most ~3.4e38.
+    if not math.isfinite(number) or abs(number) > 3.4028234663852886e38:
+        raise ValueError(f"{value!r} is not a finite number the board can hold")
+    return number
 
 
 def _trim_float(value: float) -> str:
@@ -244,12 +299,14 @@ def _tokens(profile: TaskProfile | None, config: dict[str, Any]) -> list[str]:
             continue
         try:
             rendered = _format_value(field, value)
-        except (ValueError, TypeError):
-            # A malformed value falls back to the sketch's own default rather
-            # than emitting garbage the firmware would misparse.
-            if field.default is None:
-                continue
-            rendered = _format_value(field, field.default)
+        except (ValueError, TypeError, OverflowError) as exc:
+            # Refused, not replaced by the default: a value quietly swapped for
+            # another is a run on a setting nobody chose, and the operator is
+            # owed the field's name.
+            raise TaskProfileError(
+                f"{profile.task_name}: {field.label or field.wire_key} "
+                f"({field.metadata_key}, {field.type}): {exc}."
+            ) from exc
         tokens.append(f"{field.wire_key}={rendered}")
     return tokens
 

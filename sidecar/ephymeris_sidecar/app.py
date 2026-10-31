@@ -671,7 +671,8 @@ class Application:
                 profile = await asyncio.to_thread(task_profile.load_profile, sketch.path)
             except task_profile.TaskProfileError:
                 profile = None  # profile-less: bare START, as in a session
-            # A `TaskProfileError` here is a parameter over the firmware's cap.
+            # A `TaskProfileError` here is a parameter that cannot be sent as
+            # written: a wrong-type value, or one over the firmware's cap.
             command = build_start_command(profile, args.get("config", {}))
             # Off the loop: each `SET` line waits for the board's `PARAMS`.
             written = await asyncio.to_thread(self._require_ports().send_start, box, command)

@@ -684,10 +684,10 @@ def test_a_string_default_cannot_contain_whitespace() -> None:
         parse_profile({"taskName": "T", "config": [_field(type="string", default="two words")]})
 
 
-def test_a_value_with_whitespace_falls_back_to_the_default() -> None:
-    """A string value the operator typed a space into can't ride the wire; the
-    builder already degrades to the sketch's own default rather than emitting
-    a token the firmware would misparse."""
+def test_a_value_with_whitespace_is_refused_naming_its_field() -> None:
+    """A string value the operator typed a space into can't ride the wire, and is
+    not swapped for the default: the board would run a setting nobody chose."""
     profile = parse_profile({"taskName": "T", "config": [
         {"metadataKey": "mode", "wireKey": "MD", "label": "Mode", "type": "string", "default": "fast"}]})
-    assert build_start_command(profile, {"mode": "not fast"}).tokens == ("MD=fast",)
+    with pytest.raises(TaskProfileError, match="Mode"):
+        build_start_command(profile, {"mode": "not fast"})

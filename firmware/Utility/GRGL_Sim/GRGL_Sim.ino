@@ -459,26 +459,13 @@ void earlyOdorSampling(bool goRight)
   emit(BF_INVALID_TRIAL, 0);
 }
 
-/* Mirror the real handshake: announce INTERP and READY, answer each SET line
-   with the running PARAMS total, and block until "START SEED=<n>", parsing
-   exactly as the real firmware does -- one buffer, one cap, the shared parser. */
+/* Mirror the real handshake: announce INTERP and READY, then the shared loop
+   (BehaviorBox.h) answers each SET line with the running PARAMS and returns on
+   "START SEED=<n>" -- one buffer, one cap, the shared parser. */
 void waitForStart(TaskParams &p)
 {
-  char buf[SET_LINE_MAX]; // the firmware's cap, from the shared header
-  ParamAudit audit;
   announceReady();
-  while (true)
-  {
-    if (!readLineInto(buf, sizeof(buf)))
-      continue;
-    if (lineIsCommand(buf, "SET"))
-      applySetLine(buf, p, audit);
-    else if (lineIsCommand(buf, "START"))
-    {
-      parseStartCommand(buf, p);
-      return;
-    }
-  }
+  awaitStart(p);
 }
 
 /* Mid-session STOP uses BehaviorBox.h's own checkForStop() -- the exact

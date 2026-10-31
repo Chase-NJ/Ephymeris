@@ -77,7 +77,9 @@ class Board:
         if self.silent:
             return
         line = line[: self.cap]
-        if line == "SET" or line.startswith("SET "):
+        if line == "BEGIN":
+            self._tokens = []
+        elif line == "SET" or line.startswith("SET "):
             for token in line.split()[1:]:
                 key, eq, _value = token.partition("=")
                 if eq and key in self.known:
@@ -188,7 +190,7 @@ def test_the_set_lines_go_out_after_ready_and_start_only_after_params_match() ->
     run.board.boot()
     assert wait_for(lambda: run.ready)
 
-    assert run.board.sent() == ["SET ITI=1000 PRM=1001", f"START SEED={SEED}"]
+    assert run.board.sent() == ["BEGIN", "SET ITI=1000 PRM=1001", f"START SEED={SEED}"]
     assert run.ready == [(SEED, 1)]
     assert run.handler.state is PortState.IN_SESSION
 
@@ -209,12 +211,13 @@ def test_each_set_line_waits_for_the_answer_to_the_one_before() -> None:
     run.board.boot()
     assert wait_for(lambda: held)
     time.sleep(0.2)
-    assert held == [command.set_lines[0]]  # the second waits
+    assert held == ["BEGIN", command.set_lines[0]]  # the second waits
 
     run.board._hear = original  # type: ignore[method-assign]
-    original(held[0])
+    for line in held:
+        original(line)
     assert wait_for(lambda: run.ready)
-    assert run.board.sent()[: len(command.set_lines)] == list(command.set_lines)
+    assert run.board.sent()[: len(command.set_lines) + 1] == ["BEGIN", *command.set_lines]
     assert run.board.sent()[-1] == f"START SEED={SEED}"
 
 

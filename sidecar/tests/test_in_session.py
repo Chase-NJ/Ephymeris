@@ -88,7 +88,9 @@ class ScriptedSerial:
         # are about something else get through the parameter handshake
         # (`test_params_handshake.py` is about the handshake).
         for line in data.decode().splitlines():
-            if line == "SET" or line.startswith("SET "):
+            if line == "BEGIN":
+                self._tokens = []
+            elif line == "SET" or line.startswith("SET "):
                 self._tokens.extend(line.split()[1:])
                 crc = zlib.crc32(" ".join(self._tokens).encode())
                 self.feed(f"PARAMS {len(self._tokens)} {crc}\r\n")
@@ -175,7 +177,7 @@ def test_start_is_sent_only_after_ready(fake_serial) -> None:
     port.feed("READY\n")
     assert wait_for(lambda: b"START" in bytes(port.written))
     # The parameters first, as one capped SET line, and only then START.
-    assert bytes(port.written) == b"SET CL=0 LAZY=1\nSTART SEED=777\n"
+    assert bytes(port.written) == b"BEGIN\nSET CL=0 LAZY=1\nSTART SEED=777\n"
 
 
 def test_seed_line_is_captured_when_present(fake_serial) -> None:

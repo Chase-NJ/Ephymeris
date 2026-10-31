@@ -546,6 +546,7 @@ class PortHandler:
                 shake.interp = int(interp.group(1))
             elif text.upper() == READY_TOKEN:
                 shake.phase = "params"
+                self._send_line(port, shake.command.begin_line)
                 self._send_line(port, shake.exchange.first_line)
                 shake.params_deadline = time.monotonic() + SESSION_PARAMS_TIMEOUT_S
             return
@@ -614,6 +615,7 @@ class PortHandler:
         with self._pending_lock:
             self._listeners.append(answers.put)
         try:
+            self.write(command.begin_line)
             self.write(exchange.first_line)
             deadline = time.monotonic() + SESSION_PARAMS_TIMEOUT_S
             while not exchange.done:

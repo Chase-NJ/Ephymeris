@@ -98,7 +98,9 @@ class ScriptedBoard:
     def write(self, data: bytes) -> int:
         self.written.extend(data)
         for line in data.decode().splitlines():
-            if line == "SET" or line.startswith("SET "):
+            if line == "BEGIN":
+                self._tokens = []
+            elif line == "SET" or line.startswith("SET "):
                 self._tokens.extend(line.split()[1:])
                 reply = self.answer(self._tokens)
                 with self._lock:

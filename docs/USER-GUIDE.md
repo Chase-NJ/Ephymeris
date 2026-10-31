@@ -922,7 +922,8 @@ ask the lab manager for the new installer instead.
 | A box will not flash | Read the message on its card. If the box shows `ERROR`, click **Acknowledge**, then try again. If it fails again, tell the lab manager |
 | A box is stuck in `ERROR` | Open it from the Dashboard (click its star) and click **Acknowledge**. Reset does not clear an error |
 | A box will not start | Click **Reset**, wait a few seconds, then **Start** again |
-| A box refuses to start and says it did not confirm its parameters, or that it moved a value, or that it carries an older sketch | The box checks its settings before it runs and refuses rather than run on the wrong ones. Nothing was started and no file was written. **Acknowledge** the error, then flash the box's task again and **Start**. If it refuses again, tell the lab manager what the message says |
+| A box refuses to start and says it could not hold a value as chosen | The box checks its settings before it runs and refuses rather than run on the wrong ones. Nothing was started and no file was written. The message names the setting: **Acknowledge** the error, change that value at the mapping step to one inside the box's range, and **Start**. Flashing again will not help |
+| A box refuses to start and says it did not recognise a parameter, carries an older sketch, or received different parameters than were sent | Nothing was started and no file was written. **Acknowledge** the error, flash the box's task again and **Start**. For *received different parameters*, check the USB cable first. If it refuses again, tell the lab manager what the message says |
 | **Stop** seems to do nothing | The box stops at the end of the current trial. If no animal is poking, that can take until the trial times out. Wait |
 | Screens say *Waiting for the backend* or *The backend isn't connected*, or Debug Mode shows *sidecar down* | The app lost its connection to its own background process. Close Ephymeris and open it again. It does not restart this by itself |
 | **backup failing** on Mission Control, or a warning under **Backup directory** in Settings | Data is still saved locally; the backup copy is not being made. Tell the lab manager. The refresh button beside the warning copies anything missing once the backup drive is back |
@@ -969,7 +970,7 @@ ask the lab manager for the new installer instead.
 | **Strobe** | One event the board reports (an odor poke, a water delivery), with a code and a time |
 | **Trial** | One attempt: the animal samples an odor, then answers at a well, or does not |
 | **Condition** | One kind of trial, such as a particular odor whose correct answer is the left well |
-| **START line** | The message that starts a task on a board, carrying all its settings |
+| **START line** | The message that starts a task on a board. Its settings go ahead of it and the box confirms them first; the START line itself carries only the trial seed |
 | **Utility sketch (baseline)** | The resting program idle boxes are kept on. It lets the app light a box and run Prime |
 | **Mission Control** | The screen where you start, watch and stop the boxes during a session |
 | **Constellation** | The star figures: the small one in the sidebar shows box health, and the 3D views show the rig or the session's animals |

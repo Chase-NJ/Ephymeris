@@ -315,11 +315,12 @@ class SessionLifecycle:
                     try:
                         start_command = build_start_command(profile, entry.config)
                     except task_profile.TaskProfileError as exc:
-                        # The profile declares more than the firmware's line
-                        # buffer can hold. Refusing the mapping is the point:
-                        # the board cannot report a truncated START, so letting
-                        # this through would run the session on whichever
-                        # parameters happened to fit.
+                        # A parameter that cannot be sent as written: a value of
+                        # the wrong type for its field, or one too long for a SET
+                        # line. Refusing the mapping is the point -- the board
+                        # cannot report a truncated line or a value it read
+                        # differently, so letting this through would run the
+                        # session on a setting nobody chose. The message says which.
                         raise MappingRefused(entry.box, str(exc)) from exc
                     box_configs.append(
                         BoxConfig(

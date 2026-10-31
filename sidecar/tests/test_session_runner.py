@@ -128,7 +128,7 @@ async def test_a_run_writes_its_tsv_with_the_seed_captured(tmp_path: Path, bench
     runner.start_box(1)
     board = await bench.run_handshake(1, seed=288577176)
     # The parameters on a SET line, confirmed; the seed alone on START.
-    assert board.sent()[:-1] == ["SET CL=0 LAZY=1"]
+    assert board.sent()[:-1] == ["BEGIN", "SET CL=0 LAZY=1"]
     assert board.sent()[-1].startswith("START SEED=")
 
     await board.said("101\t0", "249\t500")

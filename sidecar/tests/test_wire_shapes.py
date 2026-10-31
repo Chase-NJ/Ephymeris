@@ -145,13 +145,19 @@ def test_group_proposal_matches_schema() -> None:
 
 
 def test_a_metric_with_several_alternates_matches_schema() -> None:
+    from ephymeris_sidecar.rig import registry
+
+    code = registry.Vocabulary(registry.default_vocabulary_document()).code_of
     profile = task_profile.parse_profile(
         {
             "taskName": "Go / no-go",
-            "strobes": {"105": "ODOR_5_ON", "256": "WATER_POKE_NONE"},
+            "strobes": {str(code("ODOR_5_ON")): "ODOR_5_ON",
+                        str(code("WATER_POKE_NONE")): "WATER_POKE_NONE"},
             "liveMetrics": [
-                {"id": "p_withhold_1", "label": "P(withhold | Odor 5)", "triggerCode": 105,
-                 "successCode": 256, "alternateCodes": [248, 249], "windowSize": 20}
+                {"id": "p_withhold_1", "label": "P(withhold | Odor 5)",
+                 "triggerCode": code("ODOR_5_ON"), "successCode": code("WATER_POKE_NONE"),
+                 "alternateCodes": [code("WATER_POKE_L"), code("WATER_POKE_R")],
+                 "windowSize": 20}
             ],
         }
     )

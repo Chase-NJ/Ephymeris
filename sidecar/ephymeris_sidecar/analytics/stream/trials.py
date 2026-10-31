@@ -31,7 +31,10 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Iterable
 
+from ...rig import registry
+from ...rig.registry import Vocabulary
 from ...tasks.profile import LiveMetric, TaskProfile
+from . import infer
 
 
 @dataclass(frozen=True)
@@ -123,7 +126,14 @@ class MetricAccumulator:
 class MetricSet:
     """All of a sketch's live metrics, fed together from its strobe stream."""
 
-    def __init__(self, profile: TaskProfile | None) -> None:
+    def __init__(self, profile: TaskProfile | None, vocabulary: Vocabulary | None = None) -> None:
+        # The live scorer widens a no-go metric exactly as the archive does
+        # (`infer.widen_no_go`), so the figure on Mission Control is the one
+        # Analytics will compute. `vocabulary` defaults to the one in force.
+        if profile is not None:
+            profile = infer.widen_no_go(
+                profile, vocabulary if vocabulary is not None else registry.vocabulary()
+            )
         metrics = profile.live_metrics if profile else []
         boundaries = frozenset(m.trigger_code for m in metrics)
         self._accumulators = [MetricAccumulator(m, boundaries) for m in metrics]

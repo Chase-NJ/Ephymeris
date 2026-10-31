@@ -995,7 +995,7 @@ Separates *learning* from *picking a side*: one point per run, x = accuracy at o
 > [!IMPORTANT]
 > **The axes are SIDES, not conditions** (`stream.strategy_axes`, `view.strategyAxes`, `view.sideAccuracy`). x pools every condition answered at one well, y every condition answered at the other — **over integers** (sum hits, sum counted) — so a four-odor task reads on the same two axes as a two-odor one. Taking `liveMetrics[0]` against `[1]` silently blanked the plane for every task with more than two conditions.
 >
-> - **A condition's side comes from its own `successCode` only** (`answer_side_of`), never from `alternateCode`: a no-go metric's alternate means "any port will do", and the fallback prints "left well" for a condition whose answer is to poke nothing. Unprovable → `null` → no axis.
+> - **A condition's side comes from its own `successCode` only** (`answer_side_of`), never from `alternateCode`: a no-go metric's alternates are every response port, and the fallback prints "left well" for a condition whose answer is to poke nothing. Unprovable → `null` → no axis.
 > - **A withhold condition and `__overall__` never count toward a side.**
 > - **A profile that cannot be split into two opposing answers has no plane**, and is listed in the panel's picker **disabled, with its reason** (`view.strategyProfiles`), never silently omitted.
 

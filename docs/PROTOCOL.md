@@ -2569,7 +2569,7 @@ Where a `diverged` run's recorded strobes first leave what replay predicts (`ANA
 | `detail` | string |  |
 | `index` | number \| null | 0-based position in the recorded stream of the first strobe replay did not predict. Null when the recorded inputs could not be fed to replay at all. |
 | `atMs` | number \| null |  |
-| `expected` | string \| null | What replay predicts there, `NAME at <ms> ms`; null past its end. |
+| `expected` | string \| null | What replay predicts there, `CODE_NAME@ms`; null past its end. |
 | `recorded` | string \| null | What the file records there; null past its end. |
 
 <a id="shape-replayscore"></a>

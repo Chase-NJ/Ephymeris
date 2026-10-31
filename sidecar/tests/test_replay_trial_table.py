@@ -185,3 +185,94 @@ def test_metrics_are_functions_of_the_table() -> None:
         ("P(correct | Go)", 1, 2, 3, 1), ("P(correct | No-go)", 0, 2, 2, 0)]
     overall = table_metrics.overall_correct(score)
     assert (overall.hits, overall.counted) == (1, 4)
+
+
+def test_the_hops_before_the_trial_start_on_one_tick_belong_to_the_trial_that_ends() -> None:
+    """A window that starts the trial, whose lick goes to an outcome-bearing
+    chance state that misses straight back to the window: the lick, the class
+    and the latency are the old trial's, and the new trial starts empty."""
+    omission = lowering.OUTCOME_CLASSES.index("omission") + 1
+    table = rp.Table(
+        states=[
+            rp.StateRow(watch=0b1, timer_min=1, timer_max=1, on_timeout=2, edge_first=0, edge_count=1,
+                        flags=rp.STARTS_TRIAL),
+            rp.StateRow(chance=2, on_hit=3, on_miss=0, outcome=lowering.OUTCOME_CORRECT),
+            rp.StateRow(timer_min=3, timer_max=3, on_timeout=0, outcome=omission),
+            rp.StateRow(outputs=0b1, timer_min=3, timer_max=3, on_timeout=0),
+        ],
+        edges=[rp.EdgeRow(0, rp.RISE, 1)],
+    )
+    params = (1000, 1000, 0, 100)  # the draw always misses
+    first, second = trials(table, params, [(300, rp.Edges(rose=1))], 1500)[:2]
+    assert first.outcome == lowering.OUTCOME_CORRECT and not first.rewarded
+    assert first.response == (0, rp.RISE) and first.response_at == 300 and first.latency == 300
+    assert second.at == 300 and second.outcome == omission
+    assert second.response is None and second.counts == {}
+
+
+HOLD_BROKEN = lowering.OUTCOME_CLASSES.index("hold_broken") + 1
+OMISSION = lowering.OUTCOME_CLASSES.index("omission") + 1
+
+
+def window_table(*, delay: bool = False, marked_chance: bool = True) -> tuple[rp.Table, tuple[int, ...]]:
+    """A response window with a hold, as #101's lowering writes one: the lick
+    goes to a hold in the window's phase, whose timer goes on to the Outcome
+    (a chance state, then the reward line, then the class timeout) and whose
+    release goes to a `hold_broken` branch; the window's timeout goes to an
+    `omission` branch. `delay` puts a Delay phase between the window and the
+    Outcome; `marked_chance=False` marks the class on the reward state instead
+    of the chance state. Phases: 0 start, 1 window, 2 delay, 3 outcome, 4 ITI."""
+    rows: list[rp.StateRow] = []
+    phases: list[int] = []
+    idx = {name: i for i, name in enumerate(
+        ["start", "window", "hold", *(["delay"] if delay else []), "chance", "reward", "settle",
+         "broken", "omit", "iti"])}
+    post = idx["delay"] if delay else idx["chance"]
+
+    def add(phase: int, **fields) -> None:  # noqa: ANN003
+        rows.append(rp.StateRow(**fields))
+        phases.append(phase)
+
+    add(0, timer_min=1, timer_max=1, on_timeout=idx["window"], flags=rp.STARTS_TRIAL)
+    add(1, watch=1, timer_min=2, timer_max=2, on_timeout=idx["omit"], edge_first=0, edge_count=1)
+    add(1, watch=1, timer_min=3, timer_max=3, on_timeout=post, edge_first=1, edge_count=1)
+    if delay:
+        add(2, timer_min=6, timer_max=6, on_timeout=idx["chance"])
+    add(3, chance=4, on_hit=idx["reward"], on_miss=idx["settle"],
+        outcome=lowering.OUTCOME_CORRECT if marked_chance else 0)
+    add(3, outputs=1, timer_min=5, timer_max=5, on_timeout=idx["settle"],
+        outcome=0 if marked_chance else lowering.OUTCOME_CORRECT)
+    add(3, timer_min=6, timer_max=6, on_timeout=idx["iti"])
+    add(3, timer_min=6, timer_max=6, on_timeout=idx["iti"], outcome=HOLD_BROKEN)
+    add(3, timer_min=6, timer_max=6, on_timeout=idx["iti"], outcome=OMISSION)
+    add(4, timer_min=7, timer_max=7, on_timeout=idx["start"])
+    edges = [rp.EdgeRow(0, rp.RISE, idx["hold"]), rp.EdgeRow(0, rp.FALL, idx["broken"])]
+    return rp.Table(states=rows, edges=edges), tuple(phases)
+
+
+#: start 100, window 2000, hold 200, permille 1000, reward 50, settle 10, ITI 500
+WINDOW_PARAMS = (0, 100, 2000, 200, 1000, 50, 10, 500)
+
+
+def window_trials(**shape):  # noqa: ANN003
+    """Trial 1 licks 250 ms into the window (opened at 100) and holds; trial 2
+    licks, then lets go during the hold; trial 3 never licks."""
+    table, phases = window_table(**shape)
+    # Trial 1: hold ends at 550, then [delay 10], reward 50, settle 10, ITI 500.
+    start2 = 1110 + (10 if shape.get("delay") else 0)
+    events = [(350, rp.Edges(rose=1)), (700, rp.Edges(fell=1)),
+              (start2 + 300, rp.Edges(rose=1)), (start2 + 350, rp.Edges(fell=1))]
+    actions = rp.replay(table, WINDOW_PARAMS, 7, events, start2 + 4000)
+    return trial_table.trials_of(table, actions, end=None, phase_of=phases), 100
+
+
+def test_a_held_response_is_the_windows_lick_in_the_lowerings_real_shape() -> None:
+    for shape in ({}, {"delay": True}, {"marked_chance": False}):
+        out, window_at = window_trials(**shape)
+        held, broken, unanswered = out[0], out[1], out[2]
+        assert held.outcome == lowering.OUTCOME_CORRECT, shape
+        assert (held.response, held.response_at, held.latency) == ((0, rp.RISE), 350, 350 - window_at), shape
+        assert broken.outcome == HOLD_BROKEN, shape
+        assert broken.response == (0, rp.RISE) and broken.response_at == broken.at + 300, shape
+        assert broken.latency == 200, "from the window opening, 100 ms into the trial"
+        assert unanswered.outcome == OMISSION and unanswered.response is None, shape

@@ -4,20 +4,25 @@ One row per trial. Every column is read from the state table's own fields, never
 from a phase kind or a code name, so a phase or an outcome class added later is
 scored with no change here:
 
-- a trial starts at each tick whose actions carry `ACT_TRIAL_START`, which is
-  where a state flagged `STARTS_TRIAL` is entered;
+- a trial starts where a state flagged `STARTS_TRIAL` is entered. A tick can
+  finish one trial and start the next (a chance state that misses straight
+  back to the start): the hops before the flagged state are the old trial's;
 - its **outcome class** is the `outcome` of the last outcome-bearing state it
   entered (0 when it entered none, as an abort to the ITI does);
 - it is **rewarded** when it took the `on_hit` branch of a chance state that
   bears an outcome. The reward line is the outputs `on_hit` drives and
   `on_miss` does not, and the reward time is the ticks actually spent in it;
-- its **response** is read through the phase map. P is the phase of the state
-  the trial was in when it first entered an outcome-bearing state; the response
-  is the first edge exit taken out of a state of phase P, and its latency runs
-  from the trial's first entry into P. A window and the hold after it are one
-  phase, so a held response is timed from the window, not from the hold's end.
-  Without a phase map every state is its own phase, which reduces to "the edge
-  into the first outcome-bearing state";
+- its **response** is an edge exit out of a **deciding** state: one with two or
+  more exits (edge rows and its timer) from which an outcome-bearing state can
+  be reached before the next trial starts, as a response window's every
+  response and its timeout can. Of the trial's edge exits out of deciding
+  states before its first outcome-bearing state, the last one names a phase P;
+  the response is the first edge exit of the trial's visit to P, and its
+  latency runs from that visit's entry. A window and the hold after it are one
+  phase, so a held response, kept or broken, is the window's edge, timed from
+  the window opening. A trial decided by a timer (an omission, a withhold) has
+  none, and neither has a spine with no deciding state (the tracer). Without a
+  phase map every state is its own phase;
 - an input's **count** is its watched rises, attributed to the state held before
   the tick, as the interpreter attributes them.
 
@@ -64,7 +69,7 @@ class _Open:
 
     index: int
     at: int
-    #: (state entered, tick, the state held before that tick, the edge row that took it there)
+    #: (state entered, tick, the state it was entered from, the edge row that took it there)
     path: list[tuple[int, int, int | None, rp.EdgeRow | None]] = field(default_factory=list)
     counts: dict[tuple[int, int], int] = field(default_factory=dict)
     reward_state: int | None = None
@@ -78,19 +83,38 @@ def trials_of(
     actions: Iterable[tuple[int, rp.Actions]],
     *,
     end: int | None,
-    phase_of: Sequence[int] | None = None,
+    phase_of: Sequence[int | None] | None = None,
 ) -> list[Trial]:
     """Every trial of a replay, in order.
 
     `actions` are `replay.replay`'s, through the session's last tick. `end` is
     the tick the session ended at (its trial start opens no trial), or None for
     a run cut off before it ended, whose last trial is then incomplete.
+    `phase_of[s]` is state s's phase, None for a state in no phase.
     """
     states = table.states
-    phase = (lambda s: phase_of[s]) if phase_of is not None else (lambda s: s)
+
+    def phase(s: int) -> int:
+        # A state in no phase (a pick) is a phase of its own, never another's.
+        p = phase_of[s] if phase_of is not None else s
+        return p if p is not None else -1 - s
+
+    deciding = _deciding(table)
     out: list[Trial] = []
     current: _Open | None = None
     held: int | None = None  # the state held before this tick
+
+    def walk(trial: _Open | None, entered: list[int], hops: range, now: int, edge: rp.EdgeRow | None) -> None:
+        if trial is None:
+            return
+        for h in hops:
+            s = entered[h]
+            trial.path.append((s, now, held if h == 0 else entered[h - 1], edge if h == 0 else None))
+            row = states[s]
+            if row.is_chance and row.outcome and h + 1 in hops and entered[h + 1] == row.on_hit:
+                trial.reward_state, trial.reward_at = row.on_hit, now
+                miss = states[row.on_miss].outputs if row.on_miss != rp.NONE else 0
+                trial.reward_outputs = states[row.on_hit].outputs & ~miss
 
     for now, a in actions:
         if current is not None and held is not None and a.rose:
@@ -102,28 +126,22 @@ def trials_of(
             continue
         if current is not None and current.reward_state == held and current.reward_ms is None:
             current.reward_ms = now - (current.reward_at or now)
+        edge = _taken(table, held, a, entered[0]) if held is not None else None
+        split = len(entered)
         if a.flags & rp.ACT_TRIAL_START:
+            split = next((h for h, s in enumerate(entered) if states[s].flags & rp.STARTS_TRIAL), 0)
+        walk(current, entered, range(split), now, edge)
+        if split < len(entered):
             if current is not None:
-                out.append(_close(current, states, phase, complete=True))
+                out.append(_close(current, states, phase, deciding, complete=True))
                 current = None
             if end is not None and now == end:
                 return out
             current = _Open(index=len(out), at=now)
-        edge = _taken(table, held, a, entered[0]) if held is not None else None
-        before = held
-        for hop, s in enumerate(entered):
-            if current is not None:
-                current.path.append((s, now, before, edge if hop == 0 else None))
-                row = states[s]
-                if row.is_chance and row.outcome and hop + 1 < len(entered) and entered[hop + 1] == row.on_hit:
-                    current.reward_state = row.on_hit
-                    current.reward_at = now
-                    miss = states[row.on_miss].outputs if row.on_miss != rp.NONE else 0
-                    current.reward_outputs = states[row.on_hit].outputs & ~miss
-            before = s
+            walk(current, entered, range(split, len(entered)), now, edge)
         held = entered[-1]
     if current is not None:
-        out.append(_close(current, states, phase, complete=False))
+        out.append(_close(current, states, phase, deciding, complete=False))
     return out
 
 
@@ -131,21 +149,65 @@ def _bits(mask: int) -> list[int]:
     return [i for i in range(32) if mask >> i & 1]
 
 
+def _exits(table: rp.Table, s: int) -> list[int]:
+    """Where state s can go: its edge rows, its timer, a chance state's branches."""
+    row = table.states[s]
+    out = [e.next for e in table.edges[row.edge_first : row.edge_first + row.edge_count]]
+    if row.timer_min != rp.NONE:
+        out.append(row.on_timeout)
+    if row.is_chance:
+        out += [row.on_hit, row.on_miss]
+    return out
+
+
+def _deciding(table: rp.Table) -> frozenset[int]:
+    """The states with two or more exits (edge rows and timer) that can reach an
+    outcome-bearing state before the next trial starts: where a trial's outcome
+    is decided by what the animal does."""
+    states = table.states
+    # Every state that can reach an outcome-bearing one without starting a
+    # trial: those states, then a fixed point back through their exits.
+    reaches = {s for s, row in enumerate(states) if row.outcome}
+    grew = True
+    while grew:
+        grew = False
+        for s, row in enumerate(states):
+            if s not in reaches and not row.flags & rp.STARTS_TRIAL \
+                    and any(t in reaches for t in _exits(table, s)):
+                reaches.add(s)
+                grew = True
+
+    out = set()
+    for s, row in enumerate(states):
+        if row.is_chance:
+            continue
+        exits = [e.next for e in table.edges[row.edge_first : row.edge_first + row.edge_count]]
+        if row.timer_min != rp.NONE:
+            exits.append(row.on_timeout)
+        if sum(1 for t in exits if t in reaches) >= 2:
+            out.add(s)
+    return frozenset(out)
+
+
 def _taken(table: rp.Table, held: int, a: rp.Actions, target: int) -> rp.EdgeRow | None:
-    """The edge row that moved `held` to `target` this tick, or None for its timer.
+    """The input edge row that moved `held` to `target` this tick, or None for
+    its timer (or a pick's branch, which no input takes).
 
     The interpreter takes an edge whenever one of the state's edge rows matches,
     and the row it took is one whose `next` is where it went.
     """
     s = table.states[held]
     for e in table.edges[s.edge_first : s.edge_first + s.edge_count]:
+        if e.edge not in (rp.RISE, rp.FALL):
+            continue
         mask = a.rose if e.edge == rp.RISE else a.fell
         if mask >> e.input & 1 and e.next == target:
             return e
     return None
 
 
-def _close(t: _Open, states: Sequence[rp.StateRow], phase, *, complete: bool) -> Trial:  # noqa: ANN001
+def _close(t: _Open, states: Sequence[rp.StateRow], phase, deciding: frozenset[int], *,  # noqa: ANN001
+           complete: bool) -> Trial:
     entries: dict[int, int] = {}
     for s, tick, _, _ in t.path:
         entries.setdefault(s, tick)
@@ -154,15 +216,21 @@ def _close(t: _Open, states: Sequence[rp.StateRow], phase, *, complete: bool) ->
 
     response = response_at = latency = None
     if marked:
-        _, _, before, _ = t.path[marked[0]]
-        if before is not None:
-            window = phase(before)
-            opened = next((tick for s, tick, _, _ in t.path if phase(s) == window), None)
-            for s, tick, left, edge in t.path[: marked[0] + 1]:
-                if edge is not None and left is not None and phase(left) == window:
-                    response, response_at = (edge.input, edge.edge), tick
-                    latency = tick - opened if opened is not None else None
-                    break
+        decided = [k for k in range(marked[0] + 1)
+                   if t.path[k][3] is not None and t.path[k][2] in deciding]
+        if decided:
+            window = phase(t.path[decided[-1]][2])
+            # Back through the visit to that phase: its first edge exit is the response.
+            k = first = decided[-1]
+            while k >= 0 and t.path[k][2] is not None and phase(t.path[k][2]) == window:
+                if t.path[k][3] is not None:
+                    first = k
+                k -= 1
+            _, response_at, _, edge = t.path[first]
+            assert edge is not None
+            response = (edge.input, edge.edge)
+            opened = t.path[k][1] if k >= 0 else t.at
+            latency = response_at - opened
     return Trial(
         index=t.index,
         at=t.at,
@@ -199,14 +267,15 @@ class Naming:
     """What a snapshot says the table's numbers are, for `name`.
 
     `inputs[i]` and `outputs[j]` are bit i's and bit j's channel names.
-    `phase_of[s]` is state s's phase index, with `phases` the spine's phase
-    count, or None when the snapshot cannot say. `row_of[s]` is the row id a
+    `phase_of[s]` is state s's phase index (None for a state in no phase, a
+    pick), with `phases` the spine's phase count; `phase_of` is None when the
+    snapshot cannot say. `row_of[s]` is the row id a
     state belongs to, and `row` the run's only row, when it has one.
     """
 
     inputs: tuple[str, ...] = ()
     outputs: tuple[str, ...] = ()
-    phase_of: tuple[int, ...] | None = None
+    phase_of: tuple[int | None, ...] | None = None
     phases: int = 0
     row_of: tuple[str | None, ...] | None = None
     row: str | None = None
@@ -295,13 +364,14 @@ def name(trial: Trial, naming: Naming) -> ReplayTrial:
         first: list[int | None] = [None] * naming.phases
         for s, tick in trial.entries.items():
             p = naming.phase_of[s]
-            if first[p] is None or tick < first[p]:  # type: ignore[operator]
+            if p is not None and (first[p] is None or tick < first[p]):  # type: ignore[operator]
                 first[p] = tick
         entries = tuple(first)
         by_phase: dict[tuple[int, int], int] = {}
         for (s, bit), n in trial.counts.items():
-            key = (naming.phase_of[s], bit)
-            by_phase[key] = by_phase.get(key, 0) + n
+            p = naming.phase_of[s]
+            if p is not None:
+                by_phase[(p, bit)] = by_phase.get((p, bit), 0) + n
         counts = tuple(InputCount(p, channel(naming.inputs, bit), n) for (p, bit), n in sorted(by_phase.items()))
 
     lines = _bits(trial.reward_outputs)

@@ -386,7 +386,7 @@ did, so nothing in its strobes says what a trial was. Instead its file carries i
 and seed ([the snapshot](../../../docs/TASKS.md#the-snapshot)), and Analytics **replays** it: the input
 edges drive `stream/replay.py`, the port of the board's interpreter, which says what the board did at every
 tick ([ADR 0003](../../../docs/adr/0003-phase-spine-task-model.md#replay-and-analytics)). One replay
-gives two things (`spine.replayed`):
+gives two things (`spine.replayed`, which replays the run once):
 
 1. **The check.** Every output, `START_SESSION`, `TRIAL_START` and `END_SESSION` the board strobed is
    predicted, and must equal what was recorded, strobe for strobe. A run where it does not is
@@ -409,11 +409,11 @@ One row per trial (`stream/trial_table.py`, `ReplayTrial` on the wire). Columns,
 
 | Column | Read from |
 |---|---|
-| `index`, `atMs` | Each tick a state flagged `STARTS_TRIAL` is entered. The trial start the session ends on (trial NT+1, or the first after `STOP`) is not a trial |
+| `index`, `atMs` | Each tick a state flagged `STARTS_TRIAL` is entered. A tick that finishes one trial and starts the next (a chance state missing straight back to the start) is split there: the hops before the flagged state are the old trial's. The trial start the session ends on (trial NT+1, or the first after `STOP`) is not a trial |
 | `block`, `row`, `rowName`, `level` | The snapshot's `table.rows` (each state's row index) when it carries one; otherwise the task's only row and block, when it has exactly one; otherwise null |
-| `phaseEntries` | The first tick the trial entered a state of each phase, by the snapshot's `table.phases` (each state's phase index). A snapshot without it is lowered again from its own definition, and that map is used only if it gives back exactly the recorded table; otherwise the column is empty |
+| `phaseEntries` | The first tick the trial entered a state of each phase, by the snapshot's `table.phases` (each state's phase index, null for a state in no phase such as a pick). A snapshot without it is lowered again from its own definition, and that map is used only if it gives back exactly the recorded table; otherwise the column is empty |
 | `outcome` | The outcome class of the **last** outcome-bearing state (`outcome` ≠ 0) the trial entered, named by `taskdef/lowering.py`'s `OUTCOME_CLASSES`, or `outcome_<n>` for a number this build has no name for. Null when it entered none, as an abort to the ITI does |
-| `response`, `responseEdge`, `responseMs`, `latencyMs` | Let P be the phase of the state the trial was in when it first entered an outcome-bearing state. The response is the first edge exit the trial took out of a state of phase P; its latency runs from the trial's first entry into P. A window and the hold after it are one phase, so a held response is timed from the window opening, not from the end of the hold. Null when the trial left P by its timer (an omission, or the tracer's Delay). Without a phase map each state is its own phase |
+| `response`, `responseEdge`, `responseMs`, `latencyMs` | An edge exit out of a **deciding** state: one with two or more exits (edge rows and its timer) that can reach an outcome-bearing state before the next trial starts, as a response window's every response and its timeout can. Of the trial's edge exits out of deciding states before its first outcome-bearing state, the last names a phase P; the response is the first edge exit of the trial's visit to P, and its latency runs from that visit's entry. A window and the hold after it are one phase, so a held response, kept or broken, is the window's edge timed from the window opening, whatever phases lie between it and the Outcome. Null for a trial a timer decided (an omission, a withhold) and in a spine with no deciding state (the tracer). Without a phase map each state is its own phase |
 | `rewarded`, `rewardLine`, `rewardMs` | The trial took the `on_hit` branch of a chance state that bears an outcome. The line is the outputs `on_hit` drives and `on_miss` does not; the time is the ticks actually spent in `on_hit` |
 | `correction` | Always false: no block has a correction rule yet |
 | `inputCounts` | Each watched input's rises per phase, attributed to the state held before the tick, as the interpreter attributes them. Non-zero counts only |
@@ -445,7 +445,7 @@ The tracer's Outcome records `correct` before it draws the reward, so a trial ca
 ### Diverged and unreplayable runs
 
 - **`diverged`**: replay ran, and the first recorded strobe it did not predict is named in `divergence`
-  (its position, what replay predicts there and what the file records). A recorded stream that cannot be
+  (its position, and what replay predicts there and what the file records, each as `CODE_NAME@ms`). A recorded stream that cannot be
   fed to replay at all (strobes out of order, an edge after the end) is diverged too. A diverged run has no
   metrics and no trial table: its outputs are not what this table, seed and inputs produce, so any number
   read from it would describe a session that did not happen.

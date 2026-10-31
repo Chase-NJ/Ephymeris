@@ -168,7 +168,10 @@ async def test_a_run_with_an_edited_output_strobe_is_diverged_and_not_scored(rig
     assert run["status"] == "diverged"
     assert run["metrics"] == [] and run["overall"] is None and run["replay"] is None
     assert run["divergence"]["index"] == k
-    assert "FLUID_2_ON" in run["divergence"]["expected"] and "diverged" in run["detail"]
+    at = document["ts_data"][k][1]
+    assert run["divergence"]["expected"] == f"FLUID_2_ON@{at - 1}"
+    assert run["divergence"]["recorded"] == f"FLUID_2_ON@{at}"
+    assert "diverged" in run["detail"] and f"FLUID_2_ON@{at - 1}" in run["detail"]
     assert diverged_flag(rig, run_id) == 1
     [series] = (await rig.service.series([run_id]))["series"]
     assert series["trialTable"] is None, "a diverged run has no trial table"
@@ -205,6 +208,33 @@ async def test_a_legacy_run_is_scored_as_before(rig: Rig) -> None:
     run = (await rig.service.summary(rig.cohort.id))["runs"][0]
     assert run["status"] == "ok" and run["replay"] is None and run["divergence"] is None
     assert run["metrics"], "scored by the legacy ladder"
+
+
+def test_a_run_is_replayed_once_for_its_check_and_its_table(monkeypatch) -> None:
+    document = recorded_document()
+    calls = []
+    real = replay.replay
+
+    def counted(*args, **kwargs):  # noqa: ANN002, ANN003
+        calls.append(1)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(replay, "replay", counted)
+    result = spine_stream.replayed(document)
+    assert result.divergence is None and len(result.trials) == 3
+    assert len(calls) == 1
+
+
+def test_a_pick_state_in_no_phase_keeps_the_phase_map(monkeypatch) -> None:
+    """#101's `table.phases` gives a pick state no phase (null): the map is
+    still read, never dropped for the null."""
+    document = recorded_document()
+    spine = document[task_profile.SNAPSHOT_KEY]["spine"]
+    phases = [0, 1, 2, 3, 3, 3, 4]
+    phases[0] = None  # as a pick state would be, standing in for state 0
+    spine["table"]["phases"] = phases
+    first = spine_stream.replayed(document).trials[0]
+    assert first.phase_entries == (None, 200, 1200, 1700, 1801)
 
 
 def test_the_canary_holds_spine_runs() -> None:

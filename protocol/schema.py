@@ -1230,7 +1230,7 @@ SHAPES = (
                 "predict. Null when the recorded inputs could not be fed to replay at all.",
             ),
             f("atMs", nullable(INT)),
-            f("expected", nullable(STR), doc="What replay predicts there, `NAME at <ms> ms`; "
+            f("expected", nullable(STR), doc="What replay predicts there, `CODE_NAME@ms`; "
               "null past its end."),
             f("recorded", nullable(STR), doc="What the file records there; null past its end."),
         ),

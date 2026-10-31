@@ -213,7 +213,13 @@ def expected_stream(record: SpineRecord) -> list[tuple[int, int]]:
     last recorded strobe: a power cut can fall between two strobes of one tick,
     so its last tick is held only to as many strobes as the file recorded there.
     """
-    out = _predict(record)
+    return _expected(record, *_session(record))
+
+
+def _expected(record: SpineRecord, actions: list[tuple[int, rp.Actions]],
+              end: int | None) -> list[tuple[int, int]]:
+    """`expected_stream` from a replay already run."""
+    out = _stream(record, actions, end)
     if record.end_tick is None:
         held = sum(1 for _, t in record.recorded if t == record.last_tick)
         before = [s for s in out if s[1] < record.last_tick]
@@ -245,9 +251,9 @@ def _session(record: SpineRecord) -> tuple[list[tuple[int, rp.Actions]], int | N
     return actions, None
 
 
-def _predict(record: SpineRecord) -> list[tuple[int, int]]:
+def _stream(record: SpineRecord, actions: list[tuple[int, rp.Actions]],
+            end: int | None) -> list[tuple[int, int]]:
     """Every strobe of every tick through the end, or through the last recorded one."""
-    actions, end = _session(record)
     out: list[tuple[int, int]] = []
     outputs = 0
 
@@ -291,7 +297,9 @@ def _naming(
     info = {str(r.get("id")): (str(r.get("name") or r.get("id")), _number(r.get("level"))) for r in rows_doc}
     blocks = [b for b in (spine.get("blocks") or []) if isinstance(b, dict)]
 
-    phase_of = _ints(table_doc.get("phases"), n_states, len(phases)) or _relowered(spine, table_doc, inputs, outputs)
+    # A state in no phase (#101's pick state) is null in `table.phases`.
+    phase_of = _ints(table_doc.get("phases"), n_states, len(phases), nullable=True) \
+        or _relowered(spine, table_doc, inputs, outputs)
     row_of = None
     row_index = _ints(table_doc.get("rows"), n_states, len(rows), nullable=True)
     if row_index is not None:
@@ -383,10 +391,10 @@ def replayed(document: dict[str, Any]) -> Replayed:
     """
     record = decode(document)
     try:
-        expected = expected_stream(record)
-        actions, end = _session(record)
+        actions, end = _session(record)  # the one replay: the check and the table read it
     except SpineDecodeError as exc:
         return Replayed(record.interp, Divergence(detail=str(exc)), (), record.phase_labels, record.rows)
+    expected = _expected(record, actions, end)
     recorded = list(record.recorded)
     if expected != recorded:
         return Replayed(record.interp, _divergence(record, expected, recorded), (),
@@ -405,7 +413,7 @@ def _divergence(record: SpineRecord, expected: list[tuple[int, int]],
         if index >= len(stream):
             return None
         code, ts = stream[index]
-        return f"{record.names.get(code, code)} at {ts} ms"
+        return f"{record.names.get(code, code)}@{ts}"
 
     want, got = strobe(expected), strobe(recorded)
     at = (recorded[index] if index < len(recorded) else expected[index])[1]

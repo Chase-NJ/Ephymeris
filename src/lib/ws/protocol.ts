@@ -1242,7 +1242,7 @@ export interface ReplayDivergence {
    */
   index: number | null;
   atMs: number | null;
-  /** What replay predicts there, `NAME at <ms> ms`; null past its end. */
+  /** What replay predicts there, `CODE_NAME@ms`; null past its end. */
   expected: string | null;
   /** What the file records there; null past its end. */
   recorded: string | null;

@@ -21,7 +21,7 @@ _Avoid_: pinout (the shipped transcription a pin map starts from)
 
 <a id="held-wiring"></a>
 **Held wiring**:
-Stored rig wiring that passes every check but is not the wiring last saved, or confirmed, on this machine: copied in, changed by hand, or a layout a later save replaced. It is never in force, at any start, until its pins are confirmed and it is saved. Unrelated to a held session.
+Stored rig wiring that passes every check but that the record cannot vouch for as the wiring last saved, or confirmed, on this machine: copied in, changed by hand, a layout a later save replaced, or wiring saved here when a save after it did not finish. It is never in force, at any start, until its pins are confirmed and it is saved. Unrelated to a held session.
 _Avoid_: unconfirmed wiring, pending wiring
 
 <a id="held-session"></a>

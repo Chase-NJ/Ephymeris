@@ -124,10 +124,10 @@ def write_pair(s: store.HardwareStore, doc: dict) -> None:
 LAYOUTS = {"wiring.json": write_wiring, "rig.json": write_rig_json, "pair": write_pair}
 
 
-def assert_held(rig: Rig) -> None:
+def assert_held(rig: Rig, *, why: str = "not saved or confirmed") -> None:
     """Not in force, every box refused, the draft the held file with RIG108."""
     problem = rig.definition.wiring_problem()
-    assert problem and "not saved or confirmed" in problem
+    assert problem and why in problem
     assert registry.channels().content_hash() == SHIPPED_PINOUT_HASH
     payload = rig.get()
     assert "RIG108" in {p["code"] for p in payload["problems"]}
@@ -385,7 +385,7 @@ def test_a_save_cut_off_at_any_step_never_trusts_wiring_it_was_not_saving(
 
     restarted = Rig(tmp_path, first_start=False)
     if in_force is None:
-        assert_held(restarted)
+        assert_held(restarted, why="did not finish")
         return
     assert restarted.definition.wiring_problem() is None
     assert registry.channels().get("left_well").index == in_force
@@ -607,7 +607,7 @@ def test_a_save_cut_off_before_its_record_never_revives_the_wiring_it_replaced(t
     store.HardwareStore(tmp_path).path.unlink()  # deleted by hand before the next start
 
     restarted = Rig(tmp_path, first_start=False)
-    assert_held(restarted)
+    assert_held(restarted, why="did not finish")
     assert restarted.get()["document"]["pins"]["left_well"]["index"] == 12, "shown, never in force"
 
 
@@ -746,7 +746,7 @@ def test_a_cut_off_save_completes_only_for_the_wiring_it_was_saving(tmp_path, mo
     monkeypatch.undo()
     rig.hardware.path.write_bytes(twelve)
 
-    assert_held(Rig(tmp_path, first_start=False))
+    assert_held(Rig(tmp_path, first_start=False), why="did not finish")
 
 
 def test_a_save_that_fails_before_its_commit_leaves_the_last_wiring_recorded(tmp_path, monkeypatch):
@@ -861,6 +861,116 @@ def test_an_earlier_record_never_confirms_a_reordered_file_after_the_upgrade(tmp
     assert Rig(tmp_path).definition.wiring_problem() is None
     _reorder_on_disk(s)
     assert_held(Rig(tmp_path, first_start=False))
+
+
+def _blind(doc_or_path) -> str:
+    if isinstance(doc_or_path, Path):
+        doc_or_path = json.loads(doc_or_path.read_text(encoding="utf-8"))
+    return store.order_blind_digest(doc_or_path)
+
+
+def _write_134_record(s: store.HardwareStore, digest: str, pending: str | None = None) -> None:
+    s.confirmed_path.write_text(
+        json.dumps({"version": 1, "digest": digest, **({"pending": pending} if pending else {}), "leftovers": []}),
+        encoding="utf-8",
+    )
+
+
+def test_an_order_blind_digest_unmatched_at_the_upgrade_never_confirms_later(tmp_path):
+    """#134's record names X; at the upgrade a copy is on disk instead, so X
+    is not carried over. X with two odor lines swapped, copied in after,
+    must never match the order-blind digest left behind."""
+    Rig(tmp_path).save(moved(12))
+    s = store.HardwareStore(tmp_path)
+    x = json.loads(s.path.read_text(encoding="utf-8"))
+    _write_134_record(s, _blind(x))
+    write_wiring(s, moved(13))  # copied in before the upgrade
+    assert_held(Rig(tmp_path, first_start=False))  # the upgrade
+
+    s.path.write_text(json.dumps(_reordered(x, "odor_line_1", "odor_line_2")), encoding="utf-8")
+    assert_held(Rig(tmp_path, first_start=False))
+
+
+def test_a_broken_file_at_the_upgrade_drops_the_order_blind_digest(tmp_path):
+    Rig(tmp_path).save(moved(12))
+    s = store.HardwareStore(tmp_path)
+    x = json.loads(s.path.read_text(encoding="utf-8"))
+    _write_134_record(s, _blind(x))
+    s.path.write_text("{ damaged", encoding="utf-8")
+    Rig(tmp_path, first_start=False)  # the upgrade
+
+    s.path.write_text(json.dumps(_reordered(x, "odor_line_1", "odor_line_2")), encoding="utf-8")
+    assert_held(Rig(tmp_path, first_start=False))
+
+
+def test_an_order_blind_pending_save_unmatched_at_the_upgrade_never_confirms_later(tmp_path):
+    """#134 crashed saving Y over X: X is on disk, Y pending. After the
+    upgrade, Y with two odor lines swapped must never be taken as that save."""
+    Rig(tmp_path).save(moved(12))
+    s = store.HardwareStore(tmp_path)
+    x = json.loads(s.path.read_text(encoding="utf-8"))
+    y = {**moved(13), "edited_at": "2026-10-31T05:00:00Z"}
+    _write_134_record(s, _blind(x), _blind(y))
+    assert_held(Rig(tmp_path, first_start=False), why="did not finish")  # the upgrade
+
+    s.path.write_text(json.dumps(_reordered(y, "odor_line_1", "odor_line_2")), encoding="utf-8")
+    assert_held(Rig(tmp_path, first_start=False))
+
+
+def test_a_save_that_died_at_its_commit_is_described_as_saved_here(tmp_path, monkeypatch):
+    """The held wiring.json IS the last wiring saved here: the notice says so,
+    and that the save after it did not finish -- never 'not saved here'."""
+    rig = Rig(tmp_path)
+    rig.save(moved(12))
+    real = store._write_atomic
+
+    def die(path, text):
+        if path.name == store.WIRING_FILENAME:
+            raise PowerCut()
+        return real(path, text)
+
+    monkeypatch.setattr(store, "_write_atomic", die)
+    with pytest.raises(PowerCut):
+        rig.hardware.save(moved(13))
+    monkeypatch.undo()
+
+    restarted = Rig(tmp_path, first_start=False)
+    assert_held(restarted, why="did not finish")
+    payload = restarted.get()
+    text = " ".join([n["message"] for n in payload["status"]["notices"]] + [p["message"] for p in payload["problems"]])
+    assert "saved here, but a save after it did not finish" in text
+    assert "not saved or confirmed" not in text
+    assert "copied in" not in text
+
+
+def test_a_rig_json_left_by_a_134_migration_cut_off_is_the_app_s_own(tmp_path):
+    """#134 was saving P (wiring.json) over rig.json (D) and died before
+    removing rig.json. After the upgrade P is in force and rig.json is a
+    leftover the next save removes; neither is trusted wrongly."""
+    s = store.HardwareStore(tmp_path)
+    d, p = moved(12), {**moved(13), "edited_at": "2026-10-31T05:00:00Z"}
+    write_rig_json(s, d)
+    s.path.write_text(json.dumps(p), encoding="utf-8")
+    _write_134_record(s, _blind(d), _blind(p))
+    s.started_path.write_text("2026-10-31T05:00:00Z\n", encoding="utf-8")  # #134 never wrote it
+
+    rig = Rig(tmp_path, first_start=False)
+    assert rig.definition.wiring_problem() is None
+    assert registry.channels().get("left_well").index == 13
+    assert rig.get()["status"]["notices"] == []
+    s.path.unlink()  # the leftover is never trusted
+    assert_held(Rig(tmp_path, first_start=False))
+
+
+def test_the_next_save_removes_a_rig_json_left_by_a_134_migration(tmp_path):
+    s = store.HardwareStore(tmp_path)
+    d, p = moved(12), {**moved(13), "edited_at": "2026-10-31T05:00:00Z"}
+    write_rig_json(s, d)
+    s.path.write_text(json.dumps(p), encoding="utf-8")
+    _write_134_record(s, _blind(d), _blind(p))
+    rig = Rig(tmp_path, first_start=False)
+    rig.save(moved(14))
+    assert not s.legacy_rig_path.exists()
 
 
 def test_a_record_lost_while_running_never_trusts_a_file_copied_in_after(tmp_path):

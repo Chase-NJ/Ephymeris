@@ -599,7 +599,8 @@ from ephymeris_sidecar.tasks.profile import embedded_profile
 document = json.load(open("remy1_….json"))
 profile = embedded_profile(document)
 # Widen as the scorer does, or an old no-go run gets its old, inflated number.
-profile = stream.infer.widen_no_go(profile, registry.vocabulary())
+if profile is not None:
+    profile = stream.infer.widen_no_go(profile, registry.vocabulary())
 summary = stream.summarize(document, profile)
 print(summary.to_json())
 ```

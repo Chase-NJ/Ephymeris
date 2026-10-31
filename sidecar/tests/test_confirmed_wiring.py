@@ -676,6 +676,19 @@ def test_the_first_start_mark_is_read_before_the_database_connects(tmp_path):
     assert has_mark(path, store.FIRST_START_MARK) is True, "unreadable: never seed twice"
 
 
+def test_a_first_start_seeds_over_a_record_it_cannot_read(tmp_path):
+    """A record an earlier build wrote in another shape, met at the first
+    start this database has marked: seeded as if absent, so the upgrade asks
+    nothing. At any later start the same record holds everything."""
+    s = store.HardwareStore(tmp_path)
+    write_wiring(s, moved(12))
+    s.confirmed_path.write_text('{"version": 1, "digests": ["abc"]}', encoding="utf-8")
+    assert_held(Rig(tmp_path, first_start=False))
+    rig = Rig(tmp_path, first_start=True)
+    assert rig.definition.wiring_problem() is None
+    assert rig.get()["status"]["notices"] == []
+
+
 def test_a_record_lost_while_running_never_trusts_a_file_copied_in_after(tmp_path):
     """Only a start records unrecorded wiring; a read never does, so the
     copy is held for as long as this run lasts and no record is written."""

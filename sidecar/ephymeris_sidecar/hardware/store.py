@@ -316,7 +316,8 @@ class HardwareStore:
         """Once per start, before the first install (`RigDefinition`).
 
         THE MACHINE'S FIRST START (`first_start`, which the database decides,
-        never this file's absence): with no record yet, record the stored
+        never this file's absence): with no record yet, or one this build
+        cannot read (an earlier build's shape), record the stored
         wiring if it passes every check -- what the build before would have put
         in force -- and own any older layout beside it, which that build's own
         save left and would have removed. The record is written even when
@@ -328,12 +329,14 @@ class HardwareStore:
         shows it landed: its wiring becomes the one recorded and what it
         replaced becomes a leftover. Anything else stays held.
         """
-        if not self.confirmed_path.exists():
+        record = self._record()
+        if record.problem:
+            # No record, or one this build cannot read (an earlier build's
+            # shape): only the first start may seed over it.
             if first_start:
                 self._seed()
             return
-        record = self._record()
-        if record.pending is None or record.problem:
+        if record.pending is None:
             return
         on_disk = _digest_of(_read(self.path, quiet=True)[0]) if self.path.is_file() else None
         if on_disk == record.pending:

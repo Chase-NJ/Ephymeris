@@ -594,6 +594,21 @@ def test_a_table_whose_go_rows_have_no_usable_port_presents_nothing():
     assert "TSK108" in codes(_answered_at("left_well"))
 
 
+def test_a_wrong_kind_port_that_declares_a_slot_is_still_not_a_port():
+    """Nothing stops a slot being declared on a reward line. The generator must
+    not answer a trial at the left well's codes because `fluid_1` says it is
+    slot 1, and TSK108 must say the table presents nothing."""
+    from ephymeris_sidecar.hardware import store as rig_store
+
+    doc = rig_store.default_document()
+    doc["channels"]["fluid_1"]["port_slot"] = 1
+    registry.set_rig_source(lambda: doc)
+
+    table = _answered_at("fluid_1")
+    assert "TSK108" in codes(table)
+    assert "TrialType(true" not in generate.task_trials_h(table)
+
+
 def test_the_validator_and_the_generator_agree_on_what_a_presentable_row_is():
     """Pinned over the same definitions: TSK108 fires exactly when the generated
     trial table holds no row the selector can draw."""

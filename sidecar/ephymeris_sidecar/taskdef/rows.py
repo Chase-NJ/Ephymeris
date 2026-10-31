@@ -59,6 +59,9 @@ def resolve_row(trial: TrialTypeDef, channels, vocab) -> ResolvedRow | None:
     port = channels.get(trial.response_channel) if trial.response_channel else None
     reward = reward_index(channels, trial.reward_channel)
     slot = vocab.port_slot(port.port_slot) if port and port.port_slot else None
-    if port is None or reward is None or not slot:
+    # Only a RESPONSE channel answers a trial: nothing stops a slot being
+    # declared on a reward line, and its codes would then be emitted as the
+    # well's own.
+    if port is None or port.kind != "response" or reward is None or not slot:
         return None
     return ResolvedRow(odor_index, port, reward, slot)

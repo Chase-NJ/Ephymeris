@@ -9,6 +9,8 @@ carries tells replay, and what the diagnostics catch before a flash.
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -247,6 +249,104 @@ def test_a_task_whose_row_ids_collide_still_saves_and_says_why(tmp_path):
     assert ("SPN106", "rows[1].id") in {(d["code"], d["location"]) for d in problems}
     profile = task_profile.load_profile(store.sketch_dir(TaskDefinition.from_json(raw)))
     assert profile.spine["table"] is None
+
+
+def test_a_tracer_saved_with_one_row_keys_keeps_its_reward_values(tmp_path):
+    """A one-row spine saved before rewards were keyed by row id stored
+    `reward_ms` and `reward_permille`. Those values are the row's: they reach
+    the profile, the folder and the START line, and a save stores them under
+    the row's keys. Never the row's default in their place."""
+    raw = fixture.tracer(params={"reward_ms": 250, "reward_permille": 600})
+    definition = TaskDefinition.from_json(raw)
+    assert validate(definition) == []
+    profile = generate.build_profile(definition)
+    fields = {f.metadata_key: f.default for f in profile.config}
+    assert fields["reward_ms_r1"] == 250 and fields["reward_permille_r1"] == 600
+    assert '{"RW1", 250UL' in generate.task_spine_h(definition)
+    tokens = list(build_start_command(profile, {}).tokens)
+    assert "RW1=250" in tokens and "RP1=600" in tokens
+
+    store = TaskStore(tmp_path, library_root=FIRMWARE)
+    assert store.save(definition) == []
+    stored = json.loads(next(tmp_path.rglob("spine_tracer.json")).read_text(encoding="utf-8"))
+    assert stored["params"] == {"reward_ms_r1": 250, "reward_permille_r1": 600}
+
+
+def test_a_stored_value_no_parameter_reads_is_named_not_dropped():
+    """A key the spine declares no parameter for would be ignored; the
+    diagnostic names it so the value is not lost without a word."""
+    raw = fixture.go_no_go(params={"reward_ms": 250, "present_9_ms": 5})
+    found = {(d.code, d.location) for d in validate(TaskDefinition.from_json(raw))}
+    assert {("SPN110", "params.reward_ms"), ("SPN110", "params.present_9_ms")} <= found
+
+
+def test_two_rows_whose_parameter_keys_collide_are_diagnosed(tmp_path):
+    """Row `odor_far` paying on slot `right` and row `odor` paying on slot
+    `far_right` would both be `reward_permille_odor_far_right`."""
+    raw = fixture.two_afc()
+    raw["slots"].insert(3, {"id": "far_right", "type": "digital_in"})
+    raw["spine"][2]["responses"] = ["left", "right", "far_right"]
+    first, second = raw["rows"]
+    first.update(id="odor_far", map={"right": {"outcome": "correct", "line": "reward_r", "rewardPermille": 1000},
+                                     "left": {"outcome": "wrong_response"},
+                                     "far_right": {"outcome": "wrong_response"},
+                                     "timeout": {"outcome": "omission"}})
+    second.update(id="odor", map={"far_right": {"outcome": "correct", "line": "reward_l", "rewardPermille": 1000},
+                                  "left": {"outcome": "wrong_response"},
+                                  "right": {"outcome": "wrong_response"},
+                                  "timeout": {"outcome": "omission"}})
+    raw["blocks"][0]["rows"] = ["odor_far", "odor"]
+    definition = TaskDefinition.from_json(raw)
+    found = {(d.code, d.location) for d in validate(definition)}
+    assert ("SPN106", "rows[1].id") in found
+    store = TaskStore(tmp_path, library_root=FIRMWARE)
+    store.save(definition)
+    assert task_profile.load_profile(store.sketch_dir(definition)).spine["table"] is None
+
+
+def test_two_windows_are_one_problem_not_a_map_problem_per_row():
+    raw = fixture.two_afc()
+    raw["spine"].insert(3, dict(raw["spine"][2]))
+    found = [(d.code, d.location) for d in validate(TaskDefinition.from_json(raw))]
+    assert ("SPN105", "spine") in found
+    assert not [f for f in found if f[0] == "SPN109"]
+
+
+def test_a_table_over_the_ram_budget_is_refused_by_name():
+    """The table sits in the board's RAM. A legal 23-row 2AFC is 254 states,
+    which leaves a Mega too little for its stack."""
+    raw = fixture.two_afc()
+    raw["rows"] = [dict(raw["rows"][i % 2], id=f"row_{i}", name=f"Row {i}") for i in range(19)]
+    raw["blocks"][0]["rows"] = [r["id"] for r in raw["rows"]]
+    definition = TaskDefinition.from_json(raw)
+    problems = [d for d in validate(definition) if d.code == "SPN105"]
+    assert [d.location for d in problems] == ["spine"] and "RAM" in problems[0].message
+    assert "#error" in generate.task_spine_h(definition)
+    raw["rows"], raw["blocks"][0]["rows"] = raw["rows"][:18], raw["blocks"][0]["rows"][:18]
+    assert validate(TaskDefinition.from_json(raw)) == []
+
+
+def test_a_tables_bytes_are_its_rows_at_the_c_structs_sizes():
+    low = generate.build_profile(TaskDefinition.from_json(fixture.go_no_go())).spine["table"]
+    assert lowering.table_bytes(len(low["states"]), len(low["edges"])) == \
+        len(low["states"]) * lowering.STATE_ROW_BYTES + len(low["edges"]) * lowering.EDGE_ROW_BYTES
+
+
+@pytest.mark.skipif(shutil.which("clang++") is None and shutil.which("g++") is None, reason="no host C++ compiler")
+def test_the_row_sizes_are_boxinterp_hs_structs_as_avr_packs_them(tmp_path):
+    """AVR aligns nothing, so a struct's size there is its members' sizes. A host
+    build packed to 1 byte gives the same: a member added to either struct moves it."""
+    source = tmp_path / "sizes.cpp"
+    source.write_text(
+        "#include <cstdio>\n#pragma pack(push, 1)\n#include \"BoxInterp.h\"\n#pragma pack(pop)\n"
+        "int main() { std::printf(\"%u %u\", (unsigned)sizeof(InterpStateRow), (unsigned)sizeof(InterpEdgeRow)); }\n",
+        encoding="utf-8")
+    binary = tmp_path / "sizes"
+    compiler = shutil.which("clang++") or shutil.which("g++")
+    subprocess.run([compiler, "-std=c++11", f"-I{FIRMWARE / 'libraries' / 'BehaviorBox'}", str(source),
+                    "-o", str(binary)], check=True)
+    out = subprocess.run([str(binary)], capture_output=True, text=True, check=True).stdout
+    assert out == f"{lowering.STATE_ROW_BYTES} {lowering.EDGE_ROW_BYTES}"
 
 
 def test_a_map_on_a_spine_with_no_window_is_diagnosed():

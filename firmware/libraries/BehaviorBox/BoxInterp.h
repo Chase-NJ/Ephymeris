@@ -207,6 +207,14 @@ typedef struct {
   uint8_t outcome;
 } InterpStateRow;
 
+/*  A table sits in RAM, and the generator holds its size to a budget at save
+    (lowering.py's STATE_ROW_BYTES and EDGE_ROW_BYTES, docs/TASKS.md#spine-diagnostics).
+    Change a row here and those change with it. */
+#if defined(__AVR__) && defined(__cplusplus)
+static_assert(sizeof(InterpStateRow) == 18, "lowering.py's STATE_ROW_BYTES is this row's size");
+static_assert(sizeof(InterpEdgeRow) == 3, "lowering.py's EDGE_ROW_BYTES is this row's size");
+#endif
+
 typedef struct {
   const InterpStateRow *states;
   const InterpEdgeRow *edges;

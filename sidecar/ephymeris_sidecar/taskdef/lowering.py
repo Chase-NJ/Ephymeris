@@ -87,6 +87,18 @@ TIMEOUT = "timeout"
 
 TRIALS_KEY = "NT"
 
+#: The bytes one `InterpStateRow` and one `InterpEdgeRow` take on the board
+#: (AVR packs them: two uint32_t and ten uint8_t; three uint8_t). The table sits
+#: in RAM, so its size is checked at save (`TASKS.md#spine-diagnostics`).
+#: `test_spine_task.py` pins both against BoxInterp.h.
+STATE_ROW_BYTES = 18
+EDGE_ROW_BYTES = 3
+
+
+def table_bytes(states: int, edges: int) -> int:
+    """The RAM a table of `states` states and `edges` edge rows takes on the board."""
+    return states * STATE_ROW_BYTES + edges * EDGE_ROW_BYTES
+
 
 class LoweringError(ValueError):
     """The spine cannot be written as a table at all."""

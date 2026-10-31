@@ -438,6 +438,7 @@ class TaskDefinition:
             raise TaskDefinitionError("legacyNames must be a list of strings")
 
         stages = [StageRow.from_json(s) for s in stages_raw] or [StageRow()]
+        spine = Spine.from_json(raw) if "spine" in raw else None
         return TaskDefinition(
             id=task_id,
             name=name,
@@ -445,17 +446,39 @@ class TaskDefinition:
             selection_mode=mode,
             trials=[TrialTypeDef.from_json(t) for t in trials_raw],
             stages=stages,
-            params=dict(params),
+            params=_one_row_reward_keys(dict(params), spine),
             legacy_names=[n for n in legacy],
             notes=str(raw.get("notes", "")),
             # The `spine` key is what makes a definition a spine task.
-            spine=Spine.from_json(raw) if "spine" in raw else None,
+            spine=spine,
         )
 
 
 # --------------------------------------------------------------------------- #
 # Parsing helpers
 # --------------------------------------------------------------------------- #
+
+
+#: The reward keys a one-row spine stored before rewards were keyed by row id.
+_ONE_ROW_REWARD_KEYS = ("reward_ms", "reward_permille")
+
+
+def _one_row_reward_keys(params: dict[str, Any], spine: Spine | None) -> dict[str, Any]:
+    """Carry a one-row spine's `reward_ms` and `reward_permille` over to its row's keys.
+
+    A spine of one row stored them unkeyed; its row's parameters are now
+    `reward_ms_<row id>` and `reward_permille_<row id>`
+    (`TASKS.md#lowering`). Read as the row's, never dropped for its default.
+    A key the row already holds wins, and the old one is left for SPN110 to name.
+    """
+    if spine is None or len(spine.rows) != 1:
+        return params
+    row = spine.rows[0].id
+    for old in _ONE_ROW_REWARD_KEYS:
+        new = f"{old}_{row}"
+        if old in params and new not in params:
+            params[new] = params.pop(old)
+    return params
 
 
 def _contingency_map(raw: Any) -> dict[str, MapEntry]:

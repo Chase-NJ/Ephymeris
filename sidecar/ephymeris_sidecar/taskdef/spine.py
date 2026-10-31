@@ -51,6 +51,11 @@ SLOT_TYPES = ("digital_in", "digital_out")
 _MS_MAX = 3_600_000
 _TRIALS_MAX = 10_000
 _REWARD_MS_MAX = 5_000
+#: The most RAM a table's states and edge rows may take on a Mega (8192 B). The
+#: rest of a spine sketch's globals measured about 550 B, plus 18 B per
+#: parameter; this keeps them under the 75% arduino-cli warns at, so the stack
+#: and the serial buffers keep at least 2 KB (`TASKS.md#spine-diagnostics`).
+TABLE_RAM_MAX = 4096
 
 
 @dataclass
@@ -66,7 +71,7 @@ class _Resolved:
 
 
 def diagnostics(definition: TaskDefinition) -> list[Diagnostic]:
-    """Every problem with a spine task, located (SPN101–SPN109)."""
+    """Every problem with a spine task, located (SPN101–SPN110)."""
     return _resolve(definition).problems
 
 
@@ -150,6 +155,8 @@ def _resolve(definition: TaskDefinition) -> _Resolved:
                                          rows=rows)
         except lowering.LoweringError as exc:  # too many states, or two responses on one channel
             problem("spine", "SPN105", str(exc))
+    if out.lowered is not None:
+        _table_problems(definition, out, problem)
     if out.lowered is None:
         out.blockers.append("this spine cannot be lowered to a state table; see the task's diagnostics")
 
@@ -268,7 +275,9 @@ def _map_problems(spine: Spine, slot_type: dict[str, str], problem) -> bool:  # 
         problem(location, "SPN109", message)
 
     windows = [p for p in spine.phases if p.phase == "response"]
-    window = windows[0] if len(windows) == 1 else None
+    if len(windows) > 1:
+        return False  # SPN105 refuses the spine; no map can be judged against it
+    window = windows[0] if windows else None
     for r, row in enumerate(spine.rows):
         at = f"rows[{r}].map"
         if window is None:
@@ -300,6 +309,36 @@ def _map_problems(spine: Spine, slot_type: dict[str, str], problem) -> bool:  # 
             elif entry.hold and window.hold_ms is None:
                 bad(f"{at}.{key}.hold", "a hold lasts the window's holdMs, and the window gives none")
     return ok
+
+
+def _table_problems(definition: TaskDefinition, out: _Resolved, problem) -> None:  # noqa: ANN001
+    """What only the lowered table shows: parameter keys two rows would share
+    (SPN106), stored values no parameter reads (SPN110), and the table's RAM
+    (SPN105). A collision withholds the table, since a profile declaring one key
+    twice does not load."""
+    spine, low = definition.spine, out.lowered
+    assert spine is not None and low is not None
+    fields = _param_fields(spine, low)
+    owner: dict[str, lowering.ParamSlot] = {}
+    for f, s in zip(fields, low.slots):
+        key = f["metadataKey"]
+        if key in owner:
+            rows = sorted({spine.rows[r].id for r in (owner[key].row, s.row) if r is not None})
+            problem(f"rows[{s.row}].id" if s.row is not None else "spine", "SPN106",
+                    f"rows {' and '.join(map(repr, rows))} would both name a parameter {key!r}; rename one")
+        owner.setdefault(key, s)
+    if len(owner) != len(fields):
+        out.lowered = None
+        return
+    for key in definition.params:
+        if key not in owner:
+            problem(f"params.{key}", "SPN110", f"no parameter of this task is {key!r}, so its stored value "
+                    f"{definition.params[key]!r} is not used. Move it to the parameter it belongs to, or remove it")
+    size = lowering.table_bytes(len(low.states), len(low.edges))
+    if size > TABLE_RAM_MAX:
+        problem("spine", "SPN105", f"the state table takes {size} B of the board's RAM, over the {TABLE_RAM_MAX} B "
+                "a Mega can spare for it: fewer rows, phases or map entries")
+        out.blockers.append(f"the state table takes {size} B of RAM, over {TABLE_RAM_MAX} B")
 
 
 # --------------------------------------------------------------------------- #

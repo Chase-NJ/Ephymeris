@@ -441,3 +441,119 @@ def test_after_allocation_a_header_differs_only_by_the_new_codes_and_the_stamp(t
         assert all("vocabulary" in line.lower() or "Strobes:" in line for line in removed), (path, removed)
         assert all(line in issued or "vocabulary" in line.lower() or "Strobes:" in line
                    for line in added), (path, added)
+
+
+# --------------------------------------------------------------------------- #
+# The pair commits or fails as one
+# --------------------------------------------------------------------------- #
+
+
+def _swapped_ports() -> dict:
+    """Left and right swapped in BOTH halves: the slots in the channel set and
+    the pins in the pin map. Either half alone records a left poke under the
+    right family -- the torn pair the reviewer built."""
+    doc = store.default_document()
+    left, right = doc["channels"]["left_well"], doc["channels"]["right_well"]
+    left["port_slot"], right["port_slot"] = right["port_slot"], left["port_slot"]
+    lp, rp = doc["pins"]["left_well"], doc["pins"]["right_well"]
+    lp["index"], rp["index"] = rp["index"], lp["index"]
+    return doc
+
+
+def _fail_replacing(monkeypatch, target_name: str) -> None:
+    real = store.os.replace
+
+    def replace(src, dst):
+        if Path(dst).name == target_name:
+            raise PermissionError(f"{target_name} is held open")
+        return real(src, dst)
+
+    monkeypatch.setattr(store.os, "replace", replace)
+
+
+def test_a_save_whose_pin_map_cannot_be_written_leaves_the_old_pair(tmp_path, monkeypatch):
+    s = store.HardwareStore(tmp_path)
+    s.save(store.default_document())
+    before = s.load()
+
+    _fail_replacing(monkeypatch, store.PIN_MAP_FILENAME)
+    with pytest.raises(PermissionError):
+        s.save(_swapped_ports())
+    monkeypatch.undo()
+
+    after = s.load()
+    assert after["channels"] == before["channels"]
+    assert after["pins"] == before["pins"]
+
+
+def test_a_save_stopped_between_the_two_replaces_loads_as_the_new_pair(tmp_path, monkeypatch):
+    """A power cut after the channel set landed: the pin map written beside it
+    is the commit record, so the load finishes the save rather than pairing
+    the new channel set with the old pins."""
+    s = store.HardwareStore(tmp_path)
+    s.save(store.default_document())
+
+    _fail_replacing(monkeypatch, store.PIN_MAP_FILENAME)
+    monkeypatch.setattr(s, "_restore", lambda *a: (_ for _ in ()).throw(OSError("power cut")))
+    with pytest.raises(PermissionError):
+        s.save(_swapped_ports())
+    monkeypatch.undo()
+
+    loaded = s.load()
+    assert loaded["channels"]["left_well"]["port_slot"] == 2
+    assert loaded["pins"]["left_well"]["index"] == 3
+    assert s.load_problems() == []
+
+
+def test_a_torn_pair_never_loads_silently(tmp_path):
+    s = store.HardwareStore(tmp_path)
+    s.save(store.default_document())
+    channel_set, _ = store.split(_swapped_ports())
+    s.channel_set_path.write_text(json.dumps(channel_set), encoding="utf-8")
+
+    assert s.load() is None
+    problems = s.load_problems()
+    assert problems and "pin_map.json" in problems[0][0]
+    payload = service.document_payload(s)
+    assert any("does not belong" in p["message"] for p in payload["problems"])
+
+
+def test_a_wiring_save_that_fails_after_issuing_codes_still_rebuilds(tmp_path, monkeypatch):
+    """The codes stay (append only); the rebuild that every vocabulary edit
+    owes the generated folders still runs, and the next save reclaims them."""
+    rig = Rig(tmp_path)
+    rebuilt: list[int] = []
+    rig.definition._tasks.regenerate_all = lambda: rebuilt.append(1) or 0
+    _fail_replacing(monkeypatch, store.PIN_MAP_FILENAME)
+    with pytest.raises(PermissionError):
+        rig.save(store.default_document())
+    monkeypatch.undo()
+
+    assert "ODOR_PORT_ENTER" in registry.vocabulary()
+    assert rebuilt and rig.events == ["strobes.updated"]
+    assert not rig.hardware.exists()
+    assert rig.save(store.default_document())["allocations"] == []
+
+
+def test_a_code_is_reclaimed_only_by_a_channel_of_the_same_kind_and_role(tmp_path):
+    rig = Rig(tmp_path)
+    doc = store.default_document()
+    rig.save(doc)
+    stored = rig.hardware.load()
+    issued = stored["channels"]["fluid_1"]["edges"]
+
+    # fluid_1 deleted, then a cue added back under its name.
+    stored["channels"]["fluid_1"] = {
+        "kind": "cue", "label": "fluid 1", "type": "digital_out", "role": "cue",
+    }
+    stored["channels"]["fluid_0"].pop("well")  # keep RIG rules about wells out of it
+    _, allocations = allocation.plan(stored, registry.vocabulary())
+    assert [a.name for a in allocations] == ["FLUID_1_ON_2", "FLUID_1_OFF_2"]
+
+    # Back as a reward line again: its own codes return.
+    stored["channels"]["fluid_1"] = {
+        "kind": "reward", "label": "fluid 1", "well": "left_well",
+        "type": "digital_out", "role": "reward", "serves": "left_well",
+    }
+    filled, allocations = allocation.plan(stored, registry.vocabulary())
+    assert allocations == [] and filled["channels"]["fluid_1"]["edges"] == issued

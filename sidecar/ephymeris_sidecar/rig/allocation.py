@@ -15,10 +15,13 @@ from the name at each read is the mistake `generate._onset_macro` records.
 APPEND ONLY (TASKS.md#append-only). A name the vocabulary ever gave to anything
 else -- live or retired -- is never reused; the plan suffixes `_2`, `_3`, ...
 instead. The one name a plan takes back is a live code this allocator issued
-(`CHANNEL_SET_ORIGIN`) under exactly the name it would issue, to an edge no
-channel in the document holds: a channel set reset to the shipped one, or a
-channel deleted and added back. Issuing it again under `_2` would only grow
-the vocabulary by codes that mean the same thing.
+(`CHANNEL_SET_ORIGIN`) under exactly the name it would issue, FOR THE SAME
+channel, edge, kind and role (`issued_for`), to an edge no channel in the
+document holds: a channel set reset to the shipped one, a channel deleted and
+added back as what it was, or a save that issued codes and then failed.
+Issuing those again under `_2` would only grow the vocabulary by codes that
+mean the same thing. A deleted reward line `lever` that returns as a cue is a
+different event, and gets fresh codes.
 """
 
 from __future__ import annotations
@@ -42,6 +45,10 @@ class Allocation:
     edge: str
     name: str
     code: int
+    #: What the channel was when the code was issued; recorded with the code so
+    #: a reclaim can tell the same channel from a new one under its name.
+    kind: str = ""
+    role: str = ""
 
     def to_json(self) -> dict[str, Any]:
         return {"channel": self.channel, "edge": self.edge, "name": self.name, "code": self.code}
@@ -82,7 +89,10 @@ def plan(document: Any, vocab: registry.Vocabulary) -> tuple[Any, list[Allocatio
     for name, entry in out["channels"].items():
         if not isinstance(entry, dict):
             continue
-        channel_type = entry.get("type") or registry.channel_set_defaults(entry).get("type")
+        defaults = registry.channel_set_defaults(entry)
+        channel_type = entry.get("type") or defaults.get("type")
+        kind = str(entry.get("kind", ""))
+        role = str(entry.get("role") or defaults.get("role", ""))
         edges = entry.get("edges") if isinstance(entry.get("edges"), dict) else {}
         missing = [e for e in registry.EDGES.get(channel_type, ()) if not edges.get(e)]
         if not missing:
@@ -94,12 +104,16 @@ def plan(document: Any, vocab: registry.Vocabulary) -> tuple[Any, list[Allocatio
             while True:
                 if candidate not in claimed:
                     live = vocab.get(candidate)
-                    if live is not None and live.origin == CHANNEL_SET_ORIGIN:
-                        break  # this allocator's own code, held by no edge: take it back
+                    if (
+                        live is not None
+                        and live.origin == CHANNEL_SET_ORIGIN
+                        and live.issued_for == (name, edge, kind, role)
+                    ):
+                        break  # issued for this very channel, held by no edge: take it back
                     if live is None and vocab.retired_entry(candidate) is None:
                         number = next_number()
                         numbers.add(number)
-                        allocations.append(Allocation(name, edge, candidate, number))
+                        allocations.append(Allocation(name, edge, candidate, number, kind, role))
                         break
                 n += 1
                 candidate = f"{base}_{n}"
@@ -124,5 +138,6 @@ def issue(vocabulary_document: dict, allocations: list[Allocation]) -> dict:
             rationale=f"The {a.edge} edge of the {a.channel} channel, issued when the "
             "channel set was saved. Kept if the channel is renamed.",
             origin=CHANNEL_SET_ORIGIN,
+            issued_for={"channel": a.channel, "edge": a.edge, "kind": a.kind, "role": a.role},
         )
     return doc

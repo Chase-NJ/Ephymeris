@@ -279,6 +279,7 @@ def add(
     rationale: str,
     emitted_on: str = "",
     origin: str = OPERATOR_ORIGIN,
+    issued_for: dict[str, str] | None = None,
 ) -> dict:
     """A new live code. Refused unless the name is new and the number free.
 
@@ -321,6 +322,7 @@ def add(
         "origin": origin,
         "added_at": _now(),
         **({"emitted_on": emitted_on.strip()} if emitted_on.strip() else {}),
+        **({"issued_for": dict(issued_for)} if issued_for else {}),
         "rationale": rationale.strip(),
     }
     out["codes"] = _sorted_section(out["codes"])

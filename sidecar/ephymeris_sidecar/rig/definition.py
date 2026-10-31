@@ -259,7 +259,17 @@ class RigDefinition:
                 # Before any code is issued: a refused wiring issues nothing.
                 raise hardware_store.RigInvalid(problems)
             filled, issued = await asyncio.to_thread(self._issue_edge_codes, document)
-            stored = await asyncio.to_thread(self._hardware.save, filled)
+            try:
+                stored = await asyncio.to_thread(self._hardware.save, filled)
+            except BaseException:
+                if issued:
+                    # The vocabulary changed and stays changed (append only;
+                    # the next save reclaims these codes), so the rebuild every
+                    # vocabulary edit owes the generated folders still runs.
+                    await self._rebuild()
+                    vocabulary = await asyncio.to_thread(self.vocabulary_payload)
+                    await self._broadcast(event(Evt.STROBES_UPDATED, vocabulary))
+                raise
             # Install before reporting, or the reply would describe the wiring
             # that was in force a moment ago.
             registry.set_rig_source(self._hardware.load)

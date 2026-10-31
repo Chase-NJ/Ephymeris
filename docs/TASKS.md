@@ -463,7 +463,7 @@ A saved task's folder is regenerated on `tasks.save`, at **every sidecar start**
 - **At start**, because a folder written by an older generator either stops compiling (loud — `TrialType` grew an argument) or sends keys the firmware no longer parses (silent).
 - **On a wiring change or a vocabulary edit**, because pins and strobe codes are compiled into `TaskPins.h`.
 
-A wiring change, from the Rig tab's save to the rescan, is all one [rig definition write], including the [edge codes](#edge-codes) it issues(#the-rig-definition) (`RigDefinition.save_wiring` / `reset_wiring` in `rig/definition.py`). A vocabulary edit joins at the rebuild after installing its document. Startup runs the same two rebuilds (`rebuild_at_startup`), before anything can flash:
+A wiring change, from the Rig tab's save to the rescan, is all one [rig definition write](#the-rig-definition), including the [edge codes](#edge-codes) it issues (`RigDefinition.save_wiring` / `reset_wiring` in `rig/definition.py`). A vocabulary edit joins at the rebuild after installing its document. Startup runs the same two rebuilds (`rebuild_at_startup`), before anything can flash:
 
 ```mermaid
 flowchart TD
@@ -568,6 +568,17 @@ A second box generation is a one-file pinout swap, *provided the channel names a
 The operator's pair **replaces** the shipped pair rather than merging with it. A merge would bring back a channel someone deleted, and it could not describe a box that lacks one.
 
 The editor and the wire still see **one document**, `{rig_version, channels, pins, …}`. `hardware/store.py` joins the pair on load and splits it on save. A rig saved as the single `rig.json` from before the split is read as both halves, and the next save writes the pair and removes it.
+
+> [!CAUTION]
+> **The pair commits or fails as one, and a pair that does not belong together never loads.** Two files cannot be replaced atomically. A new channel set loaded against old pins can put a swapped port under the other port's codes: every poke is then recorded under the wrong family, with no error anywhere.
+>
+> So `pin_map.json` records the digest of the channel set it was written beside, and a save works in three steps:
+>
+> 1. **Stage** both files, complete.
+> 2. **Replace** the channel set.
+> 3. **Replace** the pin map. If that fails, the save puts the old channel set back.
+>
+> A save stopped between steps 2 and 3 leaves its staged pin map behind as the commit record, and the load completes the save from it. Any other mismatch loads nothing: the rig runs the shipped pinout, and `hardware.get` reports the stored wiring that did not load, until it is saved again.
 
 Channel kinds are `engagement` (exactly one), `response`, `emitter`, `reward`, `cue`, `vacuum` and `sync` (at most one).
 
@@ -731,12 +742,19 @@ A declared code that nothing can emit is a name in every picker that no session 
 - **Inside the write:** the vocabulary gains the codes inside the same [rig definition write](#the-rig-definition) as the wiring, then one rebuild serves both. `strobes.updated` is broadcast beside `hardware.updated`.
 - **In the preview:** `hardware.preview` runs the same plan and writes nothing.
 - **When the vocabulary will not read:** a save that needs a code is refused, as every vocabulary edit is. A save that needs none goes ahead.
+- **When the wiring will not write:** codes already issued stay issued (append only). The rebuild every vocabulary edit owes still runs, and the next save reclaims them.
 
 **The shipped channel set names no edge codes.** So the shipped vocabulary is untouched, and a machine's first save issues one code per edge.
 
 **Renaming a channel never renames its codes.** The `edges` map travels inside the channel's entry, and a save fills only an edge that has none.
 
-**One case takes a name back.** If a live `channel_set` code has exactly the name a plan would issue, and no edge in the document holds it, the plan reuses it. That happens to a channel set reset to the shipped one, and to a channel deleted and added back under its old name. Issuing those again under `_2` would only grow the vocabulary with codes that mean the same thing.
+**One case takes a name back.** Each code records the channel, edge, kind and role it was issued for (`issued_for`). A plan reuses a live `channel_set` code when all of these hold:
+
+- the code has exactly the name the plan would issue;
+- it was issued for the same channel, edge, kind and role;
+- no edge in the document holds it.
+
+That covers a channel set reset to the shipped one, a channel deleted and added back as what it was, and a save that issued codes and then failed to write. Issuing those again under `_2` would only grow the vocabulary with codes that mean the same thing. A deleted reward line `lever` that comes back as a cue is a different event, and gets fresh codes.
 
 **Nothing emits an edge code yet.** GRGL still strobes its own codes. The page says "nothing on this machine names it" ([Every declared code is emitted](#every-declared-code-is-emitted)) until a sketch emits it.
 

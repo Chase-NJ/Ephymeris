@@ -32,10 +32,15 @@ def document_payload(rig: store.HardwareStore) -> dict[str, Any]:
     that into their own; until then nothing is written.
     """
     doc = rig.load() or store.default_document()
+    # Stored wiring that did not load comes first: the document below is the
+    # shipped one standing in for it, and the operator must be told so.
+    stored = [
+        {"location": loc, "message": msg, "code": None} for loc, msg in rig.load_problems()
+    ]
     return {
         "document": doc,
         "status": _status(rig, doc),
-        "problems": problems_for(doc),
+        "problems": stored + problems_for(doc),
     }
 
 

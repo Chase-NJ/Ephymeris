@@ -76,6 +76,9 @@ class StrobeEntry:
     rationale: str
     emitted_on: str = ""
     emitted_by: tuple[str, ...] = ()
+    #: A channel-set edge code: the (channel, edge, kind, role) it was issued
+    #: for (`rig/allocation.py`). Empty for every other code.
+    issued_for: tuple[str, str, str, str] | tuple[()] = ()
 
 
 @dataclass(frozen=True)
@@ -97,6 +100,12 @@ STROBE_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
 #: vocabulary is the only place a code is defined. Mirrored by `ONSET_NAME` in
 #: `src/lib/taskdef/lines.ts`, which filters the same picker.
 ONSET_NAME = re.compile(r"_\d+_ON$")
+
+
+def _issued_for(raw: object) -> tuple[str, str, str, str] | tuple[()]:
+    if not isinstance(raw, dict):
+        return ()
+    return tuple(str(raw.get(k, "")) for k in ("channel", "edge", "kind", "role"))  # type: ignore[return-value]
 
 
 class Vocabulary:
@@ -128,6 +137,7 @@ class Vocabulary:
                 rationale=e.get("rationale", ""),
                 emitted_on=e.get("emitted_on", ""),
                 emitted_by=tuple(e.get("emitted_by", ())),
+                issued_for=_issued_for(e.get("issued_for")),
             )
             for name, e in raw["codes"].items()
             if not name.startswith("_")

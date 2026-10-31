@@ -22,18 +22,22 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Iterable, Sequence
 
-#: The `INTERP` versions this replay can run (`INTERP_VERSION` in BoxInterp.h).
-#: Not 1: that is BehaviorBox.h's trial runner (`BOX_INTERP`), which every
-#: recorded GRGL run names, and which no table describes. The two share one
-#: numbering space so a run's header alone says which ran it.
-INTERP_VERSIONS = frozenset({2})
-INTERP_VERSION = 2
+#: The `INTERP` versions this replay can run (`INTERP_VERSION` in BoxInterp.h),
+#: and the one place they are listed. Not 1: that is BehaviorBox.h's trial
+#: runner (`BOX_INTERP`), which every recorded GRGL run names, and which no table
+#: describes. The two share one numbering space so a run's header alone says
+#: which ran it. 2 is the tracer's format; 3 adds the pick state and is
+#: otherwise the same, so a version-2 table runs under the same rules here and
+#: only a pick state in one is refused (`check_interp`).
+INTERP_VERSIONS = frozenset({2, 3})
+INTERP_VERSION = 3
 
 NONE = 0xFF
 PERMILLE = 1000
 RISE = 1
 FALL = 2
 STARTS_TRIAL = 0x01
+PICK = 0x02
 ACT_SESSION_START = 0x01
 ACT_TRIAL_START = 0x02
 
@@ -112,6 +116,15 @@ class StateRow:
         return self.chance != NONE
 
     @property
+    def is_pick(self) -> bool:
+        return bool(self.flags & PICK)
+
+    @property
+    def branches(self) -> bool:
+        """A state that takes no time: it goes on at once, by a draw."""
+        return self.is_chance or self.is_pick
+
+    @property
     def slots(self) -> tuple[int, ...]:
         """The parameter slots this state reads."""
         return tuple(s for s in (self.timer_min, self.timer_max, self.chance) if s != NONE)
@@ -160,7 +173,7 @@ def _check_state(table: Table, i: int, s: StateRow) -> None:
                  "edge_first", "edge_count", "flags", "outcome"):
         if not 0 <= getattr(s, name) <= 0xFF:
             fail(f"{name} does not fit a uint8_t")
-    if s.flags & ~STARTS_TRIAL:
+    if s.flags & ~(STARTS_TRIAL | PICK):
         fail(f"unknown flags {s.flags:#x}")
 
     if s.is_chance:
@@ -170,8 +183,26 @@ def _check_state(table: Table, i: int, s: StateRow) -> None:
             target(name)
             if table.states[getattr(s, name)].is_chance:
                 fail(f"a chance state's {name} is another chance state")
+            if table.states[getattr(s, name)].is_pick:
+                fail(f"a chance state's {name} is a pick state")
     elif s.on_hit != NONE or s.on_miss != NONE:
         fail("on_hit and on_miss belong to a chance state")
+
+    if s.is_pick:
+        if s.outputs or s.watch or s.timer_min != NONE or s.timer_max != NONE or s.on_timeout != NONE:
+            fail("a pick state has no outputs, watch, timer or chance")
+        if not s.edge_count:
+            fail("a pick state needs at least one branch")
+        if s.edge_first + s.edge_count > len(table.edges):
+            fail("its edge rows run past the table's")
+        for e in table.edges[s.edge_first : s.edge_first + s.edge_count]:
+            if (e.input, e.edge) != (0, 0):
+                fail("a pick state's branches are edge rows (input 0, edge 0)")
+            if not 0 <= e.next < n:
+                fail(f"a branch {e.next} is not a state")
+            if table.states[e.next].branches:
+                fail("a pick state's branches are neither chance nor pick states")
+        return
 
     if s.timer_min == NONE:
         if s.timer_max != NONE or s.on_timeout != NONE:
@@ -254,6 +285,11 @@ class _Tick:
         return Actions(self.rose, self.fell, self.on, self.off, (self.entered[0], self.entered[1]), self.flags)
 
 
+def _pick(rng: int, branches: int) -> tuple[int, int]:
+    """A pick state's draw: which of its `branches` it takes. Every entry draws."""
+    return draw(rng, branches)
+
+
 def _enter(core: Core, target: int, now: int, a: _Tick) -> Core:
     """`interp__enter()`."""
     states, params, rng = core.table.states, core.params, core.rng
@@ -264,10 +300,14 @@ def _enter(core: Core, target: int, now: int, a: _Tick) -> Core:
         if s.flags & STARTS_TRIAL:
             a.flags |= ACT_TRIAL_START
         state = target
-        if not s.is_chance or hop == 1:
+        if not s.branches or hop == 1:
             break
-        value, rng = draw(rng, PERMILLE)
-        target = s.on_hit if value < params[s.chance] else s.on_miss
+        if s.is_chance:
+            value, rng = draw(rng, PERMILLE)
+            target = s.on_hit if value < params[s.chance] else s.on_miss
+        else:
+            k, rng = _pick(rng, s.edge_count)
+            target = core.table.edges[s.edge_first + k].next
         hop += 1
     duration = 0
     if s.timer_min != NONE:
@@ -282,12 +322,19 @@ def _enter(core: Core, target: int, now: int, a: _Tick) -> Core:
     return replace(core, rng=rng, entered_at=now, duration=duration, outputs=s.outputs, state=state)
 
 
+def check_interp(table: Table, interp: int) -> None:
+    """Refuse a table `interp` cannot have run: an unknown version, or a pick state before 3."""
+    if interp not in INTERP_VERSIONS:
+        raise ValueError(f"INTERP {interp} is not a version this replay knows ({sorted(INTERP_VERSIONS)})")
+    if interp < 3 and any(s.is_pick for s in table.states):
+        raise ValueError(f"INTERP {interp} has no pick state, and this table holds one")
+
+
 def begin(
     table: Table, params: Sequence[int], seed: int, now: int, interp: int = INTERP_VERSION
 ) -> tuple[Core, Actions]:
     """`interp_begin()`: the session's first tick, at `now`."""
-    if interp not in INTERP_VERSIONS:
-        raise ValueError(f"INTERP {interp} is not a version this replay knows ({sorted(INTERP_VERSIONS)})")
+    check_interp(table, interp)
     params = tuple(params)
     if len(params) < table.slots_used():
         raise ValueError(f"the table reads parameter slot {table.slots_used() - 1}, past the {len(params)} given")

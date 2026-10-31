@@ -313,7 +313,7 @@ async def test_a_change_to_the_recorded_config_reaches_a_warm_row(
 # --- the one pin (`DATA.md#caching`) ---------------------------------------
 
 #: What today's scoring answers for the canary runs (`scoring.canary_fingerprint`).
-CANARY = "cd32c86ca6c07f292fb6e2fb022dde51cad64ef7056020d7dbc1b5d5e7da8044"
+CANARY = "8017cb23a538a5487f85a4a41eeeefca09ad6a3085b9c107c322d9d960991c80"
 
 # --- a snapshot recorded before a no-go metric listed every port ------------
 

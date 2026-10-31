@@ -198,7 +198,7 @@ The three values are themselves guarded in `BehaviorBox.h`. A header that once o
 
 The host tests compile `BehaviorBox.h` off-target against a minimal `Arduino.h` shim. They do not replace a real AVR compile and flash.
 
-`run_interp.sh` tests `BoxInterp.h`, the phase interpreter's pure core ([ADR 0003](adr/0003-phase-spine-task-model.md)), which includes no Arduino header and needs no shim. `run_diff.sh` is the **differential test**: it runs that core and its Python port, `analytics/stream/replay.py`, over generated state tables and randomized input logs, and fails on the first tick where their actions differ. It then changes the Python tie rule and expects a difference, so a run that generates too few ties fails rather than passing on nothing. Change the header and the port together; the header documents the table format and the tick rules for both. A third of the differential test's tables are lowered by the generator itself (`taskdef/lowering.py`), so the tables a saved spine task compiles are held to both interpreters. Those tables hold no ties (a lowered state has at most one exit), so their family has a self-check of its own: with every RNG draw reflected, they must differ.
+`run_interp.sh` tests `BoxInterp.h`, the phase interpreter's pure core ([ADR 0003](adr/0003-phase-spine-task-model.md)), which includes no Arduino header and needs no shim. `run_diff.sh` is the **differential test**: it runs that core and its Python port, `analytics/stream/replay.py`, over generated state tables and randomized input logs, and fails on the first tick where their actions differ. It then changes the Python tie rule and expects a difference, so a run that generates too few ties fails rather than passing on nothing. Change the header and the port together; the header documents the table format and the tick rules for both. A third of the differential test's tables are lowered by the generator itself (`taskdef/lowering.py`), so the tables a saved spine task compiles are held to both interpreters. They have Response windows, contingency maps, holds and several rows, and the raw tables have pick states. Two more self-checks: with the pick draw mirrored, the raw tables and the generator's tables must each differ, and with every RNG draw reflected, the generator's tables alone must differ.
 
 `run_spine.sh` tests `BoxSpine.h`, the runner around that core, on the instrumented shim with a hand-written table: the handshake, the stream's order and tick times, skipped `millis()` values, and the [session end rule](#the-runner). `sidecar/tests/test_spine_run.py` compiles a **generated** spine task the same way, plays its serial output through the real session path, and replays the `.tsv` that path wrote.
 
@@ -571,10 +571,10 @@ Two orderings carry meaning and both are emitted from a single pass so they cann
 
 A **spine task** is ADR 0003's model, one tracer ahead of the rest: an ordered spine of phases, lowered by the generator to a state table that one interpreter walks ([ADR 0003](adr/0003-phase-spine-task-model.md)). It needs no firmware written for it. The definition is saved with `tasks.save` like any task, and its folder is generated, flashed and run through the ordinary session flow. Nothing in the app names a sketch: what a spine task does differently is read from its definition and its profile. The Task editor does not edit one yet, so today a spine definition is written as JSON.
 
-The tracer has limits, and each is diagnosed rather than guessed around:
+It has limits, and each is diagnosed rather than guessed around:
 
-- the phases are Wait, Present, Delay, Outcome and ITI;
-- a task has one row and one block;
+- the phases are Wait, Present, Delay, Response window, Outcome and ITI;
+- a task has one block, which draws each of its rows uniformly;
 - nothing is scored live yet: Mission Control says so, from the profile (`src/lib/sessions/liveScoring.ts`);
 - it is proven on the host, not yet on a Mega: the free RAM a board reports with a table loaded is still to be measured ([README.md](../README.md#not-yet-done)).
 
@@ -585,29 +585,46 @@ A definition with a top-level `spine` key is a spine task (`taskdef/model.py`, `
 | Field | Holds |
 |---|---|
 | `slots[]` | The spine's roles, each `{id, type}` with type `digital_in` or `digital_out` |
-| `spine[]` | The phases, in order. Each `{phase, …}`:<br>• `wait` moves on at a rise on input slot `on`, with an optional `timeoutMs` that goes to the ITI;<br>• `present` lasts `ms`, and `abortOnRelease` names an input slot whose release aborts to the ITI;<br>• `delay` lasts `ms`;<br>• `outcome` opens output slot `line`, then waits `ms`;<br>• `iti` lasts `ms`.<br>Any phase may name `outputs`, the output slots HIGH while in it |
-| `rows[]` | One row: a stable `id`, a required `name`, `bind` (slot → channel name), `rewardMs`, and `rewardPermille` |
-| `blocks[]` | One block: `{id, rows: [the row's id], trials}` |
+| `spine[]` | The phases, in order. Each `{phase, …}`:<br>• `wait` moves on at a rise on input slot `on`, with an optional `timeoutMs` that goes to the ITI;<br>• `present` lasts `ms`, and `abortOnRelease` names an input slot whose release aborts to the ITI;<br>• `delay` lasts `ms`;<br>• `response`, the Response window, watches the input slots in `responses` for `ms`; each row's `map` says where a response or the timeout goes. Optional `holdMs` is how long a response must be held when its map entry asks for a hold. At most one per spine, followed by exactly one Outcome;<br>• `outcome`, at most one per spine, opens output slot `line`, then waits `ms`. After a Response window it names no `line`: the row's map does;<br>• `iti` lasts `ms`.<br>Any phase may name `outputs`, the output slots HIGH while in it, a window's through its holds |
+| `rows[]` | The trial types. Each has a stable `id` (lower case, digits and underscores: it names the row's parameters), a required `name`, `bind` (slot → channel name), `rewardMs`, `rewardPermille` (read only by an Outcome with no window before it), and, with a Response window, a `map` |
+| `rows[].map` | The row's **contingency map**: one entry per watched response slot and one for `timeout`, each `{outcome, line, rewardPermille, hold}`:<br>• `outcome`, a class from `lowering.OUTCOME_CLASSES`;<br>• `line`, optional: an output slot, which the row binds to a reward channel;<br>• `rewardPermille`, with a `line` only, default 1000;<br>• `hold`, on a response only: it must be held for the window's `holdMs`, and letting go sooner is `hold_broken` |
+| `blocks[]` | One block: `{id, rows: [every row's id, once], trials}` |
 | `params{}` | Only divergences from the defaults the spine itself states, keyed by metadata key |
 
-Plus `id`, `name`, `category`, `legacyNames` and `notes`, as for any task. A slot binds a channel by **name**, never a pin.
+Plus `id`, `name`, `category`, `legacyNames` and `notes`, as for any task. A slot binds a channel by **name**, never a pin. One channel serves one slot, across every row.
+
+A go/no-go pair, the window and the two rows' maps:
+
+```json
+{"phase": "response", "responses": ["resp"], "ms": 3000}
+"go":    {"resp": {"outcome": "correct", "line": "reward", "rewardPermille": 1000}, "timeout": {"outcome": "omission"}}
+"no_go": {"resp": {"outcome": "false_alarm"}, "timeout": {"outcome": "withheld"}}
+```
 
 ### Lowering
 
-`taskdef/lowering.py` writes each phase as states, as `BoxInterp.h`'s *Lowering the first phases* describes. It is pure and standard-library only, so the differential test loads it by path and holds its tables to both interpreters ([Compiling and the host tests](#compiling-and-the-host-tests)).
+`taskdef/lowering.py` writes each phase as states, as `BoxInterp.h`'s *Lowering the first phases* describes and this section extends. It is pure and standard-library only, so the differential test loads it by path and holds its tables to both interpreters ([Compiling and the host tests](#compiling-and-the-host-tests)).
 
-- **Channels are bits.** Input bit i is the i-th `digital_in` slot and output bit j is the j-th `digital_out` slot, in slot order. No pin enters the table.
+- **Channels are bits.** Input bit i is the i-th distinct channel bound to a `digital_in` slot, ordered by slot and then by row; outputs the same. A slot bound to one channel in every row is one bit; `sample` bound to two odor lines in two rows is two. No pin enters the table.
 - **Every duration and probability is a parameter slot**, set by a `SET` line. One table therefore serves every tuning and every pin map.
 
 | Slot | Wire key | Metadata key | What |
 |---|---|---|---|
 | 0 | `NT` | `block_trials` | The block's trial count. The session ends at the start of the next trial |
 | 1… | `T<i>` | `<phase>_<i>_ms`, or `wait_<i>_timeout_ms` | Phase i's timer, one per timed phase |
-| then | `RW1`, `RP1` | `reward_ms`, `reward_permille` | The row's reward time and probability, when the spine has an Outcome |
+| | `H<i>` | `response_<i>_hold_ms` | The window's hold, straight after its `T<i>`, when it gives `holdMs` |
+| then, per row r from 1 | `RW<r>` | `reward_ms_<row id>` | The row's reward time, when it can pay |
+| | `RP<r>` | `reward_permille_<row id>` | Its reward probability, for an Outcome with no window before it |
+| | `RP<r>_<k>` | `reward_permille_<row id>_<slot or timeout>` | The probability of map entry k, numbered from 1 in branch order (the window's responses, then `timeout`), for each entry with a line |
 
-- **The ITI comes last.** A spine ends in exactly one ITI, which is where every abort and timeout goes; its timer leads back to state 0, which starts a trial.
-- **The Outcome's states.** An Outcome is a chance state on `RP1`, recording the outcome class `correct`, then the reward line's state (`RW1`), then the class timeout. The phase's own `outputs` stay HIGH through all of it, the reward included.
+- **Rows.** Each row gets its own copy of the spine, ITI included, since its bindings differ. With two or more rows, state 0 is a **pick state** carrying `STARTS_TRIAL`: it draws one of its branches, each row's first state in `rows` order, uniformly from the session RNG, and goes on in the same tick ([`BoxInterp.h`](../firmware/libraries/BehaviorBox/BoxInterp.h)). A trial's row is the branch it took. With one row, the row's first state is state 0 and there is no pick state. So the first phase of a task with several rows is never an Outcome.
+- **The ITI comes last.** A spine ends in exactly one ITI per row, which is where every abort and timeout goes; its timer leads back to state 0, which starts a trial.
+- **The Response window** is one state per row. It watches the response bits, each rise leads to its map entry's branch, and the timer `T<i>` leads to the `timeout` branch.
+- **Branches.** Each map entry gets its own copy of the phases from after the window up to the ITI, and so does a `hold_broken` branch when any entry holds. An entry with `hold` starts with a hold state: the window's outputs, watching only that response; its fall leads to the `hold_broken` branch and its timer `H<i>` on into the entry's branch.
+- **The Outcome's states.** With a line, an Outcome is a chance state on the row's probability, marked with the outcome class, then the reward line's state (`RW<r>`), then the class timeout. Without one, it is the class timeout alone, marked with the class. With no window before it the class is `correct` and the line is the phase's own. The phase's own `outputs` stay HIGH through all of it, the reward included.
+- **One mark per trial.** Every trial that resolves enters exactly one state with a non-zero `outcome`; with a line, that is the chance state whose `on_hit` is the reward state. A reward probability below 1000 is drawn there from the seeded session RNG, so replay draws it identically. An abort or a wait's timeout before the window marks nothing.
 - **Outcome class numbers** come from `lowering.OUTCOME_CLASSES` and are append-only.
+- **A table holds at most 254 states and 254 edge rows.**
 
 ### The generated folder
 
@@ -629,7 +646,7 @@ Plus `id`, `name`, `category`, `legacyNames` and `notes`, as for any task. A slo
 - **Ticks.** The core is stepped once per millisecond of `millis()`, including each value AVR `millis()` skips.
 - **Outputs and strobes.** The runner drives each tick's outputs, then strobes the tick's actions, each stamped with the tick.
 - **The handshake.** It is the one in [Confirming the parameters](#confirming-the-parameters), over the table's parameter slots. A value is held only when it is a whole number within its slot's declared range; otherwise the board answers `CLAMPED` and the start is refused.
-- **The announcement.** The runner announces `INTERP=2`.
+- **The announcement.** The runner announces `INTERP=3`, `BoxInterp.h`'s `INTERP_VERSION`. Replay also runs `2`, the same table format without the pick state, and refuses a version-2 table that holds one. `replay.INTERP_VERSIONS` is the one list of the versions it runs.
 
 **The stream** holds only what the board observed and what it did. Within a tick it runs in this order:
 
@@ -650,12 +667,12 @@ An edge on an input no state is watching is never strobed: the interpreter ignor
 The profile's `spine` key is everything replay needs that the run's own header does not already hold:
 
 - the definition's slots, phases, rows and blocks;
-- the table exactly as lowered, with its `interp`;
+- the table exactly as lowered, with its `interp`, and per state its phase index (`table.phases`) and its row index into `rows` (`table.rows`), null for the pick state. The trial table reads these; the board never does;
 - each bit's channel and edge code **names**;
 - each parameter slot's wire key;
 - the structural code names.
 
-It rides in the `# task_profile:` header line of every run's `.tsv` ([DATA.md](DATA.md#the-tsv-log)), beside the parameter values, the seed and `# interp: 2`, so a crashed run's `.tsv` alone replays. Code numbers come from the snapshot's own `strobes` map, which is the vocabulary when the run started. `analytics/stream/spine.py` reads a run's document back into the table, parameters, seed and input edges, and predicts every strobe the board must have sent ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#the-folder-at-a-glance)).
+It rides in the `# task_profile:` header line of every run's `.tsv` ([DATA.md](DATA.md#the-tsv-log)), beside the parameter values, the seed and `# interp: 3`, so a crashed run's `.tsv` alone replays. Code numbers come from the snapshot's own `strobes` map, which is the vocabulary when the run started. `analytics/stream/spine.py` reads a run's document back into the table, parameters, seed and input edges, and predicts every strobe the board must have sent ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#the-folder-at-a-glance)).
 
 `profile_hash` hashes the snapshot with the rest of the profile, names and all. Covering behaviour only, and leaving out every string meant for a person, is still to come (ADR 0003, *Hashes and data*).
 
@@ -669,10 +686,11 @@ It rides in the `# task_profile:` header line of every run's `.tsv` ([DATA.md](D
 | `SPN102` | A channel whose type is not the slot's, or the sync line | A sensor driven as a valve; a pulse in a recording |
 | **`SPN103`** | **A channel edge with no live code.** The shipped channel set names none, so the rig's first wiring save issues them ([Edge codes](#edge-codes)) | An edge recorded as a number nothing decodes |
 | `SPN104` | The vocabulary lacks `START_SESSION`, `TRIAL_START` or `END_SESSION`. A machine seeded before `TRIAL_START` existed adds it on Task > Strobes, at the number the shipped vocabulary gives it (`rig/schema/strobe_vocab.default.json`) | A stream with no trials in it |
-| `SPN105` | A spine of the wrong shape: an unknown phase, no ITI or not last, a slot of the wrong direction, a missing duration | A table the interpreter cannot walk |
-| `SPN106` | More than one row or block, a block that does not draw the row, a trial count or probability out of range | What the tracer cannot express yet |
-| `SPN107` | Two slots on one channel | One pin, two roles |
+| `SPN105` | A spine of the wrong shape: an unknown phase, no ITI or not last, a slot of the wrong direction, a missing duration, a slot called `timeout`, more than one Outcome; a window whose `responses` are not distinct input slots, more than one window, a window not followed by exactly one Outcome, an Outcome after a window that names its own `line`; with several rows, a first phase that is an Outcome; a table over 254 states | A table the interpreter cannot walk |
+| `SPN106` | No row, more than one block, a block that does not draw every row exactly once, a row id that is not lower case or not its own, a trial count, reward time or probability out of range | What the session cannot run yet, or a parameter the board would clamp |
+| `SPN107` | Two slots on one channel, in one row or across rows | One pin, two roles |
 | `SPN108` | A row with no name | Every readout titled after nothing |
+| `SPN109` | A contingency map that is wrong: a watched response or the timeout with no entry, an entry for a slot the window does not watch, an unknown outcome class, a `line` that is not an output slot, a probability outside 0–1000 or with no line, `hold` on the timeout or without the window's `holdMs`, a map on a spine with no window | A response that goes nowhere, or pays where nobody meant |
 
 ## Rig wiring
 
@@ -1030,7 +1048,7 @@ Before a run starts, the board proves it holds exactly what the host meant it to
 sequenceDiagram
     participant Host as Sidecar
     participant Board as Mega2560
-    Board-->>Host: INTERP=1 (a spine task: INTERP=2)
+    Board-->>Host: INTERP=1 (a spine task: INTERP=3)
     Board-->>Host: FREE_RAM=n
     Board-->>Host: READY
     Host->>Board: BEGIN
@@ -1051,7 +1069,7 @@ sequenceDiagram
   > [!CAUTION]
   > **A parameter whose declared `max` is above 32767 can be refused by the board.** GRGL's `task.json` allows `ERR`, `ITI`, `NPH`, `LZD` up to 120000, `NWP`, `LZS`, `S<n>W`, `S<n>O` up to 60000 and `LZM` up to 300000, but the board holds them in a 16-bit `int`. Such a value now refuses the start with `PARAMS_CLAMPED` instead of running wrapped; the form does not yet stop it being typed.
 - **`START SEED=<n>`** is sent only after the answer clears. It carries the seed and nothing else ([SEED](#seed)); the board clamps and applies ramp row 0 then.
-- **`INTERP=<n>`** is printed before `READY` and names the firmware interpreter, in one numbering space: `1` is `BehaviorBox.h`'s trial runner (GRGL), `2` is the state-table interpreter that runs a [spine task](#the-runner) (`BoxInterp.h`'s `INTERP_VERSION`). The run's `.tsv` header records it as `# interp: <n>` ([DATA.md](DATA.md#the-tsv-log)), so the header alone tells a spine run from a legacy one; a board that announced none leaves the line out. Replay runs only the state-table versions and refuses `1`.
+- **`INTERP=<n>`** is printed before `READY` and names the firmware interpreter, in one numbering space: `1` is `BehaviorBox.h`'s trial runner (GRGL), `2` and `3` are table formats of the state-table interpreter that runs a [spine task](#the-runner) (`BoxInterp.h`'s `INTERP_VERSION`, which a spine board announces as `3`). The run's `.tsv` header records it as `# interp: <n>` ([DATA.md](DATA.md#the-tsv-log)), so the header alone tells a spine run from a legacy one; a board that announced none leaves the line out. Replay runs only the state-table versions and refuses `1`.
 - **`FREE_RAM=<n>`** follows it: the bytes of RAM free between the heap and the stack, measured in `setup()` with the sketch's tables already resident (`boxFreeRam()` in `BehaviorBox.h`). The header records it as `# free_ram: <n>`, and the `.json` as `free_ram`. A host build has no RAM to measure and reports a fixed value.
 
 The start is refused, with nothing started and the port in `ERROR` until acknowledged, on any of:

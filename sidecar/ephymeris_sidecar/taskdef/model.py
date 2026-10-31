@@ -163,40 +163,80 @@ class SpinePhase:
     """One phase from the palette. Fields a phase does not use stay None.
 
     `ms` is the default of the phase's timer parameter (`T<i>` on the wire);
-    a Wait has one only when it declares `timeout_ms`.
+    a Wait has one only when it declares `timeout_ms`. A Response window's
+    `hold_ms` is the default of its `H<i>`.
     """
 
     phase: str
     on: str | None = None              # wait: the input slot whose edge moves on
     outputs: tuple[str, ...] = ()      # output slots HIGH while in the phase
-    ms: int | None = None              # present, delay, outcome (class timeout), iti
+    ms: int | None = None              # present, delay, response (the window), outcome (class timeout), iti
     timeout_ms: int | None = None      # wait: optional, out to the ITI
     abort_on_release: str | None = None  # present: an input slot whose release aborts
-    line: str | None = None            # outcome: the reward line's slot
+    line: str | None = None            # outcome with no window before it: the reward line's slot
+    responses: tuple[str, ...] = ()    # response: the input slots it watches
+    hold_ms: int | None = None         # response: how long an entry that holds must be held
 
     def to_json(self) -> dict[str, Any]:
         out: dict[str, Any] = {"phase": self.phase}
         for key, value in (("on", self.on), ("outputs", list(self.outputs) or None),
                            ("ms", self.ms), ("timeoutMs", self.timeout_ms),
-                           ("abortOnRelease", self.abort_on_release), ("line", self.line)):
+                           ("abortOnRelease", self.abort_on_release), ("line", self.line),
+                           ("responses", list(self.responses) or None), ("holdMs", self.hold_ms)):
             if value is not None:
                 out[key] = value
         return out
 
 
 @dataclass(frozen=True)
+class MapEntry:
+    """Where one watched response, or the window's timeout, takes a trial.
+
+    `line` is an output slot the row binds to a reward channel; the reward is
+    drawn with `reward_permille`, which goes only with a line. `hold` asks for
+    the response to be held for the window's `holdMs`, and letting go early is
+    `hold_broken`.
+    """
+
+    outcome: str
+    line: str | None = None
+    reward_permille: int = 1000
+    hold: bool = False
+
+    def to_json(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"outcome": self.outcome}
+        if self.line is not None:
+            out["line"] = self.line
+        if self.line is not None or self.reward_permille != 1000:
+            out["rewardPermille"] = self.reward_permille
+        if self.hold:
+            out["hold"] = True
+        return out
+
+
+@dataclass(frozen=True)
 class SpineRow:
-    """A trial type: a stable id, the operator's name, and a channel per slot."""
+    """A trial type: a stable id, the operator's name, a channel per slot, and
+    its contingency map: each of the window's responses, and `timeout`, to an
+    outcome class (`MapEntry`).
+
+    `reward_permille` is read only by an Outcome with no Response window before
+    it; after a window each map entry carries its own.
+    """
 
     id: str
     name: str
     bind: dict[str, str]
     reward_ms: int = 100
     reward_permille: int = 1000
+    map: dict[str, MapEntry] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, Any]:
-        return {"id": self.id, "name": self.name, "bind": dict(self.bind),
-                "rewardMs": self.reward_ms, "rewardPermille": self.reward_permille}
+        out: dict[str, Any] = {"id": self.id, "name": self.name, "bind": dict(self.bind),
+                               "rewardMs": self.reward_ms, "rewardPermille": self.reward_permille}
+        if self.map:
+            out["map"] = {key: entry.to_json() for key, entry in self.map.items()}
+        return out
 
 
 @dataclass(frozen=True)
@@ -261,6 +301,8 @@ class Spine:
                 timeout_ms=opt_int(p.get("timeoutMs"), "timeoutMs"),
                 abort_on_release=_opt_str(p.get("abortOnRelease")),
                 line=_opt_str(p.get("line")),
+                responses=strings(p.get("responses"), "a window's responses"),
+                hold_ms=opt_int(p.get("holdMs"), "holdMs"),
             )
             for p in objects("spine")
         )
@@ -275,6 +317,7 @@ class Spine:
                 bind={str(k): v for k, v in bind.items()},
                 reward_ms=_int(r.get("rewardMs", 100), "rewardMs"),
                 reward_permille=_int(r.get("rewardPermille", 1000), "rewardPermille"),
+                map=_contingency_map(r.get("map")),
             ))
         return Spine(
             slots=tuple(SpineSlot(id=str(s.get("id", "")), type=str(s.get("type", ""))) for s in objects("slots")),
@@ -413,6 +456,29 @@ class TaskDefinition:
 # --------------------------------------------------------------------------- #
 # Parsing helpers
 # --------------------------------------------------------------------------- #
+
+
+def _contingency_map(raw: Any) -> dict[str, MapEntry]:
+    """A row's `map`, refused only for a value of the wrong JSON type."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict) or any(not isinstance(v, dict) for v in raw.values()):
+        raise TaskDefinitionError("a row's map takes each response, and timeout, to an object")
+    out: dict[str, MapEntry] = {}
+    for key, entry in raw.items():
+        hold = entry.get("hold", False)
+        if not isinstance(hold, bool):
+            raise TaskDefinitionError(f"map entry {key!r}: hold is true or false, not {hold!r}")
+        outcome = entry.get("outcome", "")
+        if not isinstance(outcome, str):
+            raise TaskDefinitionError(f"map entry {key!r}: outcome is a class name, not {outcome!r}")
+        out[str(key)] = MapEntry(
+            outcome=outcome,
+            line=_opt_str(entry.get("line")),
+            reward_permille=_int(entry.get("rewardPermille", 1000), "rewardPermille"),
+            hold=hold,
+        )
+    return out
 
 
 def _req_str(raw: dict, key: str) -> str:

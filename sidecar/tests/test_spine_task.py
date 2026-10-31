@@ -82,7 +82,8 @@ def test_the_profile_carries_everything_replay_needs():
     low = lowering.lower([p.to_json() for p in tracer().spine.phases],
                          inputs=["port"], outputs=["cue", "sample", "reward"])
     assert spine["interp"] == lowering.INTERP_VERSION
-    assert spine["table"] == {"states": [list(s) for s in low.states], "edges": [list(e) for e in low.edges]}
+    assert spine["table"] == {"states": [list(s) for s in low.states], "edges": [list(e) for e in low.edges],
+                              "phases": [0, 1, 2, 3, 3, 3, 4], "rows": [0] * 7}
     assert spine["params"] == list(low.params)
     assert spine["inputs"] == [{"slot": "port", "channel": "odor_port",
                                 "rise": "ODOR_PORT_ENTER", "fall": "ODOR_PORT_EXIT"}]
@@ -127,6 +128,139 @@ def test_a_vocabulary_without_the_trial_start_code_is_diagnosed():
     fixture.install(rig, vocab)
     assert "SPN104" in codes(tracer())
     assert '#error "the strobe vocabulary has no TRIAL_START' in generate.task_spine_h(tracer())
+
+
+# --- the Response window, the contingency map and several rows (#101) ----------
+
+
+@pytest.mark.parametrize("make", [fixture.two_afc, fixture.go_no_go], ids=["2afc", "go_no_go"])
+def test_a_task_with_a_window_and_rows_round_trips_and_is_clean(make):
+    raw = make()
+    assert TaskDefinition.from_json(raw).to_json() == raw | {"legacyNames": [], "notes": ""}
+    assert validate(TaskDefinition.from_json(raw)) == []
+
+
+def test_the_go_no_go_snapshot_names_each_bit_and_annotates_each_state():
+    definition = TaskDefinition.from_json(fixture.go_no_go())
+    spine = generate.build_profile(definition).spine
+    assert spine["interp"] == lowering.INTERP_VERSION == 3
+    # One bit per channel: `sample` is two odor lines, one per row.
+    assert [(o["slot"], o["channel"]) for o in spine["outputs"]] == [
+        ("cue", "trial_light"), ("sample", "odor_line_1"), ("sample", "odor_line_2"), ("reward", "fluid_2")]
+    assert spine["outputs"][2] == {"slot": "sample", "channel": "odor_line_2",
+                                   "on": "ODOR_LINE_2_ON", "off": "ODOR_LINE_2_OFF"}
+    table = spine["table"]
+    assert len(table["phases"]) == len(table["rows"]) == len(table["states"])
+    assert table["phases"][0] is None and table["rows"][0] is None, "the pick state is no phase's and no row's"
+    assert table["states"][0][10] == lowering.STARTS_TRIAL | lowering.PICK
+    assert set(table["rows"][1:]) == {0, 1}
+    # Every class the two maps name is marked by exactly one state.
+    marked = sorted(lowering.OUTCOME_CLASSES[s[11] - 1] for s in table["states"] if s[11])
+    assert marked == ["correct", "false_alarm", "omission", "withheld"]
+
+
+def test_each_row_and_entry_has_its_own_parameter_keyed_by_row_id():
+    profile = generate.build_profile(TaskDefinition.from_json(fixture.two_afc()))
+    fields = {f.metadata_key: (f.wire_key, f.default) for f in profile.config}
+    assert fields == {
+        "block_trials": ("NT", 20),
+        "present_1_ms": ("T1", 1000),
+        "response_2_ms": ("T2", 5000),
+        "response_2_hold_ms": ("H2", 200),
+        "outcome_3_ms": ("T3", 0),
+        "iti_4_ms": ("T4", 3000),
+        "reward_ms_odor_1": ("RW1", 100),
+        "reward_permille_odor_1_right": ("RP1_2", 1000),
+        "reward_ms_odor_2": ("RW2", 100),
+        "reward_permille_odor_2_left": ("RP2_1", 1000),
+    }
+    assert [f.wire_key for f in profile.config] == profile.spine["params"]
+
+
+def test_the_tracer_s_reward_keys_name_its_row():
+    keys = [f.metadata_key for f in generate.build_profile(tracer()).config]
+    assert keys[-2:] == ["reward_ms_r1", "reward_permille_r1"]
+
+
+def test_a_go_no_go_folder_carries_its_table():
+    header = generate.task_spine_h(TaskDefinition.from_json(fixture.go_no_go()))
+    assert "#define SPINE_INTERP 3" in header and "#error" not in header
+    assert "#define SPINE_NUM_STATES 15" in header and "#define SPINE_NUM_OUTPUTS 4" in header
+
+
+def _window(d: dict) -> dict:
+    return d["spine"][2]
+
+
+@pytest.mark.parametrize(
+    ("edit", "code", "where"),
+    [
+        (lambda d: _window(d).update(responses=["left", "left"]), "SPN105", "spine[2].responses"),
+        (lambda d: _window(d).update(responses=["cue"]), "SPN105", "spine[2].responses"),
+        (lambda d: _window(d).update(responses=[]), "SPN105", "spine[2].responses"),
+        (lambda d: _window(d).pop("ms"), "SPN105", "spine[2].ms"),
+        (lambda d: d["spine"].insert(3, dict(_window(d))), "SPN105", "spine"),
+        (lambda d: d["spine"].pop(3), "SPN105", "spine"),
+        (lambda d: d["spine"].insert(3, {"phase": "outcome", "ms": 0}), "SPN105", "spine"),
+        (lambda d: d["spine"][3].update(line="reward_r"), "SPN105", "spine[3].line"),
+        (lambda d: d["slots"].append({"id": "timeout", "type": "digital_in"}), "SPN105", "slots[7].id"),
+        (lambda d: d["spine"].insert(0, {"phase": "outcome", "line": "reward_r", "ms": 0}), "SPN105", "spine[0]"),
+        # A second Outcome would mark a trial's class twice.
+        (lambda d: d["spine"].insert(1, {"phase": "outcome", "line": "reward_r", "ms": 0}), "SPN105", "spine"),
+        (lambda d: d["blocks"][0].update(rows=["odor_1"]), "SPN106", "blocks[0].rows"),
+        (lambda d: d["blocks"][0].update(rows=["odor_1", "odor_1", "odor_2"]), "SPN106", "blocks[0].rows"),
+        (lambda d: d["rows"][1].update(id="odor_1"), "SPN106", "rows[1].id"),
+        (lambda d: d["rows"][1].update(id="Odor 2"), "SPN106", "rows[1].id"),
+        (lambda d: d["rows"][1].update(rewardMs=9000), "SPN106", "rows[1].rewardMs"),
+        (lambda d: d["rows"][1]["bind"].update(sample="fluid_1"), "SPN107", "rows[1].bind.sample"),
+        (lambda d: d["rows"][1].update(name=""), "SPN108", "rows[1].name"),
+        (lambda d: d["rows"][0]["map"].pop("left"), "SPN109", "rows[0].map.left"),
+        (lambda d: d["rows"][0]["map"].pop("timeout"), "SPN109", "rows[0].map.timeout"),
+        (lambda d: d["rows"][0]["map"].update(port={"outcome": "correct"}), "SPN109", "rows[0].map.port"),
+        (lambda d: d["rows"][0]["map"]["left"].update(outcome="great"), "SPN109", "rows[0].map.left.outcome"),
+        (lambda d: d["rows"][0]["map"]["left"].update(line="port"), "SPN109", "rows[0].map.left.line"),
+        (lambda d: d["rows"][0]["map"]["right"].update(rewardPermille=1001), "SPN109",
+         "rows[0].map.right.rewardPermille"),
+        (lambda d: d["rows"][0]["map"]["left"].update(rewardPermille=500), "SPN109",
+         "rows[0].map.left.rewardPermille"),
+        (lambda d: d["rows"][0]["map"]["timeout"].update(hold=True), "SPN109", "rows[0].map.timeout.hold"),
+        (lambda d: _window(d).pop("holdMs"), "SPN109", "rows[0].map.right.hold"),
+    ],
+)
+def test_each_window_and_map_problem_is_located(edit, code, where):
+    raw = fixture.two_afc()
+    edit(raw)
+    found = {(d.code, d.location) for d in validate(TaskDefinition.from_json(raw))}
+    assert (code, where) in found, found
+    if code == "SPN105":  # a spine of the wrong shape is no table: its folder refuses to compile
+        assert "#error" in generate.task_spine_h(TaskDefinition.from_json(raw))
+
+
+def test_a_task_whose_row_ids_collide_still_saves_and_says_why(tmp_path):
+    """Row ids name parameters, so two rows of one id would declare one key
+    twice: the profile is refused unless the table is withheld."""
+    raw = fixture.two_afc()
+    raw["rows"][1]["id"] = "odor_1"
+    raw["blocks"][0]["rows"] = ["odor_1"]
+    store = TaskStore(tmp_path, library_root=FIRMWARE)
+    problems = store.save(TaskDefinition.from_json(raw))
+    assert ("SPN106", "rows[1].id") in {(d["code"], d["location"]) for d in problems}
+    profile = task_profile.load_profile(store.sketch_dir(TaskDefinition.from_json(raw)))
+    assert profile.spine["table"] is None
+
+
+def test_a_map_on_a_spine_with_no_window_is_diagnosed():
+    raw = fixture.tracer()
+    raw["rows"][0]["map"] = {"timeout": {"outcome": "omission"}}
+    assert ("SPN109", "rows[0].map") in {(d.code, d.location) for d in validate(TaskDefinition.from_json(raw))}
+
+
+def test_a_table_over_the_format_s_size_is_diagnosed():
+    raw = fixture.go_no_go()
+    raw["rows"] = [dict(raw["rows"][i % 2], id=f"row_{i}", name=f"Row {i}") for i in range(40)]
+    raw["blocks"][0]["rows"] = [r["id"] for r in raw["rows"]]
+    found = {(d.code, d.location) for d in validate(TaskDefinition.from_json(raw))}
+    assert ("SPN105", "spine") in found
 
 
 @pytest.mark.parametrize(

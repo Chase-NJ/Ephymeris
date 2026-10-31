@@ -27,7 +27,7 @@
 #define BF_FLUID_ON 46
 #define BF_FLUID_OFF 47
 
-#define SPINE_INTERP 2
+#define SPINE_INTERP 3
 
 #define SPINE_NUM_STATES 6
 #define SPINE_STATES { \

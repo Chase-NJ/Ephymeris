@@ -1,7 +1,8 @@
 """A phase-spine task: what is wrong with one, and the folder it generates (`TASKS.md#spine-tasks`).
 
-ADR 0003's first tracer: a spine of the first phases, one row binding its
-slots to this rig's channels, one block. The definition's data is
+ADR 0003's spine: a spine of phases, rows that bind its slots to this rig's
+channels and map each response to an outcome class, one block drawing them.
+The definition's data is
 `model.Spine`; this module judges it against the rig and the vocabulary and
 writes what the board runs:
 
@@ -31,7 +32,7 @@ from typing import Any
 
 from ..rig import registry
 from . import lowering
-from .model import Spine, TaskDefinition
+from .model import ID_RE, Spine, TaskDefinition
 from .validate import Diagnostic
 
 #: The structural codes a spine strobes, by role (`0003-phase-spine-task-model.md#the-strobe-stream`).
@@ -65,7 +66,7 @@ class _Resolved:
 
 
 def diagnostics(definition: TaskDefinition) -> list[Diagnostic]:
-    """Every problem with a spine task, located (SPN101–SPN108)."""
+    """Every problem with a spine task, located (SPN101–SPN109)."""
     return _resolve(definition).problems
 
 
@@ -79,9 +80,13 @@ def _resolve(definition: TaskDefinition) -> _Resolved:
         out.problems.append(Diagnostic(location, message, code))
 
     slot_type: dict[str, str] = {}
+    slots_before = len(out.problems)
     for i, slot in enumerate(spine.slots):
         if not slot.id or slot.id in slot_type:
             problem(f"slots[{i}].id", "SPN105", f"slot {slot.id!r} needs an id of its own")
+        elif slot.id == lowering.TIMEOUT:
+            problem(f"slots[{i}].id", "SPN105", f"no slot can be called {lowering.TIMEOUT!r}: a row's map "
+                    "keeps that key for the window running out")
         elif slot.type not in SLOT_TYPES:
             problem(f"slots[{i}].type", "SPN105", f"slot {slot.id!r} is {slot.type!r}, not one of {SLOT_TYPES}")
         else:
@@ -89,45 +94,19 @@ def _resolve(definition: TaskDefinition) -> _Resolved:
     inputs = [s for s, t in slot_type.items() if t == "digital_in"]
     outputs = [s for s, t in slot_type.items() if t == "digital_out"]
 
-    shape_ok = _shape_problems(spine, slot_type, problem)
-    if shape_ok:
-        try:
-            out.lowered = lowering.lower([p.to_json() for p in spine.phases], inputs=inputs, outputs=outputs)
-        except lowering.LoweringError as exc:  # every case is diagnosed above; this is the guard
-            problem("spine", "SPN105", str(exc))
-    if out.lowered is None:
-        out.blockers.append("this spine cannot be lowered to a state table; see the task's diagnostics")
+    shape_ok = _shape_problems(spine, slot_type, problem) and len(out.problems) == slots_before
+    rows_ok = _row_problems(spine, problem)
+    map_ok = _map_problems(spine, slot_type, problem)
+    rows = [r.to_json() for r in spine.rows]
 
-    # One row and one block: the tracer. Rows that differ need per-row states
-    # (#101); several blocks need the block runner (#103).
-    if len(spine.rows) != 1:
-        problem("rows", "SPN106", f"a spine task has exactly one row for now, not {len(spine.rows)}")
-    if len(spine.blocks) != 1:
-        problem("blocks", "SPN106", f"a spine task has exactly one block for now, not {len(spine.blocks)}")
-    row = spine.rows[0] if spine.rows else None
-    if spine.blocks:
-        block = spine.blocks[0]
-        if row is None or list(block.rows) != [row.id]:
-            problem("blocks[0].rows", "SPN106", "the block draws the task's one row, by its id")
-        if not 1 <= block.trials <= _TRIALS_MAX:
-            problem("blocks[0].trials", "SPN106", f"a block runs 1 to {_TRIALS_MAX} trials")
-    if row is not None and not row.name.strip():
-        problem("rows[0].name", "SPN108", "this row has no name. Its name is what every readout of it is titled")
-    if row is not None and not 0 <= row.reward_permille <= 1000:
-        problem("rows[0].rewardPermille", "SPN106", "a reward probability is 0 to 1000 permille")
-    if row is not None and not 0 <= row.reward_ms <= _REWARD_MS_MAX:
-        # The board holds RW1 to this range and would refuse the start (CLAMPED).
-        problem("rows[0].rewardMs", "SPN106", f"a reward opens its line for 0 to {_REWARD_MS_MAX} ms")
-
-    bind = row.bind if row is not None else {}
-    held: dict[str, str] = {}
-    for kind, slots, edges in (("in", inputs, _INPUT_EDGES), ("out", outputs, _OUTPUT_EDGES)):
-        for slot in slots:
-            at = f"rows[0].bind.{slot}"
-            name = bind.get(slot, "")
+    # Every row's bindings. One channel serves one slot, across rows too; the
+    # same channel in the same slot of several rows is one bit.
+    slot_of: dict[str, str] = {}
+    for r, row in enumerate(spine.rows):
+        for slot in (*inputs, *outputs):
+            at = f"rows[{r}].bind.{slot}"
+            name = row.bind.get(slot, "")
             channel = channels.get(name) if name else None
-            entry: dict[str, Any] = {"slot": slot, "channel": name}
-            (out.inputs if kind == "in" else out.outputs).append(entry)
             if channel is None:
                 problem(at, "SPN101", f"slot {slot!r} is bound to no channel" if not name
                         else f"this rig has no channel {name!r}")
@@ -138,9 +117,19 @@ def _resolve(definition: TaskDefinition) -> _Resolved:
                         f"needs a {slot_type[slot]}" + (" other than the sync line" if channel.kind == "sync" else ""))
                 out.blockers.append(f"{name} is not a {slot_type[slot]} channel")
                 continue
-            if name in held:
-                problem(at, "SPN107", f"{name} is already slot {held[name]!r}; one channel is one slot")
-            held[name] = slot
+            if slot_of.setdefault(name, slot) != slot:
+                problem(at, "SPN107", f"{name} is already slot {slot_of[name]!r}; one channel is one slot")
+
+    # One entry per bit, each with its channel's pin and edge codes.
+    for kind, slots, edges in (("in", inputs, _INPUT_EDGES), ("out", outputs, _OUTPUT_EDGES)):
+        bits, _ = lowering.channel_bits(slots, rows)
+        for slot, name in bits:
+            entry: dict[str, Any] = {"slot": slot, "channel": name}
+            (out.inputs if kind == "in" else out.outputs).append(entry)
+            channel = channels.get(name) if name else None
+            if channel is None or channel.type != slot_type[slot] or channel.kind == "sync":
+                continue  # diagnosed above
+            at = next(f"rows[{r}].bind.{slot}" for r, row in enumerate(spine.rows) if row.bind.get(slot) == name)
             entry["pin"] = channel.index
             if kind == "in":
                 entry["activeHigh"] = channel.active_level == "high"
@@ -154,6 +143,15 @@ def _resolve(definition: TaskDefinition) -> _Resolved:
                     out.blockers.append(f"the {edge} edge of {name} has no strobe code")
                 else:
                     entry[role] = code
+
+    if shape_ok and rows_ok and map_ok:
+        try:
+            out.lowered = lowering.lower([p.to_json() for p in spine.phases], inputs=inputs, outputs=outputs,
+                                         rows=rows)
+        except lowering.LoweringError as exc:  # too many states, or two responses on one channel
+            problem("spine", "SPN105", str(exc))
+    if out.lowered is None:
+        out.blockers.append("this spine cannot be lowered to a state table; see the task's diagnostics")
 
     for role, name in STRUCTURAL.items():
         if name not in vocab:
@@ -176,6 +174,21 @@ def _shape_problems(spine: Spine, slot_type: dict[str, str], problem) -> bool:  
     kinds = [p.phase for p in phases]
     if kinds.count("iti") != 1 or not kinds or kinds[-1] != "iti" or len(phases) < 2:
         bad("spine", "a spine ends in exactly one ITI, after at least one other phase: every abort goes there")
+    if kinds.count("outcome") > 1:
+        # Each resolved trial marks its class in exactly one state (TASKS.md#lowering).
+        bad("spine", "a spine has at most one Outcome: a second would mark a trial's class twice")
+    windows = [i for i, kind in enumerate(kinds) if kind == "response"]
+    if len(windows) > 1:
+        bad("spine", "a spine has at most one Response window")
+    window = windows[0] if windows else None
+    if window is not None:
+        end = kinds.index("iti") if "iti" in kinds else len(kinds)
+        if kinds[window + 1 : end].count("outcome") != 1:
+            bad("spine", "a Response window is followed by exactly one Outcome, before the ITI: the row's "
+                "map says what it pays")
+    if len(spine.rows) > 1 and kinds and kinds[0] == "outcome":
+        bad("spine[0]", "with several rows the first phase cannot be an Outcome: a trial starts by drawing "
+            "its row, and an Outcome's draw cannot follow that one in the same tick")
     for i, p in enumerate(phases):
         at = f"spine[{i}]"
         if p.phase not in lowering.PHASES:
@@ -189,13 +202,103 @@ def _shape_problems(spine: Spine, slot_type: dict[str, str], problem) -> bool:  
         if p.phase == "present" and p.abort_on_release is not None \
                 and slot_type.get(p.abort_on_release) != "digital_in":
             bad(f"{at}.abortOnRelease", f"{p.abort_on_release!r} is not an input slot")
-        if p.phase == "outcome" and slot_type.get(p.line or "") != "digital_out":
-            bad(f"{at}.line", f"an outcome opens an output slot's line; {p.line!r} is not one")
-        if p.phase in ("present", "delay", "iti") and p.ms is None:
+        if p.phase == "response":
+            if not p.responses or len(set(p.responses)) != len(p.responses) \
+                    or any(slot_type.get(s) != "digital_in" for s in p.responses):
+                bad(f"{at}.responses", "a window watches one or more input slots, each named once")
+        if p.phase == "outcome":
+            if window is not None and i > window:
+                if p.line is not None:
+                    bad(f"{at}.line", "an Outcome after a Response window pays as each row's map says, so it "
+                        "names no line of its own")
+            elif slot_type.get(p.line or "") != "digital_out":
+                bad(f"{at}.line", f"an outcome opens an output slot's line; {p.line!r} is not one")
+        if p.phase in ("present", "delay", "response", "iti") and p.ms is None:
             bad(f"{at}.ms", f"a {p.phase} lasts a set time; give it ms")
-        for key, value in (("ms", p.ms), ("timeoutMs", p.timeout_ms)):
+        for key, value in (("ms", p.ms), ("timeoutMs", p.timeout_ms), ("holdMs", p.hold_ms)):
             if value is not None and not 0 <= value <= _MS_MAX:
                 bad(f"{at}.{key}", f"a duration is 0 to {_MS_MAX} ms")
+    return ok
+
+
+def _row_problems(spine: Spine, problem) -> bool:  # noqa: ANN001
+    """The rows and the block (SPN106, SPN108). True when the rows can be lowered:
+    there is one, and each id is its own and can name parameters."""
+    ids_ok = True
+    if not spine.rows:
+        problem("rows", "SPN106", "a spine task has at least one row")
+    if len(spine.blocks) != 1:
+        # Several blocks need the block runner (#103).
+        problem("blocks", "SPN106", f"a spine task has exactly one block for now, not {len(spine.blocks)}")
+    seen: set[str] = set()
+    for r, row in enumerate(spine.rows):
+        at = f"rows[{r}]"
+        if not ID_RE.match(row.id):
+            ids_ok = False
+            problem(f"{at}.id", "SPN106", f"{row.id!r} is not a row id: lower case letters, digits and "
+                    "underscores, starting with a letter. It names the row's parameters")
+        elif row.id in seen:
+            ids_ok = False
+            problem(f"{at}.id", "SPN106", f"two rows are {row.id!r}; each row's id is its own")
+        seen.add(row.id)
+        if not row.name.strip():
+            problem(f"{at}.name", "SPN108", "this row has no name. Its name is what every readout of it is titled")
+        if not 0 <= row.reward_permille <= 1000:
+            problem(f"{at}.rewardPermille", "SPN106", "a reward probability is 0 to 1000 permille")
+        if not 0 <= row.reward_ms <= _REWARD_MS_MAX:
+            # The board holds RW<r> to this range and would refuse the start (CLAMPED).
+            problem(f"{at}.rewardMs", "SPN106", f"a reward opens its line for 0 to {_REWARD_MS_MAX} ms")
+    if spine.blocks:
+        block = spine.blocks[0]
+        drawn = list(block.rows)
+        if len(set(drawn)) != len(drawn) or set(drawn) != {row.id for row in spine.rows}:
+            problem("blocks[0].rows", "SPN106", "the block draws every row exactly once, by its id")
+        if not 1 <= block.trials <= _TRIALS_MAX:
+            problem("blocks[0].trials", "SPN106", f"a block runs 1 to {_TRIALS_MAX} trials")
+    return bool(spine.rows) and ids_ok
+
+
+def _map_problems(spine: Spine, slot_type: dict[str, str], problem) -> bool:  # noqa: ANN001
+    """Each row's contingency map (SPN109). True when every map can be written as states."""
+    ok = True
+
+    def bad(location: str, message: str, blocks: bool = True) -> None:
+        nonlocal ok
+        ok = ok and not blocks
+        problem(location, "SPN109", message)
+
+    windows = [p for p in spine.phases if p.phase == "response"]
+    window = windows[0] if len(windows) == 1 else None
+    for r, row in enumerate(spine.rows):
+        at = f"rows[{r}].map"
+        if window is None:
+            if row.map:
+                bad(at, "this row maps responses, but the spine has no Response window", blocks=False)
+            continue
+        keys = [*window.responses, lowering.TIMEOUT]
+        for key in keys:
+            if key not in row.map:
+                bad(f"{at}.{key}", f"the window watches {key!r} and this row's map does not say where it goes"
+                    if key != lowering.TIMEOUT else "this row's map does not say where the window running "
+                    "out goes")
+        for key, entry in row.map.items():
+            if key not in keys:
+                bad(f"{at}.{key}", f"the window does not watch {key!r}", blocks=False)
+                continue
+            if entry.outcome not in lowering.OUTCOME_CLASSES:
+                bad(f"{at}.{key}.outcome", f"{entry.outcome!r} is not an outcome class "
+                    f"{lowering.OUTCOME_CLASSES}")
+            if entry.line is not None and slot_type.get(entry.line) != "digital_out":
+                bad(f"{at}.{key}.line", f"a reward line is an output slot; {entry.line!r} is not one")
+            if not 0 <= entry.reward_permille <= 1000:
+                bad(f"{at}.{key}.rewardPermille", "a reward probability is 0 to 1000 permille", blocks=False)
+            elif entry.line is None and entry.reward_permille != 1000:
+                bad(f"{at}.{key}.rewardPermille", "a reward probability goes with a line, and this entry "
+                    "names none", blocks=False)
+            if entry.hold and key == lowering.TIMEOUT:
+                bad(f"{at}.{key}.hold", "the window running out is no response to hold")
+            elif entry.hold and window.hold_ms is None:
+                bad(f"{at}.{key}.hold", "a hold lasts the window's holdMs, and the window gives none")
     return ok
 
 
@@ -217,7 +320,11 @@ def profile_json(definition: TaskDefinition) -> dict[str, Any]:
         "inputs": [_public(e, ("slot", "channel", "rise", "fall")) for e in resolved.inputs],
         "outputs": [_public(e, ("slot", "channel", "on", "off")) for e in resolved.outputs],
         "params": list(low.params) if low else [],
-        "table": ({"states": [list(s) for s in low.states], "edges": [list(e) for e in low.edges]}
+        # `phases` and `rows`: the phase index and the row index (into `rows`)
+        # each state belongs to, null for the pick state. The trial table reads
+        # them; the board never does.
+        "table": ({"states": [list(s) for s in low.states], "edges": [list(e) for e in low.edges],
+                   "phases": list(low.phases), "rows": list(low.rows)}
                   if low else None),
         "structural": dict(STRUCTURAL),
     }
@@ -238,39 +345,55 @@ def _public(entry: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
 
 
 def _param_fields(spine: Spine, low: lowering.Lowered | None) -> list[dict[str, Any]]:
-    """One config field per parameter slot, in slot order: slot s is wire key `params[s]`."""
+    """One config field per parameter slot, in slot order: slot s is wire key `params[s]`.
+
+    Metadata keys name a row by its stable id, and a map entry by its slot (or
+    `timeout`), so renaming a row or reordering rows moves no stored value.
+    """
     if low is None:
         return []
-    row = spine.rows[0] if spine.rows else None
     block = spine.blocks[0] if spine.blocks else None
-    timer_of = {key: i for i, key in enumerate(low.timers) if key is not None}
     out: list[dict[str, Any]] = []
-    for key in low.params:
-        if key == lowering.TRIALS_KEY:
-            out.append(_int_field("block_trials", key, "Trials", block.trials if block else 1,
+    for s in low.slots:
+        if s.role == "trials":
+            out.append(_int_field("block_trials", s.key, "Trials", block.trials if block else 1,
                                   "Session", None, 1, _TRIALS_MAX,
                                   "How many trials the session runs; it ends at the start of the next."))
-        elif key == lowering.REWARD_MS_KEY:
-            name = row.name if row else "row"
-            out.append(_int_field("reward_ms", key, f"Reward — {name}", row.reward_ms if row else 0,
-                                  "Reward volume", "ms", 0, _REWARD_MS_MAX,
-                                  "How long the reward line opens: the reward volume."))
-        elif key == lowering.REWARD_PERMILLE_KEY:
-            name = row.name if row else "row"
-            out.append(_int_field("reward_permille", key, f"Reward probability — {name}",
-                                  row.reward_permille if row else 1000, "Reward volume", "‰", 0, 1000,
-                                  "The chance, in thousandths, that an outcome opens the line."))
-        else:
-            i = timer_of[key]
+        elif s.role == "timer":
+            i = s.phase
             p = spine.phases[i]
             wait = p.phase == "wait"
             metadata = f"wait_{i}_timeout_ms" if wait else f"{p.phase}_{i}_ms"
-            label = f"{'Wait timeout' if wait else p.phase.capitalize()} (phase {i + 1})"
+            name = {"wait": "Wait timeout", "response": "Response window"}.get(p.phase, p.phase.capitalize())
             default = (p.timeout_ms if wait else p.ms) or 0
-            help_text = ("How long a wait lasts before it goes to the ITI." if wait else
-                         "How long this phase lasts." if p.phase != "outcome" else
-                         "How long the outcome lasts after the reward, before the next phase.")
-            out.append(_int_field(metadata, key, label, default, "Phases", "ms", 0, _MS_MAX, help_text))
+            help_text = {
+                "wait": "How long a wait lasts before it goes to the ITI.",
+                "response": "How long the window waits for a response before the map's timeout entry.",
+                "outcome": "How long the outcome lasts after the reward, before the next phase.",
+            }.get(p.phase, "How long this phase lasts.")
+            out.append(_int_field(metadata, s.key, f"{name} (phase {i + 1})", default, "Phases", "ms", 0,
+                                  _MS_MAX, help_text))
+        elif s.role == "hold":
+            i = s.phase
+            out.append(_int_field(f"response_{i}_hold_ms", s.key, f"Response hold (phase {i + 1})",
+                                  spine.phases[i].hold_ms or 0, "Phases", "ms", 0, _MS_MAX,
+                                  "How long a response whose map entry holds must be held; letting go "
+                                  "sooner is hold broken."))
+        else:
+            row = spine.rows[s.row]
+            if s.role == "reward_ms":
+                out.append(_int_field(f"reward_ms_{row.id}", s.key, f"Reward — {row.name}", row.reward_ms,
+                                      "Reward volume", "ms", 0, _REWARD_MS_MAX,
+                                      "How long the reward line opens: the reward volume."))
+            elif s.entry is None:
+                out.append(_int_field(f"reward_permille_{row.id}", s.key, f"Reward probability — {row.name}",
+                                      row.reward_permille, "Reward volume", "‰", 0, 1000,
+                                      "The chance, in thousandths, that an outcome opens the line."))
+            else:
+                out.append(_int_field(f"reward_permille_{row.id}_{s.entry}", s.key,
+                                      f"Reward probability — {row.name}, {s.entry}",
+                                      row.map[s.entry].reward_permille, "Reward volume", "‰", 0, 1000,
+                                      f"The chance, in thousandths, that {s.entry} opens its line."))
     return out
 
 
@@ -350,7 +473,8 @@ def task_spine_h(definition: TaskDefinition, banner: str) -> str:
         "/*  The table format this was lowered for; BoxSpine.h refuses another. */",
         f"#define SPINE_INTERP {lowering.INTERP_VERSION}",
         "",
-        "/*  The state table (BoxInterp.h, THE STATE TABLE). State 0 starts a trial.",
+        "/*  The state table (BoxInterp.h, THE STATE TABLE). State 0 starts a trial;",
+        "    with several rows it is the pick state that draws the trial's row.",
         "    {outputs, watch, timer_min, timer_max, on_timeout, chance, on_hit,",
         "     on_miss, edge_first, edge_count, flags, outcome} */",
         f"#define SPINE_NUM_STATES {len(states)}",
@@ -359,10 +483,11 @@ def task_spine_h(definition: TaskDefinition, banner: str) -> str:
         f"#define SPINE_NUM_EDGES {len(edges)}",
         f"#define SPINE_EDGES {initialiser(edges)}",
         "",
-        "/*  Input bit i, in slot order: {pin, active high, debounce ms, rise code, fall code}. */",
+        "/*  Input bit i, one per channel, by slot then by row: {pin, active high,",
+        "    debounce ms, rise code, fall code}. */",
         f"#define SPINE_NUM_INPUTS {len(inputs)}",
         f"#define SPINE_INPUTS {initialiser(inputs)}",
-        "/*  Output bit j, in slot order: {pin, on code, off code}. */",
+        "/*  Output bit j, one per channel, by slot then by row: {pin, on code, off code}. */",
         f"#define SPINE_NUM_OUTPUTS {len(outputs)}",
         f"#define SPINE_OUTPUTS {initialiser(outputs)}",
         "",

@@ -44,6 +44,22 @@ def preload() -> None:
         log.exception("scipy.io failed to import; .mat files will not be written")
 
 
+#: How `refusal` names a top-level field to the operator.
+_FIELD_NAMES = {"rat": "the animal name"}
+
+
+def refusal(data: dict[str, Any]) -> str | None:
+    """Why `data` can never be written to a `.mat`, on any build, or None.
+
+    A top-level string with a character outside the BMP, such as an animal
+    name with an emoji: `to_matlab` refuses it rather than mis-size it.
+    """
+    for name, value in data.items():
+        if isinstance(value, str) and any(ord(c) > 0xFFFF for c in value):
+            return f"{_FIELD_NAMES.get(name, repr(name))} can't be written to a .mat"
+    return None
+
+
 def to_matlab(data: dict[str, Any]) -> dict[str, Any]:
     """The document with every value converted to what `savemat` should write."""
     import numpy as np

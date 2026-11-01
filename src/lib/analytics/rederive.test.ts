@@ -41,7 +41,7 @@ describe("describeRederive", () => {
     );
   });
 
-  it("names runs left to a newer version, and a .mat that wasn't written", () => {
+  it("names each run left alone, and a .mat that wasn't written", () => {
     const note = describeRederive(
       result({
         rewritten: 1,
@@ -49,12 +49,12 @@ describe("describeRederive", () => {
         skipped: 1,
         entries: [
           { jsonPath: "/a.json", status: "rewritten", reason: null, matError: "couldn't write a.mat: disk full" },
-          { jsonPath: "/c.json", status: "skipped", reason: "newer", matError: null },
+          { jsonPath: "/c.json", status: "skipped", reason: "a newer replay derived it", matError: null },
         ],
       }),
     );
     expect(note).toBe(
-      "Rewrote the trial table of 1 of 3 spine runs; left 1 spine run a newer version derived alone; /a.json: couldn't write a.mat: disk full.",
+      "Rewrote the trial table of 1 of 3 spine runs; left 1 spine run alone; /a.json: couldn't write a.mat: disk full; /c.json: a newer replay derived it.",
     );
   });
 

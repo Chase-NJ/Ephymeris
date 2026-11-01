@@ -2621,9 +2621,9 @@ One spine run Re-derive rewrote or could not (`DATA.md#re-derive`).
 | Field | Type | Notes |
 |---|---|---|
 | `jsonPath` | string | The run's `.json`; its `.mat` is the sibling in the session's mat folder. |
-| `status` | "rewritten" \| "skipped" \| "failed" | `rewritten`: its `.json` was rewritten with this build's table, or its `.mat` was older than its `.json` and was written from it. `skipped`: a newer replay derived its table, or it was replayed (`ok`) and this build cannot replay it; nothing was written. `failed`: nothing was written. A current run is counted, never listed. |
+| `status` | "rewritten" \| "skipped" \| "failed" | `rewritten`: its `.json` was rewritten with this build's table, or its `.mat` held another table and was written from the `.json`. `skipped`: nothing was written, because a newer replay derived its table, it was replayed (`ok`) and this build cannot replay it, or its `.mat` can be written by no build (an animal name outside the BMP). `failed`: something went wrong and nothing was written. A current run is counted, never listed. |
 | `reason` | string \| null | Why it was skipped or failed, when it was. |
-| `matError` | string \| null | Why its `.mat` could not be written, when it could not. Never holds the `.json` back; the next Re-derive finds the `.mat` older than its `.json` and writes it. |
+| `matError` | string \| null | Why its `.mat` could not be written, when it could not. Never holds the `.json` back; the next Re-derive finds the `.mat`'s table stale and writes it. |
 
 <a id="shape-rederiveresult"></a>
 #### RederiveResult
@@ -2635,7 +2635,7 @@ What `sessions.rederive` did to a cohort's spine runs (`DATA.md#re-derive`).
 | `scanned` | number | Spine runs found: `.json` files whose own file says a state table ran them. Legacy runs are never derived, so never counted. |
 | `rewritten` | number | Runs whose `.json` and `.mat` were rewritten with this build's table. |
 | `current` | number | Runs whose stored block already equals what this build derives: left untouched. |
-| `skipped` | number | Runs this build must not rewrite: a newer replay derived their table, or they were replayed and this build does not know their INTERP. Two lab machines on different builds can share one archive. |
+| `skipped` | number | Runs left alone, each listed with why: a newer replay derived their table, they were replayed and this build does not know their INTERP (two lab machines on different builds can share one archive), or their `.mat` can be written by no build. |
 | `failed` | number | Runs that could not be replayed or written; each is listed with why. |
 | `entries` | [RederivedRun](#shape-rederivedrun)[] | The rewritten and failed runs. |
 | `cohortId` | string | The cohort asked about. |

@@ -624,8 +624,9 @@ The Recover button chains an `analytics.rescan`, so recovered files are adopted 
 - **An older build never undoes a newer one's work.** Two lab machines on different builds can share one archive. A block whose `replay_version` is newer than this build's is `skipped`. So is a replayed (`ok`) block when this build does not know the run's `INTERP`, which would otherwise be replaced with `unreplayable`. Each skipped run is counted and listed with why.
 - **The `.json` first, then the `.mat`.**
   - If the `.json` fails, nothing has changed and the run is reported failed.
-  - If the `.mat` fails (scipy missing, a full disk, an animal name outside the BMP), that never holds the `.json` back. The failure is reported on its own (`matError`).
-  - The `.json` is always written first, so a `.mat` older than its `.json`, or a missing one, was not written from it. Re-derive writes such a `.mat` from the `.json` even when the table is current, so the next run repairs a `.mat` that failed.
+  - If the `.mat` fails (scipy missing, a full disk), that never holds the `.json` back. The failure is reported on its own (`matError`).
+  - **The `.mat` is judged by its content, as the `.json` is.** Re-derive reads only its `derived` variable. If that is not what this build would write, the `.mat` is written from the `.json` even when the `.json` is current, so the next run repairs a `.mat` that failed. A `.mat` whose table a newer replay derived is skipped. Mtime is never the test: a copy made without keeping mtimes can give an old table a new one.
+  - A `.mat` no build can write (an animal name outside the BMP, [above](#the-mat-mirror)) is not a failure of the run. Once its `.json` is current, the run is `skipped` with that reason.
 - **Archive rules:** it is an [archive write](#the-cohort-archive), so it runs under the archive lock and is refused while a box runs (a finishing run writes its own `.json`). Each file it wrote, and only those, is queued for backup.
 - **No number in Analytics changes**, since the app never reads the table. A rewritten file's new mtime makes its next summary read it once.
 

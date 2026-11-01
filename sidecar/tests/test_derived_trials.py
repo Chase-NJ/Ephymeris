@@ -379,7 +379,7 @@ async def test_rederive_refreshes_the_json_when_the_mat_cannot_be_written(rig, m
     from ephymeris_sidecar.sessions import matwriter
 
     _, json_path, mat = run_through_writer(rig.root, recorded_document())
-    stale_on_disk(json_path, replay_version=0)
+    matwriter.savemat(str(mat), stale_on_disk(json_path, replay_version=0))
     real = matwriter.savemat
 
     def full_disk(*_args):  # noqa: ANN002, ANN202
@@ -396,7 +396,7 @@ async def test_rederive_refreshes_the_json_when_the_mat_cannot_be_written(rig, m
     monkeypatch.setattr(matwriter, "savemat", real)
     again = await rig.archive.rederive(rig.cohort.id)
     assert again["rewritten"] == 1 and again["entries"][0]["matError"] is None, \
-        "the .json is current, but its .mat is older than it, so the .mat is written"
+        "the .json is current, but its .mat still holds the old table, so the .mat is written"
     assert rig.changes[-1].files_to_back_up == (str(mat),)
     assert float(load_mat(mat)[DERIVED][0, 0]["replay_version"][0, 0]) == spine_stream.REPLAY_VERSION
     assert (await rig.archive.rederive(rig.cohort.id))["current"] == 1
@@ -480,8 +480,51 @@ async def test_an_animal_name_outside_the_bmp_never_holds_the_json_back(rig) -> 
     assert DERIVED in read_json(json_path) and not mat.exists()
     stale_on_disk(json_path, replay_version=0)
     [entry] = (await rig.archive.rederive(rig.cohort.id))["entries"]
-    assert entry["status"] == "rewritten" and "BMP" in entry["matError"]
+    assert entry["status"] == "rewritten" and "can't be written to a .mat" in entry["matError"]
     assert read_json(json_path)[DERIVED]["replay_version"] == spine_stream.REPLAY_VERSION
+    assert rig.changes[-1].files_to_back_up == (str(json_path),)
+
+    # From then on the .json is current and its .mat can never be written, as
+    # on any build: not this run's failure, so not `failed`, every time.
+    again = await rig.archive.rederive(rig.cohort.id)
+    assert (again["failed"], again["skipped"]) == (0, 1)
+    assert again["entries"][0]["reason"] == "the animal name can't be written to a .mat"
+
+
+async def test_a_stale_mat_with_a_newer_mtime_is_rewritten(rig) -> None:  # noqa: ANN001, F811
+    """The `.mat` is judged by its content, as the `.json` is: a copy made
+    without keeping mtimes can leave an old table with a new mtime."""
+    import os
+
+    from ephymeris_sidecar.sessions import matwriter
+
+    _, json_path, mat = run_through_writer(rig.root, recorded_document())
+    old = {**read_json(json_path)}
+    old[DERIVED] = {**old[DERIVED], "replay_version": 0}
+    matwriter.savemat(str(mat), old)
+    later = json_path.stat().st_mtime_ns + 10**9
+    os.utime(mat, ns=(later, later))
+
+    result = await rig.archive.rederive(rig.cohort.id)
+    [entry] = result["entries"]
+    assert (result["rewritten"], entry["matError"]) == (1, None)
+    assert rig.changes[-1].files_to_back_up == (str(mat),), "the .json was current"
+    assert float(load_mat(mat)[DERIVED][0, 0]["replay_version"][0, 0]) == spine_stream.REPLAY_VERSION
+    assert (await rig.archive.rederive(rig.cohort.id))["current"] == 1
+
+
+async def test_a_mat_from_a_newer_replay_is_left_alone(rig) -> None:  # noqa: ANN001, F811
+    from ephymeris_sidecar.sessions import matwriter
+
+    _, json_path, mat = run_through_writer(rig.root, recorded_document())
+    newer = {**read_json(json_path)}
+    newer[DERIVED] = {**newer[DERIVED], "replay_version": spine_stream.REPLAY_VERSION + 1}
+    matwriter.savemat(str(mat), newer)
+    before = mat.read_bytes()
+
+    result = await rig.archive.rederive(rig.cohort.id)
+    assert result["skipped"] == 1 and "newer" in result["entries"][0]["reason"]
+    assert mat.read_bytes() == before and not rig.changes
 
 
 async def test_rederive_is_refused_while_a_box_is_writing(rig) -> None:  # noqa: ANN001, F811

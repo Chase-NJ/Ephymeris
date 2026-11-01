@@ -22,12 +22,10 @@ export function describeRederive(result: RederiveResult): string {
       : `Rewrote the trial table of ${result.rewritten} of ${runs(result.scanned)}`,
   ];
   if (result.skipped > 0) {
-    parts.push(
-      `left ${runs(result.skipped)} a newer version derived alone`,
-    );
+    parts.push(`left ${runs(result.skipped)} alone`);
   }
   for (const entry of result.entries) {
-    if (entry.status === "failed") {
+    if (entry.status !== "rewritten") {
       parts.push(`${entry.jsonPath}: ${entry.reason ?? "failed"}`);
     } else if (entry.matError) {
       parts.push(`${entry.jsonPath}: ${entry.matError}`);

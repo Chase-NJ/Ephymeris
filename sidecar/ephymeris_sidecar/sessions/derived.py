@@ -222,9 +222,11 @@ def rederive_file(json_path: Path) -> dict[str, Any] | None:
     - A block that differs from what this build derives is written into the
       `.json`, every other key as read. A `.json` that fails changes nothing.
     - Then the `.mat`, from the same document, whenever the `.json` changed or
-      the `.mat` is older than it (or missing). One that fails never holds the
-      `.json` back: it is reported as `matError`, and the next Re-derive finds
-      it older than its `.json` and writes it.
+      the `.mat`'s own derived block is not what this build would write (judged
+      by content; one a newer replay wrote is `skipped`). One that fails never
+      holds the `.json` back: it is reported as `matError`, and the next
+      Re-derive finds it stale and writes it. One no build can write (an
+      animal name outside the BMP) is `skipped` once the `.json` is current.
     - Otherwise the run is `current` and nothing is written.
     """
     # Here, not at the top: both import this module.
@@ -261,10 +263,22 @@ def rederive_file(json_path: Path) -> dict[str, Any] | None:
             return entry
         entry["written"].append(str(json_path))
         entry["status"] = "rewritten"
-    elif _no_older(mat_path, json_path):
-        entry["status"] = "current"
-        return entry
+    else:
+        held = _mat_kept(mat_path, block)
+        if held == "current":
+            entry["status"] = "current"
+            return entry
+        if held is not None:
+            entry.update(status="skipped", reason=held)
+            return entry
 
+    refused = matwriter.refusal(document)
+    if refused is not None:
+        # Not this run's failure: no build can write it (`DATA.md#the-mat-mirror`).
+        entry["matError"] = refused
+        if entry["status"] != "rewritten":
+            entry.update(status="skipped", reason=refused)
+        return entry
     try:
         mat_path.parent.mkdir(parents=True, exist_ok=True)
         writer.write_atomic(mat_path, lambda part: matwriter.savemat(str(part), document))
@@ -296,13 +310,49 @@ def _kept(stored: Any, block: dict[str, Any]) -> str | None:
     return None
 
 
-def _no_older(mat_path: Path, json_path: Path) -> bool:
-    """The `.mat` is there and no older than its `.json`, which is always
-    written first, so it was written from that `.json`'s document."""
+def _mat_kept(mat_path: Path, block: dict[str, Any]) -> str | None:
+    """Whether a run whose `.json` is current may keep its `.mat`: "current"
+    when the `.mat`'s derived block is what this build would write, a reason
+    when a newer replay wrote it, or None when it must be written.
+
+    Judged by content, as the `.json` is, never by mtime: a copy made without
+    keeping mtimes can give an old table a new one. Only `derived` is read.
+    """
+    import io
+
     try:
-        return mat_path.stat().st_mtime_ns >= json_path.stat().st_mtime_ns
-    except OSError:
+        import scipy.io
+
+        on_disk = scipy.io.loadmat(str(mat_path), variable_names=[DERIVED_KEY]).get(DERIVED_KEY)
+        version = float(on_disk[0, 0]["replay_version"].ravel()[0])
+    except Exception:  # noqa: BLE001 - missing, unreadable, or no block: write it
+        return None
+    if version > spine.REPLAY_VERSION:
+        return (f"its .mat's table was derived by a newer replay (version {version:g}; this "
+                f"build's is {spine.REPLAY_VERSION})")
+    buffer = io.BytesIO()
+    scipy.io.savemat(buffer, {DERIVED_KEY: to_matlab(block)})
+    buffer.seek(0)
+    wanted = scipy.io.loadmat(buffer)[DERIVED_KEY]
+    return "current" if _same(on_disk, wanted) else None
+
+
+def _same(a: Any, b: Any) -> bool:
+    """Two values `loadmat` gave back hold the same data, struct by struct,
+    with NaN equal to NaN."""
+    import numpy as np
+
+    if not (isinstance(a, np.ndarray) and isinstance(b, np.ndarray)):
+        return bool(a == b)
+    if a.shape != b.shape or a.dtype.names != b.dtype.names:
         return False
+    if a.dtype.names:
+        return all(_same(x[n], y[n]) for x, y in zip(a.ravel(), b.ravel()) for n in a.dtype.names)
+    if a.dtype == object or b.dtype == object:
+        return a.dtype == b.dtype and all(_same(x, y) for x, y in zip(a.ravel(), b.ravel()))
+    if a.dtype != b.dtype:
+        return False
+    return bool(np.array_equal(a, b, equal_nan=a.dtype.kind in "fc"))
 
 
 def rederive_cohort(data_folder: str) -> dict[str, Any]:

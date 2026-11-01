@@ -1680,17 +1680,18 @@ export interface RederivedRun {
   /** The run's `.json`; its `.mat` is the sibling in the session's mat folder. */
   jsonPath: string;
   /**
-   * `rewritten`: its `.json` was rewritten with this build's table, or its `.mat` was older than
-   * its `.json` and was written from it. `skipped`: a newer replay derived its table, or it was
-   * replayed (`ok`) and this build cannot replay it; nothing was written. `failed`: nothing was
-   * written. A current run is counted, never listed.
+   * `rewritten`: its `.json` was rewritten with this build's table, or its `.mat` held another
+   * table and was written from the `.json`. `skipped`: nothing was written, because a newer
+   * replay derived its table, it was replayed (`ok`) and this build cannot replay it, or its
+   * `.mat` can be written by no build (an animal name outside the BMP). `failed`: something went
+   * wrong and nothing was written. A current run is counted, never listed.
    */
   status: "rewritten" | "skipped" | "failed";
   /** Why it was skipped or failed, when it was. */
   reason: string | null;
   /**
    * Why its `.mat` could not be written, when it could not. Never holds the `.json` back; the
-   * next Re-derive finds the `.mat` older than its `.json` and writes it.
+   * next Re-derive finds the `.mat`'s table stale and writes it.
    */
   matError: string | null;
 }
@@ -1707,9 +1708,9 @@ export interface RederiveResult {
   /** Runs whose stored block already equals what this build derives: left untouched. */
   current: number;
   /**
-   * Runs this build must not rewrite: a newer replay derived their table, or they were replayed
-   * and this build does not know their INTERP. Two lab machines on different builds can share one
-   * archive.
+   * Runs left alone, each listed with why: a newer replay derived their table, they were replayed
+   * and this build does not know their INTERP (two lab machines on different builds can share one
+   * archive), or their `.mat` can be written by no build.
    */
   skipped: number;
   /** Runs that could not be replayed or written; each is listed with why. */

@@ -29,6 +29,7 @@ import pytest
 
 from ephymeris_sidecar.analytics.stream import replay as rp
 from ephymeris_sidecar.analytics.stream import spine as spine_stream
+from ephymeris_sidecar.analytics.stream.summary import summarize
 from ephymeris_sidecar.ports import handler as handler_module
 from ephymeris_sidecar.rig import registry
 from ephymeris_sidecar.sessions import recovery
@@ -247,6 +248,18 @@ async def test_a_saved_spine_task_runs_a_session_and_its_tsv_alone_replays(tmp_p
     record = spine_stream.decode(document)
     assert spine_stream.expected_stream(record) == [tuple(s) for s in document["ts_data"]], \
         "replay predicts every strobe the board sent, at its tick"
+
+    # And Analytics scores it from that replay (`ANALYTICS.md#how-a-spine-run-is-scored`):
+    # trials 1 and 3 held through the odor, trial 2 let go during it.
+    summary = summarize(document, None)
+    assert summary.status == "ok" and summary.divergence is None
+    [metric] = summary.metrics
+    assert (metric.hits, metric.counted, metric.triggered) == (2, 2, 3)
+    table = spine_stream.trial_table(document)
+    assert [t["outcome"] for t in table["trials"]] == ["correct", None, "correct"]
+    assert [t["phaseEntries"][1] for t in table["trials"]] == [200, 5000, 8500], \
+        "the present begins at each poke, on the board's own clock"
+    assert summary.replay.rewarded.n == sum(t["rewarded"] for t in table["trials"])
 
 
 async def test_a_crashed_runs_tsv_alone_replays_as_far_as_it_goes(tmp_path, monkeypatch):
@@ -504,6 +517,31 @@ async def test_pwm_tone_and_a_train_drive_their_pins_and_replay_to_every_pulse(t
     edges = sorted((t, level) for _, rise, fall in spine_stream.pulses(record) for t, level in ((rise, 1), (fall, 0)))
     assert edges == trace, "replay reconstructs every pulse the board fired, at its tick"
     assert len(trace) > 2 * len(rows)
+
+    # The run is scored by #99's replay: no divergence, a trial per row drawn.
+    result = spine_stream.replayed(document)
+    assert result.divergence is None
+    assert [t.row for t in result.trials] == rows
+
+    # A train's start and end are the record of its pulses (the pulses
+    # themselves are never strobed): a TRAIN_OFF moved by a tick or dropped,
+    # or a train length the board did not run, is a diverged run, never scored.
+    dim_off = next(i for i, (n, t) in enumerate(named) if n == "LASER_TRAIN_OFF"
+                   and t - starts[stops.index(t)] == 300)
+
+    def diverged(edit) -> spine_stream.Divergence | None:  # noqa: ANN001
+        damaged = json.loads(json.dumps(document))
+        edit(damaged)
+        return spine_stream.replayed(damaged).divergence
+
+    def shift(d: dict) -> None:
+        d["ts_data"][dim_off][1] += 1
+
+    shifted = diverged(shift)
+    assert shifted is not None and shifted.index == dim_off and "LASER_TRAIN_OFF" in shifted.expected
+    assert diverged(lambda d: d["ts_data"].pop(dim_off)) is not None
+    assert diverged(lambda d: d.update(train_ms_dim_laser=301)) is not None
+    assert spine_stream.trial_table(document) is not None
 
 
 def test_an_unknown_table_format_is_refused_rather_than_replayed():

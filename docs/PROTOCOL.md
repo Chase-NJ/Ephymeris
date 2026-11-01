@@ -2198,6 +2198,17 @@ The two commands that make a box announce itself — a trial light, a buzzer, wh
 | `on` | string |  |
 | `off` | string |  |
 
+<a id="shape-inputcount"></a>
+#### InputCount
+
+Watched rises of one input channel during one phase of a trial.
+
+| Field | Type | Notes |
+|---|---|---|
+| `phase` | number |  |
+| `channel` | string |  |
+| `count` | number |  |
+
 <a id="shape-intansettings"></a>
 #### IntanSettings
 
@@ -2338,6 +2349,20 @@ What kind of entry a note is. Closed so the log, its PDF and `notes.md` can grou
 
 "observation" \| "intervention" \| "hardware" \| "animal-health" \| "protocol-deviation"
 
+<a id="shape-outcometally"></a>
+#### OutcomeTally
+
+How many of a scope's trials ended in one outcome class (`ANALYTICS.md#metrics-from-the-trial-table`).
+
+| Field | Type | Notes |
+|---|---|---|
+| `outcomeClass` | string | An outcome class's name (`taskdef/lowering.py`'s `OUTCOME_CLASSES`), or `outcome_<n>` for a number this build has no name for. An open set: a class added later needs no wire change. |
+| `n` | number |  |
+| `of` | number | Every complete trial of the scope, unclassified ones included. |
+| `p` | number \| null |  |
+| `low` | number \| null |  |
+| `high` | number \| null |  |
+
 <a id="shape-outputline"></a>
 #### OutputLine
 
@@ -2447,6 +2472,19 @@ A scored IN_SESSION task, or a PASSTHROUGH tool (`TASKS.md#task-profile`). A beh
 How much the decoding can be trusted (`DATA.md#reading-the-archive`). Four states — `sketch-current` means the profile may have changed since the run; `inferred` means no profile resolved at all and the conditions were read out of the recorded stream itself, sound because the strobe registry is append-only but blind to conditions the animal never met.
 
 "snapshot" \| "sketch-current" \| "inferred" \| "unavailable"
+
+<a id="shape-proportion"></a>
+#### Proportion
+
+A count out of a total, with its interval.
+
+| Field | Type | Notes |
+|---|---|---|
+| `n` | number |  |
+| `of` | number |  |
+| `p` | number \| null | n / of; null when `of` is 0, never 0.0. |
+| `low` | number \| null | 95% Wilson interval (`ANALYTICS.md#uncertainty`). |
+| `high` | number \| null |  |
 
 <a id="shape-proposedanimal"></a>
 #### ProposedAnimal
@@ -2561,6 +2599,59 @@ One orphaned write-ahead log the crash-recovery backfill processed.
 | `cohortId` | string |  |
 | `dataFolder` | string |  |
 | `folderMissing` | boolean | Same distinction as RescanResult's: 'nothing there' vs 'nowhere to look'. |
+
+<a id="shape-replaydivergence"></a>
+#### ReplayDivergence
+
+Where a `diverged` run's recorded strobes first leave what replay predicts (`ANALYTICS.md#how-a-spine-run-is-scored`).
+
+| Field | Type | Notes |
+|---|---|---|
+| `detail` | string |  |
+| `index` | number \| null | 0-based position in the recorded stream of the first strobe replay did not predict. Null when the recorded inputs could not be fed to replay at all. |
+| `atMs` | number \| null |  |
+| `expected` | string \| null | What replay predicts there, `CODE_NAME@ms`; null past its end. |
+| `recorded` | string \| null | What the file records there; null past its end. |
+
+<a id="shape-replayscore"></a>
+#### ReplayScore
+
+A replayed spine run's tallies, each a function of its trial table (`ANALYTICS.md#metrics-from-the-trial-table`).
+
+| Field | Type | Notes |
+|---|---|---|
+| `interp` | number | The interpreter version the run was replayed under. |
+| `trials` | number | Complete trials: a crashed run's cut-off last trial is left out. |
+| `unclassified` | number |  |
+| `classes` | [OutcomeTally](#shape-outcometally)[] | By class number; with `unclassified` they partition `trials`. |
+| `rows` | [RowOutcomes](#shape-rowoutcomes)[] | In the task's row order. |
+| `rewarded` | [Proportion](#shape-proportion) | Trials whose reward line opened, of `trials`. |
+
+<a id="shape-replaytrial"></a>
+#### ReplayTrial
+
+One trial of a spine run, read off its replay (`ANALYTICS.md#the-trial-table`).
+
+| Field | Type | Notes |
+|---|---|---|
+| `index` | number | 0-based, in the run's order. |
+| `atMs` | number | The trial's start, in ms from the session's first tick. |
+| `block` | string \| null | The block's id, when the table can say. |
+| `row` | string \| null | The row's id, when the table can say. |
+| `rowName` | string \| null |  |
+| `level` | number \| null |  |
+| `phaseEntries` | (number \| null)[] | The first ms the trial entered each phase, aligned to `TrialTable.phases`; null for a phase it never reached. Empty when the snapshot cannot map states to phases. |
+| `response` | string \| null | The input channel whose edge was the response. |
+| `responseEdge` | "rise" \| "fall" \| null |  |
+| `responseMs` | number \| null |  |
+| `latencyMs` | number \| null | Response ms minus the ms its phase was entered. |
+| `outcome` | string \| null | Its outcome class; null when it reached none. |
+| `rewarded` | boolean |  |
+| `rewardLine` | string \| null | The output channel that paid. |
+| `rewardMs` | number \| null | How long the line was open. |
+| `correction` | boolean | A correction trial; always false until blocks have a correction rule. |
+| `inputCounts` | [InputCount](#shape-inputcount)[] | Non-zero counts only. |
+| `complete` | boolean | False only for a crashed run's cut-off last trial. |
 
 <a id="shape-rescanorphan"></a>
 #### RescanOrphan
@@ -2686,6 +2777,19 @@ One thing wrong with a wiring document, located. Every problem is reported rathe
 | `canSave` | boolean | Whether `hardware.save` of THIS draft would be taken: the draft the reply describes (the one previewed, or the one served) has no problems, differs from the served draft or would clear a notice (a copy beside `wiring.json` is not cleared by a save), and the rig's state allows a save. False while stored wiring that did not load has nothing to repair (only Reset replaces it), and while RIG108 asks for the pins to be confirmed. The frontend renders it; it never decides it. |
 | `needsPinConfirmation` | boolean | The draft is a stored file that is not in force and that the record cannot vouch for -- copied in, changed outside the app, not loaded (even once repaired in the editor), a pin map not written with its channel set, or saved here when a save after it did not finish -- so nobody has checked its pins here: offer the operator a way to confirm them, sent as `confirmedPins`. A restart never confirms them (`TASKS.md#the-channel-set-and-the-pin-map`). |
 
+<a id="shape-rowoutcomes"></a>
+#### RowOutcomes
+
+P(outcome | row): one row's trials by outcome class.
+
+| Field | Type | Notes |
+|---|---|---|
+| `rowId` | string \| null | Null for trials the table names no row for. |
+| `name` | string \| null |  |
+| `trials` | number |  |
+| `unclassified` | number | Trials that reached no outcome-bearing state. |
+| `classes` | [OutcomeTally](#shape-outcometally)[] |  |
+
 <a id="shape-runchange"></a>
 #### RunChange
 
@@ -2730,13 +2834,14 @@ The runner-held session — the same shape a sessions.status reply carries.
 | `metrics` | [MetricSeries](#shape-metricseries)[] |  |
 | `trail` | [StrategyPoint](#shape-strategypoint)[] | The joint walk through the strategy plane. Always rolling, whatever `mode` is — 'what strategy is running right now' is a rolling question. Empty when the profile's conditions can't be split into two opposing sides (`stream.strategy_axes`). Starts only once both windows hold enough counted trials, since a one-trial proportion pins the walk to a corner. Cannot be assembled client-side from `metrics`: those are indexed by each metric's own counted trials, which interleave. |
 | `trials` | [TrialRecord](#shape-trialrecord)[] | Every trial in stream order. Empty when the profile can't express outcomes, on the same rule as `RunSummary.outcomes`. Tallying this list reproduces the run's `TrialOutcomes` and, grouped by `triggerCode`, its `ConditionOutcomes` — pinned by test, so the tape and the tallies can never disagree. |
+| `trialTable` | [TrialTable](#shape-trialtable) \| null | A spine run's trial table, computed from its replay on each request and never cached (`DATA.md#caching`). Null for a legacy run, a diverged one and one replay cannot run. |
 
 <a id="shape-runstatus"></a>
 #### RunStatus
 
-Why a run has numbers or not (`ANALYTICS.md#why-a-run-has-no-numbers`). `replay-pending` is a spine task's run: recorded, and scored by replay once that exists.
+Why a run has numbers or not (`ANALYTICS.md#why-a-run-has-no-numbers`). A spine task's run is `ok` when replay scored it, `diverged` when its recorded outputs are not what replay predicts (flagged, never scored), and `unreplayable` when replay cannot run it at all, an unknown `INTERP` among them (`ANALYTICS.md#how-a-spine-run-is-scored`).
 
-"ok" \| "no-metrics" \| "replay-pending" \| "missing" \| "unreadable"
+"ok" \| "no-metrics" \| "diverged" \| "unreplayable" \| "missing" \| "unreadable"
 
 <a id="shape-runsummary"></a>
 #### RunSummary
@@ -2771,6 +2876,8 @@ Why a run has numbers or not (`ANALYTICS.md#why-a-run-has-no-numbers`). `replay-
 | `seed` | number \| null |  |
 | `detail` | string \| null |  |
 | `excludedByDefault` | boolean |  |
+| `replay` | [ReplayScore](#shape-replayscore) \| null | A spine run's tallies from its trial table, when replay scored it. Its `metrics` are then P(correct \| row) and `overall` their pooled figure. Null for every other run. |
+| `divergence` | [ReplayDivergence](#shape-replaydivergence) \| null | Set exactly when `status` is `diverged`. |
 
 <a id="shape-scopedata"></a>
 #### ScopeData
@@ -3334,6 +3441,16 @@ One classified trial (`ANALYTICS.md#how-a-strobe-stream-is-scored`) — the same
 | `outcome` | "rewarded" \| "hold-failed" \| "wrong-well" \| "no-response" \| "aborted" |  |
 | `atMs` | number \| null | Trial open, in ms from the run's first recorded timestamp. Null when the file carries no usable clock. |
 | `latencyMs` | number \| null | Trial open → the code that settled the outcome. Null for no-response/aborted trials, which nothing settles. |
+
+<a id="shape-trialtable"></a>
+#### TrialTable
+
+A spine run's trial table (`ANALYTICS.md#the-trial-table`).
+
+| Field | Type | Notes |
+|---|---|---|
+| `phases` | string[] | Each phase's kind, in spine order, for labels only. |
+| `trials` | [ReplayTrial](#shape-replaytrial)[] |  |
 
 <a id="shape-utilitybaselinestate"></a>
 #### UtilityBaselineState

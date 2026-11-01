@@ -166,6 +166,16 @@ class SessionAnimalRun:
     #: before this existed, which is honest: they ran on firmware constants.
     config: dict[str, Any] | None = None
     params_hash: str | None = None
+    #: What the board announced as `INTERP=<n>`, and the channel set its sketch
+    #: was generated against (`DATA.md#run-records`). `None` on runs recorded
+    #: before v16, and `interp` on a board that announced none.
+    interp: int | None = None
+    channel_set_hash: str | None = None
+    #: Whether replay could not predict this run's recorded outputs: written by
+    #: the analytics pass that reads its file, never at finalization
+    #: (`ANALYTICS.md#how-a-spine-run-is-scored`). `None` until replay scores it,
+    #: and on every run replay does not score.
+    diverged: bool | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {

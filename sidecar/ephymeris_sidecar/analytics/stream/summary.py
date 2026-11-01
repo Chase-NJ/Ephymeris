@@ -2,7 +2,9 @@
 
 `summarize(document, profile)` is the whole job: every declared metric replayed
 through the live accumulator, the pooled figure, the outcome tally, the
-per-condition tally and the engagement ladder, as one `RunSummary`.
+per-condition tally and the engagement ladder, as one `RunSummary`. A spine
+run is scored by replay instead (`ANALYTICS.md#how-a-spine-run-is-scored`):
+its trial table, and the metrics that are functions of it.
 """
 
 from __future__ import annotations
@@ -13,68 +15,20 @@ from typing import Any
 
 from ...tasks.profile import LiveMetric, TaskProfile
 from .document import _duration_ms, codes_of
-from .spine import REPLAY_PENDING_DETAIL, is_spine_run
+from . import table_metrics
+from .spine import Divergence, SpineDecodeError, is_spine_run, replayed
 from .engagement import TrialEngagement, engagement_of
 from .outcomes import ConditionOutcomes, TrialOutcomes, conditions_of, outcomes_of
-from .stats import _round, wilson_interval
+from .metric_summary import OVERALL_ID, MetricSummary
+from .stats import wilson_interval
 from .trials import MetricAccumulator, boundaries_for
-
-
-@dataclass(frozen=True)
-class MetricSummary:
-    """One metric's whole-session result (`ANALYTICS.md#two-probabilities-per-metric`,
-    `ANALYTICS.md#trial-counts`, `ANALYTICS.md#uncertainty`)."""
-
-    id: str
-    label: str
-    #: Whole-session P(hit) — the summary statistic used by every panel.
-    p_session: float | None
-    #: Rolling P(hit) at the profile's authored window, for continuity with
-    #: what the operator watched live. **Not** interchangeable with the above:
-    #: they diverge sharply over the first `windowSize` trials.
-    p_window: float | None
-    #: Counted trials this metric scored a hit on. Carried alongside `counted`
-    #: rather than left to be recovered from `p_session`, because POOLING two
-    #: conditions is exact only over integers: summing hits and counted answers
-    #: "how often was this animal right on either of these", where averaging the
-    #: two proportions weights a 20-trial condition like a 200-trial one.
-    hits: int
-    counted: int
-    triggered: int
-    excluded: int
-    window_size: int
-    wilson_low: float | None
-    wilson_high: float | None
-    low_confidence: bool
-    #: Which answer this condition rewards (`DATA.md#strategy-plane`), or None
-    #: when the profile
-    #: cannot prove one. What lets the strategy plane fold N conditions onto two
-    #: axes without knowing anything about odors.
-    answer_side: str | None = None
-
-    def to_json(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "label": self.label,
-            "pSession": _round(self.p_session),
-            "pWindow": _round(self.p_window),
-            "hits": self.hits,
-            "counted": self.counted,
-            "triggered": self.triggered,
-            "excluded": self.excluded,
-            "windowSize": self.window_size,
-            "wilsonLow": _round(self.wilson_low),
-            "wilsonHigh": _round(self.wilson_high),
-            "lowConfidence": self.low_confidence,
-            "answerSide": self.answer_side,
-        }
 
 
 @dataclass(frozen=True)
 class RunSummary:
     """Everything the cohort-scale panels need about one animal's run."""
 
-    status: str  # 'ok' | 'no-metrics' | 'replay-pending' | 'missing' | 'unreadable'
+    status: str  # 'ok' | 'no-metrics' | 'diverged' | 'unreplayable' | 'missing' | 'unreadable'
     metrics: list[MetricSummary] = field(default_factory=list)
     #: Accuracy pooled across every metric — see `_overall`. The honest single
     #: number for a run, and every per-run readout's default.
@@ -104,6 +58,11 @@ class RunSummary:
     #: A `kind: "utility"` profile is scored if it declares metrics, but left
     #: out of cohort aggregates unless asked for (`ANALYTICS.md#edge-cases`).
     excluded_by_default: bool = False
+    #: A spine run's tallies from its trial table, when replay scored it
+    #: (`ANALYTICS.md#metrics-from-the-trial-table`). None for every other run.
+    replay: table_metrics.ReplayScore | None = None
+    #: Where a `diverged` run's strobes leave what replay predicts.
+    divergence: Divergence | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -120,6 +79,8 @@ class RunSummary:
             "seed": self.seed,
             "detail": self.detail,
             "excludedByDefault": self.excluded_by_default,
+            "replay": self.replay.to_json() if self.replay else None,
+            "divergence": self.divergence.to_json() if self.divergence else None,
         }
 
 
@@ -157,11 +118,11 @@ def summarize(
         "seed": seed,
     }
 
-    # A spine run is scored by replay, which is still to come: never by the
-    # legacy scorer, whose onset-shaped names its edge codes would only mimic
-    # (`ANALYTICS.md#why-a-run-has-no-numbers`).
+    # A spine run is scored by replay and nothing else: never by the legacy
+    # scorer, whose onset-shaped names its edge codes would only mimic
+    # (`ANALYTICS.md#how-a-spine-run-is-scored`).
     if is_spine_run(document):
-        return RunSummary(status="replay-pending", detail=REPLAY_PENDING_DETAIL, **base)
+        return _replay_summary(document, base, min_counted)
 
     # A sketch with no Task Profile is fully supported (`ANALYTICS.md#edge-cases`)
     # and still worth listing — it has a real duration, event count and stop
@@ -183,6 +144,25 @@ def summarize(
         conditions=conditions_of(codes, profile),
         engagement=engagement_of(codes, profile),
         excluded_by_default=profile.kind == "utility",
+        **base,
+    )
+
+
+def _replay_summary(document: dict[str, Any], base: dict[str, Any], min_counted: int) -> RunSummary:
+    """A spine run: `ok` with its trial-table metrics, `diverged`, or `unreplayable`."""
+    try:
+        result = replayed(document)
+    except SpineDecodeError as exc:
+        return RunSummary(status="unreplayable", detail=f"replay cannot run this spine run: {exc}", **base)
+    if result.divergence is not None:
+        return RunSummary(status="diverged", detail=result.divergence.detail,
+                          divergence=result.divergence, **base)
+    score = table_metrics.score(result.trials, rows=result.rows, interp=result.interp)
+    return RunSummary(
+        status="ok",
+        metrics=table_metrics.correct_metrics(score, min_counted=min_counted),
+        overall=table_metrics.overall_correct(score, min_counted=min_counted),
+        replay=score,
         **base,
     )
 
@@ -210,9 +190,6 @@ def with_threshold(payload: dict[str, Any], min_counted: int) -> dict[str, Any]:
     return out
 
 
-#: The id reserved for the pooled figure, so the frontend can offer it in the
-#: same selector as the real metrics without colliding with one.
-OVERALL_ID = "__overall__"
 
 
 @dataclass(frozen=True)

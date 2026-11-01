@@ -14,11 +14,13 @@ import {
 import type {
   ConditionOutcomes,
   MetricSummary,
+  ReplayScore,
   RunSeries,
   RunSummary,
   TrialEngagement,
   TrialOutcomes,
 } from "@/lib/analytics/types";
+import { classParts } from "@/lib/analytics/trialTable";
 import { OUTCOME_STYLE } from "@/lib/analytics/view";
 import { springPanel, springSnappy } from "@/lib/motion";
 
@@ -160,7 +162,11 @@ export function AnimalCard({
             be the same sentence twice. */}
         {!reason && (
           <div className="mt-0.5">
-            <Effort outcomes={outcomes} engagement={run.engagement} />
+            {run.replay ? (
+              <ReplayEffort replay={run.replay} />
+            ) : (
+              <Effort outcomes={outcomes} engagement={run.engagement} />
+            )}
           </div>
         )}
 
@@ -199,7 +205,11 @@ export function AnimalCard({
               />
             ))}
 
-            <OutcomeBar outcomes={outcomes} index={index} revealKey={revealKey} />
+            {run.replay ? (
+              <ReplayBar replay={run.replay} index={index} revealKey={revealKey} />
+            ) : (
+              <OutcomeBar outcomes={outcomes} index={index} revealKey={revealKey} />
+            )}
           </>
         )}
       </div>
@@ -511,4 +521,57 @@ function OutcomeBar({
 
 function pct(value: number): string {
   return `${Math.round(value * 100)}%`;
+}
+
+/** A replayed spine run's header: its trials, and how many reached no outcome
+ *  (`ANALYTICS.md#metrics-from-the-trial-table`). */
+function ReplayEffort({ replay }: { replay: ReplayScore }) {
+  return (
+    <span className="font-mono text-[10px] tabular-nums text-static/80">
+      <span className="text-starlight">{replay.trials}</span> trials ·{" "}
+      <span className="text-starlight">{replay.rewarded.n}</span> rewarded
+      {replay.unclassified > 0 && <> · {replay.unclassified} no outcome</>}
+    </span>
+  );
+}
+
+/** A replayed spine run's trials by outcome class, the same bar the legacy
+ *  tally draws, over every trial rather than the administered ones. */
+function ReplayBar({
+  replay,
+  index,
+  revealKey,
+}: {
+  replay: ReplayScore;
+  index: number;
+  revealKey: string;
+}) {
+  if (replay.trials === 0) {
+    return <p className="mt-2 font-mono text-[10px] text-static/50">no complete trials</p>;
+  }
+  const parts = classParts(replay.classes, replay.unclassified);
+  return (
+    <div className="mt-2">
+      <div className="flex items-baseline justify-between gap-2 font-mono text-[9px] text-static/70">
+        <span>all trials, by outcome</span>
+        <span className="tabular-nums">{replay.trials}</span>
+      </div>
+      <motion.div
+        key={`${revealKey}:replay`}
+        className="mt-0.5 flex h-2 overflow-hidden rounded-[2px]"
+        initial={{ scaleX: 0 }}
+        animate={{ scaleX: 1 }}
+        transition={{ ...springSnappy, delay: index * 0.04 + 0.15 }}
+        style={{ transformOrigin: "left center" }}
+      >
+        {parts.map((part) => (
+          <span
+            key={part.key}
+            title={`${part.n} ${part.label}`}
+            style={{ width: `${(part.n / replay.trials) * 100}%`, background: part.fill }}
+          />
+        ))}
+      </motion.div>
+    </div>
+  );
 }

@@ -770,6 +770,24 @@ async def test_a_run_that_lands_after_the_session_let_go_is_still_recorded(rig) 
     assert rig.events[-1]["evt"] == "session.animalEnded"
 
 
+async def test_a_run_record_keeps_the_interpreter_and_channel_set_it_ran_on(rig) -> None:
+    """`DATA.md#run-records`: what the board announced (`INTERP=<n>`) and the
+    channel set its sketch was generated against go on the record at
+    finalization; whether replay diverged is left for Analytics to say."""
+    session = rig.session()
+    config = BoxConfig(
+        box=1, animal_id="C1-1", animal_name="remy1", sketch_path="/sk", sketch_name="sk",
+        start_command=build_start_command(None, {}), config_metadata={}, profile=None,
+        channel_set_hash="3f0c9a17b2d4e588", channel_set_hash_version=2,
+    )
+    run = ActiveRun(box=1, config=config, run_id="r-spine", started_at="2026-10-10T10:00:00+00:00",
+                    address="/dev/fake1", session_id_label="P1_12", session_id=session.id, interp=2)
+    await rig.lifecycle.animal_ended(run, "end")
+
+    [recorded] = rig.sessions.runs_for(session.id)
+    assert (recorded.interp, recorded.channel_set_hash, recorded.diverged) == (2, "3f0c9a17b2d4e588", None)
+
+
 async def test_a_run_never_names_a_profile_another_writers_rollback_threw_away(
     db: Database, tmp_path: Path
 ) -> None:

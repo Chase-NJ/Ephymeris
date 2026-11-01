@@ -498,7 +498,7 @@ A live append-only log, not a serialization of the document:
 
 The `# key: value` header is written by `AnimalWriter.open_files` after the parameter handshake and `SEED` resolve, and before the first strobe. The **profile snapshot rides in the header as one compact JSON line, always last**, so a `.tsv` rebuilt by [crash recovery](#crash-recovery) yields a `.json` as self-describing as a finalized one — and the recovered file is exactly the one someone carries to another machine. `stop_reason` and `n_events` are unknown until the end, so they form a **footer**. **A `.tsv` cut off mid-session lacks only that footer.**
 
-A [spine task](TASKS.md#spine-tasks)'s header reads `# interp: 5`, or `2`, `3` or `4`, versions replay also runs, and its snapshot carries a `spine` key: the state table as lowered, which channel and edge codes each bit is, how each driven output is driven, and which wire key each parameter is. With the parameter values and `trial_seed` beside it, that header is everything replay needs, so a spine run cut off mid-session still replays up to its last strobe ([TASKS.md](TASKS.md#the-snapshot)).
+A [spine task](TASKS.md#spine-tasks)'s header reads `# interp: 6`, or `2` to `5`, versions replay also runs, and its snapshot carries a `spine` key: the state table as lowered, which channel and edge codes each bit is, how each driven output is driven, and which wire key each parameter is. With the parameter values and `trial_seed` beside it, that header is everything replay needs, so a spine run cut off mid-session still replays up to its last strobe ([TASKS.md](TASKS.md#the-snapshot)).
 
 ### The mat mirror
 
@@ -534,8 +534,8 @@ A [spine run](TASKS.md#spine-tasks)'s `.json` and `.mat` carry its [trial table]
 "derived": {
   "status": "ok",           // ok | diverged | unreplayable
   "detail": null,           // why, when not ok
-  "interp": 3,              // the INTERP it was replayed under (the header's, when unreplayable)
-  "replay_version": 2,      // spine.REPLAY_VERSION
+  "interp": 6,              // the INTERP it was replayed under (the header's, when unreplayable)
+  "replay_version": 3,      // spine.REPLAY_VERSION
   "phases": ["wait", "present", "delay", "outcome", "iti"],
   "trials": [{"index": 0, "at_ms": 0, "block": "b1", "row": "r1", "row_name": "Odor 1", "level": null,
               "phase_entries": [0, 200, 1200, 1700, 1701], "outcome": "correct", "rewarded": true, /* … */

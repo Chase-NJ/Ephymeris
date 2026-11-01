@@ -930,7 +930,7 @@ def _spine_canary(*, diverge: bool = False) -> dict[str, Any]:
         {"phase": "outcome", "line": "reward", "ms": 0},
         {"phase": "iti", "ms": 3000},
     ]
-    low = lowering.lower(phases, ["port"], ["cue", "sample", "reward"])
+    low = lowering.lower(phases, ["port"], ["cue", "sample", "reward"], session_cap=True)
     names = ["START_SESSION", "TRIAL_START", "END_SESSION", "PORT_ENTER", "PORT_EXIT",
              "CUE_ON", "CUE_OFF", "SAMPLE_ON", "SAMPLE_OFF", "REWARD_ON", "REWARD_OFF"]
     code = {name: i + 1 for i, name in enumerate(names)}

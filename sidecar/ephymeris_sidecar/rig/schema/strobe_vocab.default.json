@@ -359,6 +359,16 @@
         "behaviorbox"
       ],
       "rationale": "A structural code of the phase spine (docs/adr/0003-phase-spine-task-model.md#the-strobe-stream): the stream otherwise carries only channel edges, so this is what divides it into trials. Emitted by BoxSpine.h at the tick the interpreter enters a state flagged INTERP_STARTS_TRIAL. A spine session opens and closes with the existing START_SESSION and END_SESSION, which mean the same events. Numbered apart from the lowest free codes, which a channel-set save issues to edges, so a machine that already issued edge codes can add it at this same number."
+    },
+    "BLOCK_START": {
+      "code": 271,
+      "origin": "ephymeris",
+      "since": 3,
+      "emitted_on": "the first trial of each block of a spine task, just before its TRIAL_START",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "A structural code of the phase spine (docs/adr/0003-phase-spine-task-model.md#the-strobe-stream), which lists it beside TRIAL_START. Emitted by BoxSpine.h at the tick the interpreter starts a block (INTERP_ACT_BLOCK_START): the session's first trial, and the first trial after a block's end rule is met. Replay predicts it from the table, so a block switch is part of the checksum, and a reader of the .tsv or a recording sees switches without replaying. Numbered next to TRIAL_START for the same reason: a machine that already issued edge codes can add it at this same number."
     }
   },
   "port_slots": {

@@ -226,7 +226,8 @@ STIM_BIND = {"port": "odor_port", "light": "light", "tone": "tone", "laser": "la
 
 def test_a_driven_slot_has_a_bit_per_row_and_each_value_is_a_parameter():
     rows = [{"bind": STIM_BIND}, {"bind": STIM_BIND}]
-    low = lowering.lower(STIM, inputs=["port"], outputs=["light", "tone", "laser"], rows=rows, drives=DRIVES)
+    low = lowering.lower(STIM, inputs=["port"], outputs=["light", "tone", "laser"], rows=rows, drives=DRIVES,
+                         session_cap=True)
     # One channel per slot, but one bit per row: each row drives it at its own value.
     assert low.outputs == (("light", "light"), ("light", "light"), ("tone", "tone"), ("tone", "tone"),
                            ("laser", "laser"), ("laser", "laser"))
@@ -281,7 +282,7 @@ def test_a_task_driving_all_three_is_clean_and_its_snapshot_names_each_drive(dri
     definition = stimulus()
     assert spn(definition) == []
     snapshot = generate.build_profile(definition).spine
-    assert snapshot["interp"] == 5
+    assert snapshot["interp"] == lowering.INTERP_VERSION == 6
     laser = [o for o in snapshot["outputs"] if o["slot"] == "laser"]
     assert laser == [
         {"slot": "laser", "channel": "laser", "on": "LASER_TRAIN_ON", "off": "LASER_TRAIN_OFF",

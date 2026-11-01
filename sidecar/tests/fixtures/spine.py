@@ -211,6 +211,8 @@ def stimulus(**edits) -> dict:
     }
     doc.update(edits)
     return doc
+
+
 def ratio(**edits) -> dict:
     """An operant ratio schedule: count the right well's pokes, pay at the N-th,
     a short ITI, again. FR-5 as written; `counter` edits make it VR or PR."""
@@ -278,4 +280,56 @@ def held_trial(**edits) -> dict:
         {"phase": "iti", "ms": 1000},
     ]
     doc["rows"][0]["bind"]["early"] = "right_well"
+    return doc
+
+
+# --- blocks (#103) ----------------------------------------------------------------
+
+
+def _afc_row(row_id: str, name: str, odor: str, entries: dict[str, tuple[str, int]]) -> dict:
+    """A 2AFC row on `odor`: each well in `entries` maps to (class, permille);
+    a correct entry pays that well's line, held."""
+    bind = {"port": "odor_port", "left": "left_well", "right": "right_well", "cue": "trial_light",
+            "reward_l": "fluid_1", "reward_r": "fluid_2", "sample": odor}
+    entry_map: dict = {"timeout": {"outcome": "omission"}}
+    for well, (outcome, permille) in entries.items():
+        entry_map[well] = ({"outcome": outcome, "line": f"reward_{well[0]}", "rewardPermille": permille,
+                            "hold": True} if outcome == "correct" else {"outcome": outcome})
+    return {"id": row_id, "name": name, "bind": bind, "rewardMs": 100, "rewardPermille": 1000,
+            "map": entry_map}
+
+
+def reversal(**edits) -> dict:
+    """ADR 0003's reversal: block a pays odor 1 at the right well and odor 2 at
+    the left, repeats an error once, and ends at 8 correct of the last 10; block
+    b pays them the other way round for 4 trials, and the session ends."""
+    doc = two_afc(**{"id": "spine_reversal", "name": "Spine Reversal", **edits})
+    doc["rows"] += [
+        _afc_row("odor_1_rev", "Odor 1, reversed", "odor_line_1",
+                 {"left": ("correct", 1000), "right": ("wrong_response", 0)}),
+        _afc_row("odor_2_rev", "Odor 2, reversed", "odor_line_2",
+                 {"right": ("correct", 1000), "left": ("wrong_response", 0)}),
+    ]
+    doc["blocks"] = [
+        {"id": "a", "rows": ["odor_1", "odor_2"], "criterion": {"correct": 8, "of": 10}, "correction": 1},
+        {"id": "b", "rows": ["odor_1_rev", "odor_2_rev"], "trials": 4},
+    ]
+    return doc
+
+
+def bandit(**edits) -> dict:
+    """ADR 0003's two-armed bandit on one stimulus: both wells are correct, the
+    left paying 80% of the time in block a and 20% in block b, and the right the
+    other way round. The blocks loop, each lasting 40-60 trials; the session's
+    `sessionTrials` caps it."""
+    doc = two_afc(**{"id": "spine_bandit", "name": "Spine Bandit", **edits})
+    doc["rows"] = [
+        _afc_row("left_good", "Left good", "odor_line_1", {"left": ("correct", 800), "right": ("correct", 200)}),
+        _afc_row("right_good", "Right good", "odor_line_1", {"left": ("correct", 200), "right": ("correct", 800)}),
+    ]
+    doc["blocks"] = [
+        {"id": "a", "rows": ["left_good"], "trials": 40, "trialsMax": 60},
+        {"id": "b", "rows": ["right_good"], "trials": 40, "trialsMax": 60, "next": "a"},
+    ]
+    doc["sessionTrials"] = 130
     return doc

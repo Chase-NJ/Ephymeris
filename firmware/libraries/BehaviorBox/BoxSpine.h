@@ -26,8 +26,9 @@
     INTERP=<INTERP_VERSION>, FREE_RAM=<n>, READY
     BEGIN                 back to the table's defaults; the audit cleared
     SET <KEY>=<v> ...     each answered CLAMPED <KEY> (a value not held exactly as
-                          written: junk, a sign, outside the slot's [min, max]),
-                          then PARAMS <n> <crc32>, the running total
+                          written: junk, a sign, outside the slot's [min, max], or
+                          a drawn N's high end below its low end), then
+                          PARAMS <n> <crc32>, the running total
     START SEED=<n>        the core's RNG seeded with it, echoed as SEED <n>
 
 
@@ -81,8 +82,8 @@
 #endif
 
 /* The generator holds a task's RAM to a budget at save, counting these rows and
-   arrays at their AVR sizes (taskdef/spine.py's PARAM_BYTES, INPUT_BYTES and
-   OUTPUT_BYTES; docs/TASKS.md#spine-diagnostics). test_spine_task.py holds the
+   arrays at their AVR sizes (taskdef/spine.py's PARAM_BYTES, INPUT_BYTES,
+   OUTPUT_BYTES and RATIO_BYTES, for kRatios below; docs/TASKS.md#spine-diagnostics). test_spine_task.py holds the
    count to a Mega build: change a struct or array here and it fails. */
 
 /* One input bit: its pin, which level is ACTIVE, and the codes of its edges. */
@@ -215,6 +216,12 @@ inline void takeTokens(char *line, ParamAudit *audit)
       unsigned long x = parseUlongField(v, exact);
       if (x < kParams[s].min) { x = kParams[s].min; exact = false; }
       if (x > kParams[s].max) { x = kParams[s].max; exact = false; }
+#if SPINE_COUNT_MIN != SPINE_COUNT_MAX
+      // A drawn N's high end below its low end would fix N at the low end: VR
+      // run as FR. The host sends the low end first (slot order), so the pair is
+      // judged when the high end arrives, and held as a range, CLAMPED.
+      if (s == SPINE_COUNT_MAX && x < params[SPINE_COUNT_MIN]) { x = params[SPINE_COUNT_MIN]; exact = false; }
+#endif
       params[s] = (uint32_t)x;
       if (audit)
       {

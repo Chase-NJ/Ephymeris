@@ -175,6 +175,127 @@ def test_two_counters_are_not_a_table():
         lowering.lower([FR[0], FR[0], FR[2]], **FR_SLOTS)
 
 
+def most_marks(low: lowering.Lowered) -> int:
+    """The most outcome-bearing states any path through one trial enters: from
+    each state that starts a trial, along every exit (edge rows, timer, a
+    chance state's branches, a pick state's), until a trial starts again."""
+    states, edges = low.states, low.edges
+
+    def exits(s: int) -> list[int]:
+        row = states[s]
+        out = [edges[k][2] for k in range(row[8], row[8] + row[9])]
+        if row[2] != N:
+            out.append(row[4])
+        if row[5] != N:
+            out += [row[6], row[7]]
+        return out
+
+    memo: dict[int, int] = {}
+
+    def marks(s: int) -> int:  # the most marks from s on, s included, before the next trial
+        if s not in memo:
+            memo[s] = 0  # a trial never loops back on itself before it starts again
+            nxt = [t for t in exits(s) if not states[t][10] & lowering.STARTS_TRIAL]
+            memo[s] = (1 if states[s][11] else 0) + max((marks(t) for t in nxt), default=0)
+        return memo[s]
+
+    starts = [s for s, row in enumerate(states) if row[10] & lowering.STARTS_TRIAL]
+    return max(marks(s) for s in starts)
+
+
+EXIT_AFTER_OUTCOME = [
+    {"phase": "counter", "on": "lever", "count": 2},
+    {"phase": "outcome", "line": "reward", "ms": 0},
+    {"phase": "delay", "ms": 300, "abortOnEnter": "lever"},
+    {"phase": "wait", "on": "lever", "timeoutMs": 200},
+    {"phase": "hold", "on": "lever", "ms": 100},
+    {"phase": "iti", "ms": 500},
+]
+
+
+def test_an_early_exit_after_the_outcome_marks_nothing():
+    """The trial is decided at its Outcome: an abort, a Wait's timeout or a broken
+    Hold after it goes to the plain ITI, so a paid trial stays correct."""
+    low = lowering.lower(EXIT_AFTER_OUTCOME, **FR_SLOTS)
+    # 0 counter, 1-3 the outcome, 4 delay, 5 wait, 6 hold, 7 ITI: no end at all.
+    assert len(low.states) == 8 and low.phases[7] == 5
+    assert [row[11] for row in low.states if row[11]] == [CORRECT]
+    assert low.edges == ((0, lowering.RISE, 1), (0, lowering.RISE, 7), (0, lowering.RISE, 6),
+                         (0, lowering.FALL, 7)), "the delay's abort and the hold's release go to the ITI"
+    assert low.states[5][4] == 7, "and the wait's timeout"
+    assert most_marks(low) == 1
+
+
+def test_a_counter_limit_after_the_outcome_still_ends_the_session_unmarked():
+    spine = [{"phase": "wait", "on": "lever"}, {"phase": "outcome", "line": "reward", "ms": 0},
+             {"phase": "counter", "on": "lever", "count": 3, "timeoutMs": 50, "endsSession": True},
+             {"phase": "iti", "ms": 10}]
+    low = lowering.lower(spine, **FR_SLOTS)
+    end = low.states[-1]
+    assert end[10] == lowering.LAST_TRIAL and end[11] == 0 and low.rows[-1] is None
+    assert most_marks(low) == 1
+
+
+@pytest.mark.parametrize("seed", range(300))
+def test_any_path_through_a_trial_marks_at_most_one_class(seed):
+    """Over random spines of every phase, with and without a window and its
+    map, holds and several rows: no trial can be marked twice, so the trial
+    table's "last mark wins" never has a second mark to choose."""
+    import random
+
+    rng = random.Random(seed)
+    inputs, outputs = ["a", "b", "c"], ["x", "y", "z"]
+    n_rows = rng.choice((1, 1, 2, 3))
+
+    def plain(kinds, counted):
+        kind = rng.choice(kinds)
+        if kind == "counter" and counted:
+            kind = "hold"
+        p = {"phase": kind, "outputs": rng.sample(outputs, rng.randint(0, 2)), "ms": 5}
+        if kind in ("wait", "hold", "counter"):
+            p["on"] = rng.choice(inputs)
+        if kind == "wait":
+            p["edge"] = rng.choice(("enter", "exit"))
+        if kind in ("wait", "counter") and rng.random() < 0.6:
+            p["timeoutMs"] = 5
+        if kind == "counter":
+            p["count"] = 2
+            p["endsSession"] = "timeoutMs" in p and rng.random() < 0.5
+        if kind in ("present", "delay"):
+            if rng.random() < 0.5:
+                p["abortOnRelease"] = rng.choice(inputs)
+            if rng.random() < 0.5:
+                p["abortOnEnter"] = rng.choice(inputs)
+        if kind == "outcome":
+            p["line"] = rng.choice(outputs)
+        return p
+
+    palette = ("wait", "hold", "present", "delay", "counter")
+    spine: list[dict] = []
+    for n in range(rng.randint(1, 4)):
+        spine.append(plain(palette, any(p["phase"] == "counter" for p in spine)))
+    window = rng.random() < 0.5
+    rows = []
+    if window:
+        responses = rng.sample(inputs, rng.randint(1, 3))
+        spine.append({"phase": "response", "responses": responses, "ms": 5, "holdMs": 5})
+        spine.append({"phase": "outcome", "ms": 5})
+        for r in range(n_rows):
+            rows.append({"id": f"r{r}", "bind": {s: f"{s}{r}" for s in (*inputs, *outputs)},
+                         "map": {key: {"outcome": rng.choice(lowering.OUTCOME_CLASSES),
+                                       **({"line": "x"} if rng.random() < 0.5 else {}),
+                                       **({"hold": True} if key != "timeout" and rng.random() < 0.5 else {})}
+                                 for key in (*responses, "timeout")}})
+    else:
+        spine.append({"phase": "outcome", "line": "x", "ms": 5})
+        rows = [{"id": f"r{r}", "bind": {s: f"{s}{r}" for s in (*inputs, *outputs)}} for r in range(n_rows)]
+    for _ in range(rng.randint(0, 3)):
+        spine.append(plain(palette, any(p["phase"] == "counter" for p in spine)))
+    spine.append({"phase": "iti", "ms": 5})
+    low = lowering.lower(spine, inputs=inputs, outputs=outputs, rows=rows)
+    assert most_marks(low) == 1, spine
+
+
 def test_an_outcome_keeps_its_outputs_high_through_the_reward():
     """A phase's outputs are HIGH for the whole phase (TASKS.md#what-a-spine-task-holds).
     An outcome that dropped them for the reward would strobe the cue off and on

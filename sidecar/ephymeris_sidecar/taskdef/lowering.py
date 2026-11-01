@@ -30,7 +30,9 @@ the row's first state is state 0.
 ENDS. Every exit that ends a trial early (an abort, a released Hold, a Wait's
 timeout, a Counter's time limit) goes to an END: a copy of the ITI state that
 also carries the exit's outcome class. One end per (class, ITI outputs,
-last-trial flag) serves every row, after all the rows' states.
+last-trial flag) serves every row, after all the rows' states. Past the
+Outcome the trial is already marked: an early exit there goes to the row's own
+ITI, or to an unmarked end when a Counter's limit ends the session.
 
 PARAMETER SLOTS, in order (`ParamSlot`):
     0       NT        the block's trial count, read by the session layer (BoxSpine.h)
@@ -262,6 +264,9 @@ def lower(
         raise LoweringError(f"phase {counters[0]}: a Counter takes either a count or ratios")
     # Where an early exit's class changes: the first Present is the stimulus.
     stimulus = next((i for i, kind in enumerate(kinds) if kind == "present"), len(kinds))
+    # Where a trial is decided: past its Outcome an early exit marks nothing, so a
+    # trial carries one class, the Outcome's.
+    decided = next((i for i, kind in enumerate(kinds) if kind == "outcome"), len(kinds))
 
     in_bits, row_in = channel_bits(inputs, rows)
     out_bits, row_out = channel_bits(outputs, rows)
@@ -359,12 +364,18 @@ def lower(
 
     ends: dict[tuple[int, int, int], _Ref] = {}
 
-    def early(r: int, cls: int, flags: int = 0) -> _Ref:
-        """The end an early exit of row r goes to: its ITI, marked with `cls`."""
+    def early(r: int, i: int, cls: int, iti_ref: _Ref, flags: int = 0) -> _Ref:
+        """Where an early exit of row r from phase i goes: an end, its ITI marked
+        with `cls`. Past the Outcome the trial is already marked, so it goes to
+        the row's own ITI, or to an unmarked end when it ends the session."""
+        if i > decided:
+            if not flags:
+                return iti_ref
+            cls = 0
         key = (cls, output_mask(r, iti, phases[iti].get("outputs")), flags)
         return ends.setdefault(key, _Ref())
 
-    def aborts(r: int, i: int, p: dict[str, Any]) -> tuple[int, list[tuple[int, int, Any]]]:
+    def aborts(r: int, i: int, p: dict[str, Any], iti_ref: _Ref) -> tuple[int, list[tuple[int, int, Any]]]:
         """A Present's or a Delay's abort exits, as (watch, edge rows)."""
         cls = OUTCOME_ABORT_BEFORE if i < stimulus else OUTCOME_ABORT_DURING
         watch, exits = 0, []
@@ -372,7 +383,7 @@ def lower(
             if p.get(key) is not None:
                 bit = input_bit(r, i, p[key])
                 watch |= 1 << bit
-                exits.append((bit, edge, early(r, cls)))
+                exits.append((bit, edge, early(r, i, cls, iti_ref)))
         return watch, exits
 
     def run(r: int, indices: Sequence[int], end: Any, iti_ref: _Ref,
@@ -392,18 +403,21 @@ def lower(
                     raise LoweringError(f"phase {i}: a wait's edge is one of {tuple(EDGES)}")
                 timer = timer_key(i) if p.get("timeoutMs") is not None else None
                 # Before the stimulus no trial was offered; from it on, the animal was asked.
-                missed = early(r, OUTCOME_ABORT_BEFORE if i < stimulus else OUTCOME_OMISSION) if timer else NONE
+                missed = (early(r, i, OUTCOME_ABORT_BEFORE if i < stimulus else OUTCOME_OMISSION, iti_ref)
+                          if timer else NONE)
                 state(i, r, mask, 1 << bit, timer, missed, exits=[(bit, edge, nxt)])
             elif kind == "hold":
                 bit = input_bit(r, i, p.get("on"))
-                state(i, r, mask, 1 << bit, timer_key(i), nxt, exits=[(bit, FALL, early(r, OUTCOME_HOLD_BROKEN))])
+                state(i, r, mask, 1 << bit, timer_key(i), nxt,
+                      exits=[(bit, FALL, early(r, i, OUTCOME_HOLD_BROKEN, iti_ref))])
             elif kind in ("present", "delay"):
-                watch, exits = aborts(r, i, p)
+                watch, exits = aborts(r, i, p, iti_ref)
                 state(i, r, mask, watch, timer_key(i), nxt, exits=exits)
             elif kind == "counter":
                 bit = input_bit(r, i, p.get("on"))
                 timer = timer_key(i) if p.get("timeoutMs") is not None else None
-                limit = early(r, OUTCOME_OMISSION, LAST_TRIAL if p.get("endsSession") else 0) if timer else NONE
+                limit = (early(r, i, OUTCOME_OMISSION, iti_ref, LAST_TRIAL if p.get("endsSession") else 0)
+                         if timer else NONE)
                 state(i, r, mask, 1 << bit, timer, limit, exits=[(bit, RISE, nxt)], flags=COUNT)
             elif kind == "outcome":
                 if branch is None:

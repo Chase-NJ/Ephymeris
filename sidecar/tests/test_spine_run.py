@@ -40,6 +40,7 @@ from ephymeris_sidecar.sessions.runner import BoxConfig, SessionRunner
 from ephymeris_sidecar.taskdef import lowering
 from ephymeris_sidecar.taskdef.model import TaskDefinition
 from ephymeris_sidecar.taskdef.store import TaskStore
+from ephymeris_sidecar.taskdef.validate import validate
 from ephymeris_sidecar.tasks import profile as task_profile
 from ephymeris_sidecar.tasks.start_command import build_start_command
 from tests.fixtures import spine as fixture
@@ -550,6 +551,38 @@ async def test_a_progressive_ratio_session_ends_at_its_breakpoint(tmp_path, monk
     table = scored(document)
     assert table == [(t["outcome"], t["presses"], t["rewarded"]) for t in trials]
     assert max(n for outcome, n, _ in table if outcome == "correct") == breakpoint_
+
+
+@pytest.mark.parametrize(("override", "clamped"), [
+    ({"counter_0_count": 8, "counter_0_count_max": 3}, True),   # inverted: N would be fixed at 8
+    ({"counter_0_count": 12, "counter_0_count_max": 15}, False),  # both past the defaults, in order
+    ({}, False),
+])
+def test_the_board_refuses_a_drawn_count_whose_range_is_inverted(tmp_path, override, clamped):
+    """A per-box override can set countMax below count, which would silently make
+    VR an FR. The board answers CLAMPED for the high end, so the host never
+    sends START (`TASKS.md#confirming-the-parameters`)."""
+    folder = save(tmp_path, fixture.variable_ratio(1, 9))
+    transcript = run_board(folder, host_lines(folder, {"block_trials": 3, **override}), [], 10, tmp_path)
+    assert ("CLAMPED NX0" in transcript) == clamped, transcript
+    assert not any(line.startswith("CLAMPED") and line != "CLAMPED NX0" for line in transcript)
+
+
+async def test_an_abort_after_the_outcome_leaves_a_paid_trial_correct(tmp_path, monkeypatch):
+    """FR-2, then a Delay a press aborts. The pressing rat aborts every Delay,
+    after its reward: the trial was decided at its Outcome, so it stays correct."""
+    raw = fixture.fixed_ratio(2)
+    raw["spine"].insert(2, {"phase": "delay", "ms": 300, "abortOnEnter": "lever"})
+    assert validate(TaskDefinition.from_json(raw)) == []
+    document = await run_task(tmp_path, monkeypatch, raw, {"block_trials": 5}, 6000,
+                              events=presses(lever(), 100, 5500))
+    record = spine_stream.decode(document)
+    phase_of = document["task_profile"]["spine"]["table"]["phases"]
+    aborted = [now for now, a in rp.replay(record.table, record.params, record.seed, record.events,
+                                           record.end_tick, interp=record.interp)
+               if a.rose and a.entered[0] != rp.NONE and phase_of[a.entered[0]] == 3]
+    assert len(aborted) == 5, "a press aborted each delay, straight to the ITI"
+    assert scored(document) == [("correct", 2, True)] * 5
 
 
 async def test_a_broken_hold_and_each_abort_replay_to_their_class(tmp_path, monkeypatch):

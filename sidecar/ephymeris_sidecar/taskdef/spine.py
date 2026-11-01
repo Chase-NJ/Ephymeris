@@ -417,6 +417,18 @@ def _table_problems(definition: TaskDefinition, out: _Resolved, problem) -> None
         if key not in owner:
             problem(f"params.{key}", "SPN110", f"no parameter of this task is {key!r}, so its stored value "
                     f"{definition.params[key]!r} is not used. Move it to the parameter it belongs to, or remove it")
+    # A drawn N as it will run, stored values included: a high end below the low
+    # end would fix N at the low end every trial, VR run as FR. The board refuses
+    # the same pair from a SET line (CLAMPED); this refuses it before a flash.
+    value = {f["metadataKey"]: _with_value(f, definition)["default"] for f in fields}
+    for s in low.slots:
+        if s.role == "count_max":
+            lo, hi = f"counter_{s.phase}_count", f"counter_{s.phase}_count_max"
+            if value.get(lo, 0) > value.get(hi, 0) and (lo in definition.params or hi in definition.params):
+                at = hi if hi in definition.params else lo
+                problem(f"params.{at}", "SPN105", f"the stored counts draw N from {value[lo]} up to "
+                        f"{value[hi]}: the highest is below the lowest, so N would be {value[lo]} every trial")
+                out.blockers.append(f"counter {s.phase}'s stored count range is inverted")
     size = task_ram_bytes(low)
     if size > TASK_RAM_MAX:
         problem("spine", "SPN105", f"the state table, parameters and channels take {size} B of the board's RAM, "

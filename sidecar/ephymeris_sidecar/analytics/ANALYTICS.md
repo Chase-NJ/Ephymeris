@@ -584,7 +584,7 @@ A run's `status` (with a `detail` that says what to do):
 | `ok` | Scored | |
 | `no-metrics` | Read fine, but no profile declares anything to score. Still listed with duration, events and stop reason | Why no profile resolved, for example the sketch name matched nothing |
 | `diverged` | A [spine run](#how-a-spine-run-is-scored) whose recorded outputs are not what replay predicts. Flagged, never scored. Still listed with duration, events and stop reason | Which strobe first differs, and what replay predicted there |
-| `unreplayable` | A spine run replay cannot start: an unknown `INTERP`, no table in its snapshot, or a malformed one. Never replayed and never inferred. Still listed with duration, events and stop reason | Why, for example "the header says INTERP 4, not a version this replay knows" |
+| `unreplayable` | A spine run replay cannot start: an unknown `INTERP`, no table in its snapshot, or a malformed one. Never replayed and never inferred. Still listed with duration, events and stop reason | Why, for example "the header says INTERP 99, not a version this replay knows" |
 | `missing` | No file was recorded, or it is not on disk | "the .tsv is on disk but the .json was never written — the data is recoverable" ([crash recovery](../../../docs/DATA.md#crash-recovery)) |
 | `unreadable` | The file is there but is not a JSON object, or the path can't be read | The parser's message |
 

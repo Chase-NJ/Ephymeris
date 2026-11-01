@@ -136,8 +136,9 @@ LIGHT, FLUID_L, FLUID_R = 0, 5, 6  # outputs; odors are 1-4
 
 def spine_table(rng: random.Random, n_params: int) -> rp.Table:
     """A random spine of Wait, Present, Delay and Outcome phases ending in an ITI,
-    lowered as BoxInterp.h's "Lowering the phases" describes. Every abort
-    and timeout goes to the ITI, the last state."""
+    written here by hand as raw states, not by the generator: every abort and
+    timeout goes to the one ITI, the last state, with no end. The generator's
+    own tables, ends included, are `generated_table`'s."""
     phases = [rng.choice(("wait", "present", "delay", "outcome")) for _ in range(rng.randint(1, 5))]
     phases.insert(0, "wait")
     slot = lambda: rng.randrange(n_params)  # noqa: E731

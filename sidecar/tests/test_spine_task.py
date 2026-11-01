@@ -562,6 +562,26 @@ def test_each_hold_abort_and_counter_problem_is_located(make, edit, code, where)
         assert "#error" in generate.task_spine_h(TaskDefinition.from_json(raw))
 
 
+@pytest.mark.parametrize("stored", [
+    {"counter_0_count": 8, "counter_0_count_max": 3},
+    {"counter_0_count": 10},
+])
+def test_a_drawn_count_whose_stored_range_is_inverted_is_refused_at_save(stored):
+    """The spine says 1 to 9; stored values that run as countMax below count would
+    fix N at the low end every trial, VR run as FR. Judged as it will run."""
+    definition = TaskDefinition.from_json(fixture.variable_ratio(1, 9, params=stored))
+    found = {(d.code, d.location) for d in validate(definition)}
+    key = "counter_0_count_max" if "counter_0_count_max" in stored else "counter_0_count"
+    assert ("SPN105", f"params.{key}") in found, found
+    assert "#error" in generate.task_spine_h(definition)
+
+
+def test_a_drawn_count_whose_stored_range_is_in_order_is_clean():
+    definition = TaskDefinition.from_json(fixture.variable_ratio(1, 9, params={"counter_0_count": 4,
+                                                                             "counter_0_count_max": 12}))
+    assert validate(definition) == []
+
+
 def test_a_release_watched_on_an_input_that_may_not_be_held_still_lowers():
     """SPN111 says the task may not do what it says; it is still a table."""
     raw = fixture.held_trial()

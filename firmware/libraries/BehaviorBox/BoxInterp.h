@@ -158,6 +158,8 @@
   How the generator writes each phase of the ADR's palette as states. An END is
   a copy of the ITI state that carries an outcome class: where every exit that
   ends a trial early goes (docs/TASKS.md#lowering says which class each marks).
+  Past the Outcome the trial is already marked, so such an exit goes to the
+  row's own ITI instead, or to an unmarked end that ends the session.
 
     Wait(c, edge, timeout)    watch c; edge (c, RISE or FALL) -> next; timer -> an end.
     Hold(c for t)             watch c; timer t -> next; edge (c, FALL) -> an end

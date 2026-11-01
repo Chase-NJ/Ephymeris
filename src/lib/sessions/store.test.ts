@@ -432,3 +432,63 @@ describe("detach", () => {
     expect(store.activeIsLoaded()).toBe(false);
   });
 });
+
+describe("a spine run's live replay (`session.replay`)", () => {
+  function replayed(trials: number, phase: number | null, p: number | null) {
+    const metric = {
+      id: "overall",
+      label: "Overall accuracy",
+      pSession: p,
+      pWindow: null,
+      hits: 0,
+      counted: trials,
+      triggered: trials,
+      excluded: 0,
+      windowSize: 0,
+      wilsonLow: null,
+      wilsonHigh: null,
+      lowConfidence: true,
+      answerSide: null,
+    };
+    return {
+      box: 2,
+      animalId: "a2",
+      status: "replaying" as const,
+      detail: null,
+      state: phase,
+      phase,
+      row: null,
+      trials,
+      current: null,
+      last: null,
+      metrics: [],
+      overall: trials ? metric : null,
+      replay: null,
+      divergence: null,
+    };
+  }
+
+  it("holds the sidecar's latest payload, phase and all", () => {
+    const { sidecar, store } = attached();
+    expect(store.getReplay(2)).toBeNull();
+    sidecar.emit(EVT.SESSION_REPLAY, replayed(0, 0, null));
+    sidecar.emit(EVT.SESSION_REPLAY, replayed(0, 2, null));
+    expect(store.getReplay(2)?.phase).toBe(2);
+  });
+
+  it("draws the trend one point per scored trial, not one per phase", () => {
+    const { sidecar, store } = attached();
+    sidecar.emit(EVT.SESSION_REPLAY, replayed(1, 0, 1));
+    sidecar.emit(EVT.SESSION_REPLAY, replayed(1, 2, 1));
+    sidecar.emit(EVT.SESSION_REPLAY, replayed(2, 0, 0.5));
+    expect(store.getHistory(2, "overall")).toEqual([1, 0.5]);
+  });
+
+  it("forgets a box's replay when that box starts again", () => {
+    const { sidecar, store } = attached();
+    sidecar.emit(EVT.SESSION_REPLAY, replayed(1, 0, 1));
+    sidecar.emit(EVT.PORT_STATE, portState(2, "IN_SESSION", "IDLE"));
+    expect(store.getReplay(2)).toBeNull();
+    expect(store.getHistory(2, "overall")).toEqual([]);
+  });
+});

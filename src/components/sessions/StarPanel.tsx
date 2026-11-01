@@ -7,15 +7,17 @@ import { HudPanel, HudSection } from "@/components/common/HudPanel";
 import { LiveStateMachine } from "@/components/task/SketchStateMachine";
 import { ElapsedClock, StateChip } from "./BoxStatus";
 import { LivePanels } from "./LivePanels";
+import { LiveSpine } from "./LiveSpine";
 import { MetricStrip } from "./MetricStrip";
 import { useBoxOutput, usePortStatus } from "@/lib/hardware/context";
 import { springSnappy } from "@/lib/motion";
-import { useBoxEnded, useBoxTelemetry } from "@/lib/sessions/context";
+import { useBoxEnded, useBoxReplay, useBoxTelemetry } from "@/lib/sessions/context";
+import { replayNote, replayStrip, replayWarns } from "@/lib/sessions/liveReplay";
 import { rollingAccuracy } from "@/lib/sessions/liveTrials";
 import { useLiveTrials } from "@/lib/sessions/useLiveTrials";
 import { liveScoring } from "@/lib/sessions/liveScoring";
 import { metricLabels, useTaskProfile } from "@/lib/sessions/useTaskProfiles";
-import type { SessionBox } from "@/lib/sessions/types";
+import type { SessionBox, TaskProfile } from "@/lib/sessions/types";
 import { taskGraph } from "@/lib/tasks/topology";
 import { useLiveNode } from "@/lib/tasks/useLiveNode";
 
@@ -52,17 +54,7 @@ const ACCURACY_WINDOW = 20;
  * (`MissionControl`'s `RAIL_WIDTH_FOCUSED`), which is where the panel's width
  * comes from.
  */
-export function StarPanel({
-  box,
-  onStart,
-  onStop,
-  onReset,
-  onBack,
-  busy,
-  durationMinutes,
-  extra,
-  ref,
-}: {
+type PanelProps = {
   box: SessionBox;
   onStart: () => void;
   onStop: () => void;
@@ -92,15 +84,27 @@ export function StarPanel({
    * presence has to be able to hold a ref — `HudPanel` forwards it through.
    */
   ref?: Ref<HTMLElement>;
-}) {
-  const port = usePortStatus(box.box);
-  const ended = useBoxEnded(box.box);
+};
+
+export function StarPanel(props: PanelProps) {
+  const profile = useTaskProfile(props.box.sketchPath);
+  // A spine task is drawn from its sidecar replay alone; the legacy panels,
+  // which decode strobe names, are never mounted for one (`ARCHITECTURE.md#live-session-views`).
+  return profile?.spine !== undefined ? (
+    <SpineStarPanel {...props} profile={profile} />
+  ) : (
+    <LegacyStarPanel {...props} profile={profile} />
+  );
+}
+
+function LegacyStarPanel({ profile, ...props }: PanelProps & { profile: TaskProfile | null }) {
+  const { box } = props;
   const metrics = useBoxTelemetry(box.box);
-  const profile = useTaskProfile(box.sketchPath);
   const labels = useMemo(() => metricLabels(profile), [profile]);
   const scoring = liveScoring(profile);
-
+  const port = usePortStatus(box.box);
   const live = port.state === "IN_SESSION";
+
   const { state: trials, usable } = useLiveTrials(box.box, profile?.strobes);
   const model = useMemo(() => taskGraph(profile), [profile]);
   const { node: liveNode, condition: liveCondition } = useLiveNode(
@@ -129,6 +133,162 @@ export function StarPanel({
     [trials.trials],
   );
 
+  return (
+    <PanelFrame
+      {...props}
+      profile={profile}
+      live={live}
+      readout={
+        // The star's own temperature, stated in words — the constellation
+        // encodes it as colour, and a colour scale nobody can read precisely
+        // still needs its number somewhere.
+        <Readout
+          title="Rolling accuracy"
+          value={accuracy}
+          count={trials.trials.length}
+        />
+      }
+      flow={
+        model.usable && (
+          /* The sketch viewer's state machine, live: same glyphs, same
+             CSS-pixel type at every panel width, with the box's current
+             state wearing the token and the caption strip narrating it. */
+          <LiveStateMachine
+            model={model}
+            liveNode={liveNode}
+            liveCondition={liveCondition}
+            observedConditions={observedConditions}
+          />
+        )
+      }
+      charts={
+        usable && scoring.scored ? (
+          <LivePanels
+            live={trials}
+            strobeNames={profile?.strobes ?? {}}
+            // 32, down from 36 when the trial flow was the smaller drawing:
+            // the state machine above earns its extra rows out of the
+            // charts' aspect so the panel still fits 1080 without scrolling.
+            chartHeight={32}
+          />
+        ) : (
+          <p className="text-[11px] leading-relaxed text-static">
+            {!scoring.scored
+              ? scoring.note
+              : profile
+              ? "This sketch's Task Profile doesn't declare the strobes the panels are derived from, so only the strobe feed is available."
+              : "No Task Profile for this sketch — only the strobe feed is available."}
+          </p>
+        )
+      }
+      metrics={
+        <MetricStrip box={box.box} metrics={metrics} labels={labels} note={scoring.note} bare />
+      }
+    />
+  );
+}
+
+/**
+ * A spine task's panel: everything on it is what the sidecar's live replay
+ * reports (`session.replay`), the same replay Analytics scores the finished run
+ * with (`ANALYTICS.md#live-scoring`). Nothing here decodes a strobe.
+ */
+function SpineStarPanel({ profile, ...props }: PanelProps & { profile: TaskProfile }) {
+  const { box } = props;
+  const port = usePortStatus(box.box);
+  const replay = useBoxReplay(box.box);
+  const strip = useMemo(() => replayStrip(replay), [replay]);
+  const tally = replay?.replay?.classes ?? [];
+  return (
+    <PanelFrame
+      {...props}
+      profile={profile}
+      live={port.state === "IN_SESSION"}
+      readout={
+        <Readout
+          title="P(correct)"
+          value={replay?.overall?.pSession ?? null}
+          count={replay && !replayWarns(replay) ? replay.trials : 0}
+        />
+      }
+      flow={<LiveSpine profile={profile} replay={replay} />}
+      charts={
+        tally.length > 0 ? (
+          <div>
+            <div className="mb-1 text-[11px] text-static">Outcomes so far</div>
+            <ul className="flex flex-col gap-1">
+              {tally.map((c) => (
+                <li key={c.outcomeClass} className="flex items-center gap-3 font-mono text-[11px]">
+                  <span className="min-w-0 flex-1 truncate text-starlight">
+                    {c.outcomeClass.replace(/_/g, " ")}
+                  </span>
+                  <span className="tabular-nums text-static">
+                    {c.n} of {c.of}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : (
+          <p className="text-[11px] leading-relaxed text-static">{replayNote(replay)}</p>
+        )
+      }
+      metrics={
+        <MetricStrip
+          box={box.box}
+          metrics={strip.metrics}
+          labels={strip.labels}
+          note={replayNote(replay)}
+          bare
+        />
+      }
+    />
+  );
+}
+
+function Readout({ title, value, count }: { title: string; value: number | null; count: number }) {
+  return (
+    <div className="text-right">
+      <div className="text-[11px] text-static">{title}</div>
+      <div className="font-mono text-[18px] tabular-nums text-starlight">
+        {value === null ? "—" : value.toFixed(2)}
+      </div>
+      <div className="font-mono text-[10px] tabular-nums text-static">
+        {count > 0 ? `${count} trial${count === 1 ? "" : "s"}` : "no trials yet"}
+      </div>
+    </div>
+  );
+}
+
+/** The panel's chrome, shared by both kinds of task: the header band, the
+ *  trial flow, the charts beside the metrics and the strobe feed. */
+function PanelFrame({
+  box,
+  onStart,
+  onStop,
+  onReset,
+  onBack,
+  busy,
+  durationMinutes,
+  extra,
+  ref,
+  profile,
+  live,
+  readout,
+  flow,
+  charts,
+  metrics,
+}: PanelProps & {
+  profile: TaskProfile | null;
+  live: boolean;
+  readout: ReactNode;
+  flow: ReactNode;
+  charts: ReactNode;
+  metrics: ReactNode;
+}) {
+  const port = usePortStatus(box.box);
+  const ended = useBoxEnded(box.box);
+
   // Escape returns to the overview — the gesture people try first, and the
   // same rule Debug's panel follows.
   useEffect(() => {
@@ -152,7 +312,7 @@ export function StarPanel({
       </div>
 
       {/* The header band: identity and clock left, the box's controls in the
-          middle, its temperature right — everything the tile showed, at the
+          middle, its accuracy right — everything the tile showed, at the
           panel's width, so the swap loses nothing. */}
       <div className="mt-3 flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
         <div className="min-w-0">
@@ -190,71 +350,29 @@ export function StarPanel({
           </Button>
         </div>
 
-        {/* The star's own temperature, stated in words — the constellation
-            encodes it as colour, and a colour scale nobody can read precisely
-            still needs its number somewhere. */}
-        <div className="text-right">
-          <div className="text-[11px] text-static">Rolling accuracy</div>
-          <div className="font-mono text-[18px] tabular-nums text-starlight">
-            {accuracy === null ? "—" : accuracy.toFixed(2)}
-          </div>
-          <div className="font-mono text-[10px] tabular-nums text-static">
-            {trials.trials.length > 0
-              ? `${trials.trials.length} trial${trials.trials.length === 1 ? "" : "s"}`
-              : "no trials yet"}
-          </div>
-        </div>
+        {readout}
       </div>
 
       {extra}
 
-      {model.usable && (
+      {flow && (
         <div className="mt-3 border-t border-halo pt-3">
           <div className="mb-1 text-[11px] text-static">Trial flow</div>
-          {/* The sketch viewer's state machine, live: same glyphs, same
-              CSS-pixel type at every panel width, with the box's current
-              state wearing the token and the caption strip narrating it. */}
-          <LiveStateMachine
-            model={model}
-            liveNode={liveNode}
-            liveCondition={liveCondition}
-            observedConditions={observedConditions}
-          />
+          {flow}
         </div>
       )}
 
       {/* Charts left, the sidecar's own readouts right — every live number in
           one glance, no scrolling. */}
       <div className="mt-3 grid grid-cols-[minmax(0,1fr)_300px] items-start gap-4 border-t border-halo pt-3">
-        <div className="min-w-0">
-          {usable && scoring.scored ? (
-            <LivePanels
-              live={trials}
-              strobeNames={profile?.strobes ?? {}}
-              // 32, down from 36 when the trial flow was the smaller drawing:
-              // the state machine above earns its extra rows out of the
-              // charts' aspect so the panel still fits 1080 without scrolling.
-              chartHeight={32}
-            />
-          ) : (
-            <p className="text-[11px] leading-relaxed text-static">
-              {!scoring.scored
-                ? scoring.note
-                : profile
-                ? "This sketch's Task Profile doesn't declare the strobes the panels are derived from, so only the strobe feed is available."
-                : "No Task Profile for this sketch — only the strobe feed is available."}
-            </p>
-          )}
-        </div>
+        <div className="min-w-0">{charts}</div>
 
         <div className="flex flex-col gap-3">
-          {/* The sidecar-computed rolling metrics (`ANALYTICS.md#trials-hits-misses-and-exclusions`) —
+          {/* The sidecar-computed metrics (`ANALYTICS.md#trials-hits-misses-and-exclusions`) —
               the same strip the collapsed tile shows, so focusing a star never
               costs the readout it was showing. */}
           <HudSection title="Live metrics">
-            <div className="px-3 py-2.5">
-              <MetricStrip box={box.box} metrics={metrics} labels={labels} note={scoring.note} bare />
-            </div>
+            <div className="px-3 py-2.5">{metrics}</div>
           </HudSection>
 
           <HudSection title="Recent strobes">

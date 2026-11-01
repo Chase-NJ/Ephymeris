@@ -41,9 +41,11 @@ import {
 } from "@/lib/sessions/commands";
 import {
   useBoxEnded,
+  useBoxReplay,
   useBoxTelemetry,
   useBoxWriteError,
 } from "@/lib/sessions/context";
+import { replayNote, replayStrip } from "@/lib/sessions/liveReplay";
 import { missionControlHint, stepUrl } from "@/lib/sessions/flow";
 import type { SessionBox } from "@/lib/sessions/types";
 import { useBoxAccuracies } from "@/lib/sessions/useBoxAccuracies";
@@ -645,6 +647,7 @@ export function MissionControl() {
                     busy={busy || !connected}
                     metricLabels={labelsFor[box.sketchPath] ?? {}}
                     metricsNote={liveScoring(profiles[box.sketchPath]).note}
+                    spine={profiles[box.sketchPath]?.spine !== undefined}
                     triggers={isRecording ? (triggersFor[box.sketchPath] ?? []) : null}
                     durationMinutes={session?.durationMinutes ?? null}
                     onOpen={() => setFocusedId(box.animalId)}
@@ -901,6 +904,7 @@ function BoxCard({
   busy,
   metricLabels,
   metricsNote,
+  spine,
   triggers,
   durationMinutes,
   onOpen,
@@ -916,6 +920,9 @@ function BoxCard({
   metricLabels: Record<string, string>;
   /** What the strip says before it has a value, from the profile (`liveScoring`). */
   metricsNote: string;
+  /** A spine task: its strip shows what the sidecar's live replay scored
+   *  (`session.replay`), never the legacy telemetry. */
+  spine: boolean;
   /** This box's strobe vocabulary, for its PSTH — null when the session is not
    *  a recording, which is also what hides the scope buttons. */
   triggers: ScopeTrigger[] | null;
@@ -926,7 +933,12 @@ function BoxCard({
   onReset: () => void;
 }) {
   const port = usePortStatus(box.box);
-  const metrics = useBoxTelemetry(box.box);
+  const telemetry = useBoxTelemetry(box.box);
+  const replay = useBoxReplay(box.box);
+  const strip = useMemo(
+    () => (spine ? replayStrip(replay) : { metrics: telemetry, labels: metricLabels }),
+    [spine, replay, telemetry, metricLabels],
+  );
   const ended = useBoxEnded(box.box);
   const writeError = useBoxWriteError(box.box);
   const live = port.state === "IN_SESSION";
@@ -986,7 +998,12 @@ function BoxCard({
           Finished — <span className="text-starlight">{ended.stopReason}</span>
         </p>
       ) : (
-        <MetricStrip box={box.box} metrics={metrics} labels={metricLabels} note={metricsNote} />
+        <MetricStrip
+          box={box.box}
+          metrics={strip.metrics}
+          labels={strip.labels}
+          note={spine ? replayNote(replay) : metricsNote}
+        />
       )}
       {triggers && <ScopeButtons box={box.box} animalName={box.animalName} triggers={triggers} />}
     </section>

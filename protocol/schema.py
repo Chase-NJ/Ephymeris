@@ -896,6 +896,62 @@ SHAPES = (
         ),
     ),
     Shape(
+        "LiveReplayStatus",
+        lit("replaying", "diverged", "unreplayable", "ended"),
+        doc="Where a running spine run's live replay stands (`ANALYTICS.md#live-scoring`). "
+        "`replaying`: every strobe so far is what replay predicts, and `phase` is where the board "
+        "is. `diverged`: a strobe is not, so the run has no token and no numbers, as Analytics "
+        "will not score it. `unreplayable`: replay cannot run this run at all. `ended`: the run "
+        "is over, and its numbers are Analytics'.",
+    ),
+    Shape(
+        "LiveReplay",
+        obj(
+            f("box", INT),
+            f("animalId", STR),
+            f("status", Ref("LiveReplayStatus")),
+            f("detail", nullable(STR), doc="Why, when `diverged` or `unreplayable`."),
+            f(
+                "state",
+                nullable(INT),
+                doc="The table state the board is in, by replay; null unless `replaying`.",
+            ),
+            f(
+                "phase",
+                nullable(INT),
+                doc="That state's phase, an index into the profile snapshot's `spine.spine` "
+                "(its `table.phases`). What the live token sits on: never read from a strobe's "
+                "name. Null unless `replaying`, or for a state in no phase.",
+            ),
+            f(
+                "row",
+                nullable(STR),
+                doc="The row id the state belongs to; null for a state the rows share (the "
+                "pick, an early exit's end) or unless `replaying`.",
+            ),
+            f("trials", INT, doc="Complete trials so far, as the live trial table counts them."),
+            f(
+                "current",
+                nullable(Ref("ReplayTrial")),
+                doc="The trial in progress, as the table reads it so far (`complete: false`); "
+                "null between trials and unless `replaying`.",
+            ),
+            f("last", nullable(Ref("ReplayTrial")), doc="The latest complete trial."),
+            f(
+                "metrics",
+                ListOf(Ref("MetricSummary")),
+                doc="P(correct | row) over the complete trials so far, from the functions "
+                "Analytics scores the finished run with, so at `ended` they are Analytics'. "
+                "Empty when `diverged` or `unreplayable`.",
+            ),
+            f("overall", nullable(Ref("MetricSummary")), doc="P(correct) pooled over every row."),
+            f("replay", nullable(Ref("ReplayScore")), doc="The outcome-class tallies so far."),
+            f("divergence", nullable(Ref("ReplayDivergence")), doc="Where, when `diverged`."),
+        ),
+        doc="A running spine run as its live replay reads it (`ANALYTICS.md#live-scoring`): "
+        "where the board is and the numbers so far. Sent whole on every change.",
+    ),
+    Shape(
         "RunnerSession",
         obj(
             f("session", Ref("Session")),
@@ -4321,6 +4377,14 @@ EVENTS = (
         doc="Pushed on every strobe that updates a rolling live metric. Not "
         "batched like `port.output`: metric updates are far lower-frequency "
         "than raw strobes.",
+    ),
+    Event(
+        "session.replay",
+        Ref("LiveReplay"),
+        doc="A running spine run's live replay changed: the board entered another state, a "
+        "trial was scored, the run diverged or ended (`ANALYTICS.md#live-scoring`). Replayed "
+        "on connect, one per box whose latest run is a spine run, until that box starts again "
+        "or a new mapping is confirmed, so a reloaded Mission Control lands on the current phase.",
     ),
     Event(
         "session.animalEnded",

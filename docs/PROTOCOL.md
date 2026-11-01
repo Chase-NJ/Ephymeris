@@ -1520,6 +1520,13 @@ Pushed on every strobe that updates a rolling live metric. Not batched like `por
 
 **Data:** [BoxTelemetry](#shape-boxtelemetry)
 
+<a id="evt-session.replay"></a>
+#### `session.replay`
+
+A running spine run's live replay changed: the board entered another state, a trial was scored, the run diverged or ended (`ANALYTICS.md#live-scoring`). Replayed on connect, one per box whose latest run is a spine run, until that box starts again or a new mapping is confirmed, so a reloaded Mission Control lands on the current phase.
+
+**Data:** [LiveReplay](#shape-livereplay)
+
 <a id="evt-session.animalended"></a>
 #### `session.animalEnded`
 
@@ -2291,6 +2298,35 @@ The three bundled-sketch-library states (`TASKS.md#sketch-library`). There is no
 | `alternateCode` | number | The first (often the only) code that scores a miss. |
 | `alternateCodes` *(optional)* | number[] | Every code that scores a miss, present only when there are several: a no-go type is wrong at any response port (`ANALYTICS.md#trials-hits-misses-and-exclusions`). `alternateCode` repeats the first. |
 | `windowSize` | number |  |
+
+<a id="shape-livereplay"></a>
+#### LiveReplay
+
+A running spine run as its live replay reads it (`ANALYTICS.md#live-scoring`): where the board is and the numbers so far. Sent whole on every change.
+
+| Field | Type | Notes |
+|---|---|---|
+| `box` | number |  |
+| `animalId` | string |  |
+| `status` | [LiveReplayStatus](#shape-livereplaystatus) |  |
+| `detail` | string \| null | Why, when `diverged` or `unreplayable`. |
+| `state` | number \| null | The table state the board is in, by replay; null unless `replaying`. |
+| `phase` | number \| null | That state's phase, an index into the profile snapshot's `spine.spine` (its `table.phases`). What the live token sits on: never read from a strobe's name. Null unless `replaying`, or for a state in no phase. |
+| `row` | string \| null | The row id the state belongs to; null for a state the rows share (the pick, an early exit's end) or unless `replaying`. |
+| `trials` | number | Complete trials so far, as the live trial table counts them. |
+| `current` | [ReplayTrial](#shape-replaytrial) \| null | The trial in progress, as the table reads it so far (`complete: false`); null between trials and unless `replaying`. |
+| `last` | [ReplayTrial](#shape-replaytrial) \| null | The latest complete trial. |
+| `metrics` | [MetricSummary](#shape-metricsummary)[] | P(correct \| row) over the complete trials so far, from the functions Analytics scores the finished run with, so at `ended` they are Analytics'. Empty when `diverged` or `unreplayable`. |
+| `overall` | [MetricSummary](#shape-metricsummary) \| null | P(correct) pooled over every row. |
+| `replay` | [ReplayScore](#shape-replayscore) \| null | The outcome-class tallies so far. |
+| `divergence` | [ReplayDivergence](#shape-replaydivergence) \| null | Where, when `diverged`. |
+
+<a id="shape-livereplaystatus"></a>
+#### LiveReplayStatus
+
+Where a running spine run's live replay stands (`ANALYTICS.md#live-scoring`). `replaying`: every strobe so far is what replay predicts, and `phase` is where the board is. `diverged`: a strobe is not, so the run has no token and no numbers, as Analytics will not score it. `unreplayable`: replay cannot run this run at all. `ended`: the run is over, and its numbers are Analytics'.
+
+"replaying" \| "diverged" \| "unreplayable" \| "ended"
 
 <a id="shape-logbookcohort"></a>
 #### LogbookCohort

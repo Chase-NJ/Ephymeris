@@ -210,13 +210,20 @@ class AnimalWriter:
 
     # --- internals --------------------------------------------------------
 
-    def _document(self, stop_reason: str) -> dict[str, Any]:
-        """The full per-animal document (`DATA.md#the-json-document`). Core, then flat config, then the
-        profile snapshot, then data."""
+    def header(self) -> dict[str, Any]:
+        """The document as it stands before its first strobe: core, then flat
+        config, then the profile snapshot. What a live replay is started from
+        (`sessions/live_replay.py`)."""
         doc: dict[str, Any] = dict(self._core)
         doc.update(self._config)
         if self._profile is not None:
             doc[SNAPSHOT_KEY] = self._profile
+        return doc
+
+    def _document(self, stop_reason: str) -> dict[str, Any]:
+        """The full per-animal document (`DATA.md#the-json-document`). Core, then flat config, then the
+        profile snapshot, then data."""
+        doc = self.header()
         doc["stop_reason"] = stop_reason
         doc["n_events"] = len(self._events)
         doc["ts_data"] = [list(pair) for pair in self._events]

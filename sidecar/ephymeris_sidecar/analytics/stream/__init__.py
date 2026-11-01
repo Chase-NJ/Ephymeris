@@ -17,6 +17,7 @@ keeps it that way.
 | `false_starts` | Which restarted runs to set aside |
 | `replay`, `spine` | A spine run replayed from its own file, and checked against what it recorded |
 | `trial_table`, `table_metrics` | A spine run's trial table, and the numbers that are functions of it |
+| `live` | A spine run replayed as it runs: where its board is, and its numbers so far |
 | `stats`, `document`, `metric_summary` | The Wilson interval; reading `ts_data` out of a file's document; the metric shape |
 
 Cached summaries are versioned by `scoring.current_version`, which moves by

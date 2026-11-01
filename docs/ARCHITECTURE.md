@@ -327,7 +327,8 @@ After `auth`, the server sends every registered **snapshot** to that client alon
 (`Application.register`): one `port.state` per box (with `prev` equal to `state`, reason
 `"initial state"`), one `port.telemetry` per hand-started Debug run (`debug_run.py`), then
 `boards.presence`, `sketches.updated`, `tasks.updated`, `cohorts.updated`, `prefixes.updated`,
-`flash.queue`, `utility.updated`, `backup.status` and `intan.status`. Events are otherwise sent only on
+`flash.queue`, `utility.updated`, `backup.status`, `intan.status`, and one `session.replay` per box whose
+latest run is a spine run (`sessions/live_replay.py`). Events are otherwise sent only on
 change, so without it a client connecting in a quiet period, or a webview that reloaded, would have to
 guess. A snapshot that raises is logged and skipped rather than dropping the connection.
 
@@ -336,7 +337,8 @@ broadcasts the same provider's payload, so what a client that reconnects is told
 one that stayed was told. State an event carries belongs in a snapshot; an event that reports a change
 (`port.output`, a `port.state` transition) is broadcast as it happens.
 
-**Live session state is not replayed.** A reconnecting client asks: `sessions.active` to discover what is
+**Live session state is not replayed**, except a spine run's live replay, whose token a reloaded Mission
+Control must land on mid-trial ([Live session views](#live-session-views)). A reconnecting client asks: `sessions.active` to discover what is
 running with no prior ids, or `sessions.status` for a session it knows. The runner is the authority on the
 confirmed mapping, and asking beats a snapshot that may be stale on arrival; `session.lifecycle`
 broadcasts keep the answer current afterwards. A broadcast that lands while `sessions.active` is in
@@ -1482,6 +1484,26 @@ Mission Control's star panel and Debug Mode's live tile share `MetricStrip` and 
 > which is capped and trimmed oldest-first. A real session emits thousands of strobes; deriving from the
 > ring would silently drop the early trials — the part of a learning curve you most want.
 
+**A spine task's panel is the sidecar's live replay, and only that.** The runner replays a spine run as
+its strobes arrive ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#live-scoring)) and
+reports `session.replay`: the state and phase the board is in, the open and last trial rows, and P(correct
+| row) so far. The star panel draws the spine's phases from the profile snapshot (`lib/tasks/spineGraph.ts`,
+`LiveSpine`) with the token on the reported `phase`, and the tile and panel strips show the reported
+metrics (`lib/sessions/liveReplay.ts`). For a profile with a `spine`, `StarPanel` never mounts the legacy
+panels (`useLiveTrials`, `useLiveNode`, `LivePanels`), which decode strobe names; a test greps the spine
+path for them. A `diverged` run shows its divergence in the warning colour, with no token and no numbers.
+
+- **One step per tick, on the board's evidence.** An input edge is held until its tick is closed, then
+  stepped with every edge of that tick: the board strobes a tick's inputs before anything else.
+- **Between strobes, the board's clock.** A state the board leaves without strobing (a Wait timing out) is
+  reported when its timer runs out on the board, estimated from the last strobe's tick and the host's
+  monotonic clock, 30 ms late so an edge on its way still wins. One loop timer per box; the board is never
+  polled, and a later strobe replaces the estimate.
+- **Off the strobe's path.** The feed runs on the port's session thread after the strobe's fsync, a few
+  microseconds; the check and the numbers (`live.scored`, a whole replay) run in the loop's executor, one
+  at a time per box. A box keeps its last payload after its run ends, until it starts again or a new
+  mapping is confirmed, and `session.replay` is replayed on connect.
+
 **The session store forgets a run when the sidecar reports the next one began**, never on a click, so a
 refused start leaves the last run on screen. A port entering `IN_SESSION` (a real transition, not the
 connect replay) clears that box. Debug Mode's `port.telemetry` going from not running to running, which
@@ -1647,6 +1669,7 @@ own chunk, costs nothing until the first export, and a failure to load it loses 
 | `boards/` | `BoardTool`, the gRPC and subprocess backends, generated `rpc/` stubs | [Flashing](#flashing) |
 | `utility.py` | The utility baseline and `identify` | [Hardware utility baseline](#hardware-utility-baseline) |
 | `debug_run.py` | Live scoring for a task started from Debug Mode | [Running a task from Debug Mode](#running-a-task-from-debug-mode) |
+| `sessions/live_replay.py` | A running spine run's live replay, reported as `session.replay` | [Live session views](#live-session-views) |
 | `sessions/` | `lifecycle.py` (the held session and its ordering), `runner.py`, `writer.py` (write-ahead `.tsv`), `matwriter.py`, `models.py`, `repository.py`, `paths.py` (`parse_name_date`), `recovery.py`, `tidy.py` | [Session lifecycle](#session-lifecycle), [DATA.md](DATA.md#per-animal-files) |
 | `cohorts/` | `db.py` (SQLite, schema, migrations), `models.py`, `repository.py`, `folders.py`, `grouping.py`, `members.py` (former members), `move.py` / `move_apply.py` (moving animals between cohorts: plan, then journal, copy, commit, clean up), `relocate.py` (moving a data folder with its records' paths) | [DATA.md](DATA.md#cohorts-animals-and-groups), [DATA.md](DATA.md#moving-animals-between-cohorts) |
 | `tasks/` | `profile.py` (`task.json`, hashes), `start_command.py`, `seed.py` | [TASKS.md](TASKS.md#task-profile) |

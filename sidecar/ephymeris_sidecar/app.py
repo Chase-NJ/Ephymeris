@@ -311,6 +311,11 @@ class Application:
         self.server.register_snapshot(
             Evt.INTAN_STATUS, lambda: self.intan.status_json() if self.intan else None
         )
+        # Each box's spine-run replay, so a reloaded Mission Control lands on
+        # the phase the board is in (`ARCHITECTURE.md#replay-on-connect`).
+        self.server.register_snapshot(
+            Evt.SESSION_REPLAY, lambda: self.runner.replay_snapshot() if self.runner else []
+        )
 
     def start(self) -> None:
         self.db.connect()

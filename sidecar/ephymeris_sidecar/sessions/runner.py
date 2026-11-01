@@ -2,7 +2,8 @@
 telemetry (`ARCHITECTURE.md#entering-in_session`, `DATA.md#crash-safety`).
 
 Owns the per-box run state that the port handler doesn't: which animal is in
-each box, its writer, its rolling metrics, and its `SessionAnimalRun` record.
+each box, its writer, its rolling metrics, a spine run's live replay
+(`sessions/live_replay.py`), and its `SessionAnimalRun` record.
 The handler parses strobes and calls back here; here they become durable `.tsv`
 lines and `session.telemetry` pushes.
 
@@ -22,10 +23,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
+from ..analytics.stream.spine import is_spine_run
 from ..analytics.stream.trials import MetricSet
 from ..tasks.profile import TaskProfile
 from ..tasks.seed import new_trial_seed
 from ..tasks.start_command import StartCommand, StartRefused
+from .live_replay import BoxReplay
 from .models import SessionAnimalRun
 from .paths import AnimalFilePaths, resolve_animal_files
 from .writer import AnimalWriter
@@ -75,6 +78,8 @@ class ActiveRun:
     session_id: str = ""
     writer: AnimalWriter | None = None
     metrics: MetricSet | None = None
+    #: A spine run's live replay (`sessions/live_replay.py`), from its handshake on.
+    live: BoxReplay | None = None
     end_code: int | None = None
     resolved: bool = False
     files: AnimalFilePaths | None = None
@@ -132,6 +137,11 @@ class SessionRunner:
         # the `ended` a reloaded client reads, since `session.animalEnded` is
         # never replayed (`ARCHITECTURE.md#replay-on-connect`).
         self._ended: set[int] = set()
+        # Each box's live replay of its latest spine run, kept after the run
+        # ends so a client that connects then still reads its final numbers,
+        # until the box starts again or a new mapping is confirmed
+        # (`ARCHITECTURE.md#live-session-views`).
+        self._replays: dict[int, BoxReplay] = {}
         # In-flight fire-and-forget finalizations (end strobes, board drops).
         # `end_all` drains this so a caller that clears session state right
         # after it returns can't strand a finalization mid-write.
@@ -183,6 +193,7 @@ class SessionRunner:
         self._group_id = group_id
         self._configs = {c.box: c for c in box_configs}
         self._ended = set()
+        self._replays = {}
         self._duration_s = duration_s
 
     def clear(self) -> None:
@@ -191,6 +202,7 @@ class SessionRunner:
             raise RuntimeError("cannot clear a runner with active runs")
         self._configs = {}
         self._ended = set()
+        self._replays = {}
         self._session_folder = None
         self._session_id_label = ""
         self._session_id = ""
@@ -279,6 +291,7 @@ class SessionRunner:
         )
         self._active[box] = run
         self._ended.discard(box)
+        self._replays.pop(box, None)
         # The time limit counts from this box's own start (`ARCHITECTURE.md#configuration`). STOP is
         # still only a request the firmware honours at a trial boundary, so
         # the deadline sends it and the board's end strobe does the ending.
@@ -397,6 +410,16 @@ class SessionRunner:
             return
         run.writer = writer
         run.metrics = MetricSet(run.config.profile)
+        header = writer.header()
+        if is_spine_run(header):
+            # Replayed live as its strobes arrive, as Analytics replays the
+            # finished file (`ANALYTICS.md#live-scoring`). Never at the run's cost.
+            try:
+                run.live = BoxReplay(box, run.config.animal_id, header, loop=self._loop,
+                                     publish=self._push_replay)
+                self._replays[box] = run.live
+            except Exception:  # noqa: BLE001
+                log.exception("box %d: couldn't start its live replay", box)
         # From here the `.tsv` grows on every strobe; the mirror picks it up on
         # its own cadence and never on this thread (`DATA.md#backup-mirroring`).
         if self._backup is not None:
@@ -428,6 +451,9 @@ class SessionRunner:
                 self.on_strobe_tap(box, code, ts)
             except Exception:  # noqa: BLE001
                 log.exception("box %d: recording strobe tap failed", box)
+
+        if run.live is not None:
+            run.live.feed(code, ts)  # after the fsync; never raises
 
         if values:
             payload = {
@@ -492,6 +518,8 @@ class SessionRunner:
             self._finalizing.remove(box)
 
     async def _finalize(self, box: int, run: ActiveRun, reason: str) -> None:
+        if run.live is not None:
+            run.live.close()
         if run.deadline is not None:
             run.deadline.cancel()
             run.deadline = None
@@ -577,7 +605,17 @@ class SessionRunner:
         while pending := [t for t in self._finalizations if not t.done()]:
             await asyncio.gather(*pending, return_exceptions=True)
 
+    def replay_snapshot(self) -> list[dict[str, Any]]:
+        """One `session.replay` payload per box with a live replay: what a
+        client that connects now is owed (`ARCHITECTURE.md#replay-on-connect`)."""
+        return [self._replays[box].payload() for box in sorted(self._replays)]
+
     # --- internals --------------------------------------------------------
+
+    async def _push_replay(self, payload: dict[str, Any]) -> None:
+        from ..protocol import Evt, event
+
+        await self._broadcast(event(Evt.SESSION_REPLAY, payload))
 
     async def _push_telemetry(self, payload: dict[str, Any]) -> None:
         from ..protocol import Evt, event

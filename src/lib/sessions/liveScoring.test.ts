@@ -27,11 +27,11 @@ const metric = {
 };
 
 describe("what a box's live readouts can show, from its profile", () => {
-  it("says a spine task is not scored live yet, rather than leaving the panel blank", () => {
+  it("says where a spine task is scored live, rather than leaving Debug Mode's panel blank", () => {
     const spine = liveScoring(profile({ spine: { interp: 2 } }));
     expect(spine.scored).toBe(false);
     expect(spine.note).toMatch(/spine tasks/i);
-    expect(spine.note).toMatch(/not available yet/i);
+    expect(spine.note).toMatch(/Mission Control/);
     expect(spine.note).toMatch(/recorded/i);
   });
 

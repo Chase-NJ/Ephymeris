@@ -1,5 +1,7 @@
 import { createContext, useCallback, useContext, useSyncExternalStore } from "react";
 
+import type { LiveReplay } from "@/lib/ws/protocol";
+
 import type { SessionStore } from "./store";
 import type {
   ActiveSessions,
@@ -92,4 +94,14 @@ export function useBoxWriteError(box: number): string | null {
     [store, box],
   );
   return useSyncExternalStore(subscribe, () => store.getWriteError(box));
+}
+
+/** One box's latest spine-run replay (`session.replay`), or null for none. */
+export function useBoxReplay(box: number): LiveReplay | null {
+  const store = useSessionStore();
+  const subscribe = useCallback(
+    (cb: () => void) => store.subscribe(`replay:${box}`, cb),
+    [store, box],
+  );
+  return useSyncExternalStore(subscribe, () => store.getReplay(box));
 }

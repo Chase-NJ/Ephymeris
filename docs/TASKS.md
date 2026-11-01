@@ -638,7 +638,7 @@ It has limits, and each is diagnosed rather than guessed around:
 
 - the phases are Wait, Hold, Present, Delay, Response window, Counter, Outcome and ITI;
 - a task has one block, which draws each of its rows uniformly;
-- nothing is scored live yet: Mission Control says so, from the profile (`src/lib/sessions/liveScoring.ts`). Analytics scores a finished run by replaying it ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#how-a-spine-run-is-scored));
+- Mission Control scores a run live by replaying it as its strobes arrive, and Analytics scores the finished run by the same replay ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#live-scoring)); Debug Mode runs no live replay, and says so (`src/lib/sessions/liveScoring.ts`);
 - it is proven on the host. On a Mega it has run only with nothing wired, so no response, hold, abort or press has yet come from a real input ([README.md](../README.md#not-yet-done)).
 
 ### What a spine task holds
@@ -1288,7 +1288,9 @@ A profile with a `spine` key is hashed through `tasks/behaviour.py` ([ADR 0003](
 
 ## Derived state machine
 
-The Task tab and Mission Control draw the trial's state machine. It is **computed from the profile** in `src/lib/tasks/topology.ts` (`taskGraph`) — pure, no React, store or fetch — and laid out by `src/lib/tasks/graphLayout.ts`. Both are pinned by `topology.test.ts` and `graphLayout.test.ts`.
+The Task tab and Mission Control draw the trial's state machine. A [spine task](#spine-tasks)'s is not
+derived: Mission Control draws its spine, with the token where the sidecar's replay puts it
+([ARCHITECTURE.md](ARCHITECTURE.md#live-session-views)). Everything below is the legacy derivation. It is **computed from the profile** in `src/lib/tasks/topology.ts` (`taskGraph`) — pure, no React, store or fetch — and laid out by `src/lib/tasks/graphLayout.ts`. Both are pinned by `topology.test.ts` and `graphLayout.test.ts`.
 
 ### Why derived
 

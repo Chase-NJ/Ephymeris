@@ -127,6 +127,10 @@ def _kind(hint: Any) -> _Kind:
     origin, args = typing.get_origin(hint), typing.get_args(hint)
     if origin in (typing.Union, types.UnionType):
         present = [a for a in args if a is not type(None)]
+        if present == [bool]:
+            # A nullable flag (`correct`: right, wrong, or not scored) as 1, 0
+            # or NaN: a MATLAB logical has no null, and false is a claim.
+            return _Kind("number")
         return _kind(present[0]) if len(present) == 1 else _Kind("json")
     if hint is bool:
         return _Kind("bool")

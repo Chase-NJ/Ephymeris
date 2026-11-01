@@ -591,7 +591,7 @@ def test_a_column_added_to_the_trial_row_is_written_with_no_change_here(tmp_path
 #: A fingerprint of the derived blocks of fixed runs. **When this fails, a run's
 #: trial table has changed: bump `spine.REPLAY_VERSION`, then update this pin**,
 #: so a file's stamp says which replay wrote its table (`DATA.md#the-derived-trial-table`).
-REPLAY_PIN = "2fadabf7c0cf5e80"
+REPLAY_PIN = "7b3a05fea3f50923"
 
 
 def test_the_replay_version_pins_the_trial_table() -> None:
@@ -604,3 +604,34 @@ def test_the_replay_version_pins_the_trial_table() -> None:
     columns = [(name, kind.name) for name, kind in derived.fields_of(trial_table.ReplayTrial)]
     canon = json.dumps({"blocks": blocks, "columns": columns}, sort_keys=True, separators=(",", ":"))
     assert hashlib.sha256(canon.encode("utf-8")).hexdigest()[:16] == REPLAY_PIN
+
+
+def test_the_legacy_adapters_columns_are_written_to_both_files(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    """#107's columns: `scores` as a struct array of {condition, correct}, and a
+    nullable `correct` as 1, 0 or NaN, never a null read back as false."""
+    from ephymeris_sidecar.analytics.stream import trial_table
+
+    real = spine_stream.replayed
+
+    def scored(document):  # noqa: ANN001, ANN202
+        result = real(document)
+        trials = tuple(dataclasses.replace(
+            t, correct=None if t.index == 1 else t.correct,
+            scores=(trial_table.ConditionScore("r1", True), trial_table.ConditionScore("l1", None))
+            if t.index == 0 else ()) for t in result.trials)
+        return dataclasses.replace(result, trials=trials)
+
+    monkeypatch.setattr(spine_stream, "replayed", scored)
+    _, json_path, mat = run_through_writer(tmp_path, recorded_document())
+
+    rows = read_json(json_path)[DERIVED]["trials"]
+    assert rows[0]["scores"] == [{"condition": "r1", "correct": True}, {"condition": "l1", "correct": None}]
+    assert rows[1]["correct"] is None and rows[1]["scores"] == []
+    assert {"outcome_ms", "presented"} <= set(rows[0])
+    trials = mat_trials(mat)
+    first = trials[0, 0]["scores"]
+    assert first.shape == (2, 1)
+    assert mat_value(first[0, 0]["condition"]) == "r1" and mat_value(first[0, 0]["correct"]) == 1.0
+    assert mat_value(first[1, 0]["correct"]) is None, "an exclusion stays NaN, not false"
+    assert mat_value(trials[1, 0]["correct"]) is None
+    assert trials[1, 0]["scores"].shape == (0, 1)

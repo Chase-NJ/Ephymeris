@@ -1,27 +1,27 @@
 """One run, scored — `ANALYTICS.md#how-a-strobe-stream-is-scored`.
 
-`summarize(document, profile)` is the whole job: every declared metric replayed
-through the live accumulator, the pooled figure, the outcome tally, the
-per-condition tally and the engagement ladder, as one `RunSummary`. A spine
-run is scored by replay instead (`ANALYTICS.md#how-a-spine-run-is-scored`):
-its trial table, and the metrics that are functions of it.
+`summarize(document, profile)` is the whole job, and it is the same for both
+kinds of run: read the run into its trial table, then read every number off
+the table. A spine run's table comes from its replay
+(`ANALYTICS.md#how-a-spine-run-is-scored`); a legacy run's from the legacy
+decoder (`ANALYTICS.md#how-a-legacy-run-becomes-a-trial-table`), which gives
+the per-condition P(hit), the pooled figure, the outcome tally, the
+per-condition tally and the engagement ladder, as one `RunSummary`.
 """
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from ...tasks.profile import LiveMetric, TaskProfile
+from ...tasks.profile import TaskProfile
 from .document import _duration_ms, codes_of
-from . import table_metrics
+from . import legacy, table_metrics
 from .spine import Divergence, SpineDecodeError, is_spine_run, replayed
-from .engagement import TrialEngagement, engagement_of
-from .outcomes import ConditionOutcomes, TrialOutcomes, conditions_of, outcomes_of
+from .spine import trial_table as spine_table
+from .engagement import TrialEngagement, tally_engagement
+from .outcomes import ConditionOutcomes, TrialOutcomes, tally_conditions, tally_outcomes
 from .metric_summary import OVERALL_ID, MetricSummary
-from .stats import wilson_interval
-from .trials import MetricAccumulator, boundaries_for
 
 
 @dataclass(frozen=True)
@@ -130,19 +130,15 @@ def summarize(
     if profile is None or not profile.live_metrics:
         return RunSummary(status="no-metrics", **base)
 
-    boundaries = boundaries_for(profile)
-    scored = [
-        _summarize_metric(metric, codes, boundaries, min_counted, profile)
-        for metric in profile.live_metrics
-    ]
-    metrics = [entry.summary for entry in scored]
+    table = legacy.table_of(document, profile)
+    metrics = table_metrics.legacy_metrics(table, min_counted=min_counted)
     return RunSummary(
         status="ok",
         metrics=metrics,
-        overall=_overall(scored, min_counted),
-        outcomes=outcomes_of(codes, profile),
-        conditions=conditions_of(codes, profile),
-        engagement=engagement_of(codes, profile),
+        overall=table_metrics.legacy_overall(metrics, min_counted=min_counted),
+        outcomes=tally_outcomes(table),
+        conditions=tally_conditions(table),
+        engagement=tally_engagement(table),
         excluded_by_default=profile.kind == "utility",
         **base,
     )
@@ -190,174 +186,13 @@ def with_threshold(payload: dict[str, Any], min_counted: int) -> dict[str, Any]:
     return out
 
 
-
-
-@dataclass(frozen=True)
-class _Scored:
-    """One metric's summary plus the integer numerator behind it.
-
-    `MetricSummary` carries P(hit) as a float because that is what the wire
-    wants. Pooling needs the hit *count*, and recovering it as
-    `round(p * counted)` means reconstructing an integer from a quotient of
-    itself — correct at any n this app will ever see, and still a reconstruction
-    of something that was already known exactly. Carrying it costs a field.
-    """
-
-    summary: MetricSummary
-    hits: int
-
-
-def _overall(scored: list[_Scored], min_counted: int) -> MetricSummary | None:
-    """Accuracy pooled across every metric — correct trials over scored trials.
-
-    Why this exists, and why it is every per-run readout's default: **a single
-    metric cannot show a side bias.** An animal that pokes right on every trial
-    scores ~1.0 on "P(R | Odor 1)" and ~0.0 on "P(L | Odor 3)", so a readout
-    keyed on the first metric alone paints a completely bias-locked animal as one of the
-    best in the cohort. Pooling puts it at chance, which is the truth.
-
-    Pooled by summing hits and trials rather than averaging the two
-    proportions, so a session that scored 90 odor-1 trials and 10 odor-3 trials
-    is weighted the way it actually happened.
-
-    **The rate pools only conditions that scored; the trial counts pool all of
-    them.** A condition that fired twenty times and was never answered
-    contributes nothing to P — there is no proportion to weight — but those
-    twenty trials are exactly what `triggered` and `excluded` exist to report,
-    and dropping them made the pooled row claim the animal was never offered
-    them. Counting all of them also keeps the identity
-    `triggered == counted + excluded` true of the pooled row, which is what
-    makes it readable next to the per-condition rows above it.
-    """
-    with_trials = [
-        entry for entry in scored
-        if entry.summary.p_session is not None and entry.summary.counted > 0
-    ]
-    if not with_trials:
-        return None
-    counted = sum(entry.summary.counted for entry in with_trials)
-    hits = sum(entry.hits for entry in with_trials)
-    interval = wilson_interval(hits, counted)
-    return MetricSummary(
-        id=OVERALL_ID,
-        label="Overall accuracy",
-        p_session=hits / counted,
-        p_window=None,
-        hits=hits,
-        counted=counted,
-        triggered=sum(entry.summary.triggered for entry in scored),
-        excluded=sum(entry.summary.excluded for entry in scored),
-        window_size=0,
-        wilson_low=interval[0] if interval else None,
-        wilson_high=interval[1] if interval else None,
-        low_confidence=counted < min_counted,
-        # The pooled figure spans every condition, so it is not answered at any
-        # one side and has no axis. Its own kind of null, not a missing one.
-        answer_side=None,
-    )
-
-
-def _summarize_metric(
-    metric: LiveMetric,
-    codes: list[int],
-    boundaries: frozenset[int],
-    min_counted: int,
-    profile: TaskProfile | None = None,
-) -> _Scored:
-    """One replay of the stream through the live accumulator, read two ways.
-
-    The rolling value is the accumulator's window — literally what Mission
-    Control displayed. The whole-session value is `hits / counted` over every
-    trial the same accumulator scored, so the two differ *only* in the
-    averaging window and cannot drift apart in how a trial is classified.
-
-    This used to replay the stream a second time through a window widened past
-    the session length to get the whole-session figure. Same number by
-    construction (a window that can't fill is no window), one less pass, and no
-    dependence on the widened window actually being wide enough.
-    """
-    accumulator = MetricAccumulator(metric, boundaries)
-    for code in codes:
-        accumulator.offer(code)
-
-    counted = accumulator.counted_total
-    hits = accumulator.hits_total
-    triggered = codes.count(metric.trigger_code)
-    p_session = hits / counted if counted else None
-    p_window = accumulator.value().value
-
-    interval = wilson_interval(hits, counted) if counted else None
-
-    return _Scored(
-        summary=MetricSummary(
-            id=metric.id,
-            label=metric.label,
-            p_session=p_session,
-            p_window=p_window,
-            hits=hits,
-            counted=counted,
-            triggered=triggered,
-            # Trials where neither response arrived before the next boundary —
-            # lazy, invalid, or no-response. Meaningful in its own right: 200
-            # triggers with 90 counted is a very different session from 200 with
-            # 195, at identical P(correct).
-            excluded=max(0, triggered - counted),
-            window_size=metric.window_size,
-            wilson_low=interval[0] if interval else None,
-            wilson_high=interval[1] if interval else None,
-            low_confidence=counted < min_counted,
-            answer_side=answer_side_of(profile, metric),
-        ),
-        hits=hits,
-    )
-
-
-#: `WATER_POKE_L` → left. Mirrors `infer.py`'s `_side_label` and the frontend's
-#: `correctWellOf`, all three reading the historical suffix rather than assuming
-#: it: a rig whose response ports carry no side keeps its slot number.
-_ANSWER_SIDE = re.compile(r"^WATER_POKE_(?:PORT_(?P<slot>\d+)|(?P<side>L|R))$")
-
-
-def answer_side_of(profile: TaskProfile | None, metric: LiveMetric) -> str | None:
-    """Which answer a condition rewards — `left`, `right`, `withhold`, `port`.
-
-    > [!CAUTION]
-    > **From `success_code` and nothing else.** The tempting fallback — try
-    > `alternate_code` when the success code is not a well — is wrong in a way
-    > that prints a confident lie: a no-go metric's alternates are *every
-    > response port* (the generator's `_enter_codes`, `infer.no_go_alternates`), so
-    > the fallback answers "left well" for a condition whose correct answer
-    > is to poke nothing. `None` is the honest result whenever the profile
-    > cannot prove one, and every consumer treats it as "this condition has no axis" rather than filling it in.
-    """
-    if profile is None:
-        return None
-    name = (profile.strobes.get(metric.success_code) or "").strip().upper()
-    if not name:
-        return None
-    if name == "WATER_POKE_NONE":
-        return "withhold"
-    match = _ANSWER_SIDE.match(name)
-    if match is None:
-        return None
-    if match.group("slot"):
-        return "port"
-    return "left" if match.group("side") == "L" else "right"
-
-
-def live_equivalent(
-    profile: TaskProfile | None, codes: list[int]
-) -> list[tuple[str, float | None, int]]:
-    """Replay `codes` through the *live* accumulators, for test comparison.
-
-    Exists so a test can assert the offline path agrees with what Mission
-    Control displayed, rather than trusting that it does.
-    """
-    if profile is None:
-        return []
-    boundaries = boundaries_for(profile)
-    accumulators = [MetricAccumulator(m, boundaries) for m in profile.live_metrics]
-    for code in codes:
-        for accumulator in accumulators:
-            accumulator.offer(code)
-    return [(a.id, a.value().value, a.value().n) for a in accumulators]
+def trial_table_of(document: dict[str, Any], profile: TaskProfile | None) -> dict[str, Any] | None:
+    """A run's trial table as the wire carries it (`RunSeries.trialTable`), for a
+    spine run and a legacy one alike. None for a run with no table: a spine run
+    replay does not score (diverged, or one it cannot run), and a legacy run
+    with no profile to decode it. Computed on each request and never cached
+    (`DATA.md#caching`)."""
+    if is_spine_run(document):
+        return spine_table(document)
+    table = legacy.table_of(document, profile)
+    return table.to_json() if table.conditions else None

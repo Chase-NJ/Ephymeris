@@ -37,6 +37,23 @@ export async function deleteTask(client: SidecarPort, taskId: string) {
   return client.call(CMD.TASKS_DELETE, { taskId });
 }
 
+/** One task as it travels to the other lab machine
+ *  (`TASKS.md#moving-a-task-between-machines`). */
+export async function exportTask(client: SidecarPort, taskId: string) {
+  return client.call(CMD.TASKS_EXPORT, { taskId });
+}
+
+/** Plan (`apply: false`) or apply another machine's task export. The sidecar
+ *  decides every conflict; `confirm` passes a plan that `replaces` a task. */
+export async function importTask(
+  client: SidecarPort,
+  document: unknown,
+  apply: boolean,
+  confirm = false,
+) {
+  return client.call(CMD.TASKS_IMPORT, { document, apply, confirm });
+}
+
 /**
  * A task id from a name — lower snake case, which is what the sidecar accepts.
  *

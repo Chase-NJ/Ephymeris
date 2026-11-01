@@ -103,6 +103,8 @@ class Cmd:
     TASKS_PREVIEW: Final = "tasks.preview"
     TASKS_SAVE: Final = "tasks.save"
     TASKS_DELETE: Final = "tasks.delete"
+    TASKS_EXPORT: Final = "tasks.export"
+    TASKS_IMPORT: Final = "tasks.import"
 
     # Backup
     BACKUP_SYNC_NOW: Final = "backup.syncNow"
@@ -221,6 +223,9 @@ class ErrCode:
     STROBE_VOCABULARY_UNREADABLE: Final = "STROBE_VOCABULARY_UNREADABLE"
     STROBE_SESSION_RUNNING: Final = "STROBE_SESSION_RUNNING"
     TASK_NOT_FOUND: Final = "TASK_NOT_FOUND"
+    TASK_TRANSFER_INVALID: Final = "TASK_TRANSFER_INVALID"
+    TASK_IMPORT_CONFLICT: Final = "TASK_IMPORT_CONFLICT"
+    TASK_IMPORT_REPLACES: Final = "TASK_IMPORT_REPLACES"
     TASK_INVALID: Final = "TASK_INVALID"
     INTAN_UNAVAILABLE: Final = "INTAN_UNAVAILABLE"
     INTAN_NOT_READY: Final = "INTAN_NOT_READY"
@@ -353,7 +358,9 @@ SHAPES: Final[dict[str, Any]] = {
     "ChannelSetConflict": ('obj', (('kind', 'str', False), ('channel', ('union', ('str', 'null')), False), ('message', 'str', False))),
     "ChannelSetImportPlan": ('obj', (('conflicts', ('list', ('ref', 'ChannelSetConflict')), False), ('vocabulary', ('ref', 'StrobeImportPlan'), False), ('changed', ('list', 'str'), False), ('breaks', ('list', ('ref', 'RigImpact')), False), ('hereHash', 'str', False), ('importedHash', 'str', False), ('fileHash', 'str', False), ('fileHashVersion', 'int', False), ('identical', 'bool', False))),
     "TaskDiagnostic": ('obj', (('location', 'str', False), ('message', 'str', False), ('code', 'str', False))),
-    "TaskEntry": ('obj', (('id', 'str', False), ('name', 'str', False), ('category', 'str', False), ('path', 'str', False), ('label', 'str', False), ('editedAt', ('union', ('str', 'null')), False), ('problems', 'int', False), ('trials', 'int', False), ('stages', 'int', False), ('selectionMode', ('lit', ('antibias', 'pool', 'weighted')), False))),
+    "TaskImportConflict": ('obj', (('kind', 'str', False), ('channel', ('union', ('str', 'null')), False), ('message', 'str', False))),
+    "TaskImportPlan": ('obj', (('conflicts', ('list', ('ref', 'TaskImportConflict')), False), ('taskId', 'str', False), ('name', 'str', False), ('replaces', 'bool', False), ('replacesName', ('union', ('str', 'null')), False), ('replacesUnreadable', 'bool', False), ('identical', 'bool', False), ('sameChannelSet', 'bool', False), ('hereHash', 'str', False), ('fileHash', 'str', False), ('fileHashVersion', 'int', False), ('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False))),
+    "TaskEntry": ('obj', (('id', 'str', False), ('name', 'str', False), ('unreadable', ('union', ('str', 'null')), False), ('category', 'str', False), ('path', 'str', False), ('label', 'str', False), ('editedAt', ('union', ('str', 'null')), False), ('problems', 'int', False), ('trials', 'int', False), ('stages', 'int', False), ('selectionMode', ('lit', ('antibias', 'pool', 'weighted')), False))),
     "TaskSaved": ('obj', (('entry', ('ref', 'TaskEntry'), False), ('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False), ('sketchPath', ('union', ('str', 'null')), False))),
     "TaskPreview": ('obj', (('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False), ('profile', ('ref', 'TaskProfile'), False), ('catalogueDefaults', ('map', 'any'), False))),
     "TasksUpdatedData": ('obj', (('tasks', ('list', ('ref', 'TaskEntry')), False),)),
@@ -450,6 +457,8 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "tasks.preview": ('obj', (('definition', 'any', False),)),
     "tasks.save": ('obj', (('definition', 'any', False),)),
     "tasks.delete": ('obj', (('taskId', 'str', False),)),
+    "tasks.export": ('obj', (('taskId', 'str', False),)),
+    "tasks.import": ('obj', (('document', 'any', False), ('apply', 'bool', False), ('confirm', 'bool', True))),
     "backup.syncNow": ('obj', ()),
     "sessions.list": ('obj', (('cohortId', 'str', False), ('includeAborted', 'bool', True))),
     "analytics.summary": ('obj', (('cohortId', 'str', False), ('sessionIds', ('list', 'str'), True), ('animalIds', ('list', 'str'), True), ('minCountedTrials', 'int', True))),
@@ -541,6 +550,8 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "tasks.preview": ('ref', 'TaskPreview'),
     "tasks.save": ('ref', 'TaskSaved'),
     "tasks.delete": ('obj', (('deleted', 'bool', False),)),
+    "tasks.export": ('obj', (('document', 'any', False), ('filename', 'str', False))),
+    "tasks.import": ('obj', (('plan', ('ref', 'TaskImportPlan'), False), ('applied', 'bool', False))),
     "backup.syncNow": ('ref', 'SyncResult'),
     "sessions.list": ('obj', (('sessions', ('list', ('ref', 'SessionListItem')), False),)),
     "analytics.summary": ('ref', 'AnalyticsSummary'),

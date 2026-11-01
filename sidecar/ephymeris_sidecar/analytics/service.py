@@ -26,7 +26,7 @@ from ..sessions.models import SessionAnimalRun
 from ..sessions.paths import parse_name_date, parse_name_time, parse_session_folder
 from . import reader, stream
 from .stream import false_starts
-from .stream.spine import trial_table as spine_trial_table
+
 from .archive import RESCAN_WHILE_WRITING, CohortArchive
 from .repository import AdoptedRun, AnalyticsRepository, CachedRun
 from .scoring import RunScorer
@@ -301,10 +301,11 @@ class AnalyticsService:
             "metrics": [m.to_json() for m in metrics],
             "trail": [p.to_json() for p in trail],
             "trials": [t.to_json() for t in trials],
-            # A spine run's trial table, from its replay
-            # (`ANALYTICS.md#how-a-spine-run-is-scored`). Here, not in the
-            # summary: per-trial data is never cached (`DATA.md#caching`).
-            "trialTable": spine_trial_table(document),
+            # The run's trial table: a spine run's from its replay, a legacy
+            # run's from the legacy decoder
+            # (`ANALYTICS.md#how-a-legacy-run-becomes-a-trial-table`). Here, not
+            # in the summary: per-trial data is never cached (`DATA.md#caching`).
+            "trialTable": stream.trial_table_of(document, profile),
         }, None
 
     # --- recent sessions ----------------------------------------------------

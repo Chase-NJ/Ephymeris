@@ -352,6 +352,40 @@ def test_analytics_derive_payloads_match_schema() -> None:
     assert thin["conditions"] == []
 
 
+def test_a_legacy_trial_table_matches_schema() -> None:
+    """The legacy decoder's table (`ANALYTICS.md#how-a-legacy-run-becomes-a-trial-table`),
+    as `analytics.series` carries it, with every row kind and every nullable arm
+    reached: onset rows, an odor-less presentation, no clock, a no-go flag and two
+    conditions on one onset."""
+    from ephymeris_sidecar.analytics import stream
+
+    profile = task_profile.parse_profile(
+        {
+            "taskName": "Legacy",
+            "strobes": {
+                "101": "ODOR_1_ON", "105": "ODOR_5_ON", "222": "LIGHTS_ON", "224": "ODOR_POKE",
+                "226": "ODOR_UNPOKE", "248": "WATER_POKE_L", "249": "WATER_POKE_R",
+                "253": "FLUID_R", "256": "WATER_POKE_NONE",
+            },
+            "liveMetrics": [
+                {"id": "r1", "label": "P(R | 1)", "triggerCode": 101, "successCode": 249,
+                 "alternateCode": 248, "windowSize": 20},
+                {"id": "l1", "label": "P(L | 1)", "triggerCode": 101, "successCode": 248,
+                 "alternateCode": 249, "windowSize": 20},
+                {"id": "nogo", "label": "P(withhold | 5)", "triggerCode": 105, "successCode": 256,
+                 "alternateCodes": [248, 249], "windowSize": 20},
+            ],
+        }
+    )
+    codes = [222, 224, 101, 226, 249, 253, 222, 224, 105, 226, 256, 222, 224]
+    for clock in (lambda i: i * 100, lambda i: None):
+        document = {"rat": "r", "ts_data": [[code, clock(i)] for i, code in enumerate(codes)]}
+        table = stream.trial_table_of(document, profile)
+        assert table is not None and table["kind"] == "legacy" and len(table["trials"]) == 3
+        assert "no-go-outcomes" in table["gaps"]
+        assert validate(("ref", "TrialTable"), table) == []
+
+
 def test_a_populated_channel_set_import_plan_matches_schema() -> None:
     from ephymeris_sidecar.rig.transfer import ImportPlan
     from ephymeris_sidecar.strobes.store import MergePlan

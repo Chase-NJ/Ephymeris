@@ -14,7 +14,7 @@ from collections import Counter
 import pytest
 
 from ephymeris_sidecar.analytics import stream
-from ephymeris_sidecar.analytics.stream import compute_series
+from ephymeris_sidecar.analytics.stream.legacy import compute_series
 from ephymeris_sidecar.tasks.profile import parse_profile, profile_hash
 
 # The real GRGL profile: odor 1 should be answered right, odor 3 left.
@@ -645,7 +645,7 @@ def test_the_answer_side_is_never_taken_from_the_alternate() -> None:
             GRGL["liveMetrics"][1],
         ],
     })
-    assert stream.answer_side_of(unreadable, unreadable.live_metrics[0]) is None
+    assert stream.legacy.answer_side_of(unreadable, unreadable.live_metrics[0]) is None
     # ...and with only one readable side left, there is no plane at all.
     assert stream.strategy_axes(unreadable) is None
 
@@ -695,7 +695,7 @@ def test_a_window_shorter_than_the_floor_still_produces_a_walk() -> None:
 
 
 def test_boundaries_are_the_union_of_every_trigger() -> None:
-    assert stream.boundaries_for(PROFILE) == frozenset({101, 103})
+    assert stream.legacy.boundaries_for(PROFILE) == frozenset({101, 103})
 
 
 def test_an_unanswered_trial_is_excluded_not_mis_scored() -> None:
@@ -709,7 +709,7 @@ def test_an_unanswered_trial_is_excluded_not_mis_scored() -> None:
     codes = [101, 103, 248]
     metric = PROFILE.live_metrics[0]
 
-    correct = compute_series(metric, codes, stream.boundaries_for(PROFILE))
+    correct = compute_series(metric, codes, stream.legacy.boundaries_for(PROFILE))
     wrong = compute_series(metric, codes)  # the default: own trigger only
 
     assert correct == [], "the abandoned odor-1 trial must be excluded entirely"
@@ -727,7 +727,7 @@ def test_offline_scoring_equals_the_live_run() -> None:
         HIT_1 + HIT_3 + MISS_1 + HIT_3 + [101, 103, 248] + HIT_1 + MISS_3 + HIT_1
     )
     summary = stream.summarize(document(codes), PROFILE)
-    live = dict((mid, (value, n)) for mid, value, n in stream.live_equivalent(PROFILE, codes))
+    live = dict((mid, (value, n)) for mid, value, n in stream.legacy.live_equivalent(PROFILE, codes))
 
     for metric in summary.metrics:
         live_value, live_n = live[metric.id]
@@ -1092,7 +1092,7 @@ def test_an_unevidenced_condition_gets_a_stable_arbitrary_side() -> None:
     splitting every historical run from its future ones to correct an edge that
     real streams do not reach.
     """
-    from ephymeris_sidecar.analytics.stream import infer
+    from ephymeris_sidecar.analytics.stream.legacy import infer
 
     # Odor 1 answered right and odor 3 answered left, both with real evidence;
     # odor 4 only ever produced bare pokes.
@@ -1101,11 +1101,11 @@ def test_an_unevidenced_condition_gets_a_stable_arbitrary_side() -> None:
     second = infer.infer_profile(codes, sketch_name="GRGL 3-Odor")
     assert first is not None and second is not None
 
-    sides = [stream.answer_side_of(first, m) for m in first.live_metrics]
+    sides = [stream.legacy.answer_side_of(first, m) for m in first.live_metrics]
     # Every condition gets *a* side — the axes are never silently short one.
     assert all(side in ("left", "right") for side in sides), sides
     # And the same one every time, so a rescan cannot move the run's group.
-    assert sides == [stream.answer_side_of(second, m) for m in second.live_metrics]
+    assert sides == [stream.legacy.answer_side_of(second, m) for m in second.live_metrics]
     assert profile_hash(first) == profile_hash(second)
 
 
@@ -1121,7 +1121,7 @@ def test_the_guides_worked_example_scores_as_printed() -> None:
     inference — odor 1 rewarded at the right well and odor 3 at the left is
     exactly what that stream says.
     """
-    from ephymeris_sidecar.analytics.stream import infer
+    from ephymeris_sidecar.analytics.stream.legacy import infer
     from ephymeris_sidecar.rig import registry
 
     vocabulary = registry.vocabulary()

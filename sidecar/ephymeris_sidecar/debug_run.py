@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 from .ports.handler import STROBE_RE, OutputLine
-from .analytics.stream.trials import MetricSet
+from .analytics.stream.legacy import MetricSet
 from .tasks.profile import TaskProfile
 
 

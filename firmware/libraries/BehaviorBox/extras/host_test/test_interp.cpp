@@ -40,11 +40,15 @@ static const InterpTable TRIAL = {TRIAL_STATES, TRIAL_EDGES, NULL, NULL};
 /*  BLOCKS (INTERP 5). Two rows, each a Response window:
       0 Pick     the block's draw: its branches are the blocks' rows, block by block
       1 Row A    light on, watch LEFT and RIGHT (a response state); LEFT -> 3, RIGHT -> 4;
-                 after 100 -> 4
+                 after 100 -> 5
       2 Row B    odor on, the same, but RIGHT -> 3 and LEFT -> 4
       3 Correct  fluid for 10 -> 0, marked class 1 (correct)
-      4 Wrong    10 -> 0, marked class 2
-    The pick's branches: 0 A and 1 B (block 0), 2 B and 3 A (block 1). */
+      4 Wrong    10 -> 0, marked class 2 (wrong_response)
+      5 Timeout  10 -> 0, marked with the class timeout_class() gives it: 7
+                 (abort_before_stimulus) unless a test sets another
+    The pick's branches: 0 A and 1 B (block 0), 2 B and 3 A (block 1).
+    ERR is the default error set, wrong_response and false_alarm (classes 2
+    and 6); SKIP the classes a criterion passes over, the two aborts (7, 8). */
 enum { B0 = 0, B1 = 1, B2 = 2, B3 = 3, B5 = 4, B10 = 5, B100 = 6, B50 = 7 };
 static const uint32_t BP[] = {0, 1, 2, 3, 5, 10, 100, 50};
 static const InterpEdgeRow BLOCK_EDGES[] = {
@@ -54,11 +58,24 @@ static const InterpEdgeRow BLOCK_EDGES[] = {
 };
 static const InterpStateRow BLOCK_STATES[] = {
   {0,          0,                     NO,   NO,   NO, NO, NO, NO, 0, 4, INTERP_STARTS_TRIAL | INTERP_PICK, 0},
-  {BIT(LIGHT), BIT(LEFT) | BIT(RIGHT), B100, B100, 4,  NO, NO, NO, 4, 2, INTERP_RESPONSE, 0},
-  {BIT(ODOR),  BIT(LEFT) | BIT(RIGHT), B100, B100, 4,  NO, NO, NO, 6, 2, INTERP_RESPONSE, 0},
+  {BIT(LIGHT), BIT(LEFT) | BIT(RIGHT), B100, B100, 5,  NO, NO, NO, 4, 2, INTERP_RESPONSE, 0},
+  {BIT(ODOR),  BIT(LEFT) | BIT(RIGHT), B100, B100, 5,  NO, NO, NO, 6, 2, INTERP_RESPONSE, 0},
   {BIT(FLUID), 0,                     B10,  B10,  0,  NO, NO, NO, 0, 0, 0, 1},
   {0,          0,                     B10,  B10,  0,  NO, NO, NO, 0, 0, 0, 2},
+  {0,          0,                     B10,  B10,  0,  NO, NO, NO, 0, 0, 0, 7},
 };
+#define CLASS_BIT(c) ((uint16_t)(1U << ((c) - 1)))
+static const uint16_t ERR = CLASS_BIT(2) | CLASS_BIT(6);
+static const uint16_t SKIP = CLASS_BIT(7) | CLASS_BIT(8);
+static InterpStateRow g_timeout_states[6];
+
+/*  BLOCK_STATES with the timeout end (state 5) marked `cls`. */
+static const InterpStateRow *timeout_class(uint8_t cls)
+{
+  for (int i = 0; i < 6; ++i) g_timeout_states[i] = BLOCK_STATES[i];
+  g_timeout_states[5].outcome = cls;
+  return g_timeout_states;
+}
 /*  {side, weight}: A is answered LEFT, B RIGHT. */
 static const InterpEntry BLOCK_ENTRIES[] = {{LEFT, B2}, {RIGHT, B1}, {RIGHT, B1}, {LEFT, B1}};
 
@@ -83,6 +100,18 @@ static InterpActions respond(InterpCore &c, uint32_t bit, uint32_t &t)
   return a;
 }
 
+/*  Let the window run out (100) into the timeout end, then its 10 ms: the next trial's start. */
+static InterpActions time_out(InterpCore &c, uint32_t &t)
+{
+  t += 100;
+  InterpActions a = interp_step(&c, NOTHING, t);
+  assert(a.entered[0] == 5);
+  t += 10;
+  a = interp_step(&c, NOTHING, t);
+  assert(a.entered[0] == 0 && (a.flags & INTERP_ACT_TRIAL_START));
+  return a;
+}
+
 static void test_blocks()
 {
   // A table without blocks reports none.
@@ -91,9 +120,9 @@ static void test_blocks()
   // N trials, then the next block; its last trial ends the sequence (DONE).
   //   {first, count, select, n_min, n_max, k, n, window, correct, next}
   { static const InterpBlock R[] = {
-      {0, 2, INTERP_UNIFORM, B2, B2, NO, NO, NO, NO, 1},
-      {2, 1, INTERP_UNIFORM, B3, B3, NO, NO, NO, NO, NO}};
-    static const InterpBlocks BL = {R, NULL, NULL, 2, 0, 0};
+      {0, 2, INTERP_UNIFORM, B2, B2, NO, NO, NO, NO, 1, ERR},
+      {2, 1, INTERP_UNIFORM, B3, B3, NO, NO, NO, NO, NO, ERR}};
+    static const InterpBlocks BL = {R, NULL, NULL, 2, 0, 0, SKIP};
     InterpTable T = blocks_table(&BL);
     InterpCore c; InterpActions a = interp_begin(&c, &T, BP, 1, 0);
     assert(a.block == 0 && (a.flags & INTERP_ACT_BLOCK_START) && (a.flags & INTERP_ACT_TRIAL_START));
@@ -110,9 +139,9 @@ static void test_blocks()
 
   // k correct of the last n (2 of 3): errors do not count; a loop goes back.
   { static const InterpBlock R[] = {
-      {0, 2, INTERP_UNIFORM, NO, NO, B2, B3, NO, NO, 1},
-      {2, 1, INTERP_UNIFORM, B1, B1, NO, NO, NO, NO, 0}};
-    static const InterpBlocks BL = {R, NULL, NULL, 2, 0, 0};
+      {0, 2, INTERP_UNIFORM, NO, NO, B2, B3, NO, NO, 1, ERR},
+      {2, 1, INTERP_UNIFORM, B1, B1, NO, NO, NO, NO, 0, ERR}};
+    static const InterpBlocks BL = {R, NULL, NULL, 2, 0, 0, SKIP};
     InterpTable T = blocks_table(&BL);
     InterpCore c; interp_begin(&c, &T, BP, 7, 0);
     uint32_t t = 0;
@@ -131,8 +160,8 @@ static void test_blocks()
 
   // A drawn N: lo + draw(hi - lo + 1) at the block's start, before the pick's draw.
   { static const InterpBlock R[] = {
-      {0, 2, INTERP_UNIFORM, B2, B5, NO, NO, NO, NO, NO}};
-    static const InterpBlocks BL = {R, NULL, NULL, 1, 0, 0};
+      {0, 2, INTERP_UNIFORM, B2, B5, NO, NO, NO, NO, NO, ERR}};
+    static const InterpBlocks BL = {R, NULL, NULL, 1, 0, 0, SKIP};
     InterpTable T = blocks_table(&BL);
     for (uint32_t seed = 11; seed < 11 + 40 * 7919UL; seed += 7919UL) {
       uint32_t ctx = seed;
@@ -147,8 +176,8 @@ static void test_blocks()
 
   // Correction: after an error the same row repeats, with no draw, up to k (2) times.
   { static const InterpBlock R[] = {
-      {0, 2, INTERP_UNIFORM, NO, NO, NO, NO, NO, B2, NO}};
-    static const InterpBlocks BL = {R, NULL, NULL, 1, 0, 0};
+      {0, 2, INTERP_UNIFORM, NO, NO, NO, NO, NO, B2, NO, ERR}};
+    static const InterpBlocks BL = {R, NULL, NULL, 1, 0, 0, SKIP};
     InterpTable T = blocks_table(&BL);
     InterpCore c; interp_begin(&c, &T, BP, 3, 0);
     uint32_t t = 0;
@@ -169,8 +198,8 @@ static void test_blocks()
   // Weighted: a row of weight 0 is never drawn (block 1's A, weight B0 here).
   { static const InterpEntry ENT[] = {{LEFT, B0}, {RIGHT, B1}, {RIGHT, B1}, {LEFT, B1}};
     static const InterpBlock R[] = {
-      {0, 2, INTERP_WEIGHTED, NO, NO, NO, NO, NO, NO, NO}};
-    static const InterpBlocks BL = {R, ENT, NULL, 1, 4, 0};
+      {0, 2, INTERP_WEIGHTED, NO, NO, NO, NO, NO, NO, NO, ERR}};
+    static const InterpBlocks BL = {R, ENT, NULL, 1, 4, 0, SKIP};
     InterpTable T = blocks_table(&BL);
     InterpCore c; interp_begin(&c, &T, BP, 5, 0);
     uint32_t t = 0;
@@ -178,8 +207,8 @@ static void test_blocks()
 
   // Weighted 2 : 1 is r = draw(3), r < 2 -> A.
   { static const InterpBlock R[] = {
-      {0, 2, INTERP_WEIGHTED, NO, NO, NO, NO, NO, NO, NO}};
-    static const InterpBlocks BL = {R, BLOCK_ENTRIES, NULL, 1, 4, 0};
+      {0, 2, INTERP_WEIGHTED, NO, NO, NO, NO, NO, NO, NO, ERR}};
+    static const InterpBlocks BL = {R, BLOCK_ENTRIES, NULL, 1, 4, 0, SKIP};
     InterpTable T = blocks_table(&BL);
     for (uint32_t seed = 1; seed < 40; ++seed) {
       uint32_t ctx = seed;
@@ -190,8 +219,8 @@ static void test_blocks()
 
   // A shuffle bag of A twice and B once: every three trials hold exactly that.
   { static const InterpBlock R[] = {
-      {0, 2, INTERP_BAG, NO, NO, NO, NO, NO, NO, NO}};
-    static const InterpBlocks BL = {R, BLOCK_ENTRIES, NULL, 1, 4, 0};
+      {0, 2, INTERP_BAG, NO, NO, NO, NO, NO, NO, NO, ERR}};
+    static const InterpBlocks BL = {R, BLOCK_ENTRIES, NULL, 1, 4, 0, SKIP};
     InterpTable T = blocks_table(&BL);
     for (uint32_t seed = 1; seed < 20; ++seed) {
       InterpCore c; interp_begin(&c, &T, BP, seed, 0);
@@ -208,8 +237,8 @@ static void test_blocks()
   // most the window, 3); then a row on the drawn side, by weight. Only an exit
   // from a response state is a response.
   { static const InterpBlock R[] = {
-      {0, 2, INTERP_ANTIBIAS, NO, NO, NO, NO, B3, NO, NO}};
-    static const InterpBlocks BL = {R, BLOCK_ENTRIES, NULL, 1, 4, 0};
+      {0, 2, INTERP_ANTIBIAS, NO, NO, NO, NO, B3, NO, NO, ERR}};
+    static const InterpBlocks BL = {R, BLOCK_ENTRIES, NULL, 1, 4, 0, SKIP};
     InterpTable T = blocks_table(&BL);
     for (uint32_t seed = 1; seed < 40; ++seed) {
       InterpCore c;
@@ -230,10 +259,10 @@ static void test_blocks()
 
   // An override: while block 1 runs, a state reading B10 reads B50.
   { static const InterpBlock R[] = {
-      {0, 2, INTERP_UNIFORM, B1, B1, NO, NO, NO, NO, 1},
-      {2, 1, INTERP_UNIFORM, NO, NO, NO, NO, NO, NO, NO}};
+      {0, 2, INTERP_UNIFORM, B1, B1, NO, NO, NO, NO, 1, ERR},
+      {2, 1, INTERP_UNIFORM, NO, NO, NO, NO, NO, NO, NO, ERR}};
     static const InterpOverride O[] = {{1, B10, B50}};
-    static const InterpBlocks BL = {R, NULL, O, 2, 0, 1};
+    static const InterpBlocks BL = {R, NULL, O, 2, 0, 1, SKIP};
     InterpTable T = blocks_table(&BL);
     InterpCore c; interp_begin(&c, &T, BP, 1, 0);
     uint32_t t = 0;
@@ -243,6 +272,63 @@ static void test_blocks()
     assert(c.duration == 50);
     assert(interp_step(&c, NOTHING, t + 49).entered[0] == NO);
     assert(interp_step(&c, NOTHING, t + 50).entered[0] == 0); }
+
+  // The error set is compiled: a trial marked a class outside it never repeats.
+  // A correct withhold (withheld, class 5) is no error; a wrong response is.
+  { static const InterpBlock R[] = {
+      {0, 2, INTERP_UNIFORM, NO, NO, NO, NO, NO, B2, NO, ERR}};
+    static const InterpBlocks BL = {R, NULL, NULL, 1, 0, 0, SKIP};
+    InterpTable T = {timeout_class(5), BLOCK_EDGES, NULL, &BL};
+    InterpCore c; interp_begin(&c, &T, BP, 3, 0);
+    uint32_t t = 0;
+    InterpActions a = time_out(c, t);
+    assert(!(a.flags & INTERP_ACT_CORRECTION));
+    a = respond(c, wrong_answer(c), t);
+    assert(a.flags & INTERP_ACT_CORRECTION); }
+  // A block's own set: here only the timeout's class repeats.
+  { static const InterpBlock R[] = {
+      {0, 2, INTERP_UNIFORM, NO, NO, NO, NO, NO, B2, NO, CLASS_BIT(5)}};
+    static const InterpBlocks BL = {R, NULL, NULL, 1, 0, 0, SKIP};
+    InterpTable T = {timeout_class(5), BLOCK_EDGES, NULL, &BL};
+    InterpCore c; interp_begin(&c, &T, BP, 3, 0);
+    uint32_t t = 0;
+    assert(!(respond(c, wrong_answer(c), t).flags & INTERP_ACT_CORRECTION));
+    assert(time_out(c, t).flags & INTERP_ACT_CORRECTION); }
+
+  // A criterion's window passes over aborts (SKIP); they still count toward N.
+  // 2 of the last 3: C, abort, abort, C ends it, the aborts not being among the 3.
+  { static const InterpBlock R[] = {
+      {0, 2, INTERP_UNIFORM, NO, NO, B2, B3, NO, NO, 1, ERR},
+      {2, 1, INTERP_UNIFORM, NO, NO, NO, NO, NO, NO, NO, ERR}};
+    static const InterpBlocks BL = {R, NULL, NULL, 2, 0, 0, SKIP};
+    InterpTable T = {timeout_class(7), BLOCK_EDGES, NULL, &BL};
+    InterpCore c; interp_begin(&c, &T, BP, 9, 0);
+    uint32_t t = 0;
+    InterpActions a = respond(c, right_answer(c), t);
+    a = time_out(c, t);
+    a = time_out(c, t);
+    assert(a.block == 0);
+    a = respond(c, right_answer(c), t);
+    assert(a.block == 1 && (a.flags & INTERP_ACT_BLOCK_START));
+    // Unskipped, the aborts fill the window: C, abort, abort, C is 1 of the last 3.
+    static const InterpBlocks NOSKIP = {R, NULL, NULL, 2, 0, 0, 0};
+    InterpTable U = {timeout_class(7), BLOCK_EDGES, NULL, &NOSKIP};
+    InterpCore d; interp_begin(&d, &U, BP, 9, 0);
+    t = 0;
+    respond(d, right_answer(d), t);
+    time_out(d, t);
+    time_out(d, t);
+    assert(respond(d, right_answer(d), t).block == 0);
+    // And N counts every trial, aborts included.
+    static const InterpBlock RN[] = {
+      {0, 2, INTERP_UNIFORM, B3, B3, NO, NO, NO, NO, NO, ERR}};
+    static const InterpBlocks BN = {RN, NULL, NULL, 1, 0, 0, SKIP};
+    InterpTable V = {timeout_class(7), BLOCK_EDGES, NULL, &BN};
+    InterpCore e; interp_begin(&e, &V, BP, 9, 0);
+    t = 0;
+    time_out(e, t);
+    time_out(e, t);
+    assert(time_out(e, t).flags & INTERP_ACT_DONE); }
 }
 
 int main() {

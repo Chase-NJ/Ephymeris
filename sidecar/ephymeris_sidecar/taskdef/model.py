@@ -299,7 +299,8 @@ class SpineBlock:
     with `trials_max` N drawn from [trials, trials_max] at each start, and/or
     `criterion` (k correct of the last n); none of them: the block never ends.
     `next` is a block id, None for the following block. `correction` is how many
-    times in a row an error repeats its row. `phase_ms` overrides a timed
+    times in a row an error repeats its row; `correction_after` the outcome
+    classes that count as an error, empty for `lowering.ERROR_CLASSES`. `phase_ms` overrides a timed
     phase's duration, by phase index, while the block runs.
     """
 
@@ -312,6 +313,7 @@ class SpineBlock:
     weights: tuple[int, ...] = ()
     next: str | None = None
     correction: int | None = None
+    correction_after: tuple[str, ...] = ()
     bias_window: int | None = None
     phase_ms: dict[str, int] = field(default_factory=dict)
 
@@ -327,6 +329,7 @@ class SpineBlock:
                            ("criterion", {"correct": self.criterion[0], "of": self.criterion[1]}
                             if self.criterion is not None else None),
                            ("next", self.next), ("correction", self.correction),
+                           ("correctionAfter", list(self.correction_after) or None),
                            ("biasWindow", self.bias_window), ("phaseMs", dict(self.phase_ms) or None)):
             if value is not None:
                 out[key] = value
@@ -447,6 +450,7 @@ def _block(b: dict, strings, opt_int, ints) -> SpineBlock:  # noqa: ANN001
         weights=ints(b.get("weights"), "a block's weights"),
         next=_opt_str(b.get("next")),
         correction=opt_int(b.get("correction"), "correction"),
+        correction_after=strings(b.get("correctionAfter"), "a block's correctionAfter"),
         bias_window=opt_int(b.get("biasWindow"), "biasWindow"),
         phase_ms={str(k): _int(v, "a phase's ms") for k, v in phase_ms.items()},
     )

@@ -90,7 +90,7 @@ class SpineRecord:
 #: fingerprint of fixed runs' tables; when it fails, bump this and update the
 #: pin. Not `scoring.SCORE_VERSION`: the cache never holds a trial table, so a
 #: table change need not make every machine re-read its archive.
-REPLAY_VERSION = 1
+REPLAY_VERSION = 2
 
 #: The phase kind a response is read from (`ANALYTICS.md#the-trial-table`).
 WINDOW_PHASE = "response"
@@ -166,7 +166,8 @@ def _decode(document: dict[str, Any]) -> SpineRecord:
                      if counter is not None else None),
             blocks=(rp.Blocks(rows=[rp.Block(*b) for b in table_doc["blocks"]],
                               entries=[rp.Entry(*e) for e in table_doc.get("entries") or []],
-                              overrides=[rp.Override(*o) for o in table_doc.get("overrides") or []])
+                              overrides=[rp.Override(*o) for o in table_doc.get("overrides") or []],
+                              skipped=int(table_doc.get("skipped") or 0))
                     if table_doc.get("blocks") else None),
         )
     except (KeyError, TypeError, ValueError) as exc:

@@ -108,6 +108,20 @@ OUTCOME_OMISSION = OUTCOME_CLASSES.index("omission") + 1
 OUTCOME_ABORT_BEFORE = OUTCOME_CLASSES.index("abort_before_stimulus") + 1
 OUTCOME_ABORT_DURING = OUTCOME_CLASSES.index("abort_during_sampling") + 1
 
+#: The classes a block's correction repeats after unless the block names its
+#: own (`correctionAfter`): the animal answered, wrongly. A correct withhold, an
+#: omission and an abort are not errors.
+ERROR_CLASSES = ("wrong_response", "false_alarm")
+#: The classes a criterion's "k correct of the last n" passes over: the aborts,
+#: as P(correct) excludes them (`analytics/stream/table_metrics.py`'s
+#: `EXCLUDED`, which a test holds this equal to). They still count toward N.
+CRITERION_SKIPS = ("abort_before_stimulus", "abort_during_sampling")
+
+
+def class_mask(names) -> int:  # noqa: ANN001
+    """The bitmask of outcome classes `names`: bit c-1 for class number c."""
+    return sum(1 << OUTCOME_CLASSES.index(name) for name in set(names))
+
 #: Where `flags` sits in a state row (`Lowered.states`).
 _FLAGS = 10
 
@@ -129,7 +143,7 @@ TRIALS_KEY = "NT"
 STATE_ROW_BYTES = 18
 EDGE_ROW_BYTES = 3
 #: `InterpBlock`, `InterpEntry` and `InterpOverride`, likewise pinned.
-BLOCK_BYTES = 10
+BLOCK_BYTES = 12
 ENTRY_BYTES = 2
 OVERRIDE_BYTES = 3
 
@@ -180,9 +194,10 @@ class Lowered:
     end, which every row shares. `counter` is BoxInterp.h's `InterpCounter` as
     (count_min, count_max, ratios), None for a spine with no Counter.
     `blocks[b]` is an `InterpBlock` (first, count, select, n_min, n_max, k, n,
-    window, correct, next); `entries` one (side, weight) per branch of the
-    pick, empty when no block selects by weight or side; `overrides` each
-    (block, slot, with).
+    window, correct, next, errors); `entries` one (side, weight) per branch of
+    the pick, empty when no block selects by weight or side; `overrides` each
+    (block, slot, with); `skipped` the classes a criterion passes over, as a
+    bitmask (`InterpBlocks.skipped`).
     """
 
     states: tuple[tuple[int, ...], ...]
@@ -197,6 +212,7 @@ class Lowered:
     blocks: tuple[tuple[int, ...], ...] = ()
     entries: tuple[tuple[int, int], ...] = ()
     overrides: tuple[tuple[int, int, int], ...] = ()
+    skipped: int = 0
 
 
 def block_key(kind: str, block_index: int, extra: str = "") -> str:
@@ -304,6 +320,8 @@ def lower(
             raise LoweringError(f"block {i}: its next is not a block")
         if b.get("trialsMax") is not None and b.get("trials") is None:
             raise LoweringError(f"block {i}: trialsMax draws N from trials up to it")
+        if any(name not in OUTCOME_CLASSES for name in b.get("correctionAfter") or ()):
+            raise LoweringError(f"block {i}: correctionAfter names outcome classes {OUTCOME_CLASSES}")
         block_rows.append(drawn)
     if not phases:
         raise LoweringError("a spine needs at least one phase")
@@ -598,9 +616,11 @@ def lower(
         nxt = block_index[str(spec["next"])] if spec.get("next") is not None else b + 1 if b + 1 < len(blocks) else NONE
         n_min = slot_or_none(block_key("BN", b))
         k = slot_or_none(block_key("BK", b))
+        errors = (class_mask(spec.get("correctionAfter") or ERROR_CLASSES)
+                  if spec.get("correction") is not None else 0)
         block_table.append((first, len(block_rows[b]), SELECTIONS[spec.get("select", "uniform")],
                             n_min, slot.get(block_key("BNX", b), n_min), k, slot_or_none(block_key("BKN", b)),
-                            slot_or_none(block_key("BA", b)), slot_or_none(block_key("BC", b)), nxt))
+                            slot_or_none(block_key("BA", b)), slot_or_none(block_key("BC", b)), nxt, errors))
         if reads_entries:
             entries += [(side(r), slot[block_key("W", b, str(e))] if reads_weights else NONE)
                         for e, r in enumerate(block_rows[b], 1)]
@@ -628,4 +648,5 @@ def lower(
         blocks=tuple(block_table),
         entries=tuple(entries),
         overrides=tuple(overrides),
+        skipped=class_mask(CRITERION_SKIPS),
     )

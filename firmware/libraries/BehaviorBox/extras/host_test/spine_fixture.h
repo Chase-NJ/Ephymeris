@@ -72,7 +72,8 @@
 
 #define SPINE_TRIALS_SLOT 0
 #define SPINE_NUM_BLOCKS 2
-#define SPINE_BLOCKS { {0, 1, 0, 6, 6, 255, 255, 255, 255, 1}, {0, 1, 0, 7, 8, 255, 255, 255, 255, 255} }
+#define SPINE_BLOCKS { {0, 1, 0, 6, 6, 255, 255, 255, 255, 1, 0}, {0, 1, 0, 7, 8, 255, 255, 255, 255, 255, 0} }
+#define SPINE_BLOCK_SKIPPED 192
 #define SPINE_NUM_ENTRIES 0
 #define SPINE_NUM_OVERRIDES 0
 #define SPINE_NUM_PAIRS 1

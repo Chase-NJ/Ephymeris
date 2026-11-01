@@ -258,8 +258,8 @@ async def test_a_saved_spine_task_runs_a_session_and_its_tsv_alone_replays(tmp_p
     # The real session path wrote the same table into the file as derived
     # (`DATA.md#the-derived-trial-table`), under the file's own field names.
     derived = document["derived"]
-    assert derived["status"] == "ok" and derived["interp"] == 3
-    assert [t["outcome"] for t in derived["trials"]] == ["correct", None, "correct"]
+    assert derived["status"] == "ok" and derived["interp"] == rp.INTERP_VERSION
+    assert [t["outcome"] for t in derived["trials"]] == ["correct", "abort_during_sampling", "correct"]
     assert [t["phase_entries"][1] for t in derived["trials"]] == [200, 5000, 8500]
 
 
@@ -358,8 +358,9 @@ def answering_animal(plan: list[tuple[int, int, int]]) -> str:
     """C++ for an animal that pokes the port when the trial light comes on, holds
     it until the odor goes off, and 100 ms later answers trial k as plan[k] says:
     (the input pin it pokes after odor 1, after odor 2, how long it holds), a
-    pin of -1 to withhold. It reads the odor off the board's own output pins,
-    so it answers whichever row the board drew."""
+    pin of -1 to withhold, a hold of -1 to let go of the port as soon as the
+    odor comes on (an abort during sampling). It reads the odor off the board's
+    own output pins, so it answers whichever row the board drew."""
     pin = {name: registry.channels().get(name).index
            for name in ("odor_port", "trial_light", "odor_line_1", "odor_line_2")}
     rows = ", ".join(f"{{{a}, {b}, {hold}}}" for a, b, hold in plan)
@@ -375,7 +376,9 @@ static void animal(unsigned long t) {{
   }} else if (stage == 1) {{
     if (bb_pinValue[{pin['odor_line_1']}] == HIGH) odor = 1;
     if (bb_pinValue[{pin['odor_line_2']}] == HIGH) odor = 2;
-    if (odor && bb_pinValue[{pin['odor_line_1']}] == LOW && bb_pinValue[{pin['odor_line_2']}] == LOW) {{
+    if (odor && trial < kPlanLen && kPlan[trial][2] < 0) {{
+      bb_pinValue[{pin['odor_port']}] = HIGH; stage = 3;
+    }} else if (odor && bb_pinValue[{pin['odor_line_1']}] == LOW && bb_pinValue[{pin['odor_line_2']}] == LOW) {{
       bb_pinValue[{pin['odor_port']}] = HIGH; answerAt = t + 100; stage = 2;
     }}
   }} else if (stage == 2 && t == answerAt) {{
@@ -760,6 +763,32 @@ async def test_a_shuffle_bag_draws_each_row_its_weight_in_every_refill(tmp_path,
     assert len(rows) == 12
     for refill in range(0, 12, 4):
         assert sorted(rows[refill : refill + 4]) == ["odor_1"] * 3 + ["odor_2"], rows
+
+
+async def test_a_correct_withhold_is_never_repeated_for_correction(tmp_path, monkeypatch):
+    """An error, for correction, is a compiled set of classes, by default a wrong
+    response and a false alarm: a go/no-go block's withheld no-go trial and its
+    omitted go trial are not errors, so nothing repeats."""
+    raw = fixture.go_no_go(blocks=[{"id": "b1", "rows": ["go", "no_go"], "trials": 10, "correction": 3}])
+    document = await run_generated(tmp_path, monkeypatch, raw, {}, [(-1, -1, 0)] * 10, 80000)
+    trials = spine_stream.replayed(document).trials
+    assert {t.outcome for t in trials} == {"withheld", "omission"}
+    assert not any(t.correction for t in trials)
+
+
+async def test_a_reversal_criterion_passes_over_aborted_trials(tmp_path, monkeypatch):
+    """Aborts count toward a block's N but not in its "8 correct of the last 10":
+    with three aborts among eleven trials, block a ends on the 8th correct, though
+    the last 10 trials then hold only 7. An abort is no error, so none repeats."""
+    left, right = (registry.channels().get(n).index for n in ("left_well", "right_well"))
+    as_a, as_b, abort = (right, left, 300), (left, right, 300), (right, left, -1)
+    plan = [as_a, abort, as_a, as_a, abort, as_a, as_a, abort, as_a, as_a, as_a] + [as_b] * 4
+    document = await run_generated(tmp_path, monkeypatch, fixture.reversal(), FAST, plan, 40000)
+    trials = spine_stream.replayed(document).trials
+    assert [t.outcome for t in trials[:11]] == [
+        "abort_during_sampling" if p is abort else "correct" for p in plan[:11]]
+    assert [t.block for t in trials] == ["a"] * 11 + ["b"] * 4
+    assert not any(t.correction for t in trials)
 
 
 @pytest.mark.parametrize("header", [1, None])

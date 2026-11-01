@@ -184,6 +184,8 @@ class Block:
     window: int = NONE
     correct: int = NONE
     next: int = NONE
+    #: The classes a correction repeats after: bit c-1 for class c.
+    errors: int = 0
 
     @property
     def slots(self) -> tuple[int, ...]:
@@ -214,6 +216,8 @@ class Blocks:
     rows: tuple[Block, ...]
     entries: tuple[Entry, ...] = ()
     overrides: tuple[Override, ...] = ()
+    #: The classes a criterion's window passes over: bit c-1 for class c.
+    skipped: int = 0
 
     def __post_init__(self) -> None:
         for name in ("rows", "entries", "overrides"):
@@ -277,6 +281,8 @@ def _check_blocks(table: Table, b: Blocks) -> None:
             raise ValueError(f"block {i} draws one or more branches, each below {NONE}")
         if k.select not in (UNIFORM, WEIGHTED, BAG, ANTIBIAS):
             raise ValueError(f"block {i}'s select {k.select} is not one of 0-3")
+        if not 0 <= k.errors <= 0xFFFF:
+            raise ValueError(f"block {i}'s errors do not fit a uint16_t")
         if (k.n_min == NONE) != (k.n_max == NONE) or (k.k == NONE) != (k.n == NONE):
             raise ValueError(f"block {i}'s N and criterion are each two slots, or none")
         if k.next != NONE and k.next >= len(b.rows):
@@ -286,6 +292,8 @@ def _check_blocks(table: Table, b: Blocks) -> None:
         for s in table.states:
             if s.is_pick and s.flags & STARTS_TRIAL and k.first + k.count > s.edge_count:
                 raise ValueError(f"block {i}'s branches run past a trial-starting pick's")
+    if not 0 <= b.skipped <= 0xFFFF:
+        raise ValueError("the blocks' skipped classes do not fit a uint16_t")
     for e in b.entries:
         byte(e.side, "an entry's side")
         byte(e.weight, "an entry's weight")
@@ -502,6 +510,21 @@ def _ones(x: int) -> int:
     return bin(x & _U32).count("1")
 
 
+def _class_in(mask: int, cls: int) -> bool:
+    """`interp__class_in()`: class `cls` is in `mask`. No class, and one past the 16th, is in none."""
+    return 1 <= cls <= 16 and bool(mask >> (cls - 1) & 1)
+
+
+def _skips(c: _Run, cls: int) -> bool:
+    """Whether a trial of class `cls` stays out of a criterion's window (an abort)."""
+    return _class_in(c.table.blocks.skipped, cls)  # type: ignore[union-attr]
+
+
+def _is_error(k: Block, cls: int) -> bool:
+    """Whether a trial of class `cls` is one block `k`'s correction repeats after."""
+    return _class_in(k.errors, cls)
+
+
 def _start_block(c: _Run, b: int, a: _Tick) -> None:
     """`interp__start_block()`: its counters and bag start over, and its N is drawn."""
     k = c.table.blocks.rows[b]  # type: ignore[union-attr]
@@ -531,8 +554,7 @@ def _next_block(k: Block) -> int:
 
 def _repeats(c: _Run, k: Block, last_outcome: int) -> bool:
     """The correction rule: the last trial, marked and not correct, repeats while under its limit."""
-    return (k.correct != NONE and last_outcome not in (0, CORRECT)
-            and c.repeats < c.params[k.correct])
+    return k.correct != NONE and _is_error(k, last_outcome) and c.repeats < c.params[k.correct]
 
 
 def _trial(c: _Run, a: _Tick) -> None:
@@ -542,7 +564,9 @@ def _trial(c: _Run, a: _Tick) -> None:
     if c.block == NONE:
         _start_block(c, 0, a)
     else:
-        c.corrects = ((c.corrects << 1) | (1 if last_outcome == CORRECT else 0)) & _U32
+        # An aborted trial counts toward N but not in the criterion's window.
+        if not _skips(c, last_outcome):
+            c.corrects = ((c.corrects << 1) | (1 if last_outcome == CORRECT else 0)) & _U32
         if c.response != NONE:
             c.hist[c.hist_at] = c.response
             c.hist_at = (c.hist_at + 1) % HISTORY

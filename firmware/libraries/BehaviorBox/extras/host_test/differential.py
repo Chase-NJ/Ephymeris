@@ -21,7 +21,8 @@ alone must differ, through their chance and pick states. And a counter that
 exits one rise late, or a progressive step that never advances, must each be
 seen by both the raw and the generator's tables. So must each block rule
 changed alone: the uniform, weighted, bag and anti-bias draws, the N rule, a
-drawn N, the criterion, `next`, correction and overrides. And the named
+drawn N, the criterion, `next`, correction, the compiled error set, the
+criterion's skipped aborts and overrides. And the named
 reversal, bandit and bag must each switch blocks in some case.
 
 Usage:  python3 differential.py --driver ./interp_driver [--cases N] [--seed S]
@@ -164,13 +165,16 @@ def raw_blocks(rng: random.Random, n_params: int, states: list[rp.StateRow]) -> 
             n_min=n_min, n_max=n_max, k=k, n=n,
             window=rng.randrange(n_params) if rng.random() < 0.8 else NONE,
             correct=rng.randrange(n_params) if rng.random() < 0.5 else NONE,
-            next=rng.choice((NONE, *range(n_blocks)))))
+            next=rng.choice((NONE, *range(n_blocks))),
+            # Classes 1-8 are what the raw states mark; now and then one past them.
+            errors=rng.getrandbits(9) if rng.random() < 0.9 else rng.getrandbits(16)))
     entries = [rp.Entry(side=rng.choice((0, 1, 2, 3, NONE)),
                         weight=rng.randrange(n_params) if rng.random() < 0.8 else NONE)
                for _ in range(room)] if rng.random() < 0.85 else []
     overrides = [rp.Override(rng.randrange(n_blocks), rng.randrange(n_params), rng.randrange(n_params))
                  for _ in range(rng.choice((0, 0, 1, 2)))]
-    return rp.Blocks(rows=tuple(rows), entries=tuple(entries), overrides=tuple(overrides))
+    return rp.Blocks(rows=tuple(rows), entries=tuple(entries), overrides=tuple(overrides),
+                     skipped=rng.getrandbits(9))
 
 
 PORT, LEFT, RIGHT = 0, 1, 2       # inputs
@@ -354,6 +358,8 @@ def generated_table(rng: random.Random, n_params: int):  # noqa: ANN201
             block["next"] = f"b{rng.randrange(n_blocks)}"
         if rng.random() < 0.4:
             block["correction"] = 1
+            if rng.random() < 0.5:
+                block["correctionAfter"] = rng.sample(classes[1:], rng.randint(1, 3))
         if timed and rng.random() < 0.3:
             block["phaseMs"] = {str(rng.choice(timed)): 1}
         blocks.append(block)
@@ -366,7 +372,8 @@ def _lowered(phases, inputs, outputs, rows, blocks, cap):  # noqa: ANN001, ANN20
                      counter=rp.Counter(*low.counter) if low.counter is not None else None,
                      blocks=rp.Blocks(rows=[rp.Block(*b) for b in low.blocks],
                                       entries=[rp.Entry(*e) for e in low.entries],
-                                      overrides=[rp.Override(*o) for o in low.overrides]))
+                                      overrides=[rp.Override(*o) for o in low.overrides],
+                                      skipped=low.skipped))
     return table, low
 
 
@@ -380,12 +387,15 @@ def named_table(rng: random.Random, name: str):  # noqa: ANN201
     """A named task: a 2AFC window (left and right) whose rows map one side to
     correct, its blocks as the ADR's worked example has them. Returns the table,
     and the values its block settings hold, by slot."""
-    phases = [{"phase": "response", "responses": ["left", "right"], "ms": 1},
+    # The Wait times out into abort_before_stimulus when the animal does not
+    # poke: an abort a criterion's window passes over.
+    phases = [{"phase": "wait", "on": "port", "timeoutMs": 1},
+              {"phase": "response", "responses": ["left", "right"], "ms": 1},
               {"phase": "outcome", "ms": 1}, {"phase": "iti", "ms": 1}]
 
     def row(row_id: str, correct: str, permille: int = 1000) -> dict:
         wrong = "left" if correct == "right" else "right"
-        return {"id": row_id, "bind": {"left": "L", "right": "R", "reward": "F"},
+        return {"id": row_id, "bind": {"port": "P", "left": "L", "right": "R", "reward": "F"},
                 "map": {correct: {"outcome": "correct", "line": "reward", "rewardPermille": permille},
                         wrong: {"outcome": "wrong_response"}, "timeout": {"outcome": "omission"}}}
 
@@ -411,7 +421,7 @@ def named_table(rng: random.Random, name: str):  # noqa: ANN201
         blocks = [{"id": "a", "rows": ["go_right", "go_left"], "select": "antibias", "biasWindow": 10,
                    "correction": 1}]
         settings = {"BA1": 10, "W1_1": 1, "W1_2": 1, "BC1": 1}
-    table, low = _lowered(phases, ["left", "right"], ["reward"], rows, blocks, False)
+    table, low = _lowered(phases, ["port", "left", "right"], ["reward"], rows, blocks, False)
     # Short trials, so a run holds enough of them for its blocks to switch.
     fixed = {n: rng.randint(1, 30) for n, s in enumerate(low.slots) if s.role in ("timer", "reward_ms")}
     return (table, low), fixed | {low.params.index(k): v for k, v in settings.items()}, name
@@ -454,15 +464,22 @@ def input_log(rng: random.Random, ticks: int, inputs: list[int]) -> list[tuple[i
 
 def answering_log(rng: random.Random, table: rp.Table, params: list[int], seed: int, start: int,
                   ticks: int) -> list[tuple[int, int, int]]:
-    """An animal for a named task: at the first tick of each response window it
-    pokes the side the row pays, nine times in ten, and lets go a tick later.
-    Played through the Python replay to know the row; the C core only sees the log."""
+    """An animal for a named task: at the first tick of each Wait it pokes, four
+    times in five (otherwise the Wait times out: an abort); at the first tick of
+    each response window it pokes the side the row pays, nine times in ten; and
+    it lets go a tick later. Played through the Python replay to know the row;
+    the C core only sees the log."""
     core, _ = rp.begin(table, params, seed, start)
-    out, release = [], 0
+    out, release, visit = [], 0, None
     for offset in range(1, ticks + 1):
         rose, fell, release = 0, release, 0
         s = table.states[core.state]
-        if s.flags & rp.RESPONSE and not fell:
+        first = visit != (core.state, core.entered_at)
+        visit = (core.state, core.entered_at)
+        exits = table.edges[s.edge_first : s.edge_first + s.edge_count]
+        if not s.flags & rp.RESPONSE and first and not fell and exits and rng.random() < 0.8:
+            rose = release = 1 << exits[0].input
+        elif s.flags & rp.RESPONSE and not fell:
             exits = table.edges[s.edge_first : s.edge_first + s.edge_count]
             right = [e.input for e in exits if table.states[e.next].outcome == rp.CORRECT]
             wrong = [e.input for e in exits if table.states[e.next].outcome != rp.CORRECT]
@@ -524,10 +541,10 @@ def encode(cases: list[dict]) -> str:
         lines.append("0 255 255 0" if k is None else
                      " ".join(map(str, (1, k.count_min, k.count_max, len(k.ratios), *k.ratios))))
         b = t.blocks
-        lines.append("0 0 0" if b is None else f"{len(b.rows)} {len(b.entries)} {len(b.overrides)}")
+        lines.append("0 0 0 0" if b is None else f"{len(b.rows)} {len(b.entries)} {len(b.overrides)} {b.skipped}")
         if b is not None:
             lines.extend(" ".join(map(str, (k.first, k.count, k.select, k.n_min, k.n_max, k.k, k.n, k.window,
-                                            k.correct, k.next))) for k in b.rows)
+                                            k.correct, k.next, k.errors))) for k in b.rows)
             lines.extend(f"{e.side} {e.weight}" for e in b.entries)
             lines.extend(f"{o.block} {o.slot} {o.with_}" for o in b.overrides)
         lines.extend(f"{o} {r} {f}" for o, r, f in c["log"])
@@ -576,7 +593,7 @@ def _mutants() -> list[tuple[str, str, object]]:
     exactly as the honest one does, so only the rule's own choice differs."""
     honest = {name: getattr(rp, name) for name in (
         "_uniform", "_by_weight", "_from_bag", "_side_weight", "_block_ends", "_start_block", "_next_block",
-        "_repeats", "_param")}
+        "_repeats", "_param", "_is_error", "_skips")}
 
     def uniform(c, k):
         return k.first + k.count - 1 - (honest["_uniform"](c, k) - k.first)
@@ -616,11 +633,16 @@ def _mutants() -> list[tuple[str, str, object]]:
         return NONE
 
     def repeats(c, k, last_outcome):
-        return (k.correct != NONE and last_outcome not in (0, rp.CORRECT)
-                and c.repeats <= c.params[k.correct])
+        return k.correct != NONE and rp._is_error(k, last_outcome) and c.repeats <= c.params[k.correct]
 
     def no_override(c, slot):
         return c.params[slot]
+
+    def any_error(k, cls):
+        return cls not in (0, rp.CORRECT)
+
+    def no_skip(c, cls):
+        return False
 
     return [("a changed uniform draw", "_uniform", uniform),
             ("a changed weighted draw", "_by_weight", weighted),
@@ -631,7 +653,9 @@ def _mutants() -> list[tuple[str, str, object]]:
             ("a changed drawn N", "_start_block", drawn_n),
             ("a next block that ends the blocks", "_next_block", next_block),
             ("a correction one repeat over", "_repeats", repeats),
-            ("an override ignored", "_param", no_override)]
+            ("an override ignored", "_param", no_override),
+            ("a correction after any class not correct, its error set ignored", "_is_error", any_error),
+            ("a criterion that counts aborts", "_skips", no_skip)]
 
 
 def blocks_caught(c_runs, cases) -> str | None:

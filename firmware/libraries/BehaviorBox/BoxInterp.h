@@ -177,25 +177,29 @@
     window      Anti-bias's window slot, NONE for every response held.
     correct     The correction limit's slot, NONE for no correction.
     next        The block entered when this one ends; NONE: the blocks are done.
+    errors      The classes its correction repeats after, bit c-1 for class c.
+  InterpBlocks.skipped: the classes every criterion's window passes over, bit
+  c-1 for class c (the aborts).
   InterpEntry: side (an input bit, or NONE), weight (a slot, or NONE).
   InterpOverride: while `block` runs, a state's timer or chance, or the
   counter's N, that reads slot `slot` reads `with` instead (the first match).
 
   BLOCKS. In a table with blocks, entering a state that starts a trial:
     1. The first time, starts block 0. Otherwise closes the last trial: its
-       correctness goes into `corrects` (the block's, the latest in bit 0) and
-       its response, if any, into the ring of the last INTERP_HISTORY.
+       correctness goes into `corrects` (the block's, the latest in bit 0)
+       unless its class is in `skipped`, and its response, if any, into the
+       ring of the last INTERP_HISTORY.
     2. The running block's end rule: it has started N trials, or k of its last
        n were correct. Then its `next` starts, or with none the core reports
        INTERP_ACT_DONE: the session layer ends the session at this tick.
        Starting a block resets its trial count, `corrects`, its bag and the run
        of repeats, draws its N, and reports INTERP_ACT_BLOCK_START.
     3. Otherwise the correction rule: when the block has one, the last trial
-       was marked with a class other than INTERP_CORRECT, and fewer than
+       was marked with a class in the block's `errors`, and fewer than
        params[correct] repeats have run in a row, this trial repeats it: the
        pick takes the last trial's branch with no draw, and the core reports
        INTERP_ACT_CORRECTION.
-  Every trial counts toward N and the criterion, a correction included.
+  Every trial counts toward N, an abort and a correction included.
 
   A VALID TABLE, which the core assumes and replay.py's Table refuses to break:
     - every state index, edge row and parameter slot is in range;
@@ -212,7 +216,7 @@
       always ends at a later tick than the one that entered it;
     - a table's blocks number 1 to 254, each draws one or more branches, its
       N's and its criterion's slots are both set or both NONE, and its next is
-      a block or NONE; every pick that starts a trial has a branch for each
+      a block or NONE, and its errors fit a uint16_t; every pick that starts a trial has a branch for each
       block's slice, and so has `entries` when it is not NULL; an override
       names a block and two slots.
     So a tick enters at most two states.
@@ -336,6 +340,7 @@ typedef struct {
   uint8_t window;  // parameter slot of anti-bias's window, in responses; NONE: all held
   uint8_t correct; // parameter slot of its correction limit; NONE: no correction
   uint8_t next;    // the block entered when it ends; NONE: the blocks are done
+  uint16_t errors; // the classes a correction repeats after: bit c-1 for class c
 } InterpBlock;
 
 typedef struct {
@@ -356,7 +361,7 @@ typedef struct {
 #if defined(__AVR__) && defined(__cplusplus)
 static_assert(sizeof(InterpStateRow) == 18, "lowering.py's STATE_ROW_BYTES is this row's size");
 static_assert(sizeof(InterpEdgeRow) == 3, "lowering.py's EDGE_ROW_BYTES is this row's size");
-static_assert(sizeof(InterpBlock) == 10, "lowering.py's BLOCK_BYTES is this row's size");
+static_assert(sizeof(InterpBlock) == 12, "lowering.py's BLOCK_BYTES is this row's size");
 static_assert(sizeof(InterpEntry) == 2, "lowering.py's ENTRY_BYTES is this row's size");
 static_assert(sizeof(InterpOverride) == 3, "lowering.py's OVERRIDE_BYTES is this row's size");
 #endif
@@ -378,6 +383,7 @@ typedef struct {
   uint8_t count;
   uint8_t entry_count;
   uint8_t override_count;
+  uint16_t skipped;            // classes a criterion's window passes over: bit c-1 for class c
 } InterpBlocks;
 
 typedef struct {
@@ -485,6 +491,13 @@ static inline uint32_t interp__param(const InterpCore *c, uint8_t slot)
   return c->params[slot];
 }
 
+/*  Whether class `cls` is in `mask` (bit c-1 for class c). No class, and a
+    class past the 16th, is in none. */
+static inline bool interp__class_in(uint16_t mask, uint8_t cls)
+{
+  return cls >= 1 && cls <= 16 && ((mask >> (cls - 1)) & 1U);
+}
+
 static inline uint8_t interp__ones(uint32_t x)
 {
   uint8_t n = 0;
@@ -535,7 +548,9 @@ static inline void interp__trial(InterpCore *c, InterpActions *a)
   if (c->block == INTERP_NONE) {
     interp__start_block(c, 0, a);
   } else {
-    c->corrects = (c->corrects << 1) | (last_outcome == INTERP_CORRECT ? 1UL : 0UL);
+    // An aborted trial counts toward N but not in the criterion's window.
+    if (!interp__class_in(c->table->blocks->skipped, last_outcome))
+      c->corrects = (c->corrects << 1) | (last_outcome == INTERP_CORRECT ? 1UL : 0UL);
     if (c->response != INTERP_NONE) {
       c->hist[c->hist_at] = c->response;
       c->hist_at = (uint8_t)((c->hist_at + 1) % INTERP_HISTORY);
@@ -545,7 +560,7 @@ static inline void interp__trial(InterpCore *c, InterpActions *a)
     if (interp__block_ends(c, k)) {
       if (k->next == INTERP_NONE) a->flags |= INTERP_ACT_DONE;
       else interp__start_block(c, k->next, a);
-    } else if (k->correct != INTERP_NONE && last_outcome != 0 && last_outcome != INTERP_CORRECT
+    } else if (k->correct != INTERP_NONE && interp__class_in(k->errors, last_outcome)
                && c->repeats < c->params[k->correct]) {
       ++c->repeats;
       c->correcting = 1;

@@ -69,10 +69,10 @@ OUTPUT_BYTES = 5
 #: BehaviorBox.h and the Arduino core, measured by that same test. A build can
 #: come in some bytes under the sum (the compiler folds a small constant channel
 #: array away), never over it.
-RUNNER_RAM_BYTES = 460
+RUNNER_RAM_BYTES = 462
 #: The most RAM a task's data (`task_ram_bytes`) may take, out of a Mega's 8192 B.
-#: With the runner's own, globals stay at most 5460 B (67%), leaving the stack
-#: and the serial buffers at least 2732 B (`TASKS.md#spine-diagnostics`). An
+#: With the runner's own, globals stay at most 5462 B (67%), leaving the stack
+#: and the serial buffers at least 2730 B (`TASKS.md#spine-diagnostics`). An
 #: 18-row 2AFC fits.
 TASK_RAM_MAX = 5000
 
@@ -425,6 +425,14 @@ def _block_problems(spine: Spine, problem) -> bool:  # noqa: ANN001, C901
             bad(f"{at}.next", f"{block.next!r} is not a block of this task")
         if block.correction is not None and not 0 <= block.correction <= _CORRECTION_MAX:
             bad(f"{at}.correction", f"an error repeats 0 to {_CORRECTION_MAX} times", blocks=False)
+        unknown = [c for c in block.correction_after if c not in lowering.OUTCOME_CLASSES]
+        if unknown:
+            bad(f"{at}.correctionAfter", f"{unknown[0]!r} is not an outcome class {lowering.OUTCOME_CLASSES}")
+        elif "correct" in block.correction_after:
+            bad(f"{at}.correctionAfter", "a correct trial is no error to repeat", blocks=False)
+        elif block.correction_after and block.correction is None:
+            bad(f"{at}.correctionAfter", "the classes a correction repeats after need a correction",
+                blocks=False)
         if block.bias_window is not None and (block.select != "antibias"
                                               or not 1 <= block.bias_window <= lowering.HISTORY):
             bad(f"{at}.biasWindow", f"an antibias block weighs the last 1 to {lowering.HISTORY} responses",
@@ -592,7 +600,9 @@ def profile_json(definition: TaskDefinition) -> dict[str, Any]:
                    # no block selects by weight or side), and the overrides.
                    "blocks": [list(b) for b in low.blocks],
                    "entries": [list(e) for e in low.entries],
-                   "overrides": [list(o) for o in low.overrides]}
+                   "overrides": [list(o) for o in low.overrides],
+                   # InterpBlocks.skipped: the classes a criterion passes over.
+                   "skipped": low.skipped}
                   if low else None),
         "structural": dict(STRUCTURAL),
     }
@@ -850,9 +860,11 @@ def task_spine_h(definition: TaskDefinition, banner: str) -> str:
         f"#define SPINE_TRIALS_SLOT {low.params.index(lowering.TRIALS_KEY) if lowering.TRIALS_KEY in low.params else lowering.NONE}",
         "",
         "/*  The blocks (BoxInterp.h, InterpBlocks): {first, count, select, n_min, n_max,",
-        "    k, n, window, correct, next}; an entry per branch of the pick, {side,",
-        "    weight}; overrides, {block, slot, with}. An empty array is left out. */",
+        "    k, n, window, correct, next, errors}; an entry per branch of the pick,",
+        "    {side, weight}; overrides, {block, slot, with}. An empty array is left out.",
+        "    SPINE_BLOCK_SKIPPED: the classes a criterion passes over, bit c-1 for class c. */",
         f"#define SPINE_NUM_BLOCKS {len(low.blocks)}",
+        f"#define SPINE_BLOCK_SKIPPED {low.skipped}",
         f"#define SPINE_BLOCKS {initialiser(['{' + ', '.join(map(str, b)) + '}' for b in low.blocks])}",
         f"#define SPINE_NUM_ENTRIES {len(low.entries)}",
         *([f"#define SPINE_ENTRIES {initialiser(['{' + ', '.join(map(str, e)) + '}' for e in low.entries])}"]

@@ -93,9 +93,9 @@ def test_the_profile_carries_everything_replay_needs():
     assert spine["table"] == {"states": [list(s) for s in low.states], "edges": [list(e) for e in low.edges],
                               "phases": [0, 1, 2, 3, 3, 3, 4, 4], "rows": [0] * 7 + [None],
                               "counter": None, "blocks": [list(b) for b in low.blocks], "entries": [],
-                              "overrides": []}
-    #                             first count select n_min n_max k    n    window correct next
-    assert spine["table"]["blocks"] == [[0, 1, 0, 6, 6, 255, 255, 255, 255, 255]]
+                              "overrides": [], "skipped": 0b11000000}
+    #                             first count select n_min n_max k    n    window correct next errors
+    assert spine["table"]["blocks"] == [[0, 1, 0, 6, 6, 255, 255, 255, 255, 255, 0]]
     assert spine["params"] == list(low.params)
     assert spine["inputs"] == [{"slot": "port", "channel": "odor_port",
                                 "rise": "ODOR_PORT_ENTER", "fall": "ODOR_PORT_EXIT"}]
@@ -416,7 +416,7 @@ def test_the_ram_budget_is_what_an_avr_build_adds_for_the_task(tmp_path):
             assert counted == globals_, (globals_, counted)
         assert 0 <= counted - globals_ <= 24, (raw["id"], globals_, counted)
     assert globals_ <= spine_module.RUNNER_RAM_BYTES + spine_module.TASK_RAM_MAX
-    assert 8192 - (spine_module.RUNNER_RAM_BYTES + spine_module.TASK_RAM_MAX) == 2732
+    assert 8192 - (spine_module.RUNNER_RAM_BYTES + spine_module.TASK_RAM_MAX) == 2730
 
 
 def test_a_tables_bytes_are_its_rows_at_the_c_structs_sizes():
@@ -666,7 +666,7 @@ def test_the_ram_budget_counts_blocks_entries_overrides_and_pairs():
     added = (2 * lowering.ENTRY_BYTES + lowering.OVERRIDE_BYTES + spine_module.PAIR_BYTES
              + sum(spine_module.PARAM_BYTES + len(k) + 1 for k in ("BNX1", "W1_1", "W1_2", "B1T4")))
     assert spine_module.task_ram_bytes(low) - spine_module.task_ram_bytes(plain) == added
-    assert lowering.BLOCK_BYTES == 10 and spine_module.task_ram_bytes(plain) == (
+    assert lowering.BLOCK_BYTES == 12 and spine_module.task_ram_bytes(plain) == (
         lowering.table_bytes(len(plain.states), len(plain.edges), 1)
         + sum(spine_module.PARAM_BYTES + len(k) + 1 for k in plain.params)
         + 3 * spine_module.INPUT_BYTES + 5 * spine_module.OUTPUT_BYTES + spine_module.RATIO_BYTES)
@@ -704,6 +704,9 @@ AB = {"id": "a", "rows": ["odor_1", "odor_2"], "trials": 10}
         (_blocks(dict(AB, next="nope")), "SPN106", "blocks[0].next"),
         (_blocks(dict(AB, correction=101)), "SPN106", "blocks[0].correction"),
         (_blocks(dict(AB, biasWindow=10)), "SPN106", "blocks[0].biasWindow"),
+        (_blocks(dict(AB, correction=1, correctionAfter=["oops"])), "SPN106", "blocks[0].correctionAfter"),
+        (_blocks(dict(AB, correction=1, correctionAfter=["correct"])), "SPN106", "blocks[0].correctionAfter"),
+        (_blocks(dict(AB, correctionAfter=["omission"])), "SPN106", "blocks[0].correctionAfter"),
         (_blocks(dict(AB, phaseMs={"0": 10})), "SPN106", "blocks[0].phaseMs.0"),
         (_blocks(dict(AB, rows=["odor_1"])), "SPN106", "rows[1].id"),
         # Nothing but End Session would end it.

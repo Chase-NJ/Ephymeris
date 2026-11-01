@@ -11,8 +11,8 @@
       n_edges  x  input edge next
       n_params x  value
       has_counter count_min count_max n_ratios   then n_ratios x ratio
-      n_blocks n_entries n_overrides             (0 0 0: no blocks), then
-        n_blocks x first count select n_min n_max k n window correct next
+      n_blocks n_entries n_overrides skipped     (0 0 0 0: no blocks), then
+        n_blocks x first count select n_min n_max k n window correct next errors
         n_entries x side weight;  n_overrides x block slot with
       n_events x  offset rose fell        (offset: ticks after start, increasing)
     Out: "INTERP <version>" once, then per case
@@ -69,12 +69,13 @@ int main()
     std::vector<uint16_t> ratios(counter.ratio_count + 1u);
     for (uint32_t i = 0; i < counter.ratio_count; ++i) ratios[i] = (uint16_t)num();
     counter.ratios = ratios.data();
-    uint32_t n_blocks = num(), n_entries = num(), n_overrides = num();
+    uint32_t n_blocks = num(), n_entries = num(), n_overrides = num(), skipped = num();
     std::vector<InterpBlock> block_rows(n_blocks + 1);
     for (uint32_t i = 0; i < n_blocks; ++i) {
       InterpBlock &b = block_rows[i];
       b.first = byte(); b.count = byte(); b.select = byte(); b.n_min = byte(); b.n_max = byte();
       b.k = byte(); b.n = byte(); b.window = byte(); b.correct = byte(); b.next = byte();
+      b.errors = (uint16_t)num();
     }
     std::vector<InterpEntry> entries(n_entries + 1);
     for (uint32_t i = 0; i < n_entries; ++i) { entries[i].side = byte(); entries[i].weight = byte(); }
@@ -84,7 +85,8 @@ int main()
     }
     InterpBlocks blocks = {block_rows.data(), n_entries ? entries.data() : NULL,
                            n_overrides ? overrides.data() : NULL,
-                           (uint8_t)n_blocks, (uint8_t)n_entries, (uint8_t)n_overrides};
+                           (uint8_t)n_blocks, (uint8_t)n_entries, (uint8_t)n_overrides,
+                           (uint16_t)skipped};
     std::vector<uint32_t> at(n_events), rose(n_events), fell(n_events);
     for (uint32_t i = 0; i < n_events; ++i) { at[i] = num(); rose[i] = num(); fell[i] = num(); }
 

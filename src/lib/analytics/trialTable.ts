@@ -79,7 +79,7 @@ export function trialRows(table: TrialTable): TrialRowView[] {
   return table.trials.map((t: ReplayTrial) => ({
     key: t.index,
     number: t.index + 1,
-    at: clockOf(t.atMs),
+    at: t.atMs === null ? "—" : clockOf(t.atMs),
     row: t.rowName ?? t.row ?? "—",
     outcome: outcomeLabel(t.outcome),
     fill: outcomeFill(t.outcome),
@@ -90,7 +90,7 @@ export function trialRows(table: TrialTable): TrialRowView[] {
       t.response === null
         ? "—"
         : `${t.response}${t.latencyMs !== null ? ` +${t.latencyMs} ms` : ""}`,
-    phases: t.phaseEntries.map((at) => (at === null ? "—" : `+${at - t.atMs}`)),
+    phases: t.phaseEntries.map((at) => (at === null || t.atMs === null ? "—" : `+${at - t.atMs}`)),
     complete: t.complete,
   }));
 }

@@ -23,7 +23,8 @@ from pathlib import Path
 import pytest
 
 from ephymeris_sidecar.analytics import AnalyticsService, scoring, stream
-from ephymeris_sidecar.analytics.stream import infer, summary
+from ephymeris_sidecar.analytics.stream import summary, table_metrics
+from ephymeris_sidecar.analytics.stream.legacy import infer
 from ephymeris_sidecar.cohorts.db import Database
 from ephymeris_sidecar.rig import registry
 from ephymeris_sidecar.rig.registry import Vocabulary
@@ -313,7 +314,7 @@ async def test_a_change_to_the_recorded_config_reaches_a_warm_row(
 # --- the one pin (`DATA.md#caching`) ---------------------------------------
 
 #: What today's scoring answers for the canary runs (`scoring.canary_fingerprint`).
-CANARY = "db3dc11656e893f1e73348a486252fa8f651fce4db00fc87e6be50f7bf6219a0"
+CANARY = "8dd7d09e2901c7b6739e52bcb243ccd5a14bf73d99a2eb4f19c3d99ca275399c"
 
 # --- a snapshot recorded before a no-go metric listed every port ------------
 
@@ -403,8 +404,8 @@ def _set(owner: object, name: str, value: object):
     "change",
     [
         _set(infer, "INFERRED_WINDOW", infer.INFERRED_WINDOW + 1),
-        _set(summary, "wilson_interval", lambda hits, n, z=1.0: (0.0, 1.0)),
-        _set(summary, "OVERALL_ID", "__pooled__"),
+        _set(table_metrics, "wilson_interval", lambda hits, n, z=1.0: (0.0, 1.0)),
+        _set(table_metrics, "OVERALL_ID", "__pooled__"),
         _set(task_profile, "embedded_profile", lambda document: None),
         _set(task_profile, "recorded_config", lambda document, profile: None),
         _set(task_profile, "params_hash", lambda config: "same-for-all"),

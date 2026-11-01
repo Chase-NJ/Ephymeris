@@ -1,29 +1,28 @@
 """What actually happened on each trial — `ANALYTICS.md#rewarded-and-response-accuracy`,
 `ANALYTICS.md#per-condition-tally`, `ANALYTICS.md#per-trial-tape`.
 
-One classification pass (`_classify_trials`) over the stream, delimited by the
-same boundary codes the metrics use. The run's tally, the per-condition tally
-and the per-trial tape are all read off that one pass, so they cannot disagree.
+Every figure here is read off a legacy run's trial table
+(`ANALYTICS.md#how-a-legacy-run-becomes-a-trial-table`): its onset trials, each
+classified once by the legacy decoder. The run's tally, the per-condition tally
+and the per-trial tape are all read off those rows, so they cannot disagree.
 """
 
 from __future__ import annotations
 
-import re
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any, Iterable, Iterator
+from typing import Any, Iterable
 
 from ...tasks.profile import TaskProfile
-from .document import _pairs_of
+from . import spine
+from .legacy import decode
 from .stats import _round, wilson_interval
-from .trials import boundaries_for
-
 
 @dataclass(frozen=True)
 class TrialOutcomes:
     """What actually happened on each trial (`ANALYTICS.md#rewarded-and-response-accuracy`).
 
-    The declared metrics are **reward-unconditional**: `trials.py` scores
+    The declared metrics are **reward-unconditional**: `legacy/trials.py` scores
     a `WATER_POKE_L/R` the instant the poke is detected, so an animal that
     reaches the correct well and releases before the fluid hold still scores a
     hit. That is the right definition for a live discrimination readout — it
@@ -144,7 +143,7 @@ class TrialRecord:
     #: The condition code that opened the trial — one of `boundaries_for`'s
     #: union, so a `ConditionOutcomes.trigger_code` matches it directly.
     trigger_code: int
-    #: The internal classification (`_classify_trials`' spelling).
+    #: The internal classification (`legacy.strobes.classify_trials`' spelling).
     outcome: str
     #: Trial open, in ms from the run's earliest recorded timestamp. `None`
     #: when the file carries no usable clock at either end of the subtraction.
@@ -174,114 +173,6 @@ _WIRE_OUTCOME = {
 }
 
 
-# --- trial outcomes (ANALYTICS.md#rewarded-and-response-accuracy) ----------------
-#
-# Recognised by **name** out of the profile's `strobes` map, not by hard-coded
-# codes: `TASKS.md#strobes` makes that map the sketch's own declaration of its
-# vocabulary, and a code number means nothing without it. A task that doesn't
-# declare these names simply reports no outcomes — which is why every pattern
-# below is anchored rather than a loose substring.
-
-#: `^FLUID` and not `STOP_FLUID_G_R`, which also contains the word and marks the
-#: *end* of delivery. Anchoring is the whole defence here.
-_REWARD = re.compile(r"^FLUID(_|$)", re.IGNORECASE)
-#: Correct well, released before the hold cleared.
-_HOLD_FAIL = re.compile(r"^WATER_UNPOKE_EARLY(_|$)", re.IGNORECASE)
-_WRONG_WELL = re.compile(r"^WATER_POKE_ERROR(_|$)", re.IGNORECASE)
-#: The odor was sampled to completion. Exact — `ODOR_UNPOKE_EARLY` is the
-#: opposite event and must never match here.
-_SAMPLED = re.compile(r"^ODOR_UNPOKE$", re.IGNORECASE)
-
-
-@dataclass(frozen=True)
-class _Vocabulary:
-    """The outcome codes a profile actually declares."""
-
-    reward: frozenset[int]
-    hold_fail: frozenset[int]
-    wrong_well: frozenset[int]
-    sampled: frozenset[int]
-
-    @property
-    def usable(self) -> bool:
-        """Both halves are needed: a reward marker with no completed-sampling
-        marker gives a numerator with no honest denominator."""
-        return bool(self.reward) and bool(self.sampled)
-
-
-def _vocabulary(profile: TaskProfile) -> _Vocabulary:
-    def matching(pattern: re.Pattern[str]) -> frozenset[int]:
-        return frozenset(
-            code for code, name in profile.strobes.items() if pattern.match(name.strip())
-        )
-
-    return _Vocabulary(
-        reward=matching(_REWARD),
-        hold_fail=matching(_HOLD_FAIL),
-        wrong_well=matching(_WRONG_WELL),
-        sampled=matching(_SAMPLED),
-    )
-
-
-def _classify_trials(
-    codes: list[int], boundaries: frozenset[int], vocab: _Vocabulary
-) -> Iterator[tuple[int, int | None, int, str]]:
-    """`(open index, settle index, opening code, classification)` per trial.
-
-    Delimited as the metrics are: uses `boundaries_for`'s union rather than a
-    single trigger for the same reason the metrics do — a trial abandoned when
-    the next odor fires must close there, or its outcome is stolen by
-    whichever trial answers next.
-
-    The opening code rides along so a caller can split the tally per condition
-    (`ANALYTICS.md#per-condition-tally`) without a second, separately-drifting pass
-    over the stream. The two
-    indices — positions into `codes`, the settle index `None` for a trial
-    nothing settled — ride along for the same reason: the per-trial tape
-    (`ANALYTICS.md#per-trial-tape`) must come from *this* loop, because a second
-    classifier would
-    drift from the first and the tape would stop agreeing with the tallies
-    printed beside it.
-    """
-    open_trial = False
-    open_index = 0
-    settle_index: int | None = None
-    trigger = 0
-    sampled = False
-    outcome: str | None = None
-
-    def settle() -> str:
-        if outcome is not None:
-            return outcome
-        # A trial the animal engaged with but never answered is a real
-        # behavioural category; one it never engaged with is not the same thing.
-        return "no_response" if sampled else "aborted"
-
-    for index, code in enumerate(codes):
-        if code in boundaries:
-            if open_trial:
-                yield open_index, settle_index, trigger, settle()
-            open_trial, open_index, trigger = True, index, code
-            settle_index, sampled, outcome = None, False, None
-            continue
-        if not open_trial:
-            continue
-        if code in vocab.sampled:
-            sampled = True
-        elif outcome is None:
-            if code in vocab.reward:
-                outcome = "rewarded"
-            elif code in vocab.hold_fail:
-                outcome = "hold_failed"
-            elif code in vocab.wrong_well:
-                outcome = "wrong_well"
-            else:
-                continue
-            settle_index = index
-
-    if open_trial:
-        yield open_index, settle_index, trigger, settle()
-
 
 def _tally(classifications: Iterable[str]) -> TrialOutcomes:
     counts = Counter(classifications)
@@ -304,69 +195,46 @@ def _tally(classifications: Iterable[str]) -> TrialOutcomes:
     )
 
 
-def outcomes_of(codes: list[int], profile: TaskProfile | None) -> TrialOutcomes | None:
-    """Tally trial outcomes, or `None` when the profile can't express them."""
-    classified = _classified_trials(codes, profile)
-    if classified is None:
+
+
+def tally_outcomes(table: decode.LegacyTable) -> TrialOutcomes | None:
+    """The outcome tally of a legacy table, or `None` when its profile can't
+    express outcomes."""
+    if not table.outcomes:
         return None
-    return _tally(outcome for _, outcome in classified)
+    return _tally(decode.legacy_outcome(t) for t in _onsets(table))
 
 
-def conditions_of(
-    codes: list[int], profile: TaskProfile | None
-) -> list[ConditionOutcomes]:
+def tally_conditions(table: decode.LegacyTable) -> list[ConditionOutcomes]:
     """The same tally, split per declared condition (`ANALYTICS.md#per-condition-tally`).
 
-    Empty whenever `outcomes_of` is None, and in the same authored order as
+    Empty whenever `tally_outcomes` is None, and in the same authored order as
     `liveMetrics` — the order the strategy space already treats as load-bearing
     (`DATA.md#strategy-plane`), so a reader comparing the two panels is looking
-    at the same axes in
-    the same order.
+    at the same axes in the same order. A condition's trials are the rows scored
+    under it: every trial its onset opened.
     """
-    classified = _classified_trials(codes, profile)
-    if classified is None or profile is None:
+    if not table.outcomes:
         return []
-    by_trigger: dict[int, list[str]] = {}
-    for trigger, outcome in classified:
-        by_trigger.setdefault(trigger, []).append(outcome)
     return [
         ConditionOutcomes(
-            metric_id=metric.id,
-            label=metric.label,
-            trigger_code=metric.trigger_code,
-            outcomes=_tally(by_trigger.get(metric.trigger_code, [])),
+            metric_id=c.id,
+            label=c.label,
+            trigger_code=c.trigger,
+            outcomes=_tally(decode.legacy_outcome(t) for t in _onsets(table) if t.scored(c.id)),
         )
-        for metric in profile.live_metrics
+        for c in table.conditions
     ]
 
 
-def _classified_trials(
-    codes: list[int], profile: TaskProfile | None
-) -> list[tuple[int, str]] | None:
-    """One classification pass, or `None` when the profile can't express one."""
-    if profile is None:
-        return None
-    boundaries = boundaries_for(profile)
-    if not boundaries:
-        return None
-    vocab = _vocabulary(profile)
-    if not vocab.usable:
-        return None
-    return [
-        (trigger, outcome)
-        for _, _, trigger, outcome in _classify_trials(codes, boundaries, vocab)
-    ]
+def tape_of(table: decode.LegacyTable) -> list[TrialRecord]:
+    """The per-trial tape (`ANALYTICS.md#per-trial-tape`), or `[]` when the
+    profile can't express outcomes.
 
-
-def trials_of(document: dict[str, Any], profile: TaskProfile | None) -> list[TrialRecord]:
-    """The per-trial tape (`ANALYTICS.md#per-trial-tape`), or `[]` when the profile
-    can't express one.
-
-    The same `_classify_trials` pass `outcomes_of`/`conditions_of` sum over,
-    kept as a sequence — so tallying this list by class reproduces the run's
+    The same rows `tally_outcomes`/`tally_conditions` sum over, kept as a
+    sequence — so tallying this list by class reproduces the run's
     `TrialOutcomes`, and grouping it by `trigger_code` reproduces its
-    `ConditionOutcomes`. That identity is pinned by test; a second classifier
-    here would let the tape and the tallies drift apart silently.
+    `ConditionOutcomes`. That identity is pinned by test.
 
     Times are relative to the run's *earliest* timestamp rather than its
     first, for `_duration_ms`'s reason: a finalized file is written in arrival
@@ -374,38 +242,40 @@ def trials_of(document: dict[str, Any], profile: TaskProfile | None) -> list[Tri
     "elapsed" reads as a behaviour instead of being caught. A latency that
     still comes out negative on such a file is nulled, not reported.
     """
-    if profile is None:
+    if not table.outcomes:
         return []
-    boundaries = boundaries_for(profile)
-    if not boundaries:
-        return []
-    vocab = _vocabulary(profile)
-    if not vocab.usable:
-        return []
-    pairs = _pairs_of(document)
-    codes = [code for code, _ in pairs]
-    stamps = [ts for _, ts in pairs if ts is not None]
-    base = min(stamps) if stamps else None
+    trigger = {c.id: c.trigger for c in table.conditions}
+    return [
+        TrialRecord(
+            index=k,
+            trigger_code=trigger[t.row],
+            outcome=decode.legacy_outcome(t),
+            at_ms=t.at_ms,
+            latency_ms=t.outcome_ms - t.at_ms
+            if t.outcome_ms is not None and t.at_ms is not None and t.outcome_ms >= t.at_ms
+            else None,
+        )
+        for k, t in enumerate(_onsets(table))
+    ]
 
-    out: list[TrialRecord] = []
-    for index, (open_index, settle_index, trigger, outcome) in enumerate(
-        _classify_trials(codes, boundaries, vocab)
-    ):
-        open_ts = pairs[open_index][1]
-        settle_ts = pairs[settle_index][1] if settle_index is not None else None
-        at_ms = open_ts - base if open_ts is not None and base is not None else None
-        latency_ms = (
-            settle_ts - open_ts
-            if settle_ts is not None and open_ts is not None and settle_ts >= open_ts
-            else None
-        )
-        out.append(
-            TrialRecord(
-                index=index,
-                trigger_code=trigger,
-                outcome=outcome,
-                at_ms=at_ms,
-                latency_ms=latency_ms,
-            )
-        )
-    return out
+
+def _onsets(table: decode.LegacyTable) -> list[Any]:
+    """The rows an odor onset opened: every row with a condition."""
+    return [t for t in table.trials if t.row is not None]
+
+
+def outcomes_of(codes: list[int], profile: TaskProfile | None) -> TrialOutcomes | None:
+    """Tally bare codes' trial outcomes, or `None` when the profile can't express them."""
+    return tally_outcomes(decode.table_of_codes(codes, profile))
+
+
+def conditions_of(codes: list[int], profile: TaskProfile | None) -> list[ConditionOutcomes]:
+    """The per-condition tally of bare codes."""
+    return tally_conditions(decode.table_of_codes(codes, profile))
+
+
+def trials_of(document: dict[str, Any], profile: TaskProfile | None) -> list[TrialRecord]:
+    """A legacy run's per-trial tape. `[]` for a spine run: its trial table is its tape."""
+    if spine.is_spine_run(document):
+        return []
+    return tape_of(decode.table_of(document, profile))

@@ -1985,6 +1985,16 @@ TrialOutcomes restricted to one declared condition (`ANALYTICS.md#how-a-strobe-s
 | `triggerCode` | number | The code that opens this condition's trials — what splits the tally. Two metrics sharing one legitimately cover the same trials. |
 | `outcomes` | [TrialOutcomes](#shape-trialoutcomes) |  |
 
+<a id="shape-conditionscore"></a>
+#### ConditionScore
+
+A legacy trial's verdict under one condition its onset opens.
+
+| Field | Type | Notes |
+|---|---|---|
+| `condition` | string | The legacy condition's id (its `liveMetrics` id). |
+| `correct` | boolean \| null | A hit, a miss, or null for excluded. |
+
 <a id="shape-configfield"></a>
 #### ConfigField
 
@@ -2672,28 +2682,32 @@ A replayed spine run's tallies, each a function of its trial table (`ANALYTICS.m
 <a id="shape-replaytrial"></a>
 #### ReplayTrial
 
-One trial of a spine run, read off its replay (`ANALYTICS.md#the-trial-table`).
+One trial of a run: a spine run's read off its replay, a legacy run's off its strobes (`ANALYTICS.md#the-trial-table`).
 
 | Field | Type | Notes |
 |---|---|---|
 | `index` | number | 0-based, in the run's order. |
-| `atMs` | number | The trial's start, in ms from the session's first tick. |
+| `atMs` | number \| null | The trial's start: ms from the session's first tick, or from a legacy run's earliest strobe. Null only on a legacy file with no usable clock. |
 | `block` | string \| null | The block's id, when the table can say. |
 | `row` | string \| null | The row's id, when the table can say. |
 | `rowName` | string \| null |  |
 | `level` | number \| null |  |
 | `phaseEntries` | (number \| null)[] | The first ms the trial entered each phase, aligned to `TrialTable.phases`; null for a phase it never reached. Empty when the snapshot cannot map states to phases. |
-| `response` | string \| null | The input channel whose edge was the response. |
+| `response` | string \| null | The input channel whose edge was the response; on a legacy run, the strobe that decided its condition's verdict. |
 | `responseEdge` | "rise" \| "fall" \| null |  |
 | `responseMs` | number \| null |  |
-| `latencyMs` | number \| null | Response ms minus the ms its phase was entered. |
-| `outcome` | string \| null | Its outcome class; null when it reached none. |
+| `latencyMs` | number \| null | Response ms minus the ms its phase was entered (a legacy run: minus `atMs`). |
+| `outcome` | string \| null | Its outcome class; null when it reached none, or when a legacy no-go trial's strobes cannot say (`TrialTable.gaps`). |
+| `outcomeMs` | number \| null | When the outcome was settled. |
+| `correct` | boolean \| null | Right, wrong, or null for a trial P(correct) excludes (no class, or an abort). |
 | `rewarded` | boolean |  |
-| `rewardLine` | string \| null | The output channel that paid. |
+| `rewardLine` | string \| null | The output channel that paid (a legacy run: its reward strobe). |
 | `rewardMs` | number \| null | How long the line was open. |
-| `correction` | boolean | A correction trial; always false until blocks have a correction rule. |
+| `correction` | boolean \| null | A correction trial; false until blocks have a correction rule, null on a legacy run, which cannot say. |
 | `inputCounts` | [InputCount](#shape-inputcount)[] | Non-zero counts only. |
-| `complete` | boolean | False only for a crashed run's cut-off last trial. |
+| `complete` | boolean | False only for a crashed spine run's cut-off last trial. |
+| `presented` | boolean | The trial opens a presentation on the engagement ladder. |
+| `scores` | [ConditionScore](#shape-conditionscore)[] | A legacy trial's verdict under every condition its onset opens. Empty on a spine run. |
 
 <a id="shape-rescanorphan"></a>
 #### RescanOrphan
@@ -2876,7 +2890,7 @@ The runner-held session — the same shape a sessions.status reply carries.
 | `metrics` | [MetricSeries](#shape-metricseries)[] |  |
 | `trail` | [StrategyPoint](#shape-strategypoint)[] | The joint walk through the strategy plane. Always rolling, whatever `mode` is — 'what strategy is running right now' is a rolling question. Empty when the profile's conditions can't be split into two opposing sides (`stream.strategy_axes`). Starts only once both windows hold enough counted trials, since a one-trial proportion pins the walk to a corner. Cannot be assembled client-side from `metrics`: those are indexed by each metric's own counted trials, which interleave. |
 | `trials` | [TrialRecord](#shape-trialrecord)[] | Every trial in stream order. Empty when the profile can't express outcomes, on the same rule as `RunSummary.outcomes`. Tallying this list reproduces the run's `TrialOutcomes` and, grouped by `triggerCode`, its `ConditionOutcomes` — pinned by test, so the tape and the tallies can never disagree. |
-| `trialTable` | [TrialTable](#shape-trialtable) \| null | A spine run's trial table, computed from its replay on each request and never cached (`DATA.md#caching`). Null for a legacy run, a diverged one and one replay cannot run. |
+| `trialTable` | [TrialTable](#shape-trialtable) \| null | The run's trial table, computed on each request and never cached (`DATA.md#caching`). Null for a diverged spine run, one replay cannot run, and a legacy run nothing decodes. |
 
 <a id="shape-runstatus"></a>
 #### RunStatus
@@ -3487,11 +3501,13 @@ One classified trial (`ANALYTICS.md#how-a-strobe-stream-is-scored`) — the same
 <a id="shape-trialtable"></a>
 #### TrialTable
 
-A spine run's trial table (`ANALYTICS.md#the-trial-table`).
+A run's trial table (`ANALYTICS.md#the-trial-table`).
 
 | Field | Type | Notes |
 |---|---|---|
-| `phases` | string[] | Each phase's kind, in spine order, for labels only. |
+| `kind` | "replay" \| "legacy" | Read off a replay, or by the legacy decoder. |
+| `phases` | string[] | Each phase's kind, in spine order, for labels only. Empty for a legacy run. |
+| `gaps` | string[] | The columns this table cannot fill, so empty means unknown rather than none: `phase-entries`, `input-counts`, `no-go-outcomes`, `outcomes`, `presentations` (`ANALYTICS.md#how-a-legacy-run-becomes-a-trial-table`). |
 | `trials` | [ReplayTrial](#shape-replaytrial)[] |  |
 
 <a id="shape-utilitybaselinestate"></a>

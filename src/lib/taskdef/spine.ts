@@ -1,4 +1,4 @@
-import type { SpineRam, TaskDiagnostic, TaskTarget } from "@/lib/ws/protocol";
+import type { SpineRam, SpineStoredValue, TaskDiagnostic, TaskTarget } from "@/lib/ws/protocol";
 
 import type { TaskDocument } from "./types";
 
@@ -137,6 +137,37 @@ function moveOverrides(def: SpineDefinition, move: (i: number) => number | null)
   });
 }
 
+/**
+ * Fold every stored value keyed by a phase index into the field it overrides
+ * (`SpineStoredValue.field`, the sidecar's), and drop its key. A phase's
+ * parameter keys carry its index (`present_2_ms`, `block_b1_iti_5_ms`), so
+ * inserting or removing a phase would hand a tuned value to whichever phase
+ * takes that index next. Folded first, the value travels with its phase.
+ * Keys by row or block id never move, and are left in `params`.
+ */
+export function foldStored(def: SpineDefinition, stored: readonly SpineStoredValue[]): SpineDefinition {
+  let next = def;
+  for (const s of stored) {
+    if (!s.field || typeof s.value !== "number" || !(s.key in next.params)) continue;
+    const phase = /^spine\[(\d+)\]\.(\w+)$/.exec(s.field);
+    const block = /^blocks\[(\d+)\]\.phaseMs\.(\d+)$/.exec(s.field);
+    if (phase) {
+      const at = Number(phase[1]);
+      const current = next.spine[at];
+      if (!current) continue;
+      next = setPhase(next, at, { ...current, [phase[2] as string]: s.value });
+    } else if (block) {
+      const at = Number(block[1]);
+      const current = next.blocks[at];
+      if (!current) continue;
+      next = setBlock(next, at, { ...current, phaseMs: { ...(current.phaseMs ?? {}), [block[2] as string]: s.value } });
+    } else continue;
+    const { [s.key]: _folded, ...params } = next.params;
+    next = { ...next, params };
+  }
+  return next;
+}
+
 export function insertPhase(def: SpineDefinition, at: number, kind: string): SpineDefinition {
   const spine = [...def.spine];
   spine.splice(at, 0, freshPhase(def, kind));
@@ -241,7 +272,7 @@ export function setBlock(def: SpineDefinition, at: number, block: SpineBlock): S
   return { ...def, blocks: def.blocks.map((b, i) => (i === at ? block : b)) };
 }
 
-/** Add a slot of a type (and mode); its id is the first free `<type>_<n>`-style one given. */
+/** Add a slot, as given: its id, its type and (a pulse train's) mode. */
 export function addSlot(def: SpineDefinition, slot: SpineSlot): SpineDefinition {
   return { ...def, slots: [...def.slots, slot] };
 }

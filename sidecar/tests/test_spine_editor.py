@@ -266,9 +266,32 @@ def test_the_block_sequence_says_what_follows_each_block():
 def test_a_stored_value_is_shown_on_what_it_tunes():
     stored = view(fixture.reversal(params={"block_a_criterion_of": 9, "iti_4_ms": 5000, "stray": 1}))["stored"]
     assert sorted(stored, key=lambda s: s["key"]) == [
-        {"key": "block_a_criterion_of", "value": 9, "target": {"kind": "block", "index": 0}},
-        {"key": "iti_4_ms", "value": 5000, "target": {"kind": "phase", "index": 4}},
+        {"key": "block_a_criterion_of", "value": 9, "target": {"kind": "block", "index": 0}, "field": None},
+        {"key": "iti_4_ms", "value": 5000, "target": {"kind": "phase", "index": 4}, "field": "spine[4].ms"},
     ], "a key no parameter reads is SPN110's, not a stored value"
+
+
+def test_a_stored_value_keyed_by_a_phase_index_names_the_field_it_overrides():
+    """A phase's keys carry its index, so the editor folds each into the field it
+    overrides before a phase moves (`TASKS.md#the-spine-editor`). Keys by row or
+    block id never move, and name no field."""
+    raw = fixture.two_afc(params={"wait_0_timeout_ms": 900, "response_2_hold_ms": 300, "reward_ms_odor_1": 80},
+                          blocks=[{"id": "b1", "rows": ["odor_1", "odor_2"], "trials": 20, "phaseMs": {"4": 10}}])
+    raw["spine"][0]["timeoutMs"] = 4000
+    raw["params"]["block_b1_iti_4_ms"] = 50
+    fields = {s["key"]: s["field"] for s in view(raw)["stored"]}
+    assert fields == {"wait_0_timeout_ms": "spine[0].timeoutMs", "response_2_hold_ms": "spine[2].holdMs",
+                      "reward_ms_odor_1": None, "block_b1_iti_4_ms": "blocks[0].phaseMs.4"}
+    counter = view(fixture.variable_ratio(1, 9, params={"counter_0_count": 2, "counter_0_count_max": 7}))["stored"]
+    assert {s["key"]: s["field"] for s in counter} == {"counter_0_count": "spine[0].count",
+                                                        "counter_0_count_max": "spine[0].countMax"}
+
+
+def test_a_list_without_an_index_is_targeted_at_its_kind():
+    """No row, no block: said where rows and blocks are, not above the task."""
+    found = targets(fixture.two_afc(blocks=[]))
+    assert found[("SPN106", "blocks")] == {"kind": "block", "index": None}
+    assert targets(fixture.two_afc(rows=[], blocks=[]))[("SPN106", "rows")] == {"kind": "row", "index": None}
 
 
 # --------------------------------------------------------------------------- #

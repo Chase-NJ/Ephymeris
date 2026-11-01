@@ -7,6 +7,7 @@ import { errorMessage } from "@/lib/cohorts/commands";
 import { CASCADE, RISE, springPanel } from "@/lib/motion";
 import { spinePalette } from "@/lib/taskdef/commands";
 import {
+  foldStored,
   insertPhase,
   removePhase,
   type SpineDefinition,
@@ -111,10 +112,7 @@ export function SpineEditor({ shared, definition }: { shared: EditorShared; defi
   }, []);
 
   const taskWide = useMemo(
-    () =>
-      diagnostics.filter(
-        (d) => (d.target.kind === "task" && !d.location.startsWith("blocks")) || d.target.kind === "vocabulary",
-      ),
+    () => diagnostics.filter((d) => d.target.kind === "task" || d.target.kind === "vocabulary"),
     [diagnostics],
   );
 
@@ -162,7 +160,9 @@ export function SpineEditor({ shared, definition }: { shared: EditorShared; defi
                 stale={session.stale}
                 onSelect={(i) => setSelectedPhase(phase === i ? null : i)}
                 onInsert={(at, kind) => {
-                  setDefinition(insertPhase(definition, at, kind));
+                  // A stored value keyed by a phase index folds into its field
+                  // first, so it moves with its phase (`foldStored`).
+                  setDefinition(insertPhase(foldStored(definition, stored), at, kind));
                   setSelectedPhase(at);
                 }}
               />
@@ -174,7 +174,7 @@ export function SpineEditor({ shared, definition }: { shared: EditorShared; defi
                   stored={stored}
                   onChange={setDefinition}
                   onRemove={() => {
-                    setDefinition(removePhase(definition, phase));
+                    setDefinition(removePhase(foldStored(definition, stored), phase));
                     setSelectedPhase(null);
                   }}
                   onClearStored={clearStored}
@@ -236,8 +236,9 @@ function placeOf(d: TaskDiagnostic, def: SpineDefinition): ProblemPlace {
     case "phase":
       return { section: "Spine", which: index === null ? null : `phase ${index + 1}` };
     case "row": {
-      const name = index === null ? "" : def.rows[index]?.name;
-      return { section: "Rows", which: index === null ? null : name ? `${name}` : `row ${index + 1}` };
+      if (index === null) return { section: "Rows", which: null };
+      const name = def.rows[index]?.name;
+      return { section: "Rows", which: name || `row ${index + 1}` };
     }
     case "block":
       return { section: "Blocks", which: index === null ? null : (def.blocks[index]?.id ?? `block ${index + 1}`) };

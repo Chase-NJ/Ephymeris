@@ -454,7 +454,7 @@ A definition stores **channel names and strobe code names, never pins or numbers
 
 **Reward volume and weight live on the row, never in `params`.** The generator reads `reward_time`/`weight` off each `TrialTypeDef` and emits `RW<i+1>`/`PW<i+1>` from the same loop that emits `kTrials[i]`, so a `params["reward_time_1"]` or `params["pool_weight_1"]` is accepted and ignored. The editor offers these only on the row and never writes them into `params` (`isRowOwnedField`, `src/lib/taskdef/lines.ts`). A value on the row is a property of that condition: two conditions paying from one fluid line can pay differently, and deleting the row takes its volume with it.
 
-**There are no presets.** A new task starts from a **seed spine** ([The spine editor](#the-spine-editor)). A seed carries phases and no names: its rows are unnamed and bound to no channel. What a preset would seed that matters most is a condition's *name*, which differs on every bench, and a guessed name is wrong for everyone but its author. A trial-table task is no longer created new; a saved or imported one still opens, edits and saves as described here. The lab's real historical definitions survive as test data in `sidecar/tests/fixtures/task_definitions.py`, each transcribed from the sketch it replaced — a generator change that breaks one breaks something the lab actually ran.
+**A new task starts from a seed spine, never from a preset** ([The spine editor](#the-spine-editor)). A seed carries phases and no names: its rows are unnamed and bound to no channel. What a preset would seed that matters most is a condition's *name*, which differs on every bench, and a guessed name is wrong for everyone but its author. The lab's real historical definitions survive as test data in `sidecar/tests/fixtures/task_definitions.py`, each transcribed from the sketch it replaced — a generator change that breaks one breaks something the lab actually ran.
 
 ### The field catalogue
 
@@ -1525,7 +1525,7 @@ The frontend holds no wiring and no budget. A preview refused as `TASK_INVALID` 
 
 | Panel | What it shows and edits |
 |---|---|
-| Spine (`SpineDiagram`, `PhasePanel`) | The phases left to right in time, the ITI looping back. Each is captioned with what it watches and how long it lasts. A `+` between two inserts a phase from the palette. `insertPhase` and `removePhase` move every block's `phaseMs` index with the phases after it. Clicking a phase opens its fields. Which fields each kind offers is `spineLabels.PHASE_FIELDS`, rendered by control kind. A field every phase may name goes in its `COMMON` list, so a new plain field of the palette is one line there |
+| Spine (`SpineDiagram`, `PhasePanel`) | The phases left to right in time, the ITI looping back. Each is captioned with what it watches and how long it lasts. A `+` between two inserts a phase from the palette. `insertPhase` and `removePhase` move every block's `phaseMs` index with the phases after it. A stored value keyed by a phase index is first folded into the field it overrides (`foldStored`, by `SpineStoredValue.field`), so it moves with its phase too. Clicking a phase opens its fields. Which fields each kind offers is `spineLabels.PHASE_FIELDS`, rendered by control kind. A field every phase may name goes in its `COMMON` list, so a new plain field of the palette is one line there |
 | RAM (`RamMeter`) | `SpineView.ram`: the task's bytes out of the 5000 B budget, by the parts `spine.ram_parts` counts. `task_ram_bytes` is their sum, so the meter is the budget's own arithmetic. Past the budget the bar stretches, with the overflow in the error colour and SPN105 under it |
 | Rows (`RowsTable`) | The slots, which can be added (id and type) and removed. Then one row per trial type: its name, one binding per slot, its reward time and, with no window before the Outcome, its reward probability. Each binding picker offers exactly `SpineView.slots[].channels`: the channels of the slot's type and mode, never the sync line. Under each row are its contingency map (each watched response and `timeout`, with its class, line, probability and hold) and its driven-output values. **Add a row** (`addRow`) takes the next free neutral id and no name, copies the last row's bindings and map, and joins every block that draws that row |
 | Blocks (`BlockTimeline`) | The blocks in order, each with its selection and end rule, then what follows it: `SpineView.blocks[].next` drawn as an arrow, an arc back (`↺`) or the end. Then the session cap, said against `SpineView.sessionEnds`, and the selected block's fields: rows and weights, selection, trials, criterion, `next`, correction and the classes it repeats after, bias window, and phase durations |
@@ -1535,8 +1535,8 @@ The frontend holds no wiring and no budget. A preview refused as `TASK_INVALID` 
 | Target | Where it shows |
 |---|---|
 | `phase` | An error ring and count on its node; in its fields, by `location` |
-| `row` | Listed under the row; on the cell or map line its `location` names |
-| `block` | On its segment, and under its fields |
+| `row` | Listed under the row; on the cell or map line its `location` names. With no index (no row at all), under the table |
+| `block` | On its segment, and under its fields. With no index (no block at all), under the timeline |
 | `session` | By the session cap |
 | `slot` | On its slot chip |
 | `ram` | Under the meter |
@@ -1545,7 +1545,7 @@ The frontend holds no wiring and no budget. A preview refused as `TASK_INVALID` 
 A stored parameter's diagnostic targets the phase, row or block that owns its slot (`spine.owner_of`). The RAM budget's targets `ram`. The header's Problems list files them by the same targets, and a click selects the phase or block, or marks the row.
 
 > [!CAUTION]
-> **A value stored in `params` wins over the field it tunes**, so an edit to that field changes nothing the board runs. `SpineView.stored` lists each one with its target, and the editor shows it beside the field it shadows, with **Use the value here** to remove the stored key. A definition the editor builds stores none. One comes from an older build, an import, or a hand edit.
+> **A value stored in `params` wins over the field it tunes**, so an edit to that field changes nothing the board runs. A key that carries a phase index would also tune whichever phase takes that index after an insert or a remove, which is why those are folded into their fields first. `SpineView.stored` lists each one with its target, and the editor shows it beside the field it shadows, with **Use the value here** to remove the stored key. A definition the editor builds stores none. One comes from an older build, an import, or a hand edit.
 
 ## Writing a new sketch
 

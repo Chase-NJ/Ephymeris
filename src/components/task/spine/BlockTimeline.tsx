@@ -146,7 +146,7 @@ export function BlockTimeline({
           onClearStored={onClearStored}
         />
       )}
-      <ProblemLines diagnostics={diagnosticsOn(diagnostics, "task").filter((d) => d.location.startsWith("blocks"))} />
+      <ProblemLines diagnostics={diagnosticsOn(diagnostics, "block")} />
     </div>
   );
 }

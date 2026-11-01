@@ -214,6 +214,7 @@ export function RowsTable({
           </tbody>
         </table>
       </div>
+      <ProblemLines diagnostics={diagnosticsOn(diagnostics, "row")} />
       <button
         type="button"
         onClick={() => onChange(addRow(def))}

@@ -376,7 +376,7 @@ SHAPES: Final[dict[str, Any]] = {
     "SpineRamPart": ('obj', (('label', 'str', False), ('bytes', 'int', False))),
     "SpineRam": ('obj', (('bytes', ('union', ('int', 'null')), False), ('budget', 'int', False), ('parts', ('list', ('ref', 'SpineRamPart')), False))),
     "SpineBlockView": ('obj', (('id', 'str', False), ('next', ('union', ('int', 'null')), False))),
-    "SpineStoredValue": ('obj', (('key', 'str', False), ('value', 'any', False), ('target', ('ref', 'TaskTarget'), False))),
+    "SpineStoredValue": ('obj', (('key', 'str', False), ('value', 'any', False), ('target', ('ref', 'TaskTarget'), False), ('field', ('union', ('str', 'null')), False))),
     "SpineView": ('obj', (('slots', ('list', ('ref', 'SpineSlotView')), False), ('ram', ('ref', 'SpineRam'), False), ('blocks', ('list', ('ref', 'SpineBlockView')), False), ('sessionEnds', 'bool', False), ('stored', ('list', ('ref', 'SpineStoredValue')), False))),
     "TaskSeed": ('obj', (('id', 'str', False), ('label', 'str', False), ('summary', 'str', False), ('definition', 'any', False))),
     "TaskImportConflict": ('obj', (('kind', 'str', False), ('channel', ('union', ('str', 'null')), False), ('message', 'str', False))),

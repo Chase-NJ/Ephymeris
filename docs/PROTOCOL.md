@@ -3212,6 +3212,7 @@ A value the definition stores in `params`, over what its spine says.
 | `key` | string | The parameter's metadata key. |
 | `value` | unknown | The value `params` stores for it. |
 | `target` | [TaskTarget](#shape-tasktarget) | The phase, row or block it tunes, or the session. |
+| `field` | string \| null | For a key that carries a phase index (a phase's timer, hold or count, or a block's override of one), the definition field it overrides, as a location: `spine[2].ms`, `blocks[0].phaseMs.4`. Inserting or removing a phase moves such a key's meaning, so the editor folds the value into this field first. Null for a key by row or block id. |
 
 <a id="shape-spineview"></a>
 #### SpineView
@@ -3473,7 +3474,7 @@ Where a task diagnostic belongs on the editor (`TASKS.md#the-spine-editor`).
 
 | Field | Type | Notes |
 |---|---|---|
-| `kind` | "phase" \| "row" \| "block" \| "slot" \| "stage" \| "session" \| "vocabulary" \| "ram" \| "task" | A spine's `phase`, `row`, `block` or `slot`, a trial table's `row` or ramp `stage`, by `index`; or, with no index, the session's trial cap, the strobe vocabulary, the RAM budget or the task as a whole. |
+| `kind` | "phase" \| "row" \| "block" \| "slot" \| "stage" \| "session" \| "vocabulary" \| "ram" \| "task" | A spine's `phase`, `row`, `block` or `slot`, a trial table's `row` or ramp `stage`, by `index` (a spine's `row` or `block` with no index: the list as a whole); or the session's trial cap, the strobe vocabulary, the RAM budget or the task as a whole. |
 | `index` | number \| null | Its index in the definition's list, for the indexed kinds. |
 
 <a id="shape-telemetryfield"></a>

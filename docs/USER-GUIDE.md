@@ -164,8 +164,8 @@ nothing and picks no channels, so a new task opens with a problem on every row:
 2. Pick the channel it uses for each role (port, stimulus, reward line…).
 3. Change whatever else differs from the seed.
 
-New tasks are always built from a seed. A task built the older way, as a table of odor lines, still
-opens, changes and saves exactly as before. So does one imported from the other computer. You can
+New tasks are always built from a seed. A task made of a table of odor lines, saved here or imported
+from the other computer, opens, changes and saves on its own screen, described below. You can
 duplicate one, but you cannot start a new one from scratch.
 
 A task built from a seed shows everything about it on one screen:
@@ -199,7 +199,7 @@ Each problem shows where it is: on its step, under its row, on its block, or und
 older or imported copy of the task and wins over the field beside it. Click **Use the value here** to
 drop it.
 
-A task built the older way shows its own screen:
+A task made of a table of odor lines shows its own screen:
 
 - **The state machine** across the top: every step of a trial, drawn from what the task presents.
   Hover a step to see what tunes it; click it to jump to those settings.

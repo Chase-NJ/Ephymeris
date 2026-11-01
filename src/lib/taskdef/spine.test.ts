@@ -14,6 +14,7 @@ import {
   addBlock,
   addRow,
   diagnosticsOn,
+  foldStored,
   insertPhase,
   isSpine,
   meterOf,
@@ -140,6 +141,32 @@ describe("phases", () => {
     expect(insertPhase(goNoGo(), 0, "wait").spine[0]!).toEqual({ phase: "wait", on: "port" });
     expect(insertPhase(goNoGo(), 0, "counter").spine[0]!).toEqual({ phase: "counter", on: "port", count: 5 });
     expect(insertPhase(goNoGo(), 0, "response").spine[0]!).toEqual({ phase: "response", responses: [], ms: 3000 });
+  });
+});
+
+describe("values stored over a phase", () => {
+  const tuned = (): SpineDefinition => ({
+    ...goNoGo(),
+    params: { present_2_ms: 700, block_b1_iti_5_ms: 4500, reward_ms_row_1: 80 },
+  });
+  const stored = [
+    { key: "present_2_ms", value: 700, target: { kind: "phase" as const, index: 2 }, field: "spine[2].ms" },
+    { key: "block_b1_iti_5_ms", value: 4500, target: { kind: "block" as const, index: 0 }, field: "blocks[0].phaseMs.5" },
+    { key: "reward_ms_row_1", value: 80, target: { kind: "row" as const, index: 0 }, field: null },
+  ];
+
+  it("fold into the fields they override, so a phase can move with its value", () => {
+    const folded = foldStored(tuned(), stored);
+    expect(folded.spine[2]!.ms).toBe(700);
+    expect(folded.blocks[0]!.phaseMs).toEqual({ "5": 4500, "2": 800 });
+    expect(folded.params).toEqual({ reward_ms_row_1: 80 });
+  });
+
+  it("then travel with their phase when one is inserted before it", () => {
+    const next = insertPhase(foldStored(tuned(), stored), 0, "delay");
+    expect(next.spine[3]).toMatchObject({ phase: "present", ms: 700 });
+    expect(next.blocks[0]!.phaseMs).toEqual({ "6": 4500, "3": 800 });
+    expect(next.params).toEqual({ reward_ms_row_1: 80 });
   });
 });
 

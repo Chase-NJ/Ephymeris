@@ -85,6 +85,8 @@ def locate(location: str) -> dict[str, Any]:
     if indexed and indexed.group(1) in _INDEXED:
         return target(_INDEXED[indexed.group(1)], int(indexed.group(2)))
     head = location.split(".", 1)[0]
+    if head in ("rows", "blocks"):  # the list as a whole: none, or none that ends
+        return target(_INDEXED[head])
     if head == "sessionTrials":
         return target("session")
     if head == "vocabulary":

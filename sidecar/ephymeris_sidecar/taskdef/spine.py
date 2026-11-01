@@ -517,9 +517,16 @@ def _weight_max(block) -> int:  # noqa: ANN001
     return lowering.HISTORY // max(1, len(block.rows)) if block.select == "bag" else _WEIGHT_MAX
 
 
+def _next_block(spine: Spine, b: int) -> int | None:
+    """The index of the block that runs after block b: its `next`, else the one
+    after it in the list; None after the last, where the session ends."""
+    ids = [block.id for block in spine.blocks]
+    after = spine.blocks[b].next
+    return ids.index(after) if after in ids else (b + 1 if b + 1 < len(ids) else None)
+
+
 def _sequence_ends(spine: Spine) -> bool:
     """Whether the blocks, from the first, run out: every block met ends, and none comes round again."""
-    ids = [b.id for b in spine.blocks]
     seen: set[int] = set()
     b: int | None = 0
     while b is not None:
@@ -527,7 +534,7 @@ def _sequence_ends(spine: Spine) -> bool:
         if b in seen or (block.trials is None and block.criterion is None):
             return False
         seen.add(b)
-        b = ids.index(block.next) if block.next in ids else (b + 1 if b + 1 < len(ids) else None)
+        b = _next_block(spine, b)
     return True
 
 
@@ -678,7 +685,8 @@ def editor_view(definition: TaskDefinition) -> dict[str, Any]:
                      None after the last
         sessionEnds  whether the blocks run out by themselves (as SPN106 judges)
         stored       each stored `params` value a parameter reads, with the
-                     phase, row or block it tunes
+                     phase, row or block it tunes and, for a key that carries
+                     a phase index, the field it overrides (`_overridden`)
 
     The editor computes none of it: the frontend holds no wiring and no budget.
     """
@@ -692,16 +700,13 @@ def editor_view(definition: TaskDefinition) -> dict[str, Any]:
         mode = None if slot.mode == "level" else slot.mode
         slots.append({"id": slot.id, "type": slot.type, "mode": mode,
                       "channels": [c.name for c in channels if _fits(c, slot.type, mode)]})
-    ids = [b.id for b in spine.blocks]
-    blocks = [{"id": b.id,
-               "next": ids.index(b.next) if b.next in ids else (i + 1 if i + 1 < len(ids) else None)}
-              for i, b in enumerate(spine.blocks)]
+    blocks = [{"id": b.id, "next": _next_block(spine, i)} for i, b in enumerate(spine.blocks)]
     stored = []
     if low is not None:
         for f, s in zip(_param_fields(spine, low), low.slots):
             if f["metadataKey"] in definition.params:
                 stored.append({"key": f["metadataKey"], "value": definition.params[f["metadataKey"]],
-                               "target": owner_of(s)})
+                               "target": owner_of(s), "field": _overridden(spine, s)})
     return {
         "slots": slots,
         "ram": {"bytes": task_ram_bytes(low) if low is not None else None, "budget": TASK_RAM_MAX,
@@ -710,6 +715,23 @@ def editor_view(definition: TaskDefinition) -> dict[str, Any]:
         "sessionEnds": bool(spine.blocks) and _sequence_ends(spine),
         "stored": stored,
     }
+
+
+def _overridden(spine: Spine, s: lowering.ParamSlot) -> str | None:
+    """The definition field a parameter slot's stored value overrides, as a
+    location, when its metadata key carries a phase index: a phase's timer,
+    hold or count, or a block's override of one. Those keys move meaning when a
+    phase is inserted or removed, so the editor folds each into this field
+    first (`TASKS.md#the-spine-editor`). None for a key by row or block id."""
+    if s.phase is None:
+        return None
+    if s.role == "block_timer" and s.block is not None:
+        return f"blocks[{s.block}].phaseMs.{s.phase}"
+    if s.role == "timer":
+        limited = spine.phases[s.phase].phase in ("wait", "counter")
+        return f"spine[{s.phase}].{'timeoutMs' if limited else 'ms'}"
+    field_ = {"hold": "holdMs", "count": "count", "count_max": "countMax"}.get(s.role)
+    return f"spine[{s.phase}].{field_}" if field_ else None
 
 
 def owner_of(s: lowering.ParamSlot) -> dict[str, Any]:

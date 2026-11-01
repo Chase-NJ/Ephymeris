@@ -2297,8 +2297,9 @@ SHAPES = (
                 "kind",
                 lit("phase", "row", "block", "slot", "stage", "session", "vocabulary", "ram", "task"),
                 doc="A spine's `phase`, `row`, `block` or `slot`, a trial table's `row` "
-                "or ramp `stage`, by `index`; or, with no index, the session's trial cap, "
-                "the strobe vocabulary, the RAM budget or the task as a whole.",
+                "or ramp `stage`, by `index` (a spine's `row` or `block` with no index: "
+                "the list as a whole); or the session's trial cap, the strobe "
+                "vocabulary, the RAM budget or the task as a whole.",
             ),
             f("index", nullable(INT), doc="Its index in the definition's list, for the indexed kinds."),
         ),
@@ -2360,6 +2361,16 @@ SHAPES = (
             f("key", STR, doc="The parameter's metadata key."),
             f("value", ANY, doc="The value `params` stores for it."),
             f("target", Ref("TaskTarget"), doc="The phase, row or block it tunes, or the session."),
+            f(
+                "field",
+                nullable(STR),
+                doc="For a key that carries a phase index (a phase's timer, hold or "
+                "count, or a block's override of one), the definition field it "
+                "overrides, as a location: `spine[2].ms`, `blocks[0].phaseMs.4`. "
+                "Inserting or removing a phase moves such a key's meaning, so the "
+                "editor folds the value into this field first. Null for a key by "
+                "row or block id.",
+            ),
         ),
         doc="A value the definition stores in `params`, over what its spine says.",
     ),

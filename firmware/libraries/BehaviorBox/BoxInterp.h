@@ -221,9 +221,10 @@
       are both slots, or both NONE with 1 to 254 ratios, each at least 1;
     - a last-trial state neither branches nor starts a trial, so the session
       always ends at a later tick than the one that entered it;
-    - a table's blocks number 1 to 254, each draws one or more branches, its
-      N's and its criterion's slots are both set or both NONE, and its next is
-      a block or NONE, and its errors fit a uint16_t; every pick that starts a trial has a branch for each
+    - a table's blocks number 1 to 254, each draws one or more branches whose
+      end, first + count, is at most 255, its N's and its criterion's slots are
+      both set or both NONE, its next is a block or NONE, and its errors fit a
+      uint16_t; every pick that starts a trial has a branch for each
       block's slice, and so has `entries` when it is not NULL; an override
       names a block and two slots.
     So a tick enters at most two states.
@@ -604,7 +605,15 @@ static inline void interp__trial(InterpCore *c, InterpActions *a)
   if (c->block_trials != 0xFFFF) ++c->block_trials;
 }
 
-static inline uint32_t interp__weight(const InterpCore *c, uint8_t e)
+/*  One past a block's last branch, in a type that holds it: first + count
+    reaches 255 at most in a valid table, and a uint8_t index would never pass
+    256. Every loop over a block's branches runs a uint16_t up to this. */
+static inline uint16_t interp__end(const InterpBlock *k)
+{
+  return (uint16_t)(k->first + k->count);
+}
+
+static inline uint32_t interp__weight(const InterpCore *c, uint16_t e)
 {
   const InterpBlocks *b = c->table->blocks;
   if (b->entries == NULL || b->entries[e].weight == INTERP_NONE) return 1;
@@ -612,7 +621,7 @@ static inline uint32_t interp__weight(const InterpCore *c, uint8_t e)
   return w > INTERP_WEIGHT_MAX ? INTERP_WEIGHT_MAX : w;
 }
 
-static inline uint8_t interp__side(const InterpCore *c, uint8_t e)
+static inline uint8_t interp__side(const InterpCore *c, uint16_t e)
 {
   const InterpBlocks *b = c->table->blocks;
   return b->entries == NULL ? INTERP_NONE : b->entries[e].side;
@@ -624,14 +633,14 @@ static inline uint8_t interp__side(const InterpCore *c, uint8_t e)
 static inline uint8_t interp__by_weight(InterpCore *c, const InterpBlock *k, bool all, uint8_t side)
 {
   uint32_t total = 0, n = 0;
-  for (uint8_t e = k->first; e < k->first + k->count; ++e)
+  for (uint16_t e = k->first; e < interp__end(k); ++e)
     if (all || interp__side(c, e) == side) { total += interp__weight(c, e); ++n; }
   bool uniform = total == 0;
   uint32_t r = interp_draw(&c->rng, uniform ? n : total);
-  for (uint8_t e = k->first; e < k->first + k->count; ++e) {
+  for (uint16_t e = k->first; e < interp__end(k); ++e) {
     if (!all && interp__side(c, e) != side) continue;
     uint32_t w = uniform ? 1 : interp__weight(c, e);
-    if (r < w) return e;
+    if (r < w) return (uint8_t)e;
     r -= w;
   }
   return (uint8_t)(k->first + k->count - 1); // unreachable: r is below the sum
@@ -644,7 +653,7 @@ static inline uint8_t interp__by_weight(InterpCore *c, const InterpBlock *k, boo
 static inline uint8_t interp__from_bag(InterpCore *c, const InterpBlock *k)
 {
   uint32_t total = 0;
-  for (uint8_t e = k->first; e < k->first + k->count; ++e) total += interp__weight(c, e);
+  for (uint16_t e = k->first; e < interp__end(k); ++e) total += interp__weight(c, e);
   if (total > INTERP_HISTORY) total = INTERP_HISTORY;
   if (total == 0) return (uint8_t)(k->first + interp_draw(&c->rng, k->count));
   uint32_t full = total == INTERP_HISTORY ? 0xFFFFFFFFUL : ((uint32_t)1 << total) - 1;
@@ -655,9 +664,9 @@ static inline uint8_t interp__from_bag(InterpCore *c, const InterpBlock *k)
     if (!(c->bag & ((uint32_t)1 << token)) && r-- == 0) break;
   c->bag |= (uint32_t)1 << token;
   uint32_t upto = 0;
-  for (uint8_t e = k->first; e < k->first + k->count; ++e) {
+  for (uint16_t e = k->first; e < interp__end(k); ++e) {
     upto += interp__weight(c, e);
-    if (token < upto) return e;
+    if (token < upto) return (uint8_t)e;
   }
   return (uint8_t)(k->first + k->count - 1); // unreachable
 }
@@ -672,10 +681,10 @@ static inline uint8_t interp__antibias(InterpCore *c, const InterpBlock *k)
   uint32_t total = 0, r = 0;
   for (uint8_t pass = 0; pass < 2; ++pass) {
     if (pass) r = interp_draw(&c->rng, total);
-    for (uint8_t e = k->first; e < k->first + k->count; ++e) {
+    for (uint16_t e = k->first; e < interp__end(k); ++e) {
       uint8_t side = interp__side(c, e);
       bool seen = false;
-      for (uint8_t f = k->first; f < e; ++f) seen = seen || interp__side(c, f) == side;
+      for (uint16_t f = k->first; f < e; ++f) seen = seen || interp__side(c, f) == side;
       if (seen) continue;
       uint32_t count = 0;
       for (uint32_t j = 0; j < len; ++j)

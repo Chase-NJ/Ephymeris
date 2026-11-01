@@ -296,6 +296,25 @@ static void test_blocks()
     assert(!(respond(c, wrong_answer(c), t).flags & INTERP_ACT_CORRECTION));
     assert(time_out(c, t).flags & INTERP_ACT_CORRECTION); }
 
+  // A block's branches are walked in a uint16_t: a slice ending at 255 (the most
+  // a valid table holds) or even 256 is walked to its end, never wrapped round.
+  { static InterpEntry wide[256];
+    for (int i = 0; i < 256; ++i) { wide[i].side = (uint8_t)(i % 2); wide[i].weight = NO; }
+    for (int end = 255; end <= 256; ++end) {
+      InterpBlock k = {(uint8_t)(end - 5), 5, INTERP_WEIGHTED, NO, NO, NO, NO, NO, NO, NO, ERR};
+      InterpBlocks BL = {&k, wide, NULL, 1, 0, 0, SKIP, HITS};
+      InterpTable T = {BLOCK_STATES, BLOCK_EDGES, NULL, &BL};
+      InterpCore c;
+      c.table = &T; c.params = BP; c.rng = 7; c.block = 0;
+      c.hist_len = c.hist_at = 0; c.bag = 0;
+      for (int i = 0; i < INTERP_HISTORY; ++i) c.hist[i] = NO;
+      for (int i = 0; i < 20; ++i) {
+        assert(interp__by_weight(&c, &k, true, NO) >= end - 5);
+        assert(interp__from_bag(&c, &k) >= end - 5);
+        assert(interp__antibias(&c, &k) >= end - 5);
+      }
+    } }
+
   // A criterion counts the scorer's hits (HITS): a correct withhold is one, so a
   // no-go block that is only ever withheld ends on 2 of the last 2.
   { static const InterpBlock R[] = {

@@ -360,3 +360,17 @@ def _one(state: StateRow, *more: StateRow, edges: tuple[EdgeRow, ...] = ()) -> T
 def test_a_table_the_core_cannot_run_is_refused(build, why: str) -> None:
     with pytest.raises(ValueError, match=why):
         build()
+
+
+@pytest.mark.parametrize(("first", "count", "valid"), [(250, 5, True), (0, 255, True), (251, 5, False),
+                                                       (255, 1, False)])
+def test_a_block_slice_ends_at_255_at_most(first: int, count: int, valid: bool) -> None:
+    """BoxInterp.h walks a block's branches up to first + count, which a valid
+    table holds to 255: past it a slice is refused here, so never run on a board."""
+    states = (rp.StateRow(timer_min=0, timer_max=0, on_timeout=0, flags=rp.STARTS_TRIAL),)
+    blocks = rp.Blocks(rows=(rp.Block(first=first, count=count),))
+    if valid:
+        assert rp.Table(states=states, blocks=blocks).blocks is blocks
+    else:
+        with pytest.raises(ValueError, match="branches, each below 255"):
+            rp.Table(states=states, blocks=blocks)

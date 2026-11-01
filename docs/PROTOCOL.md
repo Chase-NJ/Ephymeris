@@ -2035,7 +2035,8 @@ One row of a `grid` control — a named piece of hardware with its own commands 
 | `state` *(optional)* | string | Telemetry key whose 0/1 value lights this row's indicator. |
 | `toggle` *(optional)* | string | Command that latches this channel. |
 | `pulse` *(optional)* | string | Command that pulses this channel. |
-| `kind` *(optional)* | string | The rig channel kind behind the row (`emitter`, `reward`, `cue`, `vacuum`). Always set by a generated utility profile. |
+| `kind` *(optional)* | string | The rig channel kind behind the row (`emitter`, `reward`, `cue`, `vacuum`): the colour family it is drawn in. Always set by a generated utility profile. |
+| `setting` *(optional)* | [ControlSetting](#shape-controlsetting) | A driven output's one setting. Absent on a level line. |
 
 <a id="shape-controloption"></a>
 #### ControlOption
@@ -2044,6 +2045,17 @@ One row of a `grid` control — a named piece of hardware with its own commands 
 |---|---|---|
 | `label` | string |  |
 | `command` | string |  |
+
+<a id="shape-controlsetting"></a>
+#### ControlSetting
+
+A driven output's one setting in Debug Mode: a PWM line's duty, a tone's pitch, a train's rate (`TASKS.md#the-box-utility`).
+
+| Field | Type | Notes |
+|---|---|---|
+| `label` | string | What the setting is: `Duty`, `Pitch` or `Rate`. |
+| `state` | string | Telemetry key holding the board's current value, e.g. `house.duty`. |
+| `options` | [SettingOption](#shape-settingoption)[] | The values offered, each with its command; never empty. |
 
 <a id="shape-detectedboard"></a>
 #### DetectedBoard
@@ -3068,6 +3080,17 @@ One timestamped log entry (`DATA.md#the-session-log`). A deleted note is never s
 #### SessionStatus
 
 "configuring" \| "running" \| "completed" \| "aborted"
+
+<a id="shape-settingoption"></a>
+#### SettingOption
+
+One value a grid row's setting can take.
+
+| Field | Type | Notes |
+|---|---|---|
+| `label` | string | What the operator reads, e.g. `50%` or `2 kHz`. |
+| `value` | string | The value the board reports under the setting's `state` key once this option is in force, so the current one can be shown. |
+| `command` | string | Command that sets it, e.g. `DUTY house 128`. |
 
 <a id="shape-sex"></a>
 #### Sex

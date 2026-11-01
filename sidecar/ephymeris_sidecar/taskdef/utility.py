@@ -7,14 +7,19 @@ grids listed exactly those. A rig with a relabelled line drove the right pin
 under the wrong name; a rig with a different count did not fit at all.
 
 Now the logic lives once in the firmware library (`BoxUtility.h`, host-tested)
-and everything it knows about THIS box is generated here from the composed
-channel map, in two halves that must agree and so are written together:
+and everything it knows about THIS box is generated here from the channel set
+-- each channel's type, mode, role and active level, never its kind -- in two
+halves that must agree and so are written together:
 
-* `UtilityChannels.h` — one row per output and per beam: the channel name (the
-  command token and STATUS key), the Rig page's label, the pin, the kind.
+* `UtilityChannels.h` — one row per output and per input: the channel name
+  (the command token and STATUS key), the Rig page's label, the pin, and an
+  output's role group and drive, or an input's active level.
 * `task.json` — the sketch folder's own rig-independent profile (buttons, the
   pulse-width select, legacy names) with the rig half merged in: one Debug Mode
-  grid row per output, a telemetry field per beam, and the identify pair.
+  grid row per output (a driven one with its setting), a telemetry field per
+  input, and the identify pair.
+
+Nothing here names a channel; `test_box_utility.py` fails if anything does.
 
 A sketch opts in by including `UtilityChannels.h`, exactly as one opts into
 rig pins by including `TaskPins.h` (`taskdef/bundled.py`), and is rebuilt on
@@ -32,25 +37,26 @@ from ..rig import registry
 #: The header a sketch includes to declare it is a box utility.
 UTILITY_HEADER = "UtilityChannels.h"
 
-#: Output kinds the utility drives, in the order its grids and self-test take
-#: them, with the `BoxUtilKind` each becomes. `sync` is deliberately absent: a
+#: Output groups, in the order the table and the self-test take them: the
+#: channel-set roles each holds, and the `BoxUtilGroup` it becomes. Read from
+#: `role` and `type`, never from `kind` (ADR 0003 retires it). A role not named
+#: here lands in the cue group, so every output appears; `sync` never does: a
 #: pulse on it is an edge in a recording, and the trial runner owns that line.
-OUTPUT_KINDS: tuple[tuple[str, str], ...] = (
-    ("emitter", "BOX_UTIL_EMITTER"),
-    ("reward", "BOX_UTIL_REWARD"),
-    ("cue", "BOX_UTIL_CUE"),
-    ("vacuum", "BOX_UTIL_VACUUM"),
+GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("BOX_UTIL_STIMULUS", ("stimulus",)),
+    ("BOX_UTIL_REWARD", ("reward",)),
+    ("BOX_UTIL_CUE", ("cue",)),
+    ("BOX_UTIL_ROUTING", ("routing",)),
 )
+_CUE_GROUP = "BOX_UTIL_CUE"
+_ROLE_GROUP = {role: group for group, roles in GROUPS for role in roles}
 
-#: Input kinds the self-test checks, engagement port first.
-INPUT_KINDS: tuple[str, ...] = ("engagement", "response")
-
-#: Debug Mode grids: id, label, the kinds they hold. `fluids` keeps its id
+#: Debug Mode grids: id, label, the groups they hold. `fluids` keeps its id
 #: because Prime finds the reward grid by it (`UtilityControls.tsx`).
 GRIDS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
-    ("fluids", "Reward lines", ("reward",)),
-    ("aux", "Cues & vacuum", ("cue", "vacuum")),
-    ("emitters", "Stimulus lines", ("emitter",)),
+    ("fluids", "Reward lines", ("BOX_UTIL_REWARD",)),
+    ("aux", "Cues & other lines", ("BOX_UTIL_CUE", "BOX_UTIL_ROUTING")),
+    ("emitters", "Stimulus lines", ("BOX_UTIL_STIMULUS",)),
 )
 
 
@@ -67,34 +73,75 @@ def wants_utility(sketch_dir: Path) -> bool:
         return False
 
 
+def group_of(channel: registry.Channel) -> str:
+    """The `BoxUtilGroup` an output is tested and shown with, by its role."""
+    return _ROLE_GROUP.get(channel.role, _CUE_GROUP)
+
+
+def is_output(channel: registry.Channel) -> bool:
+    """Whether the utility drives this channel: any output type but the sync
+    line's (by role, or by the kind the trial runner finds it by)."""
+    return (registry.TYPE_DIRECTION.get(channel.type) == "out"
+            and channel.role != "sync" and channel.kind != "sync")
+
+
 def outputs(channels: registry.ChannelMap) -> list[registry.Channel]:
-    """Every output the utility drives, grouped by kind, in DECLARATION order
-    within a kind — the order the Rig page lists them."""
-    return [c for kind, _ in OUTPUT_KINDS for c in channels.declared_of_kind(kind)]
+    """Every output the utility drives, grouped by role, in DECLARATION order
+    within a group — the order the Rig page lists them."""
+    outs = [c for c in channels if is_output(c)]
+    return [c for group, _ in GROUPS for c in outs if group_of(c) == group]
 
 
 def inputs(channels: registry.ChannelMap) -> list[registry.Channel]:
-    return [c for kind in INPUT_KINDS for c in channels.declared_of_kind(kind)]
+    """Every `digital_in`, whatever its role, in declaration order."""
+    return [c for c in channels if c.type == "digital_in"]
 
 
-#: A driven output's `BoxUtilDrive`, and what the utility drives it with, which
-#: its label says (`TASKS.md#driven-outputs`). A plain output is a level line.
+#: A driven output's `BoxUtilDrive`, and what the utility plays on it while it
+#: is on, which its label says (`TASKS.md#driven-outputs`). A plain output is a
+#: level line.
 DRIVES: dict[str | None, tuple[str, str | None]] = {
     None: ("BOX_UTIL_LEVEL", None),
-    "pwm": ("BOX_UTIL_PWM", None),            # fully on: analogWrite(255) is HIGH
-    "tone": ("BOX_UTIL_TONE", "1 kHz test tone"),
-    "train": ("BOX_UTIL_TRAIN", "20 Hz test train"),
+    "pwm": ("BOX_UTIL_PWM", None),
+    "tone": ("BOX_UTIL_TONE", "test tone"),
+    "train": ("BOX_UTIL_TRAIN", "test train"),
+}
+
+#: The one setting each drive has in Debug Mode (`TASKS.md#the-box-utility`):
+#: its label, its STATUS suffix (`<channel>.<suffix>=<n>`), the verb that sets
+#: it, and the values offered. The board's own default (`BoxUtility.h`) is
+#: among them, and the board refuses anything outside its limits. A train's
+#: width stays 5 ms, shorter than the period of every rate offered.
+SETTINGS: dict[str, tuple[str, str, str, tuple[tuple[str, int], ...]]] = {
+    "pwm": ("Duty", "duty", "DUTY", (("10%", 26), ("25%", 64), ("50%", 128), ("100%", 255))),
+    "tone": ("Pitch", "hz", "HZ", (("500 Hz", 500), ("1 kHz", 1000), ("2 kHz", 2000),
+                                   ("4 kHz", 4000), ("8 kHz", 8000))),
+    "train": ("Rate", "hz", "HZ", (("5 Hz", 5), ("10 Hz", 10), ("20 Hz", 20), ("40 Hz", 40))),
 }
 
 
 def row_label(channel: registry.Channel) -> str:
-    """The Rig page's label, with the well a reward line serves when known —
+    """The Rig page's label, with the port a reward line serves when known —
     "which well does fluid 2 feed?" is the question priming is for — or what a
     driven output plays while it is on."""
-    if channel.kind == "reward" and channel.well:
-        return f"{channel.label} · {channel.well.replace('_', ' ')}"
+    serves = channel.serves or channel.well
+    if group_of(channel) == "BOX_UTIL_REWARD" and serves:
+        return f"{channel.label} · {serves.replace('_', ' ')}"
     test = DRIVES[channel.drive][1]
     return f"{channel.label} · {test}" if test else channel.label
+
+
+def setting(channel: registry.Channel) -> dict[str, Any] | None:
+    """A driven output's Debug Mode setting, or None for a level line."""
+    if channel.drive is None:
+        return None
+    label, suffix, verb, values = SETTINGS[channel.drive]
+    return {
+        "label": label,
+        "state": f"{channel.name}.{suffix}",
+        "options": [{"label": text, "value": str(n), "command": f"{verb} {channel.name} {n}"}
+                    for text, n in values],
+    }
 
 
 def utility_channels_h(sketch_name: str) -> str:
@@ -102,19 +149,21 @@ def utility_channels_h(sketch_name: str) -> str:
     channels = registry.channels()
     outs = outputs(channels)
     ins = inputs(channels)
-    kind_macro = dict(OUTPUT_KINDS)
 
     out_rows = [
-        f'  {{{_c(c.name)}, {_c(row_label(c))}, {c.index}, {kind_macro[c.kind]}, {DRIVES[c.drive][0]}}}'
+        f'  {{{_c(c.name)}, {_c(row_label(c))}, {c.index}, {group_of(c)}, {DRIVES[c.drive][0]}}}'
         for c in outs
     ]
-    in_rows = [f"  {{{_c(c.name)}, {_c(c.label)}, {c.index}}}" for c in ins]
+    in_rows = [f"  {{{_c(c.name)}, {_c(c.label)}, {c.index}, {1 if c.active_level == 'high' else 0}}}"
+               for c in ins]
     if not in_rows:
         # A zero-length array is not C++; the engine reads NUM_INPUTS, not this.
-        in_rows = ['  {"", "", -1}']
-    # Every key, its "=0" and a space, plus the fixed tail, with room to spare:
-    # a STATUS line truncated mid-key would light the wrong row.
-    status_bytes = 96 + sum(len(c.name) + 4 for c in outs + ins)
+        in_rows = ['  {"", "", -1, 0}']
+    # Every key, its "=0" and a space, and a driven output's setting key with a
+    # five-digit value, plus the fixed tail, with room to spare: a STATUS line
+    # truncated mid-key would light the wrong row.
+    status_bytes = (96 + sum(len(c.name) + 4 for c in outs + ins)
+                    + sum(len(c.name) + 12 for c in outs if c.drive is not None))
 
     lines = [
         "/*  GENERATED by Ephymeris -- do not edit.",
@@ -153,9 +202,10 @@ def utility_profile(template: dict[str, Any]) -> dict[str, Any]:
 
     The template keeps what does not depend on the box (buttons, the pulse
     select, legacy names, the common telemetry fields); this adds a grid per
-    group of outputs, a telemetry field per beam, and an identify pair on the
-    first cue. Grids the template already declares under the same id are
-    replaced, so regenerating is idempotent.
+    group of outputs (a driven output's row with its setting), a telemetry field
+    per input, and an identify pair on the first cue that is a plain level
+    line. Grids the template already declares under the same id are replaced,
+    so regenerating is idempotent.
     """
     channels = registry.channels()
     profile = copy.deepcopy(template)
@@ -163,29 +213,34 @@ def utility_profile(template: dict[str, Any]) -> dict[str, Any]:
     controls = [c for c in profile.get("controls", []) if c.get("id") not in grid_ids]
 
     outs = outputs(channels)
-    for grid_id, label, kinds in GRIDS:
-        rows = [
-            {
+    for grid_id, label, groups in GRIDS:
+        rows = []
+        for c in outs:
+            if group_of(c) not in groups:
+                continue
+            row: dict[str, Any] = {
                 "label": row_label(c),
                 "state": c.name,
                 "toggle": f"TOGGLE {c.name}",
                 "pulse": f"PULSE {c.name}",
-                "kind": c.kind,
+                "kind": c.kind,  # the colour family Debug Mode draws it in
             }
-            for c in outs
-            if c.kind in kinds
-        ]
+            if (own := setting(c)) is not None:
+                row["setting"] = own
+            rows.append(row)
         if rows:
             controls.append({"id": grid_id, "type": "grid", "label": label, "channels": rows})
     profile["controls"] = controls
 
     telemetry = profile.setdefault("telemetry", {"match": "STATUS", "fields": []})
-    beam_keys = {c.name for c in inputs(channels)}
-    fields = [f for f in telemetry.get("fields", []) if f.get("key") not in beam_keys]
-    fields += [{"key": c.name, "label": f"{c.label} beam"} for c in inputs(channels)]
+    input_keys = {c.name for c in inputs(channels)}
+    fields = [f for f in telemetry.get("fields", []) if f.get("key") not in input_keys]
+    fields += [{"key": c.name, "label": c.label} for c in inputs(channels)]
     telemetry["fields"] = fields
 
-    cue = next((c for c in outs if c.kind == "cue"), None)
+    # Identify lights a box while animals are placed into it, so never a cue
+    # that plays a tone or runs a train.
+    cue = next((c for c in outs if c.role == "cue" and c.drive is None), None)
     if cue is not None:
         profile["identify"] = {"on": f"ON {cue.name}", "off": f"OFF {cue.name}"}
     else:

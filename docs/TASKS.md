@@ -370,7 +370,7 @@ A `"kind": "utility"` profile makes a priming, cleaning or self-test sketch firs
 |---|---|---|---|
 | `button` | a button | its `command` | non-empty `command` |
 | `select` | a dropdown | the chosen option's `command` | non-empty `options[]`, each with a `command` |
-| `grid` | one row per channel with a state lamp | that row's `toggle` or `pulse` | non-empty `channels[]`; each needs a `label` and at least one of `toggle`/`pulse` |
+| `grid` | one row per channel with a state lamp, and a select for a row's `setting` | that row's `toggle` or `pulse`, or the chosen setting option's `command` | non-empty `channels[]`; each needs a `label` and at least one of `toggle`/`pulse`; a `setting` needs a `label`, a `state` and non-empty `options[]`, each with a `label`, `value` and `command` |
 
 ![Debug Mode for box 3 on BOX_Utility: buttons for Full self-test, Stop test and All off, a pulse-width dropdown, a Prime block, and grid rows with a lamp and switch for each fluid line, the vacuum, the trial light (lit, "1 open") and twelve odor lines](images/debug-mode.webp)
 
@@ -378,7 +378,7 @@ A `"kind": "utility"` profile makes a priming, cleaning or self-test sketch firs
 section headers count what is open. Prime is the app's own control
 ([ARCHITECTURE.md](ARCHITECTURE.md#running-a-task-from-debug-mode)), not a profile control.*
 
-`grid` exists because "which solenoid is energized right now" on a fluid rig is a safety readout, not a convenience. A row with neither `toggle` nor `pulse` is rejected rather than rendered as inert decoration. A missing `state` leaves the lamp neutral rather than claiming "closed" — not reported and closed are different facts.
+`grid` exists because "which solenoid is energized right now" on a fluid rig is a safety readout, not a convenience. A row with neither `toggle` nor `pulse` is rejected rather than rendered as inert decoration. A missing `state` leaves the lamp neutral rather than claiming "closed" — not reported and closed are different facts. For the same reason a setting's select shows the value the board reports under the setting's `state`, never the option last chosen: before any report, or when the boxes of a broadcast disagree, it shows a placeholder.
 
 `telemetry` is `{ match?: string (default "STATUS"), fields?: [{key, label?}] }`. The app finds the newest `port.output` line beginning with `match`, parses space-separated `key=value` pairs, and shows the declared fields. **`STATUS` values cannot contain spaces.** Prose belongs in ordinary `Serial.println` lines, which land in the console.
 
@@ -388,7 +388,7 @@ section headers count what is open. Prime is the app's own control
 { "identify": { "on": "ON trial_light", "off": "OFF trial_light" } }
 ```
 
-The two commands that make a box announce itself, used by the utility baseline's `utility.identify` and the guided placement walk ([ARCHITECTURE.md](ARCHITECTURE.md#hardware-utility-baseline)). Keeping them in the profile is what lets the walk work on a rig that signals with a buzzer, another LED, or not at all. **Both halves are required together** — a box that can be lit but not unlit would announce itself indefinitely. Omitting the block is normal: that box simply cannot be asked. For the box utility it is generated, on the rig's first `cue` channel ([The box utility](#the-box-utility)). `identify` is not the same as that channel's row in a `grid`: that is a manual control; this is a contract the app drives on its own.
+The two commands that make a box announce itself, used by the utility baseline's `utility.identify` and the guided placement walk ([ARCHITECTURE.md](ARCHITECTURE.md#hardware-utility-baseline)). Keeping them in the profile is what lets the walk work on a rig that signals with a buzzer, another LED, or not at all. **Both halves are required together** — a box that can be lit but not unlit would announce itself indefinitely. Omitting the block is normal: that box simply cannot be asked. For the box utility it is generated, on the rig's first `cue`-role level line ([The box utility](#the-box-utility)). `identify` is not the same as that channel's row in a `grid`: that is a manual control; this is a contract the app drives on its own.
 
 ### Legacy names
 
@@ -555,28 +555,47 @@ The shipped sketches compile against `BoxPins.h`'s defaults — the box as built
 
 ### The box utility
 
-`BOX_Utility` is the resting firmware on every idle box and Debug Mode's control panel: it latches and pulses outputs, primes lines, and runs a hardware self-test. **Nothing in it describes the box.** The logic is written once in the library's `BoxUtility.h` and host-tested (`extras/host_test/run_box.sh`, against a deliberately smaller fixture box). What the box *is* comes from the rig, through `taskdef/utility.py`, whenever the sketch is rebuilt (every start, wiring change and vocabulary edit, the same triggers as any [rebuilt bundled sketch](#rebuilt-bundled-sketches)).
+`BOX_Utility` is the resting firmware on every idle box and Debug Mode's control panel: it latches and pulses outputs, sets a driven output's duty or Hz, primes lines, and runs a hardware self-test. **Nothing in it describes the box.** The logic is written once in the library's `BoxUtility.h` and host-tested (`extras/host_test/run_box.sh`, against a deliberately smaller fixture box). What the box *is* comes from the rig's [channel set](#the-channel-set-and-the-pin-map), through `taskdef/utility.py`, whenever the sketch is rebuilt (every start, wiring change and vocabulary edit, the same triggers as any [rebuilt bundled sketch](#rebuilt-bundled-sketches)). It reads each channel's `type`, `mode`, `role`, `active_level`, label and pin, never its `kind`, so a channel added on the Rig page appears in Debug Mode, responds there, and is in the self-test straight away.
 
 ```mermaid
 flowchart LR
-    rig["Rig page<br/>channels, pins, labels"] --> gen["taskdef/utility.py"]
+    rig["Rig page<br/>channel set, pins, labels"] --> gen["taskdef/utility.py"]
     tmpl["firmware/Utility/BOX_Utility/task.json<br/>buttons, pulse select, legacyNames"] --> gen
-    gen --> h["UtilityChannels.h<br/>one row per output and beam"]
-    gen --> tj["task.json<br/>+ grids, beam fields, identify"]
+    gen --> h["UtilityChannels.h<br/>one row per output and input"]
+    gen --> tj["task.json<br/>+ grids, settings, input fields, identify"]
     h --> eng["BoxUtility.h<br/>commands, STATUS, self-test"]
     tj --> dm["Debug Mode panel"]
 ```
 
-| From the rig | Becomes |
+| From the channel set | Becomes |
 |---|---|
-| Every `emitter`, `reward`, `cue` and `vacuum` channel, in declaration order within its kind | An output row: its **channel name** is the command token (`PULSE fluid_2`) and STATUS key (`fluid_2=1`); its **Rig label** names it in the self-test and the Debug Mode grid (a reward line adds its well, a [driven output](#driven-outputs) what it plays). A PWM line is on fully, a tone plays a 1 kHz test tone, and a train pulses a 20 Hz, 5 ms test train for as long as it is on, never held HIGH |
-| Every `engagement` and `response` channel | A beam: a STATUS key, a telemetry field, a prompted step in the self-test |
-| The first `cue` | The `identify` pair (`ON trial_light` / `OFF trial_light`) |
-| `sync` | Nothing. A pulse on it would be an edge in a recording |
+| Every `digital_out`, `pwm_out` and `tone_out`, except the sync line | An output row, grouped by role (below), in declaration order within a group: its **channel name** is the command token (`PULSE fluid_2`) and STATUS key (`fluid_2=1`); its **Rig label** names it in the self-test and the Debug Mode grid (a reward line adds the port it serves, a tone or train what it plays) |
+| A [driven output](#driven-outputs) | Its row also carries its one **setting**, a select in its grid row (below) |
+| Every `digital_in`, whatever its role | An input: a STATUS key (`1` while active, by its own `active_level`), a telemetry field, a prompted step in the self-test. An active-low input is pulled up; an active-high one is not |
+| The first `cue`-role output that is a level line | The `identify` pair (`ON trial_light` / `OFF trial_light`), and the light the self-test turns on while any input is active. Never a tone or a train: identify runs while animals are placed. A rig whose cues are all driven has no `identify` |
+| Role `sync` (or the `sync` kind's line) | Nothing. A pulse on it would be an edge in a recording |
+
+| Role | Self-test | Debug Mode grid |
+|---|---|---|
+| `stimulus` | Fires 500 ms each, with every routing line on | `emitters`, Stimulus lines |
+| `reward` | Pulses 500 ms each | `fluids`, Reward lines (Prime) |
+| `cue`, and any other role an output declares | Blinks six times | `aux`, Cues & other lines |
+| `routing` | On with each stimulus line; on a box with none, blinks six times | `aux` |
+
+| Drive | On means | Setting (command) | Default | Board's limits |
+|---|---|---|---|---|
+| Level | HIGH | none | — | — |
+| `pwm_out` | `analogWrite` at the duty | Duty: 10, 25, 50, 100 % (`DUTY <ch> <n>`) | 255 | 0–255 |
+| `tone_out` | `tone()` at the pitch | Pitch: 500 Hz to 8 kHz (`HZ <ch> <n>`) | 1000 Hz | 31–65535 Hz |
+| `digital_out`, `mode: "train"` | A test train of 5 ms pulses at the rate (`interp_train_high`), never held HIGH | Rate: 5, 10, 20, 40 Hz (`HZ <ch> <n>`) | 20 Hz | 1–100 Hz |
 
 - **Opt-in is the include.** A sketch whose `.ino` includes `UtilityChannels.h` is generated (`wants_utility`), as one including `TaskPins.h` is re-pinned. The shipped `UtilityChannels.h` declares nothing, so a bare build stops at `BoxUtility.h`'s `#error`.
-- **The profile is merged, not replaced.** The folder's own `task.json` keeps what does not depend on the box. The generator adds three grids (`fluids`, `aux`, `emitters`) whose rows carry an explicit `kind`, beam telemetry fields and `identify`. `fluids` keeps its id because Prime finds the reward grid by it.
-- **The self-test follows the table.** Stimulus lines fire with the vacuum energised, reward lines pulse one by one with their labels printed, each cue blinks, then every beam must read clear at rest and break when prompted. The tally is one check per beam plus the rest check.
+- **The profile is merged, not replaced.** The folder's own `task.json` keeps what does not depend on the box. The generator adds three grids (`fluids`, `aux`, `emitters`) whose rows carry an explicit `kind` (the colour Debug Mode draws them in) and, for a driven output, a `setting`; a telemetry field per input; and `identify`. `fluids` keeps its id because Prime finds the reward grid by it.
+- **A setting is the board's, not the app's.** `DUTY` or `HZ` applies at once to a line that is on and is kept through `OFF` and `ALLOFF`; a reset restores the default. The board reports it as `<ch>.duty=<n>` or `<ch>.hz=<n>` in every `STATUS`, and the select shows that value. A value outside the board's limits, a malformed one, or the wrong verb for the line changes nothing, as an out-of-range `SET PULSE` does. A train's width stays 5 ms, shorter than the period of every rate it takes (an `#error` in `BoxUtility.h` holds this), so a click never holds a laser on.
+- **The self-test follows the table**, so it reaches every output and input. Each output is driven as its drive at its current setting: a tone sounds, a train pulses. Every input must read inactive at rest, then go active when prompted. The tally is one check per input plus the rest check.
+
+> [!CAUTION]
+> **Nothing in the utility may name a channel.** A channel name, count or pin written into `BoxUtility.h`, the BOX_Utility folder, `taskdef/utility.py` or the Debug Mode panel drives the right pin under the wrong name on a rewired box, or leaves a new channel out with no error. `test_box_utility.py` fails on any shipped channel name in those sources.
 
 ### Order is meaning
 
@@ -922,7 +941,7 @@ Beside its kind, every channel declares what it is ([ADR 0003](adr/0003-phase-sp
 
 A channel that declares none of these, as every rig saved before they existed does, takes its type and role from its kind (`registry.channel_set_defaults`).
 
-**The trial-runner generator reads none of the new fields.** It still generates from `kind`, `well`, `port_slot` and `onset_strobe`, so every saved task and bundled sketch regenerates byte-identical (`test_channel_set.py`). A [spine task](#spine-tasks) reads `type`, `mode`, `active_level`, `debounce_ms` and `edges`, and nothing else of a channel but its pin.
+**The trial-runner generator reads none of the new fields.** It still generates from `kind`, `well`, `port_slot` and `onset_strobe`, so every saved task and bundled sketch regenerates byte-identical (`test_channel_set.py`). A [spine task](#spine-tasks) reads `type`, `mode`, `active_level`, `debounce_ms` and `edges`, and nothing else of a channel but its pin. [The box utility](#the-box-utility) reads `type`, `mode`, `role` and `active_level`, with the label and the pin.
 
 ### Registry rules
 

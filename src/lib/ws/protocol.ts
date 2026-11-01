@@ -787,6 +787,32 @@ export interface ControlOption {
   command: string;
 }
 
+/** One value a grid row's setting can take. */
+export interface SettingOption {
+  /** What the operator reads, e.g. `50%` or `2 kHz`. */
+  label: string;
+  /**
+   * The value the board reports under the setting's `state` key once this option is in force, so
+   * the current one can be shown.
+   */
+  value: string;
+  /** Command that sets it, e.g. `DUTY house 128`. */
+  command: string;
+}
+
+/**
+ * A driven output's one setting in Debug Mode: a PWM line's duty, a tone's pitch, a train's rate
+ * (`TASKS.md#the-box-utility`).
+ */
+export interface ControlSetting {
+  /** What the setting is: `Duty`, `Pitch` or `Rate`. */
+  label: string;
+  /** Telemetry key holding the board's current value, e.g. `house.duty`. */
+  state: string;
+  /** The values offered, each with its command; never empty. */
+  options: SettingOption[];
+}
+
 /**
  * One row of a `grid` control — a named piece of hardware with its own commands and its own live
  * state key.
@@ -800,10 +826,12 @@ export interface ControlChannel {
   /** Command that pulses this channel. */
   pulse?: string;
   /**
-   * The rig channel kind behind the row (`emitter`, `reward`, `cue`, `vacuum`). Always set by a
-   * generated utility profile.
+   * The rig channel kind behind the row (`emitter`, `reward`, `cue`, `vacuum`): the colour family
+   * it is drawn in. Always set by a generated utility profile.
    */
   kind?: string;
+  /** A driven output's one setting. Absent on a level line. */
+  setting?: ControlSetting;
 }
 
 /**

@@ -152,6 +152,7 @@ export function Select<T extends string | number>({
   disabled = false,
   attention = false,
   tone = "normal",
+  compact = false,
   className = "",
 }: {
   value: T;
@@ -159,6 +160,8 @@ export function Select<T extends string | number>({
   onChange: (next: T) => void;
   label: string;
   disabled?: boolean;
+  /** Row-sized, for a select that sits inside a table or grid row. */
+  compact?: boolean;
   /** Pulses the border until the user acts — for the one control a guided
       flow is waiting on. */
   attention?: boolean;
@@ -188,7 +191,9 @@ export function Select<T extends string | number>({
         const next = options.find((o) => String(o.value) === e.target.value);
         if (next) onChange(next.value);
       }}
-      className={`rounded-sm border border-halo bg-nebula px-2.5 py-1.5 font-mono text-[12px] ${
+      className={`rounded-sm border border-halo bg-nebula font-mono ${
+        compact ? "px-1.5 py-0.5 text-[11px]" : "px-2.5 py-1.5 text-[12px]"
+      } ${
         tone === "normal" ? "text-starlight" : ""
       } disabled:cursor-not-allowed disabled:opacity-40 ${
         attention ? "attention-border" : ""

@@ -364,9 +364,10 @@ def test_the_ram_a_drive_costs_is_counted(driven_rig):
 
 def test_the_utility_drives_each_one_as_what_it_is(driven_rig):
     header = utility.utility_channels_h("BOX_Utility")
-    assert '{"laser", "laser \\302\\267 20 Hz test train", 11, BOX_UTIL_CUE, BOX_UTIL_TRAIN}' in header
-    assert '{"tone", "tone \\302\\267 1 kHz test tone", 12, BOX_UTIL_CUE, BOX_UTIL_TONE}' in header
-    assert '{"light", "light", 45, BOX_UTIL_CUE, BOX_UTIL_PWM}' in header
+    # Each is a stimulus by role, though a cue by kind (RIG107).
+    assert '{"laser", "laser \\302\\267 test train", 11, BOX_UTIL_STIMULUS, BOX_UTIL_TRAIN}' in header
+    assert '{"tone", "tone \\302\\267 test tone", 12, BOX_UTIL_STIMULUS, BOX_UTIL_TONE}' in header
+    assert '{"light", "light", 45, BOX_UTIL_STIMULUS, BOX_UTIL_PWM}' in header
     assert '{"trial_light", "trial light", 36, BOX_UTIL_CUE, BOX_UTIL_LEVEL}' in header
     assert "#define BOX_UTILITY_HAS_TONE 1" in header
     fixture.install()

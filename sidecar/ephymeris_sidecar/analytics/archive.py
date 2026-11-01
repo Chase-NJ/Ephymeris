@@ -47,6 +47,10 @@ RECOVER_WHILE_WRITING = (
     "A box is running: its live .tsv would look like an orphan. "
     "Recover once every box has finished."
 )
+REDERIVE_WHILE_WRITING = (
+    "A box is running: a finishing run writes its own .json. "
+    "Re-derive once every box has finished."
+)
 RESCAN_WHILE_WRITING = (
     "A box is running: a run that finishes during the walk would be found "
     "twice. Rescan once every box has finished."
@@ -54,7 +58,7 @@ RESCAN_WHILE_WRITING = (
 
 
 class ArchiveBusy(Exception):
-    """A scan, tidy, relocate, move or recover already holds the archive."""
+    """A scan, tidy, relocate, move, recover or re-derive already holds the archive."""
 
 
 class RigInUse(Exception):
@@ -406,6 +410,24 @@ class CohortArchive:
             cohort = await asyncio.to_thread(self._cohorts.get, cohort_id)
             result = await asyncio.to_thread(recovery.recover_cohort, cohort.data_folder)
             write.changed(files=await asyncio.to_thread(_recovered_files, result["entries"]))
+        return {**result, "cohortId": cohort_id}
+
+
+    async def rederive(self, cohort_id: str) -> dict[str, Any]:
+        """Rewrite the derived trial table of a cohort's spine runs where this
+        build derives a different one (`DATA.md#re-derive`), as the
+        `RederiveResult` wire shape.
+
+        Refused while a box runs, as `recover` is: a finishing run writes
+        its own `.json`. Every file it wrote, and only those, is queued for
+        backup.
+        """
+        from ..sessions import derived  # sessions imports analytics.reader
+
+        async with self.write(refuse_while="writing", because=REDERIVE_WHILE_WRITING) as write:
+            cohort = await asyncio.to_thread(self._cohorts.get, cohort_id)
+            result = await asyncio.to_thread(derived.rederive_cohort, cohort.data_folder)
+            write.changed(files=result.pop("written"))
         return {**result, "cohortId": cohort_id}
 
 

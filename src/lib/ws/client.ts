@@ -94,6 +94,8 @@ const CALL_TIMEOUT_OVERRIDES: Readonly<Record<string, number>> = {
   [CMD.ANALYTICS_RESCAN]: 300_000,
   // Same walk as the rescan, plus a .json/.mat write per orphan found.
   [CMD.SESSIONS_RECOVER]: 300_000,
+  // Same walk, plus a replay of every spine run found.
+  [CMD.SESSIONS_REDERIVE]: 300_000,
   // Copies, hashes and verifies an animal's every file — over a network share
   // when that is where the archive lives (`DATA.md#moving-animals-between-cohorts`).
   // The preview hashes them too.

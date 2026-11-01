@@ -11,6 +11,7 @@ import type {
   AnalyticsSummary,
   DiskSession,
   RecoverResult,
+  RederiveResult,
   TidyPlan,
   RescanResult,
   SeriesResult,
@@ -100,6 +101,18 @@ export async function recover(
   cohortId: string,
 ): Promise<RecoverResult> {
   return client.call(CMD.SESSIONS_RECOVER, { cohortId });
+}
+
+/**
+ * Re-derive (`DATA.md#re-derive`): rewrite the derived trial table in each
+ * spine run's `.json`/`.mat` where this build replays a different one. The
+ * app never reads that table, so nothing in Analytics needs refreshing.
+ */
+export async function rederive(
+  client: SidecarPort,
+  cohortId: string,
+): Promise<RederiveResult> {
+  return client.call(CMD.SESSIONS_REDERIVE, { cohortId });
 }
 
 /**

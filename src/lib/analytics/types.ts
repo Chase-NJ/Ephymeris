@@ -37,6 +37,8 @@ export type {
   RescanResult,
   RecoveredTsv,
   RecoverResult,
+  RederivedRun,
+  RederiveResult,
   TidySession,
   TidyPlan,
   AnalyticsProgress,

@@ -1973,7 +1973,7 @@ SHAPES = (
                 "channel this rig has and the file lacks), `order` (a channel both "
                 "have, declared at another position: declaration order is the odor "
                 "index, `TASKS.md#order-is-meaning`), `no_code` (an edge the "
-                "file names no code for), `rule` (a wiring rule RIG101–RIG107 the "
+                "file names no code for), `rule` (a wiring rule, RIG101–RIG107 or RIG109, that the "
                 "imported channel set breaks here, judged against the merged "
                 "vocabulary), or `hash` (the file changed after it was exported).",
             ),
@@ -4405,7 +4405,7 @@ ERRORS = (
         "not a JSON object, or one half of a two-file pair alone), which only "
         "`hardware.reset` replaces; a draft read from a stored file not in force, "
         "sent without `confirmedPins`; or a draft with a wiring-rule problem "
-        "(RIG101–RIG107), which the editor holds Save on too. Nothing was written "
+        "(RIG101–RIG107, RIG109), which the editor holds Save on too. Nothing was written "
         "and no code was issued (`TASKS.md#the-channel-set-and-the-pin-map`).",
     ),
     ErrorCode(

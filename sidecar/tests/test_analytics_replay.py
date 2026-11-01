@@ -191,9 +191,10 @@ def test_the_trial_runner_s_interpreter_is_never_replayed_as_a_table() -> None:
     recorded GRGL run names, and the state-table interpreter is 2. So a run's
     header alone tells a spine run from a legacy one, and replay never walks a
     legacy run's strobes as if a table had produced them. 2 is the tracer's
-    table format, kept so its runs still replay; 3 adds the pick state."""
-    assert rp.INTERP_VERSIONS == {2, 3}
-    assert rp.INTERP_VERSION == 3
+    table format, kept so its runs still replay; 3 adds the pick state; 4
+    adds driven outputs and changes no table."""
+    assert rp.INTERP_VERSIONS == {2, 3, 4}
+    assert rp.INTERP_VERSION == 4
     with pytest.raises(ValueError, match="INTERP 1"):
         rp.replay(TRIAL, PARAMS, seed=1, events=[], ticks=10, interp=1)
 

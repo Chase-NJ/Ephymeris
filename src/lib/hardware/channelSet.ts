@@ -9,13 +9,18 @@ import type { RigChannel } from "./types";
  * only ever issued by a save, never written here.
  */
 
-export const CHANNEL_TYPES = ["digital_in", "digital_out"] as const;
+export const CHANNEL_TYPES = ["digital_in", "digital_out", "pwm_out", "tone_out"] as const;
+/** A `digital_out`'s modes (`TASKS.md#driven-outputs`); level is stored as no mode. */
+export const MODES = ["level", "train"] as const;
 export const ROLES = ["port", "stimulus", "reward", "cue", "routing", "sync"] as const;
 
 const EDGES: Record<string, readonly string[]> = {
   digital_in: ["enter", "exit"],
   digital_out: ["on", "off"],
+  pwm_out: ["on", "off"],
+  tone_out: ["on", "off"],
 };
+const TRAIN_EDGES = ["train_on", "train_off"] as const;
 
 const KIND_DEFAULTS: Record<string, { type: string; role: string }> = {
   engagement: { type: "digital_in", role: "port" },
@@ -27,8 +32,9 @@ const KIND_DEFAULTS: Record<string, { type: string; role: string }> = {
   sync: { type: "digital_out", role: "sync" },
 };
 
-/** The edges a channel of this type has, in the order a save issues their codes. */
-export function edgesOf(type: string | undefined): readonly string[] {
+/** The edges a channel of this type and mode has, in the order a save issues their codes. */
+export function edgesOf(type: string | undefined, mode?: string): readonly string[] {
+  if (type === "digital_out" && mode === "train") return TRAIN_EDGES;
   return (type && EDGES[type]) || [];
 }
 
@@ -42,9 +48,10 @@ export function kindDefaults(kind: string): { type: string; role: string } {
  *
  * - A KIND change carries type and role with it, since the kind still decides
  *   the direction the generator drives.
- * - A TYPE change drops the edge codes: an output's `on`/`off` are not an
- *   input's `enter`/`exit`, and a save issues the new ones. The old codes stay
- *   in the vocabulary, as every code does.
+ * - A TYPE or MODE change drops the edge codes: an output's `on`/`off` are not
+ *   an input's `enter`/`exit`, nor a train's `train_on`/`train_off`, and a save
+ *   issues the new ones. The old codes stay in the vocabulary, as every code
+ *   does. Only a `digital_out` keeps a mode, and level is stored as none.
  * - Input-only fields go when the channel stops being an input, and an input
  *   starts with a level and a debounce.
  *
@@ -58,7 +65,10 @@ export function patchChannel(current: RigChannel, patch: Partial<RigChannel>): R
     next.type = defaults.type;
     next.role = defaults.role;
   }
-  if (next.type !== current.type) {
+  if (next.type !== "digital_out" || next.mode === "level") {
+    delete next.mode;
+  }
+  if (next.type !== current.type || next.mode !== current.mode) {
     delete next.edges;
   }
   if (next.type === "digital_in") {

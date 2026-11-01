@@ -10,7 +10,8 @@
 
   Each scenario runs in its own process (the runner's state is the sketch's
   own, as on a board): run_spine.sh runs `test_spine handshake`, `stream` and
-  `stop`.
+  `stop`, then, built over spine_drive_fixture.h (-DSPINE_FIXTURE_DRIVES), the
+  driven outputs: `test_spine_drives drives` and `train_held`.
 
   Usage:  sh run_spine.sh
 */
@@ -23,7 +24,11 @@
 #include <vector>
 
 #include "strobe_fixture.h"
+#ifdef SPINE_FIXTURE_DRIVES
+#include "spine_drive_fixture.h"
+#else
 #include "spine_fixture.h"
+#endif
 #include <BehaviorBox.h>
 #include <BoxInterp.h>
 #include <BoxSpine.h>
@@ -118,7 +123,7 @@ static void handshake()
   bb_feed("START SEED=7");
   boot();
   std::vector<std::string> l = lines();
-  expect("INTERP, then FREE_RAM, then READY, first", l.size() > 3 && l[0] == "INTERP=3" &&
+  expect("INTERP, then FREE_RAM, then READY, first", l.size() > 3 && l[0] == "INTERP=4" &&
          l[1].compare(0, 9, "FREE_RAM=") == 0 && l[2] == "READY");
   expect("each SET answered with the running count and CRC",
          indexOf("PARAMS 2 1564777853") < indexOf("PARAMS 3 2992546637"));
@@ -182,13 +187,81 @@ static void stop()
   expect("the trial STOP ended is never reported", !second);
 }
 
+#ifdef SPINE_FIXTURE_DRIVES
+static void dump(const std::vector<std::pair<int, unsigned long>> &got)
+{
+  for (auto &s : got) std::cout << "      " << s.first << "\t" << s.second << "\n";
+}
+
+/* The Present holds a PWM line, a tone and a 20 Hz, 5 ms train that runs out
+   after 60 ms, so its TRAIN_OFF comes before the phase ends; then the reward. */
+static void drives()
+{
+  bb_feed("SET NT=1 T1=100 T3=50 RW=30 RP=1000 PD=128 TF=4000 TH=20 TW=5 TL=60");
+  bb_feed("START SEED=7");
+  boot();
+  port(true, 10);
+  expect("the PWM line runs at its duty", bb_pwm[45] == 128);
+  expect("the tone plays at its pitch", bb_tone[12] == 4000);
+  expect("the train starts HIGH", bb_pinValue[11] == HIGH);
+  std::vector<unsigned long> rises, falls;
+  int was = HIGH;
+  for (unsigned long t = 11; t <= 120; t++) {
+    advanceTo(t);
+    if (bb_pinValue[11] != was) (bb_pinValue[11] == HIGH ? rises : falls).push_back(t);
+    was = bb_pinValue[11];
+  }
+  expect("each pulse lands on its tick, skipped millis() values included",
+         rises == std::vector<unsigned long>({60}) && falls == std::vector<unsigned long>({15, 65}));
+  expect("the PWM line and the tone stop with their phase", bb_pwm[45] == 0 && bb_tone[12] == 0);
+  advanceTo(300);
+
+  const std::vector<std::pair<int, unsigned long>> want = {
+    {BF_START_SESSION, 0}, {BF_TRIAL_START, 0}, {BF_LIGHT_ON, 0},
+    {BF_PORT_ENTER, 10}, {BF_SAMPLE_ON, 10}, {BF_LED_ON, 10}, {BF_TONE_ON, 10}, {BF_LASER_TRAIN_ON, 10},
+    {BF_LASER_TRAIN_OFF, 70},
+    {BF_LIGHT_OFF, 110}, {BF_SAMPLE_OFF, 110}, {BF_LED_OFF, 110}, {BF_TONE_OFF, 110}, {BF_FLUID_ON, 110},
+    {BF_FLUID_OFF, 140},
+    {BF_END_SESSION, 191},
+  };
+  std::vector<std::pair<int, unsigned long>> got = strobes();
+  expect("a train strobes its start and its running out, never a pulse", got == want);
+  if (got != want) dump(got);
+}
+
+/* A train of length 0 runs as long as its phase holds it, and stops once. */
+static void trainHeld()
+{
+  bb_feed("SET NT=1 T1=100 T3=50 RW=30 RP=1000 TL=0");
+  bb_feed("START SEED=7");
+  boot();
+  port(true, 10);
+  advanceTo(300);
+  std::vector<std::pair<int, unsigned long>> got = strobes();
+  bool offAt110 = false;
+  int offs = 0;
+  for (auto &s : got) {
+    offAt110 |= s == std::make_pair(BF_LASER_TRAIN_OFF, 110UL);
+    offs += s.first == BF_LASER_TRAIN_OFF;
+  }
+  expect("a train of length 0 stops with its phase, once", offAt110 && offs == 1);
+  if (!offAt110 || offs != 1) dump(got);
+  expect("its pin is LOW after", bb_pinValue[11] == LOW);
+}
+#endif
+
 int main(int argc, char **argv)
 {
   std::string which = argc > 1 ? argv[1] : "";
   std::cout << "test_spine " << which << "\n";
+#ifdef SPINE_FIXTURE_DRIVES
+  if (which == "drives") drives();
+  else if (which == "train_held") trainHeld();
+#else
   if (which == "handshake") handshake();
   else if (which == "stream") stream();
   else if (which == "stop") stop();
+#endif
   else { std::cout << "  [FAIL] unknown scenario\n"; return 2; }
   return failures == 0 ? 0 : 1;
 }

@@ -34,6 +34,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 
+from . import board
 from .paths import HARDWARE_DIR, SCHEMA_DIR  # noqa: F401  (re-exported)
 
 log = logging.getLogger(__name__)
@@ -346,11 +347,45 @@ class Vocabulary:
 EDGES: dict[str, tuple[str, ...]] = {
     "digital_in": ("enter", "exit"),
     "digital_out": ("on", "off"),
+    "pwm_out": ("on", "off"),
+    "tone_out": ("on", "off"),
 }
+
+#: A `digital_out` in `train` mode has these edges instead of `on`/`off`: a
+#: pulse train strobes only its start and its end (TASKS.md#driven-outputs).
+TRAIN_EDGES: tuple[str, ...] = ("train_on", "train_off")
 
 #: The direction each type implies. A kind still declares its own, and RIG107
 #: reports a channel whose type contradicts it.
-TYPE_DIRECTION: dict[str, str] = {"digital_in": "in", "digital_out": "out"}
+TYPE_DIRECTION: dict[str, str] = {
+    "digital_in": "in", "digital_out": "out", "pwm_out": "out", "tone_out": "out",
+}
+
+#: The kinds a driven output (`pwm_out`, `tone_out`, a `train`) may be declared
+#: on (RIG107). The trial runner drives a cue only by the name `trial_light`,
+#: but every emitter and reward line by `digitalWrite`, which would hold a
+#: train's laser on and put DC on a tone's speaker.
+DRIVE_KINDS: tuple[str, ...] = ("cue",)
+
+
+def edges_of(channel_type: str | None, mode: str | None = None) -> tuple[str, ...]:
+    """The edges a channel of this type and mode has, in the order a save
+    issues their codes (TASKS.md#edge-codes)."""
+    if channel_type == "digital_out" and mode == "train":
+        return TRAIN_EDGES
+    return EDGES.get(channel_type or "", ())
+
+
+def drive_of(channel_type: str | None, mode: str | None = None) -> str | None:
+    """How the board drives an output beyond HIGH and LOW: `pwm`, `tone`,
+    `train`, or None for a level line or an input (TASKS.md#driven-outputs)."""
+    if channel_type == "pwm_out":
+        return "pwm"
+    if channel_type == "tone_out":
+        return "tone"
+    if channel_type == "digital_out" and mode == "train":
+        return "train"
+    return None
 
 #: What a channel can be for in a task (ADR 0003).
 ROLES: tuple[str, ...] = ("port", "stimulus", "reward", "cue", "routing", "sync")
@@ -410,7 +445,10 @@ class Channel:
     pin_source: str = ""           # the BehaviorBox.h line the number came from
     # -- the channel set (TASKS.md#the-channel-set-and-the-pin-map). Beside the
     # fields above, never instead of them: nothing generated reads these yet.
-    type: str = ""                 # digital_in | digital_out
+    type: str = ""                 # digital_in | digital_out | pwm_out | tone_out
+    #: A `digital_out`'s mode: "train", or None for a level line. A stored
+    #: "level" reads as None, so the two spellings are one channel.
+    mode: str | None = None
     role: str = ""                 # port | stimulus | reward | cue | routing | sync
     active_level: str | None = None  # inputs: "low" | "high"
     debounce_ms: int | None = None   # inputs
@@ -421,6 +459,11 @@ class Channel:
     @property
     def watchable(self) -> bool:
         return self.watch_bit is not None
+
+    @property
+    def drive(self) -> str | None:
+        """`pwm`, `tone` or `train` for a driven output; None otherwise."""
+        return drive_of(self.type, self.mode)
 
 
 class ChannelMap:
@@ -706,12 +749,27 @@ class ChannelMap:
                     at,
                     f"{c.name!r} is an output; an active level and a debounce are for inputs.",
                 ))
+            if c.mode is not None and (c.type != "digital_out" or c.mode != "train"):
+                out.append((
+                    at,
+                    f"{c.name!r} is a {c.type} channel in {c.mode!r} mode; only a digital_out "
+                    "takes a mode, and it is level or train.",
+                ))
+            if c.drive is not None and c.kind not in DRIVE_KINDS:
+                out.append((
+                    at,
+                    f"{c.name!r} is a {c.kind} channel driven as {c.drive}. A PWM, tone or train "
+                    f"output is a {' or '.join(DRIVE_KINDS)} channel: the trial runner switches every "
+                    f"{c.kind} line on and off, which would hold it on.",
+                ))
+            edges = edges_of(c.type, c.mode)
             for edge, code in c.edges:
-                if edge not in EDGES[c.type]:
+                if edge not in edges:
                     out.append((
                         at,
-                        f"{c.name!r} names a code for the edge {edge!r}, which a {c.type} "
-                        f"channel does not have ({', '.join(EDGES[c.type])}).",
+                        f"{c.name!r} names a code for the edge {edge!r}, which a "
+                        f"{c.type}{' train' if c.mode == 'train' else ''} channel does not have "
+                        f"({', '.join(edges)}).",
                     ))
                 if code not in vocab:
                     out.append((
@@ -728,6 +786,12 @@ class ChannelMap:
                     "code are indistinguishable in the data.",
                 ))
         return out
+
+    def drive_problems(self) -> list[tuple[str, str]]:
+        """RIG109: a PWM or tone output the board cannot run (`rig/board.py`).
+        Located on the pin, since moving the pin is what fixes it."""
+        return [(self._at(self.pins_source, name), message)
+                for name, message in board.drive_problems(self._by_name.values())]
 
     def content_hash(self) -> str:
         """SHA-256 over the wiring that can change a compiled byte, truncated.
@@ -854,7 +918,8 @@ class ChannelMap:
 
 def _channel(name: str, c: dict, pin: dict, kinds: dict) -> Channel:
     edges = c.get("edges") if isinstance(c.get("edges"), dict) else {}
-    order = EDGES.get(c.get("type", ""), ())
+    mode = None if c.get("mode") in (None, "level") else str(c["mode"])
+    order = edges_of(c.get("type", ""), mode)
     return Channel(
         name=name,
         index=pin["index"],
@@ -869,6 +934,7 @@ def _channel(name: str, c: dict, pin: dict, kinds: dict) -> Channel:
         pin_note=pin.get("note", ""),
         pin_source=pin.get("source", ""),
         type=str(c.get("type", "")),
+        mode=mode,
         role=str(c.get("role", "")),
         active_level=c.get("active_level"),
         debounce_ms=c.get("debounce_ms"),
@@ -885,6 +951,7 @@ def _channel(name: str, c: dict, pin: dict, kinds: dict) -> Channel:
 def channel_set_json(c: Channel) -> dict:
     return {
         "type": c.type,
+        **({"mode": c.mode} if c.mode is not None else {}),
         "role": c.role,
         **({"active_level": c.active_level} if c.active_level is not None else {}),
         **({"debounce_ms": c.debounce_ms} if c.debounce_ms is not None else {}),
@@ -931,11 +998,13 @@ class ChannelSet:
         if version not in CHANNEL_SET_HASH_VERSIONS:
             raise ValueError(f"no channel-set hash version {version!r}")
         channels = self._channels if version >= 2 else sorted(self._channels, key=lambda c: c.name)
+        # A channel's `mode` joins its entry only when it has one, so a channel
+        # set with no train hashes as it did before modes existed.
         payload = [
             [
                 c.name, c.kind, c.type, c.role, c.active_level, c.debounce_ms,
                 c.serves, c.well, c.port_slot, c.onset_strobe, dict(c.edges),
-            ]
+            ] + ([c.mode] if c.mode is not None else [])
             for c in channels
         ]
         canonical = json.dumps(payload, separators=(",", ":"), sort_keys=True)

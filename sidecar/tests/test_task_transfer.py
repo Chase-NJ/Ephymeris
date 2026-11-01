@@ -261,7 +261,7 @@ def test_the_fields_a_channel_carries_are_the_fields_the_channel_set_hash_covers
         "name": "other", "index": 99, "direction": "out", "kind": "response",
         "watch_bit": 7, "well": "left_well", "port_slot": 2, "onset_strobe": "ODOR_9_ON",
         "rationale": "x", "label": "x", "pin_note": "x", "pin_source": "x",
-        "type": "digital_out", "role": "cue", "active_level": "high", "debounce_ms": 9,
+        "type": "digital_out", "mode": "train", "role": "cue", "active_level": "high", "debounce_ms": 9,
         "serves": "left_well", "edges": (("enter", "OTHER"),),
     }
     assert set(changed) == {f.name for f in dataclasses.fields(registry.Channel)}, (

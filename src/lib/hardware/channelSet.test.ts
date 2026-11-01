@@ -18,6 +18,33 @@ describe("edgesOf", () => {
     expect(edgesOf("digital_out")).toEqual(["on", "off"]);
     expect(edgesOf(undefined)).toEqual([]);
   });
+
+  it("gives a train its start and end, and PWM and tone lines on and off", () => {
+    expect(edgesOf("digital_out", "train")).toEqual(["train_on", "train_off"]);
+    expect(edgesOf("digital_out", "level")).toEqual(["on", "off"]);
+    expect(edgesOf("pwm_out")).toEqual(["on", "off"]);
+    expect(edgesOf("tone_out")).toEqual(["on", "off"]);
+  });
+});
+
+describe("patchChannel and driven outputs", () => {
+  const cue: RigChannel = {
+    kind: "cue",
+    type: "digital_out",
+    role: "stimulus",
+    edges: { on: "LASER_ON", off: "LASER_OFF" },
+  };
+
+  it("drops the codes when a line becomes a train: train_on is a different event", () => {
+    const next = patchChannel(cue, { mode: "train" });
+    expect(next.mode).toBe("train");
+    expect(next.edges).toBeUndefined();
+  });
+
+  it("stores a level line with no mode, and drops a mode with the type", () => {
+    expect("mode" in patchChannel({ ...cue, mode: "train" }, { mode: "level" })).toBe(false);
+    expect("mode" in patchChannel({ ...cue, mode: "train" }, { type: "pwm_out" })).toBe(false);
+  });
 });
 
 describe("patchChannel", () => {

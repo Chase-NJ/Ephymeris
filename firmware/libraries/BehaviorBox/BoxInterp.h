@@ -27,7 +27,11 @@
   trial runner (BOX_INTERP), which every recorded GRGL run names, so this
   interpreter starts at 2: a run's header alone says whether a table ran it.
   3 adds the pick state and changes nothing else, so replay.py runs a version-2
-  table by the same rules and refuses only a pick state in one.
+  table by the same rules and refuses only a pick state in one. 4 changes no
+  table and no rule of the core: it adds DRIVEN OUTPUTS (PWM, tone and pulse
+  trains, below), whose train ends on its own and so puts a strobe in the
+  stream no state transition makes. A run's header then says which replay
+  reads its outputs.
 
 
   THE TICK RULES
@@ -62,7 +66,7 @@
   uint32_t, over a generator the core carries in its own state.
 
 
-  THE STATE TABLE (INTERP_VERSION 3)
+  THE STATE TABLE (INTERP_VERSION 3 and 4)
   ----------------------------------
   Generated data. A table is an array of InterpStateRow, indexed 0..254, and an
   array of InterpEdgeRow the states point into. State 0 is where a session
@@ -164,6 +168,27 @@
   Tables live in RAM as plain const arrays for now; how much a table may cost
   is an open question (0003-phase-spine-task-model.md#open-questions, the RAM
   budget).
+
+
+  PULSE TRAINS (docs/TASKS.md#driven-outputs)
+  -------------------------------------------
+  An output bit is HIGH or LOW to the core. What HIGH means on the pin is the
+  hardware layer's: a level, a PWM duty, a tone, or a PULSE TRAIN. A train's
+  shape is a pure function of the ticks since it started, here so the board
+  and replay.py's train_pulses() compute one thing, and the differential test
+  holds them to every edge's tick:
+
+      interp_train_high(elapsed, hz, width)
+
+  Pulse j of every second rises at floor(j * 1000 / hz) ms into that second,
+  j = 0 .. hz-1, and the line is HIGH while the ms into the second, less the
+  latest rise, is below `width`. So a train starts HIGH at its first tick, the
+  pattern repeats exactly every 1000 ms (the rate is exact over a second), and
+  a rise is within 1 ms of k * 1000 / hz when hz does not divide 1000. A width
+  at least the gap to the next rise merges the two pulses, across a second's
+  end too (the generator refuses one at save; a SET could still send it). With
+  hz in [1, 100], no product passes 10^5, so it is all uint32_t: no 64-bit
+  division on the board. hz 0 is never HIGH.
 */
 
 #ifndef BOX_INTERP_H
@@ -172,7 +197,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define INTERP_VERSION 3
+#define INTERP_VERSION 4
 
 #define INTERP_NONE 0xFF       // "no state / no slot / no timer" in a uint8_t field
 #define INTERP_PERMILLE 1000UL // a chance state draws over [0, 1000)
@@ -364,6 +389,15 @@ static inline InterpActions interp_step(InterpCore *c, InterpEdges in, uint32_t 
   }
   if (target != INTERP_NONE) interp__enter(c, target, now, &a);
   return a;
+}
+
+/*  A pulse train's level `elapsed` ticks after it started (PULSE TRAINS). */
+static inline bool interp_train_high(uint32_t elapsed, uint32_t hz, uint32_t width)
+{
+  if (hz == 0) return false;
+  uint32_t ms = elapsed % 1000UL;
+  uint32_t j = ((ms + 1UL) * hz - 1UL) / 1000UL;  // the latest pulse to rise by `ms`
+  return ms - (j * 1000UL) / hz < width;
 }
 
 #endif // BOX_INTERP_H

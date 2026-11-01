@@ -1853,8 +1853,8 @@ export interface ChannelSetConflict {
    * `only_here` (a channel this rig has and the file lacks), `order` (a channel both have,
    * declared at another position: declaration order is the odor index,
    * `TASKS.md#order-is-meaning`), `no_code` (an edge the file names no code for), `rule` (a
-   * wiring rule RIG101–RIG107 the imported channel set breaks here, judged against the merged
-   * vocabulary), or `hash` (the file changed after it was exported).
+   * wiring rule, RIG101–RIG107 or RIG109, that the imported channel set breaks here, judged
+   * against the merged vocabulary), or `hash` (the file changed after it was exported).
    */
   kind: string;
   /** The channel it is about, when it is about one. */

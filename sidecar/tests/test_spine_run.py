@@ -90,12 +90,13 @@ def animal(pin: int) -> list[tuple[int, int, int]]:
 
 
 def run_board(folder: Path, host_lines: list[str], events, ticks: int, tmp_path: Path,
-              animal: str = "") -> list[str]:
+              animal: str = "", trace_pin: int = -1) -> list[str]:
     """Compile the generated folder for the host and run it: its serial transcript.
 
     `events` are scripted (ms, pin, level) moves; `animal` is C++ defining
     `static void animal(unsigned long t)`, called every tick before `loop()`,
-    for an animal that reacts to what the board drives."""
+    for an animal that reacts to what the board drives. With `trace_pin`, each
+    change of that pin's level is appended as `~PIN <tick> <level>`."""
     ino = folder / f"{folder.name}.ino"
     channels = registry.channels()
     profile = task_profile.load_profile(folder)
@@ -117,13 +118,21 @@ def run_board(folder: Path, host_lines: list[str], events, ticks: int, tmp_path:
         "  setup();\n"
         "  unsigned long t0 = millis();\n"
         "  size_t k = 0, n = sizeof(kMoves) / sizeof(kMoves[0]);\n"
+        f"  const int tracePin = {trace_pin};\n"
+        "  int traced = tracePin >= 0 ? bb_pinValue[tracePin] : 0;\n"
+        "  std::string trace;\n"
         f"  for (unsigned long t = 1; t <= {ticks}UL; ++t) {{\n"
         "    while (k < n && kMoves[k].t == t) { bb_pinValue[kMoves[k].pin] = kMoves[k].level; k++; }\n"
         "    animal(t);\n"
         "    bb_ms = t0 + t;\n"
         "    loop();\n"
+        "    if (tracePin >= 0 && bb_pinValue[tracePin] != traced) {\n"
+        "      traced = bb_pinValue[tracePin];\n"
+        "      trace += \"~PIN \" + std::to_string(t) + \" \" + std::to_string(traced) + \"\\n\";\n"
+        "    }\n"
         "  }\n"
         "  fputs(bb_output().c_str(), stdout);\n"
+        "  fputs(trace.c_str(), stdout);\n"
         "}\n",
         encoding="utf-8",
     )
@@ -214,14 +223,14 @@ async def test_a_saved_spine_task_runs_a_session_and_its_tsv_alone_replays(tmp_p
     folder = save_tracer(tmp_path)
     port = registry.channels().get("odor_port").index
     transcript = run_board(folder, host_lines(folder), animal(port), 16000, tmp_path)
-    assert transcript[:3] == ["INTERP=3", f"FREE_RAM={FREE_RAM}", "READY"]
+    assert transcript[:3] == ["INTERP=4", f"FREE_RAM={FREE_RAM}", "READY"]
     assert not any(line.startswith("CLAMPED") for line in transcript)
 
     tsv = await run_session(tmp_path, folder, transcript, monkeypatch)
     text = tsv.read_text(encoding="utf-8")
     header = text[: text.index("\n", text.index("# task_profile:"))]
     # Everything replay needs is in the header, before the first strobe.
-    assert "# interp: 3\n" in header and f"# free_ram: {FREE_RAM}\n" in header
+    assert "# interp: 4\n" in header and f"# free_ram: {FREE_RAM}\n" in header
     assert f"# trial_seed: {SEED}\n" in header and "# block_trials: 3\n" in header
     assert '"spine":' in header
 
@@ -399,7 +408,7 @@ async def run_generated(tmp_path, monkeypatch, raw: dict, overrides: dict, plan,
     strobe. The run's document."""
     folder = save(tmp_path, raw)
     transcript = run_board(folder, host_lines(folder, overrides), [], ticks, tmp_path, answering_animal(plan))
-    assert transcript[:3] == ["INTERP=3", f"FREE_RAM={FREE_RAM}", "READY"]
+    assert transcript[:3] == ["INTERP=4", f"FREE_RAM={FREE_RAM}", "READY"]
     assert not any(line.startswith("CLAMPED") for line in transcript)
     tsv = await run_session(tmp_path, folder, transcript, monkeypatch, overrides)
     document = json.loads(json_of(tsv).read_text(encoding="utf-8"))
@@ -454,6 +463,47 @@ async def test_a_go_no_go_pair_runs_and_replays_to_its_outcome_classes(tmp_path,
     assert [t["outcome"] for t in trials] == [classes[t["row"], answer == respond]
                                               for t, answer in zip(trials, plan)]
     assert not any(t["rewarded"] for t in trials if t["outcome"] != "correct")
+
+
+async def test_pwm_tone_and_a_train_drive_their_pins_and_replay_to_every_pulse(tmp_path, monkeypatch):
+    """The driven outputs (`TASKS.md#driven-outputs`): the board's stream holds a
+    train's start and end only, replay predicts both (the dim row's train runs
+    out mid-phase, at a tick the core leaves idle), and replay's pulses are the
+    pin's every edge as the compiled board drove it."""
+    fixture.install(*fixture.issued_rig(driven=True))
+    overrides = {"block_trials": 4}
+    folder = save(tmp_path, fixture.stimulus())
+    channels = registry.channels()
+    laser = channels.get("laser").index
+    port = channels.get("odor_port").index
+    events = [(200, port, 0), (1500, port, 1), (2000, port, 0), (2100, port, 1),
+              (5000, port, 0), (5300, port, 1), (6800, port, 0), (6900, port, 1)]
+    out = run_board(folder, host_lines(folder, overrides), events, 9000, tmp_path, trace_pin=laser)
+    transcript = [line for line in out if not line.startswith("~PIN")]
+    trace = [tuple(int(v) for v in line.split()[1:]) for line in out if line.startswith("~PIN")]
+    assert transcript[:3] == ["INTERP=4", f"FREE_RAM={FREE_RAM}", "READY"]
+    assert not any(line.startswith("CLAMPED") for line in transcript)
+
+    tsv = await run_session(tmp_path, folder, transcript, monkeypatch, overrides)
+    document = json.loads(json_of(tsv).read_text(encoding="utf-8"))
+    assert document["stop_reason"] == runner_module.CLEAN_STOP_REASON
+    record = spine_stream.decode(document)
+    assert spine_stream.expected_stream(record) == [tuple(s) for s in document["ts_data"]], \
+        "replay predicts every strobe, a train running out on its own included"
+
+    vocab = registry.vocabulary()
+    named = [(vocab.name_of(c), t) for c, t in document["ts_data"]]
+    names = {n for n, _ in named}
+    assert {"LIGHT_ON", "LIGHT_OFF", "TONE_ON", "TONE_OFF", "LASER_TRAIN_ON", "LASER_TRAIN_OFF"} <= names
+    rows = [r["row"] for r in trials_of(document)]
+    assert set(rows) == {"dim", "bright"}, "the pick state drew both rows"
+    starts = [t for n, t in named if n == "LASER_TRAIN_ON"]
+    stops = [t for n, t in named if n == "LASER_TRAIN_OFF"]
+    assert [b - a for a, b in zip(starts, stops)] == [300 if r == "dim" else 1000 for r in rows]
+
+    edges = sorted((t, level) for _, rise, fall in spine_stream.pulses(record) for t, level in ((rise, 1), (fall, 0)))
+    assert edges == trace, "replay reconstructs every pulse the board fired, at its tick"
+    assert len(trace) > 2 * len(rows)
 
 
 def test_an_unknown_table_format_is_refused_rather_than_replayed():

@@ -16,6 +16,11 @@ raw tables and the generator's tables must each see. And with every RNG draw
 reflected, the generator's tables alone must differ, through their chance and
 pick states.
 
+Last, PULSE TRAINS: the C side steps `interp_train_high()` on every tick of a
+train, as a board drives one, and replay works each pulse out by arithmetic
+(`replay.train_pulses`); every edge's tick must agree, over every rate from 1
+to 100 Hz. With replay's rises rounded up instead of down, they must differ.
+
 Usage:  python3 differential.py --driver ./interp_driver [--cases N] [--seed S]
 """
 
@@ -172,7 +177,7 @@ def generated_table(rng: random.Random, n_params: int) -> tuple[rp.Table, int, i
     the tables a saved spine task compiles into its `TaskSpine.h`. One to three
     rows, each binding some slots to a channel of its own and some to a shared
     one; often a Response window with a contingency map per row, holds and a
-    line on some entries. Returns the table, how many parameter slots it reads
+    line on some entries; some outputs driven, a bit per row. Returns the table, how many parameter slots it reads
     (which the generator decides) and how many input bits it has."""
     del n_params  # lowering assigns the slots
     inputs = [f"in{i}" for i in range(rng.randint(1, 4))]
@@ -228,7 +233,9 @@ def generated_table(rng: random.Random, n_params: int) -> tuple[rp.Table, int, i
                 entries[key] = entry
             row["map"] = entries
         rows.append(row)
-    low = lowering.lower(phases, inputs=inputs, outputs=outputs, rows=rows)
+    # Some outputs driven (PWM, tone, a train): a bit per row rather than per channel.
+    drives = {o: rng.choice(tuple(lowering.DRIVE_PARAMS)) for o in outputs if rng.random() < 0.3}
+    low = lowering.lower(phases, inputs=inputs, outputs=outputs, rows=rows, drives=drives)
     table = rp.Table(states=[rp.StateRow(*s) for s in low.states], edges=[rp.EdgeRow(*e) for e in low.edges])
     return table, len(low.params), len(low.inputs)
 
@@ -340,6 +347,88 @@ def first_difference(c_runs, cases) -> str | None:
     return None
 
 
+# --- pulse trains -------------------------------------------------------------
+
+
+def train_cases(seed: int, count: int) -> list[tuple[int, int, int]]:
+    """(hz, width, length) trains: every rate from 1 to 100 Hz, rates that do not
+    divide 1000 often, widths up to and past the gap to the next rise, lengths
+    that end mid-pulse and across several seconds. The first is the ADR's opto
+    row, 20 Hz, 5 ms, 1 s."""
+    rng = random.Random(seed)
+    out = [(20, 5, 1000)]
+    for i in range(count):
+        hz = i % 100 + 1 if i < 100 else rng.choice((3, 7, 9, 11, 13, 17, 30, 33, 47, 99, rng.randint(1, 100)))
+        period = 1000 // hz
+        r = rng.random()
+        width = (rng.randint(1, max(1, period - 1)) if r < 0.8 else
+                 rng.randint(period, period + 20) if r < 0.95 else rng.choice((0, 999)))
+        length = rng.choice((rng.randint(1, 3000), rng.randint(1, 60) * 50, 1000 * rng.randint(1, 4)))
+        out.append((hz if rng.random() > 0.01 else 0, width, length))
+    return out
+
+
+def run_c_trains(driver: str, trains: list[tuple[int, int, int]]) -> list[list[tuple[int, int]]]:
+    text = "".join(f"TRAIN {hz} {w} {n}\n" for hz, w, n in trains)
+    out = subprocess.run([driver], input=text, capture_output=True, text=True, check=True).stdout.split("\n")
+    runs, current = [], None
+    for line in out[1:]:
+        if line == "TRAIN":
+            current = []
+        elif line == "END":
+            runs.append(current)
+        elif line:
+            current.append(tuple(int(v) for v in line.split()))
+    return runs
+
+
+def python_train_edges(hz: int, width: int, length: int) -> list[tuple[int, int]]:
+    """`replay.train_pulses` as the driver prints it: each pulse's rise and fall."""
+    return [edge for rise, fall in rp.train_pulses(hz, width, length) for edge in ((rise, 1), (fall, 0))]
+
+
+def first_train_difference(c_runs, trains) -> str | None:
+    for (hz, width, length), c in zip(trains, c_runs):
+        p = python_train_edges(hz, width, length)
+        if c != p:
+            at = next((i for i, (a, b) in enumerate(zip(c, p)) if a != b), min(len(c), len(p)))
+            return (f"train {hz} Hz, {width} ms wide, {length} ticks: edge {at}\n"
+                    f"  C:      {c[at:at + 4]}\n  Python: {p[at:at + 4]}")
+    return None
+
+
+def check_trains(driver: str, seed: int) -> int:
+    """The C pulse train and replay's reconstruction agree on every edge's tick,
+    and a rise rounded up instead of down is caught."""
+    trains = train_cases(seed, 400)
+    c_runs = run_c_trains(driver, trains)
+    if len(c_runs) != len(trains):
+        print(f"differential: the driver ran {len(c_runs)} of {len(trains)} trains")
+        return 1
+    diff = first_train_difference(c_runs, trains)
+    if diff:
+        print("differential: the C pulse train and replay's train_pulses differ at", diff)
+        return 1
+    opto = c_runs[0]
+    if opto[:4] != [(0, 1), (5, 0), (50, 1), (55, 0)] or len(opto) != 40 or opto[-1] != (955, 0):
+        print(f"differential: a 20 Hz, 5 ms, 1 s train is not 20 pulses 50 ms apart: {opto[:6]} ...")
+        return 1
+
+    honest = rp._rise
+    rp._rise = lambda j, hz: -(-j * 1000 // hz)  # noqa: E731 - rounds up
+    try:
+        caught = first_train_difference(c_runs, trains)
+    finally:
+        rp._rise = honest
+    if not caught:
+        print("differential: a train whose rises round up went unnoticed; the trains hold too few rates "
+              "that do not divide 1000")
+        return 1
+    edges = sum(len(r) for r in c_runs)
+    print(f"differential: {len(trains)} pulse trains, {edges} edges equal; a changed rise is caught")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--driver", required=True)
@@ -423,7 +512,7 @@ def main() -> int:
     generated = len(family)
     print(f"differential: {len(cases)} cases ({generated} lowered by the generator), "
           f"{actions} actions equal; a changed tie rule, pick draw and draw are caught")
-    return 0
+    return check_trains(args.driver, args.seed)
 
 
 if __name__ == "__main__":

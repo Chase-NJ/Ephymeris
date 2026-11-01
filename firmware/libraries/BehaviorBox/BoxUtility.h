@@ -38,6 +38,9 @@
     STOP               abort a running self-test
     STATUS?            request a fresh snapshot
   <ch> is the output's channel name on the Rig page (`odor_line_3`, `fluid_0`).
+  A DRIVEN output is on as its drive says (docs/TASKS.md#driven-outputs): a
+  PWM line fully on, a tone line a 1 kHz test tone, a train a 20 Hz, 5 ms
+  test train for as long as it is on, never held HIGH.
 
   TELEMETRY
     One STATUS line per state change plus a ~1 s heartbeat:
@@ -59,6 +62,11 @@
 #define BOX_UTILITY_H
 
 #include <BehaviorBox.h>
+#include <BoxInterp.h> // interp_train_high(), for a train's test train
+
+#ifndef BOX_UTILITY_HAS_TONE
+#define BOX_UTILITY_HAS_TONE 0 // a table with no tone row links no tone()
+#endif
 
 /* What an output does, so the self-test can treat each kind as it should. */
 enum BoxUtilKind : uint8_t
@@ -69,12 +77,27 @@ enum BoxUtilKind : uint8_t
   BOX_UTIL_VACUUM
 };
 
+/* How an output is driven while it is on (docs/TASKS.md#driven-outputs). A
+   PWM line is fully on, as analogWrite(255) is; a tone plays a test tone; a
+   train runs a test train, so a click never holds a laser on continuously. */
+enum BoxUtilDrive : uint8_t
+{
+  BOX_UTIL_LEVEL,
+  BOX_UTIL_PWM,
+  BOX_UTIL_TONE,
+  BOX_UTIL_TRAIN
+};
+#define BOX_UTIL_TONE_HZ 1000
+#define BOX_UTIL_TRAIN_HZ 20
+#define BOX_UTIL_TRAIN_WIDTH_MS 5
+
 struct BoxUtilOutput
 {
   const char *name;  // the command token and STATUS key: the Rig channel name
   const char *label; // what the operator calls it, for the console
   int pin;
   uint8_t kind;      // BoxUtilKind
+  uint8_t drive;     // BoxUtilDrive
 };
 
 struct BoxUtilInput
@@ -143,10 +166,44 @@ int firstOf(uint8_t kind)
   return -1;
 }
 
+unsigned long trainSince[NUM_OUTPUTS]; // when each open train started
+
 void setOutput(int i, bool open)
 {
   isOpen[i] = open;
-  digitalWrite(outputs[i].pin, open ? HIGH : LOW);
+#if BOX_UTILITY_HAS_TONE
+  if (outputs[i].drive == BOX_UTIL_TONE)
+  {
+    if (open) tone(outputs[i].pin, BOX_UTIL_TONE_HZ);
+    else noTone(outputs[i].pin);
+    return;
+  }
+#endif
+  if (outputs[i].drive == BOX_UTIL_TRAIN)
+    trainSince[i] = millis();
+  digitalWrite(outputs[i].pin, open ? HIGH : LOW); // a train starts HIGH
+}
+
+/* Every open train's pin, from millis(): called on every poll, so its edges
+   land within a poll interval. */
+void stepTrains()
+{
+  for (int i = 0; i < NUM_OUTPUTS; i++)
+    if (outputs[i].drive == BOX_UTIL_TRAIN && isOpen[i])
+      digitalWrite(outputs[i].pin,
+                   interp_train_high((uint32_t)(millis() - trainSince[i]), BOX_UTIL_TRAIN_HZ,
+                                     BOX_UTIL_TRAIN_WIDTH_MS) ? HIGH : LOW);
+}
+
+/* delay(), with the trains kept pulsing. */
+void pause(unsigned long ms)
+{
+  unsigned long start = millis();
+  while (millis() - start < ms)
+  {
+    stepTrains();
+    delay(1);
+  }
 }
 
 void setKind(uint8_t kind, bool open)
@@ -201,7 +258,7 @@ bool waitOrStop(unsigned long ms)
   {
     if (stopRequested())
       return false;
-    delay(POLL_MS);
+    pause(POLL_MS);
   }
   return true;
 }
@@ -357,7 +414,7 @@ bool testSensors()
       // the box as well as on screen.
       if (light >= 0)
         setOutput(light, anyBroken());
-      delay(POLL_MS);
+      pause(POLL_MS);
     }
     if (light >= 0)
       setOutput(light, false);
@@ -400,7 +457,7 @@ void pulse(int i)
 {
   setOutput(i, true);
   reportStatus();
-  delay(pulseMs); // short by construction; PULSE is not interruptible
+  pause(pulseMs); // short by construction; PULSE is not interruptible
   setOutput(i, false);
   reportStatus();
 }
@@ -493,7 +550,7 @@ void loop()
      beam readout stays live while idle. */
   if (millis() - lastStatus >= HEARTBEAT_MS)
     reportStatus();
-  delay(POLL_MS);
+  pause(POLL_MS);
 }
 
 } // namespace box_utility

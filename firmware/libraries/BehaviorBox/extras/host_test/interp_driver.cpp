@@ -15,6 +15,14 @@
       CASE
       now rose fell on off entered0 entered1 flags     (one line per non-idle tick)
       END
+
+    A pulse train instead (BoxInterp.h, PULSE TRAINS), stepped as the board
+    steps one, on every tick from its first, and stopped at `length`:
+      In:  TRAIN hz width length
+      Out: TRAIN
+           tick level      (one line per edge; the pin is LOW before tick 0
+                            and goes LOW at `length` if it is HIGH)
+           END
 */
 #include <cinttypes>
 #include <cstdio>
@@ -43,6 +51,19 @@ int main()
   std::printf("INTERP %d\n", INTERP_VERSION);
   char word[16];
   while (std::scanf("%15s", word) == 1) {
+    if (std::strcmp(word, "TRAIN") == 0) {
+      uint32_t hz = num(), width = num(), length = num();
+      std::printf("TRAIN\n");
+      bool high = false;
+      for (uint32_t t = 0; t < length; ++t) {
+        bool level = interp_train_high(t, hz, width);
+        if (level != high) std::printf("%" PRIu32 " %d\n", t, level ? 1 : 0);
+        high = level;
+      }
+      if (high) std::printf("%" PRIu32 " 0\n", length);
+      std::printf("END\n");
+      continue;
+    }
     if (std::strcmp(word, "CASE") != 0) { std::fprintf(stderr, "interp_driver: expected CASE\n"); return 2; }
     uint32_t n_states = num(), n_edges = num(), n_params = num();
     uint32_t seed = num(), start = num(), ticks = num(), n_events = num();

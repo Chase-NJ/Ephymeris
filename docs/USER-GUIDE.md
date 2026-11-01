@@ -710,6 +710,12 @@ The panel has three parts:
   **Full self-test**, and **Prime**, which runs water down each chosen line in turn: pick how many
   seconds and which lines, then click **Prime** (it reads, for example, **Prime 4 lines**). After flashing your own sketch, **Return to baseline**
   puts the box back on the utility sketch.
+
+  Every channel on the **Wiring** page is here as soon as you save it. A dimmable light also has a
+  small menu for its brightness (**Duty**), a speaker one for its pitch (**Pitch**), and a pulse-train
+  line such as a laser one for its rate (**Rate**). A train line's switch runs short test pulses, never
+  a steady beam. The menu shows what the box reports, so a dash means the box has not answered yet.
+  Sensors (beams, levers) are listed under the switches, each reading 1 while it is blocked or pressed.
 - **Console.** Everything the board prints. Type in the box and press Enter to send a command. The
   **Status** tab holds the utility sketch's regular status lines, so the **Console** tab stays readable.
   You can copy or save the log.
@@ -739,7 +745,8 @@ as data.** Press Esc or click **← Constellation** to go back.
   **Reset** and **Acknowledge** do the same for each box. The line underneath says how many boxes did
   it and names any box that refused.
 - **Controls.** With the consoles open on boxes resting on the utility sketch, every button, the pulse
-  width, **Prime**, and the switch and pulse for each line reach all of them at once. Each line shows one
+  width, **Prime**, and the switch, pulse and menu for each line reach all of them at once. A menu reads
+  *mixed* when the boxes are set differently, and a dash while any box has not answered. Each line shows one
   small light per box, so you can see which boxes have it open; its switch turns the line on for every
   box, or off once it is on everywhere. The table below lists each box's beams and test status.
 - **Sketch.** **Flash…** puts one program on every targeted box, one box at a time, and opens each

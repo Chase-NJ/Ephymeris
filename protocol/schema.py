@@ -273,7 +273,8 @@ SHAPES = (
                 "canIdentify",
                 BOOL,
                 doc="The utility's profile declares an `identify` pair (generated on "
-                "the rig's first cue). "
+                "the rig's first level cue, never a tone or a train; a rig whose cues "
+                "are all driven has none). "
                 "False means placement can still run, just without lights.",
             ),
             f(
@@ -718,6 +719,38 @@ SHAPES = (
     ),
     Shape("ControlOption", obj(f("label", STR), f("command", STR))),
     Shape(
+        "SettingOption",
+        obj(
+            f("label", STR, doc="What the operator reads, e.g. `50%` or `2 kHz`."),
+            f(
+                "value",
+                STR,
+                doc="The value the board reports under the setting's `state` key once "
+                "this option is in force, so the current one can be shown.",
+            ),
+            f("command", STR, doc="Command that sets it, e.g. `DUTY house 128`."),
+        ),
+        doc="One value a grid row's setting can take.",
+    ),
+    Shape(
+        "ControlSetting",
+        obj(
+            f("label", STR, doc="What the setting is: `Duty`, `Pitch` or `Rate`."),
+            f(
+                "state",
+                STR,
+                doc="Telemetry key holding the board's current value, e.g. `house.duty`.",
+            ),
+            f(
+                "options",
+                ListOf(Ref("SettingOption")),
+                doc="The values offered, each with its command; never empty.",
+            ),
+        ),
+        doc="A driven output's one setting in Debug Mode: a PWM line's duty, a tone's "
+        "pitch, a train's rate (`TASKS.md#the-box-utility`).",
+    ),
+    Shape(
         "ControlChannel",
         obj(
             f("label", STR),
@@ -734,7 +767,14 @@ SHAPES = (
                 STR,
                 optional=True,
                 doc="The rig channel kind behind the row (`emitter`, `reward`, `cue`, "
-                "`vacuum`). Always set by a generated utility profile.",
+                "`vacuum`): the colour family it is drawn in. Always set by a generated "
+                "utility profile.",
+            ),
+            f(
+                "setting",
+                Ref("ControlSetting"),
+                optional=True,
+                doc="A driven output's one setting. Absent on a level line.",
             ),
         ),
         doc="One row of a `grid` control — a named piece of hardware with its "

@@ -7,7 +7,7 @@ import { springSnappy } from "@/lib/motion";
 import type { Control, TaskProfile } from "@/lib/sessions/types";
 
 import { PrimeControls } from "../PrimeControls";
-import { ChannelSwitch, SelectControl, familyOf, isAllOff } from "../UtilityControls";
+import { ChannelSwitch, SelectControl, SettingSelect, familyOf, isAllOff } from "../UtilityControls";
 
 /**
  * The utility sketch's controls, sent to every controllable box at once
@@ -93,6 +93,7 @@ export function BroadcastControls({
           boxes={boxes}
           openOn={openOn}
           reported={reported}
+          valueOn={(box, key) => statuses.get(box)?.[key]}
           disabled={!canSend}
           onSend={onSend}
         />
@@ -111,6 +112,7 @@ function BroadcastGrid({
   boxes,
   openOn,
   reported,
+  valueOn,
   disabled,
   onSend,
 }: {
@@ -118,6 +120,8 @@ function BroadcastGrid({
   boxes: readonly number[];
   openOn: (box: number, key: string | undefined) => boolean;
   reported: (box: number, key: string | undefined) => boolean;
+  /** A box's latest STATUS value under a key, for a row's setting. */
+  valueOn: (box: number, key: string) => string | undefined;
   disabled: boolean;
   onSend: (command: string) => void;
 }) {
@@ -171,6 +175,16 @@ function BroadcastGrid({
                   ))}
                 </span>
               </span>
+              {ch.setting && (
+                <SettingSelect
+                  setting={ch.setting}
+                  channel={`${ch.label} on every box`}
+                  // A value only when every box reports the same one.
+                  values={boxes.map((b) => valueOn(b, ch.setting!.state))}
+                  disabled={disabled}
+                  onSend={onSend}
+                />
+              )}
               {ch.pulse && (
                 <button
                   type="button"

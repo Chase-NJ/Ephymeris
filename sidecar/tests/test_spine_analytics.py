@@ -130,10 +130,9 @@ async def test_a_recorded_spine_run_shows_its_trial_table_and_metrics(rig: Rig) 
 
     [metric] = run["metrics"]
     assert metric["label"] == "P(correct | Odor 1)"
-    # The abort is marked at its end (#102), so it is a classed trial and a miss.
-    assert (metric["hits"], metric["counted"], metric["triggered"], metric["excluded"]) == (2, 3, 3, 0), \
-        "two held trials correct, the abort a miss"
-    assert run["overall"]["counted"] == 3
+    assert (metric["hits"], metric["counted"], metric["triggered"], metric["excluded"]) == (2, 2, 3, 1), \
+        "two held trials correct, the abort excluded"
+    assert run["overall"]["counted"] == 2
     assert run["outcomes"] is None and run["engagement"] is None, "never the legacy scorer's tallies"
 
     tallies = run["replay"]

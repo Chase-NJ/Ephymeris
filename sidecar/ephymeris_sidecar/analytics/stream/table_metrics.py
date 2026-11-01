@@ -10,10 +10,11 @@ of its outcome. Each proportion carries its 95% Wilson interval
   `unclassified`, so classes plus unclassified partition the trials.
 - **Rewarded:** trials paid / trials.
 - **P(correct | row):** as a `MetricSummary`, so a spine run fills every panel
-  a legacy run does. Counted trials are the classified ones, hits those whose
-  class is in `HITS` (a correct response, or a correct withhold on a no-go
-  row), and the unclassified are excluded, as an unanswered trial is on a
-  legacy run (`ANALYTICS.md#trials-hits-misses-and-exclusions`).
+  a legacy run does. Counted trials are the classified ones not in `EXCLUDED`,
+  hits those whose class is in `HITS` (a correct response, or a correct
+  withhold on a no-go row). The unclassified and the aborted are excluded, as
+  an unanswered or aborted trial is on a legacy run
+  (`ANALYTICS.md#trials-hits-misses-and-exclusions`).
 
 **Pure**, like the rest of `stream/`.
 """
@@ -33,9 +34,14 @@ CORRECT = OUTCOME_CLASSES[OUTCOME_CORRECT - 1]
 #: The outcome classes a trial is right in, for P(correct | row) and the pooled
 #: figure (`ANALYTICS.md#metrics-from-the-trial-table`). A withhold is a no-go
 #: row's correct answer, so a perfect go/no-go session scores 1.0. Every other
-#: class (false alarm, wrong response, omission, hold broken, an abort, one
-#: added later) is a miss, and a trial with no class is excluded.
+#: class (false alarm, wrong response, omission, hold broken, one added later)
+#: is a miss, except those in `EXCLUDED`; a trial with no class is excluded too.
 HITS = frozenset({CORRECT, "withheld"})
+
+#: The outcome classes left out of P(correct | row), as a legacy run leaves out
+#: an aborted trial: the animal quit before it was asked. They stay in the class
+#: tallies (P(outcome | row)), just not in `counted` or `hits`.
+EXCLUDED = frozenset(name for name in OUTCOME_CLASSES if name in ("abort_before_stimulus", "abort_during_sampling"))
 
 
 @dataclass(frozen=True)
@@ -148,7 +154,8 @@ def score(
 
 def _correct(row: RowTally, *, metric_id: str, label: str, min_counted: int) -> MetricSummary:
     hits = sum(c.n for c in row.classes if c.outcome_class in HITS)
-    counted = row.trials - row.unclassified
+    excluded = row.unclassified + sum(c.n for c in row.classes if c.outcome_class in EXCLUDED)
+    counted = row.trials - excluded
     interval = wilson_interval(hits, counted) if counted else None
     return MetricSummary(
         id=metric_id,
@@ -159,7 +166,7 @@ def _correct(row: RowTally, *, metric_id: str, label: str, min_counted: int) -> 
         hits=hits,
         counted=counted,
         triggered=row.trials,
-        excluded=row.unclassified,
+        excluded=excluded,
         window_size=0,
         wilson_low=interval[0] if interval else None,
         wilson_high=interval[1] if interval else None,

@@ -247,7 +247,7 @@ async def test_a_saved_spine_task_runs_a_session_and_its_tsv_alone_replays(tmp_p
     summary = summarize(document, None)
     assert summary.status == "ok" and summary.divergence is None
     [metric] = summary.metrics
-    assert (metric.hits, metric.counted, metric.triggered) == (2, 3, 3), "the abort is a classed miss"
+    assert (metric.hits, metric.counted, metric.triggered) == (2, 2, 3), "the abort is excluded"
     table = spine_stream.trial_table(document)
     assert [t["outcome"] for t in table["trials"]] == ["correct", "abort_during_sampling", "correct"]
     assert [t["phaseEntries"][1] for t in table["trials"]] == [200, 5000, 8500], \

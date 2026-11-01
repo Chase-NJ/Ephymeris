@@ -433,13 +433,15 @@ interval](#uncertainty):
 | `replay.classes` | For each outcome class, n and n / trials. With `replay.unclassified` (trials that reached no outcome-bearing state) they partition the trials |
 | `replay.rows` | The same per row: P(outcome \| row) |
 | `replay.rewarded` | Trials whose reward line opened / trials |
-| `metrics` | One per row, **P(correct \| row)**: hits are its trials whose class is in `table_metrics.HITS`, `correct` or `withheld`; counted are its classified ones; its unclassified ones are excluded, as an unanswered trial is on a legacy run ([trials](#trials-hits-misses-and-exclusions)) |
+| `metrics` | One per row, **P(correct \| row)**: hits are its trials whose class is in `table_metrics.HITS`, `correct` or `withheld`; counted are its classified ones outside `table_metrics.EXCLUDED`; its unclassified and aborted ones (`abort_before_stimulus`, `abort_during_sampling`) are excluded, as an unanswered or aborted trial is on a legacy run. An abort still counts in its class tally ([trials](#trials-hits-misses-and-exclusions)) |
 | `overall` | P(correct) pooled over every row, by summing counts ([pooled accuracy](#pooled-accuracy)) |
 
 > [!CAUTION]
 > **A withhold is a hit.** It is a no-go row's correct answer, so counting only `correct` would score a
 > perfect go/no-go session at the go rows' share. `false_alarm`, `wrong_response`, `omission`,
-> `hold_broken`, the aborts and any class added later are misses until `HITS` says otherwise.
+> `hold_broken` and any class added later are misses until `HITS` says otherwise. The two abort
+> classes are excluded instead (`EXCLUDED`): the animal quit before it was asked, as an aborted
+> legacy trial is excluded.
 
 Because `metrics` and `overall` keep the legacy shape, a spine run appears in the session table, the cards
 and the cohort trends like any run. P(correct | row) and `replay.classes` answer different questions: the

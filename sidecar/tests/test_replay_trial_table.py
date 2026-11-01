@@ -191,6 +191,24 @@ def test_metrics_are_functions_of_the_table() -> None:
     assert (overall.hits, overall.counted) == (2, 4)
 
 
+def test_an_aborted_trial_is_excluded_from_p_correct_but_tallied_in_its_class() -> None:
+    """As a legacy run excludes an aborted trial: the animal quit before it was
+    asked. Hold broken is no abort; it stays a miss."""
+    def trial(i: int, outcome: str):
+        return trial_table.ReplayTrial(index=i, at_ms=i * 1000, row="r1", outcome=outcome)
+
+    outcomes = ["correct", "correct", "abort_during_sampling", "abort_before_stimulus", "hold_broken"]
+    score = table_metrics.score([trial(i, o) for i, o in enumerate(outcomes)], rows=(("r1", "Odor 1"),))
+    assert {c.outcome_class: c.n for c in score.classes} == {
+        "correct": 2, "abort_during_sampling": 1, "abort_before_stimulus": 1, "hold_broken": 1}
+    [metric] = table_metrics.correct_metrics(score)
+    assert (metric.hits, metric.counted, metric.triggered, metric.excluded) == (2, 3, 5, 2)
+    overall = table_metrics.overall_correct(score)
+    assert (overall.hits, overall.counted, overall.excluded) == (2, 3, 2)
+    assert table_metrics.EXCLUDED == {"abort_before_stimulus", "abort_during_sampling"}
+    assert not table_metrics.EXCLUDED & table_metrics.HITS
+
+
 def test_the_hops_before_the_trial_start_on_one_tick_belong_to_the_trial_that_ends() -> None:
     """A window that starts the trial, whose lick goes to an outcome-bearing
     chance state that misses straight back to the window: the lick, the class

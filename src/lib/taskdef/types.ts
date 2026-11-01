@@ -1,7 +1,24 @@
 import type { RigDocument } from "@/lib/hardware/types";
 import type { TaskDiagnostic, TaskEntry } from "@/lib/ws/protocol";
 
+import type { SpineDefinition } from "./spine";
+
 export type { TaskDiagnostic, TaskEntry };
+
+/** What every task document has, whichever kind it is: what the header and the
+ *  Details popover edit. */
+export interface TaskBase {
+  id: string;
+  name: string;
+  category: string;
+  /** `metadataKey → value`, and only where it diverges from the default. */
+  params: Record<string, unknown>;
+  legacyNames: string[];
+  notes: string;
+}
+
+/** A task as the editor holds it: a trial table, or a phase spine (`spine.ts`). */
+export type TaskDocument = TaskDefinition | SpineDefinition;
 
 /**
  * The definition document, as the editor holds it.
@@ -52,19 +69,12 @@ export interface StageRow {
 
 export type SelectionMode = "antibias" | "pool" | "weighted";
 
-export interface TaskDefinition {
-  id: string;
-  name: string;
-  category: string;
+export interface TaskDefinition extends TaskBase {
   selectionMode: SelectionMode;
   trials: TrialTypeDef[];
   /** Always at least one row. An empty ramp is not "no ramp" — it is a task
    *  with no holds at all, which the firmware cannot express. */
   stages: StageRow[];
-  /** `metadataKey → value`, and only where it diverges from the catalogue. */
-  params: Record<string, unknown>;
-  legacyNames: string[];
-  notes: string;
 }
 
 /** A trial type that presents nothing yet — the row an "Add" button creates. */

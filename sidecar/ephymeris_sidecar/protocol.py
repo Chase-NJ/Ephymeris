@@ -101,6 +101,7 @@ class Cmd:
     TASKS_LIST: Final = "tasks.list"
     TASKS_GET: Final = "tasks.get"
     TASKS_PREVIEW: Final = "tasks.preview"
+    TASKS_SPINE_PALETTE: Final = "tasks.spinePalette"
     TASKS_SAVE: Final = "tasks.save"
     TASKS_DELETE: Final = "tasks.delete"
     TASKS_EXPORT: Final = "tasks.export"
@@ -369,12 +370,20 @@ SHAPES: Final[dict[str, Any]] = {
     "RigSaved": ('obj', (('status', ('ref', 'RigStatus'), False), ('problems', ('list', ('ref', 'RigProblem')), False), ('breaks', ('list', ('ref', 'RigImpact')), False), ('allocations', ('list', ('ref', 'RigAllocation')), False))),
     "ChannelSetConflict": ('obj', (('kind', 'str', False), ('channel', ('union', ('str', 'null')), False), ('message', 'str', False))),
     "ChannelSetImportPlan": ('obj', (('conflicts', ('list', ('ref', 'ChannelSetConflict')), False), ('vocabulary', ('ref', 'StrobeImportPlan'), False), ('changed', ('list', 'str'), False), ('breaks', ('list', ('ref', 'RigImpact')), False), ('hereHash', 'str', False), ('importedHash', 'str', False), ('fileHash', 'str', False), ('fileHashVersion', 'int', False), ('identical', 'bool', False))),
-    "TaskDiagnostic": ('obj', (('location', 'str', False), ('message', 'str', False), ('code', 'str', False))),
+    "TaskDiagnostic": ('obj', (('location', 'str', False), ('message', 'str', False), ('code', 'str', False), ('target', ('ref', 'TaskTarget'), False))),
+    "TaskTarget": ('obj', (('kind', ('lit', ('phase', 'row', 'block', 'slot', 'stage', 'session', 'vocabulary', 'ram', 'task')), False), ('index', ('union', ('int', 'null')), False))),
+    "SpineSlotView": ('obj', (('id', 'str', False), ('type', 'str', False), ('mode', ('union', ('str', 'null')), False), ('channels', ('list', 'str'), False))),
+    "SpineRamPart": ('obj', (('label', 'str', False), ('bytes', 'int', False))),
+    "SpineRam": ('obj', (('bytes', ('union', ('int', 'null')), False), ('budget', 'int', False), ('parts', ('list', ('ref', 'SpineRamPart')), False))),
+    "SpineBlockView": ('obj', (('id', 'str', False), ('next', ('union', ('int', 'null')), False))),
+    "SpineStoredValue": ('obj', (('key', 'str', False), ('value', 'any', False), ('target', ('ref', 'TaskTarget'), False))),
+    "SpineView": ('obj', (('slots', ('list', ('ref', 'SpineSlotView')), False), ('ram', ('ref', 'SpineRam'), False), ('blocks', ('list', ('ref', 'SpineBlockView')), False), ('sessionEnds', 'bool', False), ('stored', ('list', ('ref', 'SpineStoredValue')), False))),
+    "TaskSeed": ('obj', (('id', 'str', False), ('label', 'str', False), ('summary', 'str', False), ('definition', 'any', False))),
     "TaskImportConflict": ('obj', (('kind', 'str', False), ('channel', ('union', ('str', 'null')), False), ('message', 'str', False))),
     "TaskImportPlan": ('obj', (('conflicts', ('list', ('ref', 'TaskImportConflict')), False), ('taskId', 'str', False), ('name', 'str', False), ('replaces', 'bool', False), ('replacesName', ('union', ('str', 'null')), False), ('replacesUnreadable', 'bool', False), ('identical', 'bool', False), ('sameChannelSet', 'bool', False), ('hereHash', 'str', False), ('fileHash', 'str', False), ('fileHashVersion', 'int', False), ('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False))),
-    "TaskEntry": ('obj', (('id', 'str', False), ('name', 'str', False), ('unreadable', ('union', ('str', 'null')), False), ('category', 'str', False), ('path', 'str', False), ('label', 'str', False), ('editedAt', ('union', ('str', 'null')), False), ('problems', 'int', False), ('trials', 'int', False), ('stages', 'int', False), ('selectionMode', ('lit', ('antibias', 'pool', 'weighted')), False))),
+    "TaskEntry": ('obj', (('id', 'str', False), ('name', 'str', False), ('unreadable', ('union', ('str', 'null')), False), ('category', 'str', False), ('path', 'str', False), ('label', 'str', False), ('editedAt', ('union', ('str', 'null')), False), ('problems', 'int', False), ('trials', 'int', False), ('stages', 'int', False), ('selectionMode', ('lit', ('antibias', 'pool', 'weighted')), False), ('spine', 'bool', False))),
     "TaskSaved": ('obj', (('entry', ('ref', 'TaskEntry'), False), ('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False), ('sketchPath', ('union', ('str', 'null')), False))),
-    "TaskPreview": ('obj', (('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False), ('profile', ('ref', 'TaskProfile'), False), ('catalogueDefaults', ('map', 'any'), False))),
+    "TaskPreview": ('obj', (('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False), ('profile', ('ref', 'TaskProfile'), False), ('spine', ('union', (('ref', 'SpineView'), 'null')), False), ('catalogueDefaults', ('map', 'any'), False))),
     "TasksUpdatedData": ('obj', (('tasks', ('list', ('ref', 'TaskEntry')), False),)),
     "StrobeCode": ('obj', (('name', 'str', False), ('code', 'int', False), ('origin', 'str', False), ('emittedOn', 'str', True), ('rationale', 'str', True), ('portSlot', 'int', True))),
     "RetiredStrobe": ('obj', (('name', 'str', False), ('code', 'int', False), ('rationale', 'str', True), ('seenIn', 'str', True), ('retiredAt', 'str', True))),
@@ -467,6 +476,7 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "tasks.list": ('obj', ()),
     "tasks.get": ('obj', (('taskId', 'str', False),)),
     "tasks.preview": ('obj', (('definition', 'any', False),)),
+    "tasks.spinePalette": ('obj', ()),
     "tasks.save": ('obj', (('definition', 'any', False),)),
     "tasks.delete": ('obj', (('taskId', 'str', False),)),
     "tasks.export": ('obj', (('taskId', 'str', False),)),
@@ -561,6 +571,7 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "tasks.list": ('obj', (('tasks', ('list', ('ref', 'TaskEntry')), False),)),
     "tasks.get": ('obj', (('definition', 'any', False), ('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False))),
     "tasks.preview": ('ref', 'TaskPreview'),
+    "tasks.spinePalette": ('obj', (('seeds', ('list', ('ref', 'TaskSeed')), False), ('phases', ('list', 'str'), False), ('outcomeClasses', ('list', 'str'), False), ('selections', ('list', 'str'), False))),
     "tasks.save": ('ref', 'TaskSaved'),
     "tasks.delete": ('obj', (('deleted', 'bool', False),)),
     "tasks.export": ('obj', (('document', 'any', False), ('filename', 'str', False))),

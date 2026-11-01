@@ -33,7 +33,7 @@ from typing import Any
 from ..rig import registry
 from . import lowering
 from .model import ID_RE, Spine, TaskDefinition
-from .validate import Diagnostic
+from .validate import Diagnostic, target
 
 #: The structural codes a spine strobes, by role (`0003-phase-spine-task-model.md#the-strobe-stream`).
 #: The ADR's SESSION_START and SESSION_END are the vocabulary's existing
@@ -120,20 +120,32 @@ def pairs(low: lowering.Lowered) -> list[tuple[int, int]]:
     return out
 
 
-def task_ram_bytes(low: lowering.Lowered) -> int:
-    """The bytes of RAM a task's generated `TaskSpine.h` adds to a Mega build:
-    its states, edge rows, blocks, entries and overrides, its parameters and the
-    pairs of them held in order, its channel bits, its ratios and its driven
-    outputs. Entries, overrides and pairs are left out when there are none."""
+def ram_parts(low: lowering.Lowered) -> list[tuple[str, int]]:
+    """The bytes of RAM a task's generated `TaskSpine.h` adds to a Mega build,
+    by what takes them: its states and edge rows; its blocks, entries and
+    overrides; its parameters and the pairs of them held in order; its channel
+    bits; its ratios; its driven outputs. Entries, overrides, pairs and drives
+    are left out when there are none. The editor's meter draws these
+    (`TASKS.md#the-spine-editor`), and `task_ram_bytes` is their sum."""
     ratios = len(low.counter[2]) if low.counter is not None else 0
-    return (lowering.table_bytes(len(low.states), max(1, len(low.edges)), len(low.blocks), len(low.entries),
-                                 len(low.overrides))
-            + sum(PARAM_BYTES + len(key) + 1 for key in low.params)
-            + PAIR_BYTES * len(pairs(low))
-            + INPUT_BYTES * max(1, len(low.inputs)) + OUTPUT_BYTES * max(1, len(low.outputs))
-            + RATIO_BYTES * max(1, ratios)
-            + (DRIVE_RUN_BYTES + DRIVE_BYTES * len(low.drives) if low.drives else 0)
-            + (TONE_RAM_BYTES if any(kind == "tone" for _, kind, _ in low.drives) else 0))
+    table = lowering.table_bytes(len(low.states), max(1, len(low.edges)))
+    parts = [
+        ("States and edge rows", table),
+        ("Blocks", lowering.table_bytes(len(low.states), max(1, len(low.edges)), len(low.blocks),
+                                        len(low.entries), len(low.overrides)) - table),
+        ("Parameters", sum(PARAM_BYTES + len(key) + 1 for key in low.params) + PAIR_BYTES * len(pairs(low))),
+        ("Channels", INPUT_BYTES * max(1, len(low.inputs)) + OUTPUT_BYTES * max(1, len(low.outputs))),
+        ("Ratios", RATIO_BYTES * max(1, ratios)),
+        ("Driven outputs", (DRIVE_RUN_BYTES + DRIVE_BYTES * len(low.drives) if low.drives else 0)
+         + (TONE_RAM_BYTES if any(kind == "tone" for _, kind, _ in low.drives) else 0)),
+    ]
+    return [(label, n) for label, n in parts if n]
+
+
+def task_ram_bytes(low: lowering.Lowered) -> int:
+    """The bytes of RAM a task's generated `TaskSpine.h` adds to a Mega build
+    (`ram_parts`)."""
+    return sum(n for _, n in ram_parts(low))
 
 
 @dataclass
@@ -159,8 +171,8 @@ def _resolve(definition: TaskDefinition) -> _Resolved:
     channels, vocab = registry.channels(), registry.vocabulary()
     out = _Resolved()
 
-    def problem(location: str, code: str, message: str) -> None:
-        out.problems.append(Diagnostic(location, message, code))
+    def problem(location: str, code: str, message: str, at: dict[str, Any] | None = None) -> None:
+        out.problems.append(Diagnostic(location, message, code, at))
 
     slot_type: dict[str, str] = {}
     slot_mode: dict[str, str | None] = {}
@@ -645,13 +657,71 @@ def _table_problems(definition: TaskDefinition, out: _Resolved, problem) -> None
             at = hi_key if hi_key in definition.params else lo_key
             code = "SPN105" if low.slots[hi].role == "count_max" else "SPN106"
             problem(f"params.{at}", code, f"the stored {lo_key} ({value[lo]}) is above {hi_key} ({value[hi]}): "
-                    "the high end is below the low end, so the board would refuse the start")
+                    "the high end is below the low end, so the board would refuse the start", owner_of(low.slots[hi]))
             out.blockers.append(f"the stored {lo_key} and {hi_key} are inverted")
     size = task_ram_bytes(low)
     if size > TASK_RAM_MAX:
         problem("spine", "SPN105", f"the state table, parameters and channels take {size} B of the board's RAM, "
-                f"over the {TASK_RAM_MAX} B a Mega can spare for them: fewer rows, phases or map entries")
+                f"over the {TASK_RAM_MAX} B a Mega can spare for them: fewer rows, phases or map entries",
+                target("ram"))
         out.blockers.append(f"the task's data takes {size} B of RAM, over {TASK_RAM_MAX} B")
+
+
+def editor_view(definition: TaskDefinition) -> dict[str, Any]:
+    """What the spine editor draws beside the profile (`TASKS.md#the-spine-editor`):
+
+        slots        each slot, with the channels this rig offers it: its own
+                     type and mode, never the sync line (`_fits`, as SPN102 judges)
+        ram          the budget's arithmetic, by part (`ram_parts`); no bytes
+                     when the spine cannot be lowered
+        blocks       each block's id and the index of the block that follows it,
+                     None after the last
+        sessionEnds  whether the blocks run out by themselves (as SPN106 judges)
+        stored       each stored `params` value a parameter reads, with the
+                     phase, row or block it tunes
+
+    The editor computes none of it: the frontend holds no wiring and no budget.
+    """
+    spine = definition.spine
+    assert spine is not None
+    resolved = _resolve(definition)
+    low = resolved.lowered
+    channels = list(registry.channels())
+    slots = []
+    for slot in spine.slots:
+        mode = None if slot.mode == "level" else slot.mode
+        slots.append({"id": slot.id, "type": slot.type, "mode": mode,
+                      "channels": [c.name for c in channels if _fits(c, slot.type, mode)]})
+    ids = [b.id for b in spine.blocks]
+    blocks = [{"id": b.id,
+               "next": ids.index(b.next) if b.next in ids else (i + 1 if i + 1 < len(ids) else None)}
+              for i, b in enumerate(spine.blocks)]
+    stored = []
+    if low is not None:
+        for f, s in zip(_param_fields(spine, low), low.slots):
+            if f["metadataKey"] in definition.params:
+                stored.append({"key": f["metadataKey"], "value": definition.params[f["metadataKey"]],
+                               "target": owner_of(s)})
+    return {
+        "slots": slots,
+        "ram": {"bytes": task_ram_bytes(low) if low is not None else None, "budget": TASK_RAM_MAX,
+                "parts": [{"label": label, "bytes": n} for label, n in ram_parts(low)] if low is not None else []},
+        "blocks": blocks,
+        "sessionEnds": bool(spine.blocks) and _sequence_ends(spine),
+        "stored": stored,
+    }
+
+
+def owner_of(s: lowering.ParamSlot) -> dict[str, Any]:
+    """The block, row or phase a parameter slot belongs to, or the session
+    (`NT`): where the editor shows a value stored for it."""
+    if s.block is not None:
+        return target("block", s.block)
+    if s.row is not None:
+        return target("row", s.row)
+    if s.phase is not None:
+        return target("phase", s.phase)
+    return target("session")
 
 
 # --------------------------------------------------------------------------- #

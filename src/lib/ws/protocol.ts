@@ -89,6 +89,7 @@ export const CMD = {
   TASKS_LIST: "tasks.list",
   TASKS_GET: "tasks.get",
   TASKS_PREVIEW: "tasks.preview",
+  TASKS_SPINE_PALETTE: "tasks.spinePalette",
   TASKS_SAVE: "tasks.save",
   TASKS_DELETE: "tasks.delete",
   TASKS_EXPORT: "tasks.export",
@@ -2143,6 +2144,116 @@ export interface TaskDiagnostic {
    * silent without it.
    */
   code: string;
+  /**
+   * What the problem is about, for the editor to show it there (`TASKS.md#the-spine-editor`).
+   * Read off `location`, except a stored parameter's (its phase, row or block) and the RAM
+   * budget's (`ram`).
+   */
+  target: TaskTarget;
+}
+
+/** Where a task diagnostic belongs on the editor (`TASKS.md#the-spine-editor`). */
+export interface TaskTarget {
+  /**
+   * A spine's `phase`, `row`, `block` or `slot`, a trial table's `row` or ramp `stage`, by
+   * `index`; or, with no index, the session's trial cap, the strobe vocabulary, the RAM budget or
+   * the task as a whole.
+   */
+  kind: "phase" | "row" | "block" | "slot" | "stage" | "session" | "vocabulary" | "ram" | "task";
+  /** Its index in the definition's list, for the indexed kinds. */
+  index: number | null;
+}
+
+/** One slot of a spine, and what it can bind on this rig. */
+export interface SpineSlotView {
+  /** The slot's id, as the spine's phases and rows name it. */
+  id: string;
+  /** `digital_in`, `digital_out`, `pwm_out` or `tone_out`. */
+  type: string;
+  /** `train` on a pulse-train `digital_out`, else null. */
+  mode: string | null;
+  /**
+   * The channels this rig has that the slot can bind: its own type and mode, never the sync line,
+   * in declaration order. What SPN102 accepts.
+   */
+  channels: string[];
+}
+
+/** One part of a spine task's RAM (`TASKS.md#spine-diagnostics`). */
+export interface SpineRamPart {
+  /** What takes the bytes: states and edge rows, blocks, parameters, … */
+  label: string;
+  /** Its bytes, as `spine.ram_parts` counts them. */
+  bytes: number;
+}
+
+/** The editor's RAM meter. Over budget is a diagnostic, never a refusal: the task still saves. */
+export interface SpineRam {
+  /**
+   * What the task's data takes of the board's RAM (`spine.task_ram_bytes`): the sum of `parts`.
+   * Null when the spine cannot be lowered.
+   */
+  bytes: number | null;
+  /** The most it may take, 5000 B. Over it is SPN105, target `ram`. */
+  budget: number;
+  /** The bytes by part, each non-zero. Empty with no bytes. */
+  parts: SpineRamPart[];
+}
+
+/** One block of the session's sequence, for the block timeline. */
+export interface SpineBlockView {
+  /** The block's id. */
+  id: string;
+  /**
+   * The index of the block that runs after it: its `next`, else the one after it in the list;
+   * null after the last, where the session ends.
+   */
+  next: number | null;
+}
+
+/** A value the definition stores in `params`, over what its spine says. */
+export interface SpineStoredValue {
+  /** The parameter's metadata key. */
+  key: string;
+  /** The value `params` stores for it. */
+  value: unknown;
+  /** The phase, row or block it tunes, or the session. */
+  target: TaskTarget;
+}
+
+/**
+ * What the spine editor draws beside the profile, all computed by the sidecar
+ * (`spine.editor_view`, `TASKS.md#the-spine-editor`).
+ */
+export interface SpineView {
+  /** Each slot, in order, with the channels it can bind. */
+  slots: SpineSlotView[];
+  /** The RAM meter. */
+  ram: SpineRam;
+  /** The blocks, in order, each with what follows it. */
+  blocks: SpineBlockView[];
+  /**
+   * The blocks run out by themselves. False when they loop or one never ends: then only
+   * `sessionTrials` or End Session ends the session (SPN106).
+   */
+  sessionEnds: boolean;
+  /** Each stored `params` value a parameter reads. A key none reads is SPN110 instead. */
+  stored: SpineStoredValue[];
+}
+
+/** A seed spine a new task starts from (`taskdef/seeds.py`). */
+export interface TaskSeed {
+  /** `two_afc`, `go_no_go`, `dnms`, `trace` or `ratio`. */
+  id: string;
+  /** What the chooser calls it. */
+  label: string;
+  /** One sentence on the spine's shape. */
+  summary: string;
+  /**
+   * A whole spine-task definition, opened unsaved. Its rows carry no names and bind no channels:
+   * the operator names and binds them.
+   */
+  definition: unknown;
 }
 
 /**
@@ -2237,9 +2348,15 @@ export interface TaskEntry {
   stages: number;
   /**
    * How the next trial is drawn: a side against recent bias then a type uniformly; a
-   * block-shuffled weighted pool; or the side draw with a weighted pick within it.
+   * block-shuffled weighted pool; or the side draw with a weighted pick within it. Not read on a
+   * spine task.
    */
   selectionMode: "antibias" | "pool" | "weighted";
+  /**
+   * A phase-spine task (`TASKS.md#spine-tasks`): `trials` counts its rows, `stages` is 1 and
+   * `selectionMode` means nothing, since its blocks draw its rows.
+   */
+  spine: boolean;
 }
 
 export interface TaskSaved {
@@ -2257,6 +2374,8 @@ export interface TaskPreview {
   diagnostics: TaskDiagnostic[];
   /** What this definition compiles to. */
   profile: TaskProfile;
+  /** What the spine editor draws beside the profile; null for a trial-table task. */
+  spine: SpineView | null;
   /**
    * `metadataKey` → the value this field has with NO override, keyed the same way
    * `profile.config[].default` is. The editor needs both to know which values this profile
@@ -2737,6 +2856,7 @@ export interface CommandArgsMap {
   "tasks.list": Record<string, never>;
   "tasks.get": { taskId: string };
   "tasks.preview": { definition: unknown };
+  "tasks.spinePalette": Record<string, never>;
   "tasks.save": { definition: unknown };
   "tasks.delete": { taskId: string };
   "tasks.export": { taskId: string };
@@ -2832,6 +2952,7 @@ export interface CommandResultMap {
   "tasks.list": { tasks: TaskEntry[] };
   "tasks.get": { definition: unknown; diagnostics: TaskDiagnostic[] };
   "tasks.preview": TaskPreview;
+  "tasks.spinePalette": { seeds: TaskSeed[]; phases: string[]; outcomeClasses: string[]; selections: string[] };
   "tasks.save": TaskSaved;
   "tasks.delete": { deleted: boolean };
   "tasks.export": { document: unknown; filename: string };

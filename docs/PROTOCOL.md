@@ -936,6 +936,20 @@ Compile an unsaved definition and say what is wrong with it, writing nothing. Th
 
 **Result:** [TaskPreview](#shape-taskpreview)
 
+<a id="cmd-tasks.spinepalette"></a>
+#### `tasks.spinePalette`
+
+What the spine editor builds from: the seeds a new task starts from and the palette's phases, outcome classes and selections, from the model's own lists (`TASKS.md#the-spine-editor`). Static; reads no state.
+
+**Result**
+
+| Field | Type | Notes |
+|---|---|---|
+| `seeds` | [TaskSeed](#shape-taskseed)[] | The seed spines, in the order the chooser offers them. |
+| `phases` | string[] | The phase kinds of the palette (`lowering.PHASES`). |
+| `outcomeClasses` | string[] | The outcome classes a map entry can name (`lowering.OUTCOME_CLASSES`). |
+| `selections` | string[] | How a block can draw its rows (`lowering.SELECTIONS`). |
+
 <a id="cmd-tasks.save"></a>
 #### `tasks.save`
 
@@ -3145,6 +3159,73 @@ Carried in full so a missing sketch is inspectable, not silent.
 | `path` | string |  |
 | `reason` | string |  |
 
+<a id="shape-spineblockview"></a>
+#### SpineBlockView
+
+One block of the session's sequence, for the block timeline.
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | string | The block's id. |
+| `next` | number \| null | The index of the block that runs after it: its `next`, else the one after it in the list; null after the last, where the session ends. |
+
+<a id="shape-spineram"></a>
+#### SpineRam
+
+The editor's RAM meter. Over budget is a diagnostic, never a refusal: the task still saves.
+
+| Field | Type | Notes |
+|---|---|---|
+| `bytes` | number \| null | What the task's data takes of the board's RAM (`spine.task_ram_bytes`): the sum of `parts`. Null when the spine cannot be lowered. |
+| `budget` | number | The most it may take, 5000 B. Over it is SPN105, target `ram`. |
+| `parts` | [SpineRamPart](#shape-spinerampart)[] | The bytes by part, each non-zero. Empty with no bytes. |
+
+<a id="shape-spinerampart"></a>
+#### SpineRamPart
+
+One part of a spine task's RAM (`TASKS.md#spine-diagnostics`).
+
+| Field | Type | Notes |
+|---|---|---|
+| `label` | string | What takes the bytes: states and edge rows, blocks, parameters, … |
+| `bytes` | number | Its bytes, as `spine.ram_parts` counts them. |
+
+<a id="shape-spineslotview"></a>
+#### SpineSlotView
+
+One slot of a spine, and what it can bind on this rig.
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | string | The slot's id, as the spine's phases and rows name it. |
+| `type` | string | `digital_in`, `digital_out`, `pwm_out` or `tone_out`. |
+| `mode` | string \| null | `train` on a pulse-train `digital_out`, else null. |
+| `channels` | string[] | The channels this rig has that the slot can bind: its own type and mode, never the sync line, in declaration order. What SPN102 accepts. |
+
+<a id="shape-spinestoredvalue"></a>
+#### SpineStoredValue
+
+A value the definition stores in `params`, over what its spine says.
+
+| Field | Type | Notes |
+|---|---|---|
+| `key` | string | The parameter's metadata key. |
+| `value` | unknown | The value `params` stores for it. |
+| `target` | [TaskTarget](#shape-tasktarget) | The phase, row or block it tunes, or the session. |
+
+<a id="shape-spineview"></a>
+#### SpineView
+
+What the spine editor draws beside the profile, all computed by the sidecar (`spine.editor_view`, `TASKS.md#the-spine-editor`).
+
+| Field | Type | Notes |
+|---|---|---|
+| `slots` | [SpineSlotView](#shape-spineslotview)[] | Each slot, in order, with the channels it can bind. |
+| `ram` | [SpineRam](#shape-spineram) | The RAM meter. |
+| `blocks` | [SpineBlockView](#shape-spineblockview)[] | The blocks, in order, each with what follows it. |
+| `sessionEnds` | boolean | The blocks run out by themselves. False when they loop or one never ends: then only `sessionTrials` or End Session ends the session (SPN106). |
+| `stored` | [SpineStoredValue](#shape-spinestoredvalue)[] | Each stored `params` value a parameter reads. A key none reads is SPN110 instead. |
+
 <a id="shape-strategypoint"></a>
 #### StrategyPoint
 
@@ -3274,6 +3355,7 @@ This machine's strobe vocabulary (`TASKS.md#strobe-vocabulary`) — the one sour
 | `location` | string | `trials[1].rewardChannel`, `stages[2].trials`. |
 | `message` | string |  |
 | `code` | string | TSK101–TSK111, TSK113 and TSK114 from the sidecar; TSK112 is derived on the Task tab; SPN101–SPN112 for a phase-spine task (`TASKS.md#spine-tasks`). Each names a failure that is silent without it. |
+| `target` | [TaskTarget](#shape-tasktarget) | What the problem is about, for the editor to show it there (`TASKS.md#the-spine-editor`). Read off `location`, except a stored parameter's (its phase, row or block) and the RAM budget's (`ram`). |
 
 <a id="shape-taskentry"></a>
 #### TaskEntry
@@ -3292,7 +3374,8 @@ A row in the profile list, and everything a task card states before the definiti
 | `problems` | number | How many diagnostics it currently trips. A COUNT, not the list: this reply is drawn on every route mount and would otherwise grow with the library. |
 | `trials` | number | Rows in the trial table — how many conditions it presents. |
 | `stages` | number | Rows in the shaping ramp. 1 means no ramp. |
-| `selectionMode` | "antibias" \| "pool" \| "weighted" | How the next trial is drawn: a side against recent bias then a type uniformly; a block-shuffled weighted pool; or the side draw with a weighted pick within it. |
+| `selectionMode` | "antibias" \| "pool" \| "weighted" | How the next trial is drawn: a side against recent bias then a type uniformly; a block-shuffled weighted pool; or the side draw with a weighted pick within it. Not read on a spine task. |
+| `spine` | boolean | A phase-spine task (`TASKS.md#spine-tasks`): `trials` counts its rows, `stages` is 1 and `selectionMode` means nothing, since its blocks draw its rows. |
 
 <a id="shape-taskimportconflict"></a>
 #### TaskImportConflict
@@ -3334,6 +3417,7 @@ A pure compile of an unsaved definition. Writes nothing.
 |---|---|---|
 | `diagnostics` | [TaskDiagnostic](#shape-taskdiagnostic)[] |  |
 | `profile` | [TaskProfile](#shape-taskprofile) | What this definition compiles to. |
+| `spine` | [SpineView](#shape-spineview) \| null | What the spine editor draws beside the profile; null for a trial-table task. |
 | `catalogueDefaults` | map&lt;string, unknown&gt; | `metadataKey` → the value this field has with NO override, keyed the same way `profile.config[].default` is. The editor needs both to know which values this profile actually pins: a definition stores only divergences, so a value merely EQUAL to the catalogue's must not be written into it — that would freeze it against a later correction to the range or the default. |
 
 <a id="shape-taskprofile"></a>
@@ -3363,12 +3447,34 @@ Parsed from the sketch's `task.json` sibling (`TASKS.md#task-profile`); passed t
 | `diagnostics` | [TaskDiagnostic](#shape-taskdiagnostic)[] |  |
 | `sketchPath` | string \| null | The generated folder, or null when the bundled root sketch could not be read — the profile is stored either way and simply has nothing to flash yet. |
 
+<a id="shape-taskseed"></a>
+#### TaskSeed
+
+A seed spine a new task starts from (`taskdef/seeds.py`).
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | string | `two_afc`, `go_no_go`, `dnms`, `trace` or `ratio`. |
+| `label` | string | What the chooser calls it. |
+| `summary` | string | One sentence on the spine's shape. |
+| `definition` | unknown | A whole spine-task definition, opened unsaved. Its rows carry no names and bind no channels: the operator names and binds them. |
+
 <a id="shape-tasksupdateddata"></a>
 #### TasksUpdatedData
 
 | Field | Type | Notes |
 |---|---|---|
 | `tasks` | [TaskEntry](#shape-taskentry)[] |  |
+
+<a id="shape-tasktarget"></a>
+#### TaskTarget
+
+Where a task diagnostic belongs on the editor (`TASKS.md#the-spine-editor`).
+
+| Field | Type | Notes |
+|---|---|---|
+| `kind` | "phase" \| "row" \| "block" \| "slot" \| "stage" \| "session" \| "vocabulary" \| "ram" \| "task" | A spine's `phase`, `row`, `block` or `slot`, a trial table's `row` or ramp `stage`, by `index`; or, with no index, the session's trial cap, the strobe vocabulary, the RAM budget or the task as a whole. |
+| `index` | number \| null | Its index in the definition's list, for the indexed kinds. |
 
 <a id="shape-telemetryfield"></a>
 #### TelemetryField

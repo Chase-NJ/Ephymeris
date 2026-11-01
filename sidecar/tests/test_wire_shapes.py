@@ -424,7 +424,8 @@ def test_a_populated_task_import_plan_matches_schema() -> None:
         replaces_unreadable=False,
         conflicts=[{"kind": "not_here", "channel": "lever", "message": "lever …"},
                    {"kind": "code", "channel": None, "message": "FLUID_2_ON …"}],
-        diagnostics=[{"location": "rows[0].bind.port", "message": "…", "code": "SPN101"}],
+        diagnostics=[{"location": "rows[0].bind.port", "message": "…", "code": "SPN101",
+                      "target": {"kind": "row", "index": 0}}],
     )
     assert validate(("ref", "TaskImportPlan"), plan.to_json()) == []
 

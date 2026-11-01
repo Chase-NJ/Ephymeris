@@ -4,7 +4,8 @@ import { ArrowLeft, CircleAlert, FolderTree, TriangleAlert } from "lucide-react"
 import { Button } from "@/components/common/controls";
 import { TaskDetailsBody, detailsSummary } from "@/components/task/TaskDetails";
 import { TaskGlyph } from "@/components/task/TaskGlyph";
-import type { TaskDefinition, TaskDiagnostic } from "@/lib/taskdef/types";
+import { isSpine } from "@/lib/taskdef/spine";
+import type { TaskDiagnostic, TaskDocument } from "@/lib/taskdef/types";
 import type { useTask } from "@/lib/taskdef/useTask";
 
 import { Popover } from "./Popover";
@@ -15,6 +16,42 @@ export type ProblemHome =
   | { kind: "generation" }
   | { kind: "holds" }
   | { kind: "task" };
+
+/** What the editor route hands each kind of editor body: the open document's
+ *  session and the header's own state, whichever body draws the header. */
+export interface EditorShared {
+  session: ReturnType<typeof useTask>;
+  /** Whether this task exists on disk. */
+  saved: boolean;
+  categories: readonly string[];
+  detailsOpen: boolean;
+  onDetailsOpen: (open: boolean) => void;
+  problemsOpen: boolean;
+  onProblemsOpen: (open: boolean) => void;
+  onBack: () => void;
+  onSave: () => void;
+  listError: string | null;
+}
+
+/** How the Problems list groups and labels a diagnostic: its section and, when
+ *  it is about one thing in a list, which. */
+export interface ProblemPlace {
+  section: string;
+  which: string | null;
+}
+
+const HOME_TITLE: Record<ProblemHome["kind"], string> = {
+  row: "Trial types",
+  generation: "Trial generation",
+  holds: "Holds & shaping",
+  task: "Task",
+};
+
+/** A trial-table task's diagnostics, placed by `homeOf`. */
+export function trialTablePlace(diagnostic: TaskDiagnostic): ProblemPlace {
+  const home = homeOf(diagnostic);
+  return { section: HOME_TITLE[home.kind], which: home.kind === "row" ? `row ${home.row + 1}` : null };
+}
 
 export function homeOf(diagnostic: TaskDiagnostic): ProblemHome {
   const row = /^trials\[(\d+)\]/.exec(diagnostic.location);
@@ -39,6 +76,7 @@ export function EditorHeader({
   problemsOpen,
   onProblemsOpen,
   onJump,
+  placeOf = trialTablePlace,
   onBack,
   onSave,
 }: {
@@ -53,6 +91,8 @@ export function EditorHeader({
   problemsOpen: boolean;
   onProblemsOpen: (open: boolean) => void;
   onJump: (diagnostic: TaskDiagnostic) => void;
+  /** Where the Problems list files each diagnostic. */
+  placeOf?: (diagnostic: TaskDiagnostic) => ProblemPlace;
   onBack: () => void;
   onSave: () => void;
 }) {
@@ -104,7 +144,7 @@ export function EditorHeader({
               </span>
             }
           >
-            <ProblemsList diagnostics={diagnostics} onJump={(d) => {
+            <ProblemsList diagnostics={diagnostics} placeOf={placeOf} onJump={(d) => {
               onProblemsOpen(false);
               onJump(d);
             }} />
@@ -161,24 +201,19 @@ export function EditorHeader({
   );
 }
 
-const HOME_TITLE: Record<ProblemHome["kind"], string> = {
-  row: "Trial types",
-  generation: "Trial generation",
-  holds: "Holds & shaping",
-  task: "Task",
-};
-
 function ProblemsList({
   diagnostics,
+  placeOf,
   onJump,
 }: {
   diagnostics: TaskDiagnostic[];
+  placeOf: (diagnostic: TaskDiagnostic) => ProblemPlace;
   onJump: (diagnostic: TaskDiagnostic) => void;
 }) {
-  const groups = new Map<ProblemHome["kind"], TaskDiagnostic[]>();
+  const groups = new Map<string, TaskDiagnostic[]>();
   for (const d of diagnostics) {
-    const kind = homeOf(d).kind;
-    groups.set(kind, [...(groups.get(kind) ?? []), d]);
+    const section = placeOf(d).section;
+    groups.set(section, [...(groups.get(section) ?? []), d]);
   }
   return (
     <div className="scrollbar-slim flex max-h-[60vh] flex-col gap-3 overflow-y-auto">
@@ -186,13 +221,13 @@ function ProblemsList({
         A task saves and flashes with problems outstanding — read these first, because most of
         them run and record the wrong thing rather than fail.
       </p>
-      {[...groups].map(([kind, list]) => (
-        <section key={kind} className="flex flex-col gap-1">
+      {[...groups].map(([section, list]) => (
+        <section key={section} className="flex flex-col gap-1">
           <h3 className="font-mono text-[9px] tracking-[0.18em] text-static/70 uppercase">
-            {HOME_TITLE[kind]}
+            {section}
           </h3>
           {list.map((d, i) => {
-            const home = homeOf(d);
+            const which = placeOf(d).which;
             return (
               <button
                 key={i}
@@ -203,9 +238,7 @@ function ProblemsList({
                 <TriangleAlert size={11} strokeWidth={1.75} className="mt-0.5 shrink-0 text-status-error" />
                 <span>
                   <span className="font-mono text-[10px] text-status-error">{d.code}</span>
-                  {home.kind === "row" && (
-                    <span className="font-mono text-[10px] text-static"> · row {home.row + 1}</span>
-                  )}{" "}
+                  {which && <span className="font-mono text-[10px] text-static"> · {which}</span>}{" "}
                   {d.message}
                 </span>
               </button>
@@ -218,7 +251,12 @@ function ProblemsList({
 }
 
 /** What the task glyph draws, from the definition on screen. */
-function glyphTask(definition: TaskDefinition, problems: number) {
+function glyphTask(definition: TaskDocument, problems: number) {
+  // A spine task's conditions are its rows; it has no ramp and no
+  // trial-table selection mode, so it draws as one stage under anti-bias.
+  if (isSpine(definition)) {
+    return { id: definition.id, trials: definition.rows.length, stages: 1, selectionMode: "antibias" as const, problems };
+  }
   return {
     id: definition.id,
     trials: definition.trials.length,

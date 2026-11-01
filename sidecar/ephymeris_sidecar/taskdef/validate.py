@@ -39,6 +39,7 @@ apart. Naming every condition is the one thing the trial table cannot derive.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -52,9 +53,43 @@ class Diagnostic:
     location: str
     message: str
     code: str
+    #: What the problem is about, for the editor to show it there
+    #: (`TASKS.md#the-spine-editor`): `{kind, index}`. Read off `location` by
+    #: `locate` unless the rule that found it knows better (a stored parameter's
+    #: owner, the RAM budget).
+    target: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        if self.target is None:
+            object.__setattr__(self, "target", locate(self.location))
 
     def to_json(self) -> dict[str, Any]:
-        return {"location": self.location, "message": self.message, "code": self.code}
+        return {"location": self.location, "message": self.message, "code": self.code,
+                "target": dict(self.target or {})}
+
+
+#: A location's leading path -> the kind of thing it is in.
+_INDEXED = {"spine": "phase", "rows": "row", "blocks": "block", "slots": "slot", "trials": "row",
+            "stages": "stage"}
+_INDEX_RE = re.compile(r"^(\w+)\[(\d+)\]")
+
+
+def target(kind: str, index: int | None = None) -> dict[str, Any]:
+    return {"kind": kind, "index": index}
+
+
+def locate(location: str) -> dict[str, Any]:
+    """The phase, row, block, slot or stage a diagnostic's location is in, or
+    the session, the vocabulary or the task as a whole."""
+    indexed = _INDEX_RE.match(location)
+    if indexed and indexed.group(1) in _INDEXED:
+        return target(_INDEXED[indexed.group(1)], int(indexed.group(2)))
+    head = location.split(".", 1)[0]
+    if head == "sessionTrials":
+        return target("session")
+    if head == "vocabulary":
+        return target("vocabulary")
+    return target("task")
 
 
 def validate(definition: TaskDefinition) -> list[Diagnostic]:

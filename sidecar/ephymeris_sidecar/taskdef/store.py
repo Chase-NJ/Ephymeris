@@ -70,6 +70,9 @@ class TaskEntry:
     #: Why the stored file will not read as a definition, or None. Such a task
     #: is listed rather than dropped, so it never vanishes without a word.
     unreadable: str | None = None
+    #: A phase-spine task: `trials` counts its rows, and it has no ramp or
+    #: trial-table selection mode (`stages` is 1, `selection_mode` unread).
+    spine: bool = False
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -83,6 +86,7 @@ class TaskEntry:
             "trials": self.trials,
             "stages": self.stages,
             "selectionMode": self.selection_mode,
+            "spine": self.spine,
         }
 
 
@@ -234,6 +238,7 @@ class TaskStore:
                     trials=definition.trial_count,
                     stages=definition.stage_count,
                     selection_mode=definition.selection_mode,
+                    spine=definition.spine is not None,
                     # `label` is what the impact check renders; the name is it.
                 ).to_json()
                 | {"label": definition.name}

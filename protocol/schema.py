@@ -2281,7 +2281,123 @@ SHAPES = (
                 "on the Task tab; SPN101–SPN112 for a phase-spine task "
                 "(`TASKS.md#spine-tasks`). Each names a failure that is silent without it.",
             ),
+            f(
+                "target",
+                Ref("TaskTarget"),
+                doc="What the problem is about, for the editor to show it there "
+                "(`TASKS.md#the-spine-editor`). Read off `location`, except a stored "
+                "parameter's (its phase, row or block) and the RAM budget's (`ram`).",
+            ),
         ),
+    ),
+    Shape(
+        "TaskTarget",
+        obj(
+            f(
+                "kind",
+                lit("phase", "row", "block", "slot", "stage", "session", "vocabulary", "ram", "task"),
+                doc="A spine's `phase`, `row`, `block` or `slot`, a trial table's `row` "
+                "or ramp `stage`, by `index`; or, with no index, the session's trial cap, "
+                "the strobe vocabulary, the RAM budget or the task as a whole.",
+            ),
+            f("index", nullable(INT), doc="Its index in the definition's list, for the indexed kinds."),
+        ),
+        doc="Where a task diagnostic belongs on the editor (`TASKS.md#the-spine-editor`).",
+    ),
+    Shape(
+        "SpineSlotView",
+        obj(
+            f("id", STR, doc="The slot's id, as the spine's phases and rows name it."),
+            f("type", STR, doc="`digital_in`, `digital_out`, `pwm_out` or `tone_out`."),
+            f("mode", nullable(STR), doc="`train` on a pulse-train `digital_out`, else null."),
+            f(
+                "channels",
+                ListOf(STR),
+                doc="The channels this rig has that the slot can bind: its own type and "
+                "mode, never the sync line, in declaration order. What SPN102 accepts.",
+            ),
+        ),
+        doc="One slot of a spine, and what it can bind on this rig.",
+    ),
+    Shape(
+        "SpineRamPart",
+        obj(
+            f("label", STR, doc="What takes the bytes: states and edge rows, blocks, parameters, …"),
+            f("bytes", INT, doc="Its bytes, as `spine.ram_parts` counts them."),
+        ),
+        doc="One part of a spine task's RAM (`TASKS.md#spine-diagnostics`).",
+    ),
+    Shape(
+        "SpineRam",
+        obj(
+            f(
+                "bytes",
+                nullable(INT),
+                doc="What the task's data takes of the board's RAM (`spine.task_ram_bytes`): "
+                "the sum of `parts`. Null when the spine cannot be lowered.",
+            ),
+            f("budget", INT, doc="The most it may take, 5000 B. Over it is SPN105, target `ram`."),
+            f("parts", ListOf(Ref("SpineRamPart")), doc="The bytes by part, each non-zero. Empty with no bytes."),
+        ),
+        doc="The editor's RAM meter. Over budget is a diagnostic, never a refusal: the task still saves.",
+    ),
+    Shape(
+        "SpineBlockView",
+        obj(
+            f("id", STR, doc="The block's id."),
+            f(
+                "next",
+                nullable(INT),
+                doc="The index of the block that runs after it: its `next`, else the one "
+                "after it in the list; null after the last, where the session ends.",
+            ),
+        ),
+        doc="One block of the session's sequence, for the block timeline.",
+    ),
+    Shape(
+        "SpineStoredValue",
+        obj(
+            f("key", STR, doc="The parameter's metadata key."),
+            f("value", ANY, doc="The value `params` stores for it."),
+            f("target", Ref("TaskTarget"), doc="The phase, row or block it tunes, or the session."),
+        ),
+        doc="A value the definition stores in `params`, over what its spine says.",
+    ),
+    Shape(
+        "SpineView",
+        obj(
+            f("slots", ListOf(Ref("SpineSlotView")), doc="Each slot, in order, with the channels it can bind."),
+            f("ram", Ref("SpineRam"), doc="The RAM meter."),
+            f("blocks", ListOf(Ref("SpineBlockView")), doc="The blocks, in order, each with what follows it."),
+            f(
+                "sessionEnds",
+                BOOL,
+                doc="The blocks run out by themselves. False when they loop or one never "
+                "ends: then only `sessionTrials` or End Session ends the session (SPN106).",
+            ),
+            f(
+                "stored",
+                ListOf(Ref("SpineStoredValue")),
+                doc="Each stored `params` value a parameter reads. A key none reads is SPN110 instead.",
+            ),
+        ),
+        doc="What the spine editor draws beside the profile, all computed by the sidecar "
+        "(`spine.editor_view`, `TASKS.md#the-spine-editor`).",
+    ),
+    Shape(
+        "TaskSeed",
+        obj(
+            f("id", STR, doc="`two_afc`, `go_no_go`, `dnms`, `trace` or `ratio`."),
+            f("label", STR, doc="What the chooser calls it."),
+            f("summary", STR, doc="One sentence on the spine's shape."),
+            f(
+                "definition",
+                ANY,
+                doc="A whole spine-task definition, opened unsaved. Its rows carry no "
+                "names and bind no channels: the operator names and binds them.",
+            ),
+        ),
+        doc="A seed spine a new task starts from (`taskdef/seeds.py`).",
     ),
     Shape(
         "TaskImportConflict",
@@ -2396,7 +2512,14 @@ SHAPES = (
                 lit("antibias", "pool", "weighted"),
                 doc="How the next trial is drawn: a side against recent bias then "
                 "a type uniformly; a block-shuffled weighted pool; or the side "
-                "draw with a weighted pick within it.",
+                "draw with a weighted pick within it. Not read on a spine task.",
+            ),
+            f(
+                "spine",
+                BOOL,
+                doc="A phase-spine task (`TASKS.md#spine-tasks`): `trials` counts its "
+                "rows, `stages` is 1 and `selectionMode` means nothing, since its "
+                "blocks draw its rows.",
             ),
         ),
         doc="A row in the profile list, and everything a task card states "
@@ -2422,6 +2545,12 @@ SHAPES = (
         obj(
             f("diagnostics", ListOf(Ref("TaskDiagnostic"))),
             f("profile", Ref("TaskProfile"), doc="What this definition compiles to."),
+            f(
+                "spine",
+                nullable(Ref("SpineView")),
+                doc="What the spine editor draws beside the profile; null for a "
+                "trial-table task.",
+            ),
             f(
                 "catalogueDefaults",
                 MapOf(ANY),
@@ -3796,6 +3925,22 @@ COMMANDS = (
         "writing nothing. The editor calls it as the operator types, so a "
         "problem lands against the field that caused it. `TASK_INVALID` only "
         "when the document is not a definition.",
+    ),
+    Command(
+        "tasks.spinePalette",
+        result=obj(
+            f("seeds", ListOf(Ref("TaskSeed")), doc="The seed spines, in the order the chooser offers them."),
+            f("phases", ListOf(STR), doc="The phase kinds of the palette (`lowering.PHASES`)."),
+            f(
+                "outcomeClasses",
+                ListOf(STR),
+                doc="The outcome classes a map entry can name (`lowering.OUTCOME_CLASSES`).",
+            ),
+            f("selections", ListOf(STR), doc="How a block can draw its rows (`lowering.SELECTIONS`)."),
+        ),
+        doc="What the spine editor builds from: the seeds a new task starts from and "
+        "the palette's phases, outcome classes and selections, from the model's own "
+        "lists (`TASKS.md#the-spine-editor`). Static; reads no state.",
     ),
     Command(
         "tasks.save",

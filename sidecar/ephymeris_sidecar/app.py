@@ -9,6 +9,7 @@ lets through are answered by `wire_errors.py` (`ARCHITECTURE.md#dispatch`), so
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 from datetime import UTC, datetime
@@ -40,6 +41,9 @@ from .strobes import store as strobe_store
 from .strobes.editor import VocabularyEditor
 from .strobes.usage import ArchiveScanner
 from .taskdef import bundled as bundled_sketches
+from .taskdef import lowering as task_lowering
+from .taskdef import seeds as task_seeds
+from .taskdef import spine as spine_task
 from .taskdef import store as taskdef_store
 from .taskdef import transfer as task_transfer
 from .taskdef.model import TaskDefinition, folder_key
@@ -220,6 +224,7 @@ class Application:
         self.server.register(Cmd.TASKS_GET, self._tasks_get)
         self.server.register(Cmd.TASKS_PREVIEW, self._tasks_preview)
         self.server.register(Cmd.TASKS_SAVE, self._tasks_save)
+        self.server.register(Cmd.TASKS_SPINE_PALETTE, self._tasks_spine_palette)
         self.server.register(Cmd.TASKS_DELETE, self._tasks_delete)
         self.server.register(Cmd.TASKS_EXPORT, self._tasks_export)
         self.server.register(Cmd.TASKS_IMPORT, self._tasks_import)
@@ -1023,6 +1028,17 @@ class Application:
             "diagnostics": [d.to_json() for d in diagnostics],
             "profile": profile.to_json(),
             "catalogueDefaults": {f.metadata_key: f.default for f in bare.config},
+            # What the spine editor draws beside the profile (TASKS.md#the-spine-editor).
+            "spine": spine_task.editor_view(definition) if definition.spine is not None else None,
+        }
+
+    async def _tasks_spine_palette(self, _args: Args) -> dict[str, Any]:
+        """The seeds and the palette's lists, from the model's own (TASKS.md#the-spine-editor)."""
+        return {
+            "seeds": copy.deepcopy(task_seeds.SEEDS),
+            "phases": list(task_lowering.PHASES),
+            "outcomeClasses": list(task_lowering.OUTCOME_CLASSES),
+            "selections": list(task_lowering.SELECTIONS),
         }
 
     async def _tasks_save(self, args: Args) -> dict[str, Any]:

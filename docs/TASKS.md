@@ -454,7 +454,7 @@ A definition stores **channel names and strobe code names, never pins or numbers
 
 **Reward volume and weight live on the row, never in `params`.** The generator reads `reward_time`/`weight` off each `TrialTypeDef` and emits `RW<i+1>`/`PW<i+1>` from the same loop that emits `kTrials[i]`, so a `params["reward_time_1"]` or `params["pool_weight_1"]` is accepted and ignored. The editor offers these only on the row and never writes them into `params` (`isRowOwnedField`, `src/lib/taskdef/lines.ts`). A value on the row is a property of that condition: two conditions paying from one fluid line can pay differently, and deleting the row takes its volume with it.
 
-**There are no presets.** A task is built from scratch. What a preset would seed that matters most is a condition's *name*, which differs on every bench, and a guessed name is wrong for everyone but its author. The lab's real historical definitions survive as test data in `sidecar/tests/fixtures/task_definitions.py`, each transcribed from the sketch it replaced — a generator change that breaks one breaks something the lab actually ran.
+**There are no presets.** A new task starts from a **seed spine** ([The spine editor](#the-spine-editor)). A seed carries phases and no names: its rows are unnamed and bound to no channel. What a preset would seed that matters most is a condition's *name*, which differs on every bench, and a guessed name is wrong for everyone but its author. A trial-table task is no longer created new; a saved or imported one still opens, edits and saves as described here. The lab's real historical definitions survive as test data in `sidecar/tests/fixtures/task_definitions.py`, each transcribed from the sketch it replaced — a generator change that breaks one breaks something the lab actually ran.
 
 ### The field catalogue
 
@@ -465,7 +465,7 @@ A definition stores **channel names and strobe code names, never pins or numbers
 
 ### Diagnostics
 
-`taskdef/validate.py` reports every problem, not the first. `tasks.preview` returns them as the operator types; `tasks.get` recomputes them, because most depend on the **wiring** and a task saved clean can be broken by a rewiring it never saw.
+`taskdef/validate.py` reports every problem, not the first. `tasks.preview` returns them as the operator types; `tasks.get` recomputes them, because most depend on the **wiring** and a task saved clean can be broken by a rewiring it never saw. Each carries a `target`, the row, ramp stage, phase, block or slot it is about, read off its `location` (`validate.locate`), so the editor shows it there ([The spine editor](#the-spine-editor)).
 
 | Code | Problem | Consequence without it |
 |---|---|---|
@@ -633,7 +633,7 @@ A task exported on one lab machine imports on the other, where it compiles again
 
 ## Spine tasks
 
-A **spine task** is ADR 0003's model, one tracer ahead of the rest: an ordered spine of phases, lowered by the generator to a state table that one interpreter walks ([ADR 0003](adr/0003-phase-spine-task-model.md)). It needs no firmware written for it. The definition is saved with `tasks.save` like any task, and its folder is generated, flashed and run through the ordinary session flow. Nothing in the app names a sketch: what a spine task does differently is read from its definition and its profile. The Task editor does not edit one yet, so today a spine definition is written as JSON.
+A **spine task** is ADR 0003's model, one tracer ahead of the rest: an ordered spine of phases, lowered by the generator to a state table that one interpreter walks ([ADR 0003](adr/0003-phase-spine-task-model.md)). It needs no firmware written for it. The definition is saved with `tasks.save` like any task, and its folder is generated, flashed and run through the ordinary session flow. Nothing in the app names a sketch: what a spine task does differently is read from its definition and its profile. A new task is built from a seed spine in the Task editor ([The spine editor](#the-spine-editor)).
 
 It has limits, and each is diagnosed rather than guessed around:
 
@@ -1443,13 +1443,13 @@ The Task tab answers *what the animal does*; the Rig tab answers *what this box 
 
 ### Landing
 
-`/task` (`routes/Task.tsx`) lists this rig's saved tasks (`TaskRow`), with open, **Duplicate**, delete and create; a door to the strobe vocabulary; and `LibraryStatusNote`, since a damaged install is the one thing that stops a task existing at all. Duplicate opens an **unsaved** copy named clear of every saved task (`GRGL copy`, `GRGL copy 2`) and **drops `legacyNames`**: a legacy name resolves to one sketch, so a copy carrying it would silently take over or lose the historical runs it decodes.
+`/task` (`routes/Task.tsx`) lists this rig's saved tasks (`TaskRow`; a spine task is labelled by its rows, never a selection mode, from `TaskEntry.spine`), with open, **Duplicate**, delete and create, which opens the seed chooser ([The spine editor](#the-spine-editor)); a door to the strobe vocabulary; and `LibraryStatusNote`, since a damaged install is the one thing that stops a task existing at all. Duplicate opens an **unsaved** copy named clear of every saved task (`GRGL copy`, `GRGL copy 2`) and **drops `legacyNames`**: a legacy name resolves to one sketch, so a copy carrying it would silently take over or lose the historical runs it decodes.
 
 ![The Task tab: a + New task row, then three saved tasks — 4-Odor Discrimination (weighted, 4 conditions, no ramp), Shaping - Both Sides (pool, 5 stages) and 2-Odor Discrimination (anti-bias, 5 stages) — each marked ready, with the Strobes door below](images/task-landing.webp)
 
 ### Editor
 
-`/task/new` and `/task/:taskId` (`routes/TaskEditor.tsx`) is a [telemetry display](ARCHITECTURE.md#telemetry-panels) in one frame: the derived **state machine** front and centre with every **trial type** beneath it, and beside them the **parameter dial** and **trial generation**. The diagram is the fastest check that an edit did what was meant, so it is never off screen. **Every redraw comes from `tasks.preview`**: the diagram is derived from the profile the *current* definition compiles to, and validation needs the wiring, which the frontend does not hold.
+`/task/:taskId` (`routes/TaskEditor.tsx`) opens a trial-table task as a [telemetry display](ARCHITECTURE.md#telemetry-panels) in one frame: the derived **state machine** front and centre with every **trial type** beneath it, and beside them the **parameter dial** and **trial generation**. The diagram is the fastest check that an edit did what was meant, so it is never off screen. **Every redraw comes from `tasks.preview`**: the diagram is derived from the profile the *current* definition compiles to, and validation needs the wiring, which the frontend does not hold.
 
 - **The header** (`editor/EditorHeader.tsx`): the way back, the task's glyph and name, a **Problems** popover (every diagnostic grouped by where it lives; each one jumps to its row, the dial's Holds stop or the generation panel), the **Details** popover (category, legacy names, notes — `TaskDetailsBody`, opened once on a new task because the category decides the sketch folder), then Revert and Save.
 - **One link, read from every end.** A planet, the generation panel or a machine chip lights the states it tunes; hovering a state lights its planet; a trial row or a composition segment lights its condition's tick. A chip or state click opens its home. The machine's own condition list is off here (`conditionRail={false}`): the trial rows are the accessible condition list.
@@ -1501,6 +1501,51 @@ The ramp is the dial's **Holds & shaping** stop (`editor/StageList.tsx`): one co
 > **The fold is the app's, never the profile's.** `group` rides in `ConfigField.to_json` and therefore inside `profile_hash`, so re-filing a field in `fields.py` would give every regenerated `task.json` a new hash and split each task's runs. `QUICK_TUNE_GROUPS` (the groups the mapping step promotes) and the mode scope in `selection.ts` rest on the same reasoning. Anything comparing a tab against a node's `governedBy` folds through `tabOf` first (`nodesGovernedByTab`); the machine's chips fold the same way (`holds`, `selection`).
 
 `settings.taskDefaults` has no editor here or anywhere; a profile's own values are edited on this tab.
+
+### The spine editor
+
+A spine task (a definition with a `spine` key, `isSpine` in `lib/taskdef/spine.ts`) opens in `components/task/spine/` under the same header, with Problems, Details, Revert and Save. A trial-table task opens in the panels above, unchanged.
+
+**Every redraw comes from `tasks.preview`.** The editor holds the unsaved document and applies the operator's edits to it (`lib/taskdef/spine.ts`, pure and unit-tested). Everything it draws is the preview's answer for that document:
+
+- the phases are its `profile.spine.spine`, the snapshot Mission Control's live spine reads too;
+- what each slot can bind, the RAM, the block sequence and the stored values are its `spine` (`SpineView`, `spine.editor_view`);
+- every problem is its `diagnostics`, each with its `target`.
+
+The frontend holds no wiring and no budget. A preview refused as `TASK_INVALID` leaves the last good drawing, dimmed, with the reason in the header.
+
+**A new task starts from a seed.**
+- `/task/new` is `SeedChooser`, which offers the five seeds `tasks.spinePalette` serves from `taskdef/seeds.py`: 2AFC, go/no-go, DNMS, trace and FR/PR.
+- A seed carries phases and no names: its slots, phases, maps and one block are written out, its rows' ids are neutral (`row_1`, …), and every row's `name` and `bind` is empty. So it opens with SPN108 and SPN101 on each row, until the operator names the row and binds it on this rig.
+- Picking a seed opens it unsaved, as Duplicate does.
+- The same reply carries the palette's phase kinds, outcome classes and selections, from `lowering.py`'s own tuples.
+- A trial-table task is not created new. A saved or imported one still opens, edits and saves.
+
+**The panels:**
+
+| Panel | What it shows and edits |
+|---|---|
+| Spine (`SpineDiagram`, `PhasePanel`) | The phases left to right in time, the ITI looping back. Each is captioned with what it watches and how long it lasts. A `+` between two inserts a phase from the palette. `insertPhase` and `removePhase` move every block's `phaseMs` index with the phases after it. Clicking a phase opens its fields. Which fields each kind offers is `spineLabels.PHASE_FIELDS`, rendered by control kind. A field every phase may name goes in its `COMMON` list, so a new plain field of the palette is one line there |
+| RAM (`RamMeter`) | `SpineView.ram`: the task's bytes out of the 5000 B budget, by the parts `spine.ram_parts` counts. `task_ram_bytes` is their sum, so the meter is the budget's own arithmetic. Past the budget the bar stretches, with the overflow in the error colour and SPN105 under it |
+| Rows (`RowsTable`) | The slots, which can be added (id and type) and removed. Then one row per trial type: its name, one binding per slot, its reward time and, with no window before the Outcome, its reward probability. Each binding picker offers exactly `SpineView.slots[].channels`: the channels of the slot's type and mode, never the sync line. Under each row are its contingency map (each watched response and `timeout`, with its class, line, probability and hold) and its driven-output values. **Add a row** (`addRow`) takes the next free neutral id and no name, copies the last row's bindings and map, and joins every block that draws that row |
+| Blocks (`BlockTimeline`) | The blocks in order, each with its selection and end rule, then what follows it: `SpineView.blocks[].next` drawn as an arrow, an arc back (`↺`) or the end. Then the session cap, said against `SpineView.sessionEnds`, and the selected block's fields: rows and weights, selection, trials, criterion, `next`, correction and the classes it repeats after, bias window, and phase durations |
+
+**Each problem is shown at its target** (`TaskDiagnostic.target`, read off `location` by `validate.locate`):
+
+| Target | Where it shows |
+|---|---|
+| `phase` | An error ring and count on its node; in its fields, by `location` |
+| `row` | Listed under the row; on the cell or map line its `location` names |
+| `block` | On its segment, and under its fields |
+| `session` | By the session cap |
+| `slot` | On its slot chip |
+| `ram` | Under the meter |
+| `task`, `vocabulary` | Above the diagram |
+
+A stored parameter's diagnostic targets the phase, row or block that owns its slot (`spine.owner_of`). The RAM budget's targets `ram`. The header's Problems list files them by the same targets, and a click selects the phase or block, or marks the row.
+
+> [!CAUTION]
+> **A value stored in `params` wins over the field it tunes**, so an edit to that field changes nothing the board runs. `SpineView.stored` lists each one with its target, and the editor shows it beside the field it shadows, with **Use the value here** to remove the stored key. A definition the editor builds stores none. One comes from an older build, an import, or a hand edit.
 
 ## Writing a new sketch
 

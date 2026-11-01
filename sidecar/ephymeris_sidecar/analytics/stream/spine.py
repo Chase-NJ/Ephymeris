@@ -29,6 +29,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from ...taskdef.lowering import LoweringError, lower
+from . import rates as rt
 from . import replay as rp
 from . import trial_table as tt
 
@@ -507,6 +508,8 @@ class Replayed:
     trials: tuple[tt.ReplayTrial, ...]
     phases: tuple[str, ...]
     rows: tuple[tuple[str, str], ...]
+    #: The phases that count an input they never act on (`ANALYTICS.md#phase-window-rates`).
+    windows: tuple[rt.Window, ...] = ()
 
 
 def replayed(document: dict[str, Any]) -> Replayed:
@@ -530,8 +533,10 @@ def replayed(document: dict[str, Any]) -> Replayed:
     trials = tt.trials_of(record.table, actions, end=end, phase_of=record.naming.phase_of,
                           windows=record.naming.windows)
     starts = {now: a for now, a in actions if a.flags & rp.ACT_TRIAL_START}
+    phase_of = record.naming.phase_of
+    windows = rt.windows_of(record.table, phase_of, record.naming.inputs) if phase_of is not None else ()
     return Replayed(record.interp, None, tuple(_in_block(record, starts, t) for t in trials),
-                    record.phase_labels, record.rows)
+                    record.phase_labels, record.rows, windows)
 
 
 def _in_block(record: SpineRecord, starts: dict[int, rp.Actions], trial: tt.Trial) -> tt.ReplayTrial:

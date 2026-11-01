@@ -313,6 +313,10 @@ macOS as run-from-source. Packaged-only path bugs exist (Windows verbatim `\\?\`
   proven on the host, every pulse's tick included. Not yet seen on a Mega: an LED at a duty, a
   speaker at a pitch, and a 20 Hz, 5 ms train's edges measured against their ticks, which needs an
   instrument (an RHX digital input beside the sync line, or a scope).
+- **Pavlovian conditioning on a real box.** [Trace and delay conditioning](docs/TASKS.md#pavlovian-conditioning)
+  run on the host, licks counted per phase and read as rates. Not yet seen on a Mega: a lick sensor
+  added on the wiring page, its licks strobed only in the phases that watch it, and the rates in
+  Analytics matching licks counted by hand or on a recording.
 
 ### Known bugs
 

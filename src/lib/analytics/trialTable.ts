@@ -5,7 +5,7 @@
  * decides an outcome.
  */
 
-import type { OutcomeTally, ReplayTrial, TrialTable } from "@/lib/ws/protocol";
+import type { OutcomeTally, RateEstimate, ReplayTrial, TrialTable, WindowRate } from "@/lib/ws/protocol";
 
 /** An outcome class's colour. A class this build has never seen is still
  *  drawn, in the neutral tone, so a new class needs no change here. */
@@ -92,5 +92,48 @@ export function trialRows(table: TrialTable): TrialRowView[] {
         : `${t.response}${t.latencyMs !== null ? ` +${t.latencyMs} ms` : ""}`,
     phases: t.phaseEntries.map((at) => (at === null || t.atMs === null ? "—" : `+${at - t.atMs}`)),
     complete: t.complete,
+  }));
+}
+
+export interface RateRowView {
+  key: string;
+  row: string;
+  /** The phase, numbered from 1, and its kind. */
+  window: string;
+  channel: string;
+  rate: string;
+  /** The paired difference against the reference phase, or "baseline" on it. */
+  versus: string;
+  n: number;
+  lowConfidence: boolean;
+}
+
+function estimateText(e: RateEstimate, signed: boolean): string {
+  if (e.mean === null) return "—";
+  const fixed = (v: number) => v.toFixed(1);
+  const mean = `${signed && e.mean >= 0 ? "+" : ""}${fixed(e.mean)}/s`;
+  return e.low === null || e.high === null ? mean : `${mean} [${fixed(e.low)}, ${fixed(e.high)}]`;
+}
+
+/**
+ * Each row's phase-window rates (`ANALYTICS.md#phase-window-rates`), worded:
+ * the rate with its interval, and its difference against the channel's
+ * reference phase with its own. Every number is the sidecar's.
+ */
+export function rateRows(rates: WindowRate[]): RateRowView[] {
+  return rates.map((w) => ({
+    key: `${w.rowId}:${w.phase}:${w.channel}`,
+    row: w.name,
+    window: `${w.phase + 1} ${w.label}`,
+    channel: w.channel,
+    rate: estimateText(w.rate, false),
+    versus:
+      w.reference === null || w.versus === null
+        ? "baseline"
+        : w.versus.mean === null
+          ? "—"
+          : `${estimateText(w.versus, true)} vs ${w.reference + 1}`,
+    n: w.rate.n,
+    lowConfidence: w.lowConfidence,
   }));
 }

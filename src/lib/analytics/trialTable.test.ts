@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import type { ReplayTrial, TrialTable } from "@/lib/ws/protocol";
+import type { ReplayTrial, TrialTable, WindowRate } from "@/lib/ws/protocol";
 
-import { classParts, clockOf, outcomeFill, outcomeLabel, trialRows } from "./trialTable";
+import { classParts, clockOf, outcomeFill, outcomeLabel, rateRows, trialRows } from "./trialTable";
 
 const trial = (over: Partial<ReplayTrial>): ReplayTrial => ({
   index: 0,
@@ -62,5 +62,40 @@ describe("a spine run's trial table", () => {
                                   phases: ["+0", "+200", "—"] });
     expect(second).toMatchObject({ outcome: "no outcome", reward: "—", response: "—", complete: false });
     expect(clockOf(5_999)).toBe("0:05");
+  });
+});
+
+describe("a spine run's phase-window rates", () => {
+  const estimate = (n: number, mean: number | null, low: number | null, high: number | null) => ({ n, mean, low, high });
+  const window = (over: Partial<WindowRate>): WindowRate => ({
+    rowId: "cs_plus",
+    name: "CS+",
+    phase: 0,
+    label: "delay",
+    channel: "lick_spout",
+    rate: estimate(30, 2, 1.5, 2.5),
+    reference: null,
+    versus: null,
+    lowConfidence: false,
+    ...over,
+  });
+
+  it("words each rate and its difference against the baseline, as the sidecar reported them", () => {
+    const [baseline, cs, empty] = rateRows([
+      window({}),
+      window({ phase: 1, label: "present", rate: estimate(30, 12.04, 10.5, 13.6), reference: 0,
+               versus: estimate(30, 10.04, 8.25, 11.8) }),
+      window({ rowId: "cs_minus", name: "CS−", phase: 1, label: "present", rate: estimate(0, null, null, null),
+               reference: 0, versus: estimate(0, null, null, null), lowConfidence: true }),
+    ]);
+    expect(baseline).toMatchObject({ row: "CS+", window: "1 delay", channel: "lick_spout",
+                                     rate: "2.0/s [1.5, 2.5]", versus: "baseline", n: 30 });
+    expect(cs).toMatchObject({ window: "2 present", rate: "12.0/s [10.5, 13.6]", versus: "+10.0/s [8.3, 11.8] vs 1" });
+    expect(empty).toMatchObject({ row: "CS−", rate: "—", versus: "—", n: 0, lowConfidence: true });
+  });
+
+  it("gives a single trial's rate no interval", () => {
+    const [one] = rateRows([window({ rate: estimate(1, 3, null, null) })]);
+    expect(one?.rate).toBe("3.0/s");
   });
 });

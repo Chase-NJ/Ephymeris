@@ -1234,6 +1234,51 @@ export interface ReplayScore {
   rows: RowOutcomes[];
   /** Trials whose reward line opened, of `trials`. */
   rewarded: Proportion;
+  /**
+   * Each row's rate in each phase that counts an input it never acts on, row by row in the task's
+   * order, then by phase. Empty for a task with no such phase
+   * (`ANALYTICS.md#phase-window-rates`).
+   */
+  rates: WindowRate[];
+}
+
+/** A mean over trials with its interval. */
+export interface RateEstimate {
+  /** Trials the mean is over. */
+  n: number;
+  /** Events per second, the mean of each trial's rate; null with no trials, never 0.0. */
+  mean: number | null;
+  /**
+   * 95% Student-t interval over trials (`ANALYTICS.md#uncertainty`); null with fewer than two
+   * trials.
+   */
+  low: number | null;
+  high: number | null;
+}
+
+/** One row's rate in one phase-window (`ANALYTICS.md#phase-window-rates`). */
+export interface WindowRate {
+  /** The row's stable id. */
+  rowId: string;
+  /** The row's name. */
+  name: string;
+  /** The phase's index in the spine. */
+  phase: number;
+  /** The phase's kind, for a person: nothing is scored by it. */
+  label: string;
+  /** The input channel counted. */
+  channel: string;
+  /** Its rises per second in the phase, clamped at 0. */
+  rate: RateEstimate;
+  /** The channel's first counted phase, which `versus` is against; null on that phase itself. */
+  reference: number | null;
+  /**
+   * This phase's rate minus the reference's, paired within each trial: a Pavlovian task's
+   * anticipatory licking. Null on the reference.
+   */
+  versus: RateEstimate | null;
+  /** `rate.n` < `minCountedTrials`, re-judged on every request. */
+  lowConfidence: boolean;
 }
 
 /**

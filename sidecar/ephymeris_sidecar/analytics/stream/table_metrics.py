@@ -11,6 +11,9 @@ of its outcome. Each proportion carries its 95% Wilson interval
   (P(outcome | row)). Trials that reached no outcome-bearing state are
   `unclassified`, so classes plus unclassified partition the trials.
 - **Rewarded:** trials paid / trials.
+- **Phase-window rates:** each row's rate in each phase that counts an input
+  it never acts on, against the channel's first such phase (`rates.py`,
+  `ANALYTICS.md#phase-window-rates`).
 - **P(correct | row):** as a `MetricSummary`, so a spine run fills every panel
   a legacy run does. It reads each row's `correct`: hits are the trials whose
   class is in `HITS` (a correct response, or a correct withhold on a no-go
@@ -26,6 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Sequence
 
+from .rates import Window, WindowRate, window_rates
 from .stats import _round, wilson_interval
 from .metric_summary import OVERALL_ID, MetricSummary
 from .legacy.decode import LegacyTable
@@ -104,6 +108,8 @@ class ReplayScore:
     #: Trials whose `correct` is true, and those it is not None for.
     hits: int = 0
     counted: int = 0
+    #: Each row's phase-window rates (`ANALYTICS.md#phase-window-rates`).
+    rates: tuple[WindowRate, ...] = ()
 
     def to_json(self) -> dict[str, object]:
         return {
@@ -113,6 +119,7 @@ class ReplayScore:
             "classes": [c.to_json() for c in self.classes],
             "rows": [r.to_json() for r in self.rows],
             "rewarded": self.rewarded.to_json(),
+            "rates": [w.to_json() for w in self.rates],
         }
 
 
@@ -126,10 +133,13 @@ def _classes(trials: Sequence[ReplayTrial]) -> tuple[ClassTally, ...]:
 
 
 def score(
-    table: Sequence[ReplayTrial], *, rows: Sequence[tuple[str, str]], interp: int = 0
+    table: Sequence[ReplayTrial], *, rows: Sequence[tuple[str, str]], interp: int = 0,
+    windows: Sequence[Window] = (), labels: Sequence[str] = (), min_counted: int = 10,
 ) -> ReplayScore:
     """The tallies of `table`. `rows` are the task's (id, name), in its order;
-    trials no row claims are tallied under a row of their own, id None."""
+    trials no row claims are tallied under a row of their own, id None.
+    `windows` are the phases whose rates are read (`rates.windows_of`), and
+    `labels` the phases' kinds."""
     done = [t for t in table if t.complete]
     known = [r for r, _ in rows]
     groups: list[tuple[str | None, str | None]] = list(rows)
@@ -152,6 +162,7 @@ def score(
         rewarded=Proportion(n=sum(1 for t in done if t.rewarded), of=len(done)),
         hits=sum(1 for t in done if t.correct),
         counted=sum(1 for t in done if t.correct is not None),
+        rates=window_rates(table, windows, rows=rows, labels=labels, min_counted=min_counted),
     )
 
 

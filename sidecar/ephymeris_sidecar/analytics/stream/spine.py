@@ -37,6 +37,9 @@ from . import trial_table as tt
 #: the blocks are done. NT is the parameter slot whose wire key is this, if any.
 TRIALS_KEY = "NT"
 
+#: How many parameters each kind of driven output reads (BoxSpine.h, DRIVEN OUTPUTS).
+_DRIVE_VALUES = {"pwm": 1, "tone": 1, "train": 3}
+
 
 class SpineDecodeError(ValueError):
     """The document is not a spine run this replay can decode."""
@@ -66,6 +69,9 @@ class SpineRecord:
     session_end: int
     #: Every strobe as recorded, (code, ts).
     recorded: tuple[tuple[int, int], ...]
+    #: Each driven output bit (`TASKS.md#driven-outputs`): (bit, kind, its
+    #: parameter values): a PWM duty, a tone's Hz, or a train's hz, width and ms.
+    drives: tuple[tuple[int, str, tuple[int, ...]], ...] = ()
     #: Code number -> name, from the snapshot's strobes map.
     names: dict[int, str] = field(default_factory=dict)
     #: What the snapshot says the table's bits, states and rows are.
@@ -196,6 +202,20 @@ def _decode(document: dict[str, Any]) -> SpineRecord:
         raise SpineDecodeError("the run records no trial_seed: its random draws cannot be replayed")
 
     inputs, outputs = spine.get("inputs", []), spine.get("outputs", [])
+    slot_of = {key: n for n, key in enumerate(spine.get("params", []))}
+    drives = []
+    for j, o in enumerate(outputs):
+        kind = o.get("drive")
+        if kind is None:
+            continue
+        if interp < rp.DRIVES_SINCE:
+            raise SpineDecodeError(f"the snapshot drives {o.get('channel')!r} as {kind}, which INTERP {interp} "
+                                   "never did: its table cannot have run")
+        keys = o.get("params", [])
+        if kind not in _DRIVE_VALUES or len(keys) != _DRIVE_VALUES[kind] or any(k not in slot_of for k in keys):
+            raise SpineDecodeError(f"the snapshot's {kind} output {o.get('channel')!r} names no parameters "
+                                   "replay can read")
+        drives.append((j, kind, tuple(params[slot_of[k]] for k in keys)))
     naming, labels, rows = _naming(spine, table_doc, inputs, outputs)
     rise = tuple(code(i["rise"]) for i in inputs)
     fall = tuple(code(i["fall"]) for i in inputs)
@@ -216,6 +236,7 @@ def _decode(document: dict[str, Any]) -> SpineRecord:
         trial_start=code(structural.get("trialStart")),
         session_end=code(structural.get("sessionEnd")),
         recorded=tuple((int(c), int(t)) for c, t in document.get("ts_data", [])),
+        drives=tuple(drives),
         names={code: name for name, code in code_of.items()},
         naming=naming,
         phase_labels=labels,
@@ -262,6 +283,22 @@ def _expected(record: SpineRecord, actions: list[tuple[int, rp.Actions]],
     return out
 
 
+def pulses(record: SpineRecord) -> list[tuple[int, int, int]]:
+    """Every pulse every train fired, as (output bit, rise tick, fall tick), by rise.
+
+    The stream carries only each train's start and end (`TRAIN_ON`, `TRAIN_OFF`);
+    every pulse between is `replay.train_pulses` over that span, at the row's
+    rate and width. The spans are replay's own, which `expected_stream` holds
+    to the recorded stream. A train still running when a crashed file stops is
+    cut at its last recorded strobe.
+    """
+    params = {bit: values for bit, kind, values in record.drives if kind == "train"}
+    out = [(bit, start + rise, start + fall)
+           for bit, start, end in _run(record, *_session(record))[1]
+           for rise, fall in rp.train_pulses(params[bit][0], params[bit][1], end - start)]
+    return sorted(out, key=lambda p: (p[1], p[0]))
+
+
 def _session(record: SpineRecord) -> tuple[list[tuple[int, rp.Actions]], int | None]:
     """The replay's actions through the session's end, and the tick it ended at.
 
@@ -293,30 +330,74 @@ def _session(record: SpineRecord) -> tuple[list[tuple[int, rp.Actions]], int | N
 def _stream(record: SpineRecord, actions: list[tuple[int, rp.Actions]],
             end: int | None) -> list[tuple[int, int]]:
     """Every strobe of every tick through the end, or through the last recorded one."""
+    return _run(record, actions, end)[0]
+
+
+def _run(record: SpineRecord, actions: list[tuple[int, rp.Actions]],
+         end: int | None) -> tuple[list[tuple[int, int]], list[tuple[int, int, int]]]:
+    """Every strobe through the end, or through the last recorded one, and each
+    train's (bit, first tick, tick it stopped).
+
+    The core's actions are replay's. On top of them, BoxSpine.h's DRIVEN
+    OUTPUTS: a train whose ms runs out goes LOW on its own, at a tick the core
+    may leave idle, so the outputs strobed are the LIVE ones.
+    """
     out: list[tuple[int, int]] = []
-    outputs = 0
+    spans: list[tuple[int, int, int]] = []
+    live = 0
+    train_ms = {bit: values[2] for bit, kind, values in record.drives if kind == "train"}
+    since: dict[int, int] = {}
 
     def bits(mask: int) -> list[int]:
         return [i for i in range(32) if mask >> i & 1]
 
+    def ran_out(now: int) -> int:
+        """The live trains whose ms has run out by `now`."""
+        return sum(1 << b for b, ms in train_ms.items() if live >> b & 1 and ms and now - since[b] >= ms)
+
+    def next_run_out() -> int | None:
+        due = [since[b] + ms for b, ms in train_ms.items() if live >> b & 1 and ms]
+        return min(due) if due else None
+
+    def stopped(mask: int, now: int) -> None:
+        spans.extend((b, since[b], now) for b in bits(mask) if b in train_ms)
+
+    def run_outs_before(now: int) -> None:
+        """Ticks the core leaves idle where a train runs out: its TRAIN_OFF alone."""
+        nonlocal live
+        while (due := next_run_out()) is not None and due < now:
+            mask = ran_out(due)
+            out.extend((record.off[j], due) for j in bits(mask))
+            stopped(mask, due)
+            live &= ~mask
+
     for now, a in actions:
+        run_outs_before(now)
         starts = bool(a.flags & rp.ACT_TRIAL_START)
         if a.flags & rp.ACT_SESSION_START:
             out.append((record.session_start, now))
         out += [(record.rise[i], now) for i in bits(a.rose)]
         out += [(record.fall[i], now) for i in bits(a.fell)]
         if starts and now == end:
-            out += [(record.off[j], now) for j in bits(outputs)]
+            out += [(record.off[j], now) for j in bits(live)]
             out.append((record.session_end, now))
-            return out
+            stopped(live, now)
+            return out, spans
         if starts and a.flags & rp.ACT_BLOCK_START and record.block_start is not None:
             out.append((record.block_start, now))
         if starts:
             out.append((record.trial_start, now))
-        out += [(record.off[j], now) for j in bits(a.off)]
+        off = (a.off | ran_out(now)) & live
+        out += [(record.off[j], now) for j in bits(off)]
         out += [(record.on[j], now) for j in bits(a.on)]
-        outputs = (outputs & ~a.off) | a.on
-    return out
+        stopped(off, now)
+        live = (live & ~off) | a.on
+        since.update((b, now) for b in bits(a.on) if b in train_ms)
+    run_outs_before(record.last_tick + 1)
+    stopped(live, record.last_tick)  # still running where the file stops
+    return out, spans
+
+
 
 
 # --- annotations ----------------------------------------------------------------

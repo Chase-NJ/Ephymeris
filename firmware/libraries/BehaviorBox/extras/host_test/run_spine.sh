@@ -25,4 +25,11 @@ CXX="${CXX:-clang++}"
 for scenario in handshake stream stop last blocks pairs; do
   "$HERE/test_spine" "$scenario"
 done
+# The same runner over spine_drive_fixture.h: PWM, tone and a pulse train.
+"$CXX" -std=c++11 -Wall -Werror -Wno-unused-function -DSPINE_FIXTURE_DRIVES \
+  -I"$HERE/box_shim" -I"$HERE" -I"$LIB" \
+  -x c++ "$HERE/test_spine.cpp" -o "$HERE/test_spine_drives"
+for scenario in drives train_held train_refused; do
+  "$HERE/test_spine_drives" "$scenario"
+done
 echo "test_spine: all passed"

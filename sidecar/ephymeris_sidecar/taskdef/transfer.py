@@ -46,7 +46,7 @@ MAX_EXPORT_BYTES = MAX_DEFINITION_BYTES + 64 * 1024
 #: What a channel IS, as the file carries it and the import compares it: the
 #: fields `ChannelSet.content_hash` covers, less the name, in this order.
 CHANNEL_FIELDS = (
-    "kind", "type", "role", "active_level", "debounce_ms",
+    "kind", "type", "mode", "role", "active_level", "debounce_ms",
     "serves", "well", "port_slot", "onset_strobe", "edges",
 )
 
@@ -210,6 +210,7 @@ def channel_entry(channel: registry.Channel) -> dict[str, Any]:
     values = {
         "kind": channel.kind,
         "type": channel.type,
+        "mode": channel.mode,
         "role": channel.role,
         "active_level": channel.active_level,
         "debounce_ms": channel.debounce_ms,

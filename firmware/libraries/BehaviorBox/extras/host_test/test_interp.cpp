@@ -37,7 +37,7 @@ static const InterpStateRow TRIAL_STATES[] = {
 };
 static const InterpTable TRIAL = {TRIAL_STATES, TRIAL_EDGES, NULL, NULL};
 
-/*  BLOCKS (INTERP 5). Two rows, each a Response window:
+/*  BLOCKS (INTERP 6). Two rows, each a Response window:
       0 Pick     the block's draw: its branches are the blocks' rows, block by block
       1 Row A    light on, watch LEFT and RIGHT (a response state); LEFT -> 3, RIGHT -> 4;
                  after 100 -> 5
@@ -605,6 +605,15 @@ int main() {
       assert(interp_step(&d, NOTHING, 100).entered[0] == 2);
       assert(interp_step(&d, NOTHING, 110).entered[0] == 0);
       assert(interp_step(&d, edges(BIT(LEFT), 0), 111).entered[0] == 1); } }
+  // --- a pulse train (INTERP 5): the ADR's opto row, 20 Hz, 5 ms wide ---
+  // HIGH from its first tick for 5, every 50; the same in every second.
+  { assert(interp_train_high(0, 20, 5) && interp_train_high(4, 20, 5) && !interp_train_high(5, 20, 5));
+    assert(!interp_train_high(49, 20, 5) && interp_train_high(50, 20, 5) && interp_train_high(1950, 20, 5));
+    // 3 Hz does not divide 1000: rises at 0, 333 and 666 ms into each second.
+    assert(!interp_train_high(332, 3, 1) && interp_train_high(333, 3, 1) && interp_train_high(666, 3, 1));
+    assert(interp_train_high(1000, 3, 1) && !interp_train_high(999, 3, 1));
+    // A width past the period merges the pulses; hz 0 is never HIGH.
+    assert(interp_train_high(15, 100, 20) && !interp_train_high(0, 0, 5)); }
 
   test_blocks();
 

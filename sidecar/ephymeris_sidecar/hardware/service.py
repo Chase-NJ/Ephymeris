@@ -7,7 +7,7 @@ is not a command error. It is a successful reply carrying located problems.
 `problems` comes from two places and reads as one list:
 
   * the JSON Schema, for shape -- a `kind` that is not a kind, a missing pin;
-  * the wiring rules (`RIG101`-`RIG107`), for sense -- a pin the board does not
+  * the wiring rules (`RIG101`-`RIG107`, `RIG109`), for sense -- a pin the board does not
     have, two channels on one pin, a response port with no strobe slot, an odor
     line with no onset code of its own, halves that describe different boxes, a
     channel-set declaration that contradicts itself.

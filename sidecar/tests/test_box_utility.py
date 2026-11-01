@@ -53,7 +53,7 @@ def install(doc: dict) -> None:
 def test_every_output_and_beam_comes_from_the_rig_and_sync_never_does():
     header = utility.utility_channels_h("BOX_Utility")
     assert "#define BOX_UTILITY_NUM_OUTPUTS 18" in header  # 12 + 4 + light + vacuum
-    assert '{"odor_line_7", "odor line 7", 23, BOX_UTIL_EMITTER}' in header
+    assert '{"odor_line_7", "odor line 7", 23, BOX_UTIL_EMITTER, BOX_UTIL_LEVEL}' in header
     assert "#define BOX_UTILITY_NUM_INPUTS 3" in header
     assert "sync_out" not in header, "a pulse on the sync line is an edge in a recording"
 

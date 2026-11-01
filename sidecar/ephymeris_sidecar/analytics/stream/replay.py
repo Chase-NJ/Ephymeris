@@ -26,12 +26,18 @@ from typing import Iterable, Sequence
 #: and the one place they are listed. Not 1: that is BehaviorBox.h's trial
 #: runner (`BOX_INTERP`), which every recorded GRGL run names, and which no table
 #: describes. The two share one numbering space so a run's header alone says
-#: which ran it. 2 is the tracer's format; 3 adds the pick state, 4 the
-#: counter and last-trial states, and 5 blocks and the response state. Each is
-#: otherwise the one before, so an older table runs under the same rules here,
-#: and only what its version lacks is refused in it (`check_interp`).
-INTERP_VERSIONS = frozenset({2, 3, 4, 5})
-INTERP_VERSION = 5
+#: which ran it. 2 is the tracer's format; 3 adds the pick state, and 4 the
+#: counter and last-trial states. Each is otherwise the one before, so an older
+#: table runs under the same rules here, and only what its version lacks is
+#: refused in it (`check_interp`). 5 changes no table and no rule here: it adds
+#: driven outputs, whose pulse trains are `train_pulses` and whose strobes
+#: `stream/spine.py` predicts. 6 adds blocks and the response state.
+INTERP_VERSIONS = frozenset({2, 3, 4, 5, 6})
+INTERP_VERSION = 6
+#: The first version whose outputs can be driven (PWM, tone, a pulse train).
+DRIVES_SINCE = 5
+#: The first version with blocks and the response state.
+BLOCKS_SINCE = 6
 
 NONE = 0xFF
 PERMILLE = 1000
@@ -756,7 +762,7 @@ def _counted(core: Core) -> tuple[Core, bool]:
 def check_interp(table: Table, interp: int) -> None:
     """Refuse a table `interp` cannot have run: an unknown version, a pick state
     before 3, a counter or last-trial state before 4, or blocks or a response
-    state before 5."""
+    state before 6."""
     if interp not in INTERP_VERSIONS:
         raise ValueError(f"INTERP {interp} is not a version this replay knows ({sorted(INTERP_VERSIONS)})")
     if interp < 3 and any(s.is_pick for s in table.states):
@@ -765,7 +771,7 @@ def check_interp(table: Table, interp: int) -> None:
         raise ValueError(f"INTERP {interp} has no counter, and this table holds one")
     if interp < 4 and any(s.flags & LAST_TRIAL for s in table.states):
         raise ValueError(f"INTERP {interp} has no last-trial state, and this table holds one")
-    if interp < 5 and (table.blocks is not None or any(s.flags & RESPONSE for s in table.states)):
+    if interp < BLOCKS_SINCE and (table.blocks is not None or any(s.flags & RESPONSE for s in table.states)):
         raise ValueError(f"INTERP {interp} has no blocks or response state, and this table holds one")
 
 
@@ -822,6 +828,41 @@ def step(core: Core, edges: Edges, now: int) -> tuple[Core, Actions]:
     if target != NONE:
         core = _enter(core, target, now, a)
     return core, a.done(core.block)
+
+
+# --- pulse trains -------------------------------------------------------------
+
+
+def _rise(j: int, hz: int) -> int:
+    """Pulse j of a second rises this many ms into it (BoxInterp.h, PULSE TRAINS)."""
+    return j * 1000 // hz
+
+
+def train_pulses(hz: int, width: int, length: int) -> list[tuple[int, int]]:
+    """Every pulse of a train that ran `length` ticks, as (rise, fall) offsets
+    from its first tick; a pulse still HIGH at `length` falls there.
+
+    Worked out pulse by pulse, never tick by tick, so the differential test
+    holds two different computations of one train to each other: the C side
+    steps `interp_train_high()` on every tick. A pulse is HIGH from its rise to
+    `width` ms later or the next rise, whichever is first, and two that touch
+    are one.
+    """
+    if hz <= 0 or width <= 0 or length <= 0:
+        return []
+    out: list[tuple[int, int]] = []
+    for base in range(0, length, 1000):
+        for j in range(hz):
+            rise = base + _rise(j, hz)
+            if rise >= length:
+                return out
+            nxt = base + _rise(j + 1, hz)  # _rise(hz, hz) is 1000: the next second's first
+            fall = min(rise + width, nxt, length)
+            if out and out[-1][1] == rise:
+                out[-1] = (out[-1][0], fall)
+            else:
+                out.append((rise, fall))
+    return out
 
 
 # --- a whole session ----------------------------------------------------------

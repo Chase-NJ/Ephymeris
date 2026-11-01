@@ -42,6 +42,7 @@ Everything between "a box runs firmware that emits strobes" and "the app draws i
   - [Lowering](#lowering)
   - [The generated folder](#the-generated-folder)
   - [The runner](#the-runner)
+  - [Driven outputs](#driven-outputs)
   - [The snapshot](#the-snapshot)
   - [Spine diagnostics](#spine-diagnostics)
 - [Rig wiring](#rig-wiring)
@@ -201,9 +202,9 @@ The three values are themselves guarded in `BehaviorBox.h`. A header that once o
 
 The host tests compile `BehaviorBox.h` off-target against a minimal `Arduino.h` shim. They do not replace a real AVR compile and flash.
 
-`run_interp.sh` tests `BoxInterp.h`, the phase interpreter's pure core ([ADR 0003](adr/0003-phase-spine-task-model.md)), which includes no Arduino header and needs no shim. `run_diff.sh` is the **differential test**: it runs that core and its Python port, `analytics/stream/replay.py`, over generated state tables and randomized input logs, and fails on the first tick where their actions differ. It then changes the Python tie rule and expects a difference, so a run that generates too few ties fails rather than passing on nothing. Change the header and the port together; the header documents the table format and the tick rules for both. A third of the differential test's tables are lowered by the generator itself (`taskdef/lowering.py`), so the tables a saved spine task compiles are held to both interpreters. They have every phase of the palette (Holds, Waits on either edge, aborts on either edge, Counters over a fixed, drawn or progressive N, Response windows and contingency maps) and several rows, and the raw tables have pick, counter and last-trial states. Both families have blocks of every selection and end rule, loops, corrections and overrides, and a third of the generator's tables are four named tasks run at their own settings with an animal that answers correctly nine times in ten and lets one Wait in five time out (an abort): a reversal on 8 of 10, a bandit looping between blocks of 40–60, a shuffle bag and anti-bias. The reversal, the bandit and the bag must each switch blocks in some case. More self-checks: each of the uniform, weighted, bag and anti-bias draws, the N rule, a drawn N, the criterion, `next`, correction, the compiled error set, the criterion's skipped aborts and overrides, changed one at a time, must be caught by the raw tables and by the generator's; with the pick draw mirrored, the raw tables must differ (the generator's picks all draw by their block's selection); with every RNG draw reflected, the generator's tables alone must differ; and a counter that exits one press late, or a progressive step that never advances, must each be caught by both.
+`run_interp.sh` tests `BoxInterp.h`, the phase interpreter's pure core ([ADR 0003](adr/0003-phase-spine-task-model.md)), which includes no Arduino header and needs no shim. `run_diff.sh` is the **differential test**: it runs that core and its Python port, `analytics/stream/replay.py`, over generated state tables and randomized input logs, and fails on the first tick where their actions differ. It then changes the Python tie rule and expects a difference, so a run that generates too few ties fails rather than passing on nothing. Change the header and the port together; the header documents the table format and the tick rules for both. A third of the differential test's tables are lowered by the generator itself (`taskdef/lowering.py`), so the tables a saved spine task compiles are held to both interpreters. They have every phase of the palette (Holds, Waits on either edge, aborts on either edge, Counters over a fixed, drawn or progressive N, Response windows and contingency maps) and several rows, and the raw tables have pick, counter and last-trial states. Both families have blocks of every selection and end rule, loops, corrections and overrides, and a third of the generator's tables are four named tasks run at their own settings with an animal that answers correctly nine times in ten and lets one Wait in five time out (an abort): a reversal on 8 of 10, a bandit looping between blocks of 40–60, a shuffle bag and anti-bias. The reversal, the bandit and the bag must each switch blocks in some case. More self-checks: each of the uniform, weighted, bag and anti-bias draws, the N rule, a drawn N, the criterion, `next`, correction, the compiled error set, the criterion's skipped aborts and overrides, changed one at a time, must be caught by the raw tables and by the generator's; with the pick draw mirrored, the raw tables must differ (the generator's picks all draw by their block's selection); with every RNG draw reflected, the generator's tables alone must differ; and a counter that exits one press late, or a progressive step that never advances, must each be caught by both. Some of the generator's tables drive outputs, a bit per row ([Driven outputs](#driven-outputs)). Last, **pulse trains**: the C side steps `interp_train_high()` on every tick of a train and replay works each pulse out by arithmetic (`replay.train_pulses`), over every rate from 1 to 100 Hz, and every edge's tick must agree; with replay's rises rounded up instead of down, they must differ.
 
-`run_spine.sh` tests `BoxSpine.h`, the runner around that core, on the instrumented shim with a hand-written table: the handshake, the stream's order and tick times, skipped `millis()` values, and the [session end rule](#the-runner), at the trial count, after `STOP`, after a last-trial state and where the last block ends, `BLOCK_START`, and a pair's high end held in order. `sidecar/tests/test_spine_run.py` compiles a **generated** spine task the same way, plays its serial output through the real session path, and replays the `.tsv` that path wrote.
+`run_spine.sh` tests `BoxSpine.h`, the runner around that core, on the instrumented shim with a hand-written table: the handshake, the stream's order and tick times, skipped `millis()` values, and the [session end rule](#the-runner), at the trial count, after `STOP`, after a last-trial state and where the last block ends, `BLOCK_START`, and a pair's high end held in order. `sidecar/tests/test_spine_run.py` compiles a **generated** spine task the same way, plays its serial output through the real session path, and replays the `.tsv` that path wrote. It runs again over `spine_drive_fixture.h`, whose present drives a PWM line, a tone and a pulse train: each pin, every pulse's tick, a train running out, and a pulse no shorter than its period refused. `test_spine_run.py` also runs a generated task with all three and holds the pin's every edge to replay's pulses.
 
 ## Sketch library
 
@@ -502,7 +503,7 @@ A wiring change, from the Rig tab's save to the rescan, is all one [rig definiti
 flowchart TD
     save["hardware.save"] --> inuse{"Session set up<br/>or a box running?"}
     inuse -->|yes| busy["RIG_IN_USE<br/>nothing written"]
-    inuse -->|no| check{"Pins confirmed if asked,<br/>schema, RIG101–RIG107?"}
+    inuse -->|no| check{"Pins confirmed if asked,<br/>schema, RIG101–RIG107, RIG109?"}
     check -->|"pins unconfirmed, or a rule broken"| blocked["RIG_SAVE_BLOCKED<br/>nothing written"]
     check -->|"not a rig document"| invalid["RIG_INVALID<br/>nothing written"]
     check -->|"yes"| impact{"Would it newly break<br/>a saved task?"}
@@ -569,7 +570,7 @@ flowchart LR
 
 | From the rig | Becomes |
 |---|---|
-| Every `emitter`, `reward`, `cue` and `vacuum` channel, in declaration order within its kind | An output row: its **channel name** is the command token (`PULSE fluid_2`) and STATUS key (`fluid_2=1`); its **Rig label** names it in the self-test and the Debug Mode grid (a reward line adds its well) |
+| Every `emitter`, `reward`, `cue` and `vacuum` channel, in declaration order within its kind | An output row: its **channel name** is the command token (`PULSE fluid_2`) and STATUS key (`fluid_2=1`); its **Rig label** names it in the self-test and the Debug Mode grid (a reward line adds its well, a [driven output](#driven-outputs) what it plays). A PWM line is on fully, a tone plays a 1 kHz test tone, and a train pulses a 20 Hz, 5 ms test train for as long as it is on, never held HIGH |
 | Every `engagement` and `response` channel | A beam: a STATUS key, a telemetry field, a prompted step in the self-test |
 | The first `cue` | The `identify` pair (`ON trial_light` / `OFF trial_light`) |
 | `sync` | Nothing. A pulse on it would be an edge in a recording |
@@ -647,11 +648,11 @@ A definition with a top-level `spine` key is a spine task (`taskdef/model.py`, `
 
 | Field | Holds |
 |---|---|
-| `slots[]` | The spine's roles, each `{id, type}` with type `digital_in` or `digital_out` |
-| `spine[]` | The phases, in order. Each `{phase, …}`:<br>• `wait` moves on at an edge of input slot `on`: its `edge`, `enter` (the default) or `exit`. An optional `timeoutMs` ends the trial early;<br>• `hold` moves on after `ms` with input slot `on` still active; a release sooner is `hold_broken`;<br>• `present` lasts `ms`. `abortOnRelease` names an input slot whose release aborts it, and `abortOnEnter` one whose entry does;<br>• `delay` lasts `ms`, with the same two optional aborts;<br>• `counter` counts rises of input slot `on` and moves on at the N-th. N is `count` (fixed: FR), drawn uniformly from `count` to `countMax` at each entry (VR), or the next of `ratios`, one per completion, the last repeating (PR). An optional `timeoutMs` is a time limit on the whole count: running out is an `omission`, and with `endsSession: true` that trial is the session's last. At most one per spine;<br>• `response`, the Response window, watches the input slots in `responses` for `ms`; each row's `map` says where a response or the timeout goes. Optional `holdMs` is how long a response must be held when its map entry asks for a hold. At most one per spine, followed by exactly one Outcome;<br>• `outcome`, at most one per spine, opens output slot `line`, then waits `ms`. After a Response window it names no `line`: the row's map does;<br>• `iti` lasts `ms`.<br>Any phase may name `outputs`, the output slots HIGH while in it, a window's through its holds |
-| `rows[]` | The trial types. Each has a stable `id` (lower case, digits and underscores: it names the row's parameters), a required `name`, `bind` (slot → channel name), `rewardMs`, `rewardPermille` (read only by an Outcome with no window before it), and, with a Response window, a `map` |
-| `rows[].map` | The row's **contingency map**: one entry per watched response slot and one for `timeout`, each `{outcome, line, rewardPermille, hold}`:<br>• `outcome`, a class from `lowering.OUTCOME_CLASSES`;<br>• `line`, optional: an output slot, which the row binds to a reward channel;<br>• `rewardPermille`, with a `line` only, default 1000;<br>• `hold`, on a response only: it must be held for the window's `holdMs`, and letting go sooner is `hold_broken` |
-| `blocks[]` | The session's blocks, in order, each `{id, rows, select, weights, trials, trialsMax, criterion, next, correction, biasWindow, phaseMs}`: what [Blocks](#blocks) describes. At least one |
+| `slots[]` | The spine's roles, each `{id, type, mode}` with type `digital_in`, `digital_out`, `pwm_out` or `tone_out`, and `mode: "train"` on a `digital_out` that is a pulse train ([Driven outputs](#driven-outputs)). A slot binds only a channel of its own type and mode |
+| `spine[]` | The phases, in order. Each `{phase, …}`:<br>• `wait` moves on at an edge of input slot `on`: its `edge`, `enter` (the default) or `exit`. An optional `timeoutMs` ends the trial early;<br>• `hold` moves on after `ms` with input slot `on` still active; a release sooner is `hold_broken`;<br>• `present` lasts `ms`. `abortOnRelease` names an input slot whose release aborts it, and `abortOnEnter` one whose entry does;<br>• `delay` lasts `ms`, with the same two optional aborts;<br>• `counter` counts rises of input slot `on` and moves on at the N-th. N is `count` (fixed: FR), drawn uniformly from `count` to `countMax` at each entry (VR), or the next of `ratios`, one per completion, the last repeating (PR). An optional `timeoutMs` is a time limit on the whole count: running out is an `omission`, and with `endsSession: true` that trial is the session's last. At most one per spine;<br>• `response`, the Response window, watches the input slots in `responses` for `ms`; each row's `map` says where a response or the timeout goes. Optional `holdMs` is how long a response must be held when its map entry asks for a hold. At most one per spine, followed by exactly one Outcome;<br>• `outcome`, at most one per spine, opens output slot `line`, a level `digital_out`, then waits `ms`. After a Response window it names no `line`: the row's map does;<br>• `iti` lasts `ms`.<br>Any phase may name `outputs`, the output slots HIGH while in it, a window's through its holds |
+| `rows[]` | The trial types. Each has a stable `id` (lower case, digits and underscores: it names the row's parameters), a required `name`, `bind` (slot → channel name), `rewardMs`, `rewardPermille` (read only by an Outcome with no window before it), with a Response window, a `map`, and, for each driven output slot, a `drive` entry ([Driven outputs](#driven-outputs)) |
+| `rows[].map` | The row's **contingency map**: one entry per watched response slot and one for `timeout`, each `{outcome, line, rewardPermille, hold}`:<br>• `outcome`, a class from `lowering.OUTCOME_CLASSES`;<br>• `line`, optional: a level output slot, which the row binds to a reward channel;<br>• `rewardPermille`, with a `line` only, default 1000;<br>• `hold`, on a response only: it must be held for the window's `holdMs`, and letting go sooner is `hold_broken` |
+| `blocks[]` | The session's blocks, in order, each `{id, rows, select, weights, trials, trialsMax, criterion, next, correction, correctionAfter, biasWindow, phaseMs}`: what [Blocks](#blocks) describes. At least one |
 | `sessionTrials` | Optional: the most trials the session runs, whatever its blocks (`NT`). Without it the blocks alone end the session |
 | `params{}` | Only divergences from the defaults the spine itself states, keyed by metadata key |
 
@@ -711,7 +712,7 @@ Selection and every end rule run in the interpreter's core, `BoxInterp.h`, so th
 
 `taskdef/lowering.py` writes each phase as states, as `BoxInterp.h`'s *Lowering the phases* describes and this section extends. It is pure and standard-library only, so the differential test loads it by path and holds its tables to both interpreters ([Compiling and the host tests](#compiling-and-the-host-tests)).
 
-- **Channels are bits.** Input bit i is the i-th distinct channel bound to a `digital_in` slot, ordered by slot and then by row; outputs the same. A slot bound to one channel in every row is one bit; `sample` bound to two odor lines in two rows is two. No pin enters the table.
+- **Channels are bits.** Input bit i is the i-th distinct channel bound to a `digital_in` slot, ordered by slot and then by row; outputs the same. A slot bound to one channel in every row is one bit; `sample` bound to two odor lines in two rows is two. A [driven output](#driven-outputs) slot is one bit per row whatever it binds, since each row drives it at its own values. No pin enters the table, and a table speaks of at most 32 inputs and 32 outputs.
 - **Every duration and probability is a parameter slot**, set by a `SET` line. One table therefore serves every tuning and every pin map.
 
 | Slot | Wire key | Metadata key | What |
@@ -724,6 +725,9 @@ Selection and every end rule run in the interpreter's core, `BoxInterp.h`, so th
 | then, per row r from 1 | `RW<r>` | `reward_ms_<row id>` | The row's reward time, when it can pay |
 | | `RP<r>` | `reward_permille_<row id>` | Its reward probability, for an Outcome with no window before it |
 | | `RP<r>_<k>` | `reward_permille_<row id>_<slot or timeout>` | The probability of map entry k, numbered from 1 in branch order (the window's responses, then `timeout`), for each entry with a line |
+| | `PD<r>_<s>` | `pwm_duty_<row id>_<slot>` | A PWM slot's duty, 0–255. s numbers the slot among the output slots, from 1 |
+| | `TF<r>_<s>` | `tone_hz_<row id>_<slot>` | A tone slot's frequency, 31–65535 Hz |
+| | `TH<r>_<s>`, `TW<r>_<s>`, `TL<r>_<s>` | `train_hz_…`, `train_width_ms_…`, `train_ms_<row id>_<slot>` | A train slot's rate (1–100 Hz), pulse width (1–999 ms) and length (0–3600000 ms), in three consecutive slots |
 | then, per block b from 1 | `BN<b>` | `block_<block id>_trials` | The block's N, or the fewest trials a draw can give, 1 to 10000 |
 | | `BNX<b>` | `block_<block id>_trials_max` | The most trials a draw can give, with `trialsMax` |
 | | `BK<b>`, `BKN<b>` | `block_<block id>_criterion_correct`, `_criterion_of` | The criterion's k and n, 1 to 32 |
@@ -777,14 +781,14 @@ Selection and every end rule run in the interpreter's core, `BoxInterp.h`, so th
 - **Ticks.** The core is stepped once per millisecond of `millis()`, including each value AVR `millis()` skips.
 - **Outputs and strobes.** The runner drives each tick's outputs, then strobes the tick's actions, each stamped with the tick.
 - **The handshake.** It is the one in [Confirming the parameters](#confirming-the-parameters), over the table's parameter slots. A value is held only when it is a whole number within its slot's declared range, and the high end of a pair only when it is at least the low end already taken: a Counter's drawn N (`N<i>`, `NX<i>`), a block's drawn N (`BN<b>`, `BNX<b>`) and a criterion's k and n (`BK<b>`, `BKN<b>`), listed in `TaskSpine.h` as `SPINE_PAIRS`. Otherwise the board answers `CLAMPED` and the start is refused.
-- **The announcement.** The runner announces `INTERP=5`, `BoxInterp.h`'s `INTERP_VERSION`. Replay also runs `4`, the same format without blocks and the response state, `3`, without the counter and last-trial states either, and `2`, without the pick state either, and refuses a table that holds what its version lacks. `replay.INTERP_VERSIONS` is the one list of the versions it runs.
+- **The announcement.** The runner announces `INTERP=6`, `BoxInterp.h`'s `INTERP_VERSION`. Replay also runs `5`, the same table format without [blocks](#blocks) and the response state, `4`, without [driven outputs](#driven-outputs) either, `3`, without the counter and last-trial states either, and `2`, without the pick state either. It refuses a table that holds what its version lacks, and a snapshot before 5 that drives an output. `replay.INTERP_VERSIONS` is the one list of the versions it runs.
 
 **The stream** holds only what the board observed and what it did. Within a tick it runs in this order:
 
 1. `START_SESSION`;
 2. watched inputs that rose (the channel's `enter` code), then those that fell (`exit`);
 3. `BLOCK_START`, when the trial starts a block, then `TRIAL_START`;
-4. outputs driven LOW (`off`), then outputs driven HIGH (`on`).
+4. outputs driven LOW (`off`), then outputs driven HIGH (`on`), each in bit order. A train that [runs out](#driven-outputs) is one of the tick's `off`s.
 
 An edge on an input no state is watching is never strobed: the interpreter ignores it, so replay needs only what was strobed. The structural codes are the vocabulary's `START_SESSION` and `END_SESSION` (the ADR's SESSION_START and SESSION_END, the same events), `BLOCK_START` and `TRIAL_START`. No outcome or state code is ever strobed.
 
@@ -792,6 +796,44 @@ An edge on an input no state is watching is never strobed: the interpreter ignor
 > **The session end rule is part of what replay reproduces.** The session ends at the tick that would start trial `NT`+1 (when the spine gives `sessionTrials`), at the trial start where its last block ends (the core reports `INTERP_ACT_DONE`), or at the first trial start after `STOP` or after a **last-trial state** (a Counter's time limit with `endsSession`): that trial, its ITI included, runs to its end. At that tick the board strobes the tick's watched input edges, then the `off` code of every output still HIGH, then `END_SESSION`. It does not strobe `BLOCK_START` or `TRIAL_START` and does not drive the new trial's outputs. Change the rule in `BoxSpine.h` and in `analytics/stream/spine.py` together, or every run's last tick reads as a divergence.
 
 `STOP` is honoured at a trial boundary, as with the trial runner. A spine whose first phase waits forever, with no animal poking, therefore ends only when End Session forces it.
+
+### Driven outputs
+
+Beside the level line, an output can be driven three more ways ([ADR 0003](adr/0003-phase-spine-task-model.md#rig)). Each is declared in the channel set, bound by a slot of the same type and mode, and given its values by each row:
+
+| Channel declares | Edges | A row's `drive` for the slot | The board, while a phase holds it HIGH |
+|---|---|---|---|
+| `type: "pwm_out"` | `on`, `off` | `{"duty": 0–255}` | `analogWrite(pin, duty)` |
+| `type: "tone_out"` | `on`, `off` | `{"hz": 31–65535}` | `tone(pin, hz)`; off is `noTone(pin)` |
+| `type: "digital_out", mode: "train"` | `train_on`, `train_off` | `{"hz": 1–100, "widthMs": 1–999, "ms": 0–3600000}` | A pulse train from the 1 ms tick |
+
+```json
+"slots": [{"id": "laser", "type": "digital_out", "mode": "train"}, …],
+"rows":  [{"id": "opto", …, "drive": {"laser": {"hz": 20, "widthMs": 5, "ms": 1000}}}]
+```
+
+- **The channel.** A driven output is a `cue`-kind channel, whatever its `role`, on a pin of its own (RIG107). The trial runner switches every `emitter` and `reward` line by `digitalWrite`, which would hold a laser on, and so it does the lines `registry.LEVEL_LINES` lists: the trial light, the vacuum, the odor and fluid arrays and the sync line. RIG107 refuses a driven output on any pin those land on for this rig, judged by pin: a rig without a `trial_light` channel still leaves BoxPins.h's pin 36 to the trial runner.
+- **The board can run it** (RIG109, `rig/board.py`): a `pwm_out` sits on a pin a timer drives, and a rig has at most one `tone_out`, which `tone()` plays on Timer2, so no `pwm_out` may then sit on Timer2's pins 9 and 10. Two PWM lines on one timer are fine: each holds its own duty at the timer's frequency.
+
+  | Timer | PWM pins |
+  |---|---|
+  | 0 (also `millis()`; 980 Hz) | 4, 13 |
+  | 1 | 11, 12 |
+  | 2 (`tone()`) | 9, 10 |
+  | 3 | 2, 3, 5 |
+  | 4 | 6, 7, 8 |
+  | 5 | 44, 45, 46 |
+
+- **A slot.** It binds only a channel of its own type and mode (SPN102), goes only in a phase's `outputs`, and is never a reward `line`. Its values are [parameters](#lowering), so the board clamps each to its range, and a row that gives none, or one out of range, is SPN112.
+- **A pulse train** fires pulse j of every second at `floor(j × 1000 / hz)` ms into it, `widthMs` long, from the tick the phase drives it HIGH: `BoxInterp.h`'s `interp_train_high()`, stepped on every tick, skipped `millis()` values included, with no `delay()`. A train of `ms` 0 runs as long as its phase holds it; otherwise it **runs out** `ms` ticks after it started, earlier than its phase if the phase is longer.
+
+> [!CAUTION]
+> **A width not shorter than the period, `1000 / hz`, would hold the line HIGH**: a steady output where a train was asked for, which replay would agree with. Each value can be within its own range and the pair still be wrong, so it is refused twice. At save it is SPN112, and the folder carries an `#error`. On the board, after every `SET` line, each train whose pair does not fit answers `CLAMPED <width key>`, so a per-box override that makes one never gets a `START`. A hand-typed `START` that makes one is answered the same way, and no run starts.
+- **The stream.** A train strobes `<CHANNEL>_TRAIN_ON` at its first tick and `<CHANNEL>_TRAIN_OFF` when it stops: its phase drives it LOW, it runs out, or the session ends. Never a pulse's edge. A PWM or tone line strobes its `on` and `off` as a level line does.
+- **Replay** predicts each train's `TRAIN_OFF`, from the snapshot's `drive` and parameter keys for each bit, and reconstructs every pulse in between (`spine.pulses`, by `replay.train_pulses`). The differential test holds that reconstruction to the C train on every edge's tick ([Compiling and the host tests](#compiling-and-the-host-tests)).
+
+> [!CAUTION]
+> **A train's own end is part of what replay reproduces.** The board's live outputs are the core's less every train that ran out. A train that ran out strobes no second `off` when its phase ends, and the session end turns off only live outputs. Change this in `BoxSpine.h` and `analytics/stream/spine.py` together, or every run with a train reads as a divergence.
 
 ### The snapshot
 
@@ -801,11 +843,11 @@ The profile's `spine` key is everything replay needs that the run's own header d
 - the table exactly as lowered, with its `interp`, and per state its phase index (`table.phases`, null for the pick state) and its row index into `rows` (`table.rows`, null for the pick state and the ends the rows share). The trial table reads these; the board never does;
 - the table's counter, `table.counter`: `{min, max, ratios}`, the parameter slots of a Counter's N (255 for none) and its compiled ratios, or null for a spine with no Counter;
 - the table's blocks, `table.blocks`, `table.entries`, `table.overrides` and `table.skipped` (the classes a criterion passes over, bit c−1 for class c): each `InterpBlock`, `InterpEntry` and `InterpOverride` as a list, in `BoxInterp.h`'s field order ([Blocks](#blocks)). Replay reads each trial's block id from the snapshot's `blocks[]` by the index the core reports;
-- each bit's channel and edge code **names**;
+- each bit's channel and edge code **names**, and for a [driven output](#driven-outputs) its `drive` and the wire keys of its `params`;
 - each parameter slot's wire key;
 - the structural code names.
 
-It rides in the `# task_profile:` header line of every run's `.tsv` ([DATA.md](DATA.md#the-tsv-log)), beside the parameter values, the seed and `# interp: 5`, so a crashed run's `.tsv` alone replays. Code numbers come from the snapshot's own `strobes` map, which is the vocabulary when the run started. `analytics/stream/spine.py` reads a run's document back into the table, parameters, seed and input edges, and predicts every strobe the board must have sent ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#the-folder-at-a-glance)).
+It rides in the `# task_profile:` header line of every run's `.tsv` ([DATA.md](DATA.md#the-tsv-log)), beside the parameter values, the seed and `# interp: 6`, so a crashed run's `.tsv` alone replays. Code numbers come from the snapshot's own `strobes` map, which is the vocabulary when the run started. `analytics/stream/spine.py` reads a run's document back into the table, parameters, seed and input edges, and predicts every strobe the board must have sent ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#the-folder-at-a-glance)).
 
 `profile_hash` hashes the snapshot for its behaviour only: row names and the profile's other words for a person are left out of the hash, never out of the snapshot ([A spine task's hash covers behaviour only](#a-spine-tasks-hash-covers-behaviour-only)).
 
@@ -816,16 +858,17 @@ It rides in the `# task_profile:` header line of every run's `.tsv` ([DATA.md](D
 | Code | Problem | Consequence without it |
 |---|---|---|
 | `SPN101` | A slot bound to no channel, or to one this rig lacks | A role with no pin |
-| `SPN102` | A channel whose type is not the slot's, or the sync line | A sensor driven as a valve; a pulse in a recording |
+| `SPN102` | A channel whose type or mode is not the slot's, or the sync line | A sensor driven as a valve; a laser train held on as a level; a pulse in a recording |
 | **`SPN103`** | **A channel edge with no live code.** The shipped channel set names none, so the rig's first wiring save issues them ([Edge codes](#edge-codes)) | An edge recorded as a number nothing decodes |
 | `SPN104` | The vocabulary lacks `START_SESSION`, `BLOCK_START`, `TRIAL_START` or `END_SESSION`. A machine seeded before `TRIAL_START` or `BLOCK_START` existed adds it on Task > Strobes, at the number the shipped vocabulary gives it (`rig/schema/strobe_vocab.default.json`) | A stream with no trials in it |
-| `SPN105` | A spine of the wrong shape: an unknown phase, no ITI or not last, a slot of the wrong direction, a missing duration, a slot called `timeout`, more than one Outcome; a Wait, Hold or Counter whose `on` is not an input slot, a Wait `edge` other than `enter` or `exit`, an abort on a slot that is not an input; a Counter with neither or both of `count` and `ratios`, a count outside 1–10000, a `countMax` below `count` or beside `ratios`, more than 254 ratios or one outside 1–10000, `endsSession` without `timeoutMs`, more than one Counter, stored `params` whose `counter_<i>_count_max` would run below `counter_<i>_count`; a window whose `responses` are not distinct input slots, more than one window, a window not followed by exactly one Outcome, an Outcome after a window that names its own `line`; with several rows, a first phase that is an Outcome; a table over 254 states, or a task whose states, edge rows, parameters, channels and ratios take more than 5000 B of RAM | A table the interpreter cannot walk, or a board with too little RAM left for its stack |
+| `SPN105` | A spine of the wrong shape: an unknown phase, no ITI or not last, a slot of the wrong direction, a missing duration, a slot called `timeout`, a mode on a slot that is not a `digital_out` or one other than `train`, an Outcome whose `line` is not a level output slot, more than one Outcome; a Wait, Hold or Counter whose `on` is not an input slot, a Wait `edge` other than `enter` or `exit`, an abort on a slot that is not an input; a Counter with neither or both of `count` and `ratios`, a count outside 1–10000, a `countMax` below `count` or beside `ratios`, more than 254 ratios or one outside 1–10000, `endsSession` without `timeoutMs`, more than one Counter, stored `params` whose `counter_<i>_count_max` would run below `counter_<i>_count`; a window whose `responses` are not distinct input slots, more than one window, a window not followed by exactly one Outcome, an Outcome after a window that names its own `line`; with several rows, a first phase that is an Outcome; a table over 254 states or more than 32 input or output bits, or a task whose states, edge rows, parameters, channels, ratios, blocks and driven outputs take more than 5000 B of RAM | A table the interpreter cannot walk, or a board with too little RAM left for its stack |
 | `SPN106` | No row or no block; a row or block id that is not lower case or not its own; a block that draws no row, a row twice or a row the task lacks; a row no block draws; an unknown `select`; `weights` that do not line up with the rows, or that a uniform block would not read; a weight out of range, or a bag over 32 tokens; a block `trials`, `trialsMax`, criterion, `correction` or `biasWindow` out of range; a `correctionAfter` naming a class that is not one, or `correct`, or given with no `correction`; a `next` that names no block; a `phaseMs` entry on a phase with no duration; an anti-bias block with a row that has no one response mapped `correct`; stored `params` whose pair runs high below low; two rows whose parameters would share a metadata key; a reward time or probability out of range. Also, without blocking the table, a session only End Session can end: blocks that loop or never end, with no `sessionTrials` | What the session cannot run, or a parameter the board would clamp |
 | `SPN107` | Two slots on one channel, in one row or across rows | One pin, two roles |
 | `SPN108` | A row with no name | Every readout titled after nothing |
-| `SPN109` | A contingency map that is wrong: a watched response or the timeout with no entry, an entry for a slot the window does not watch, an unknown outcome class, a `line` that is not an output slot, a probability outside 0–1000 or with no line, `hold` on the timeout or without the window's `holdMs`, a map on a spine with no window | A response that goes nowhere, or pays where nobody meant |
+| `SPN109` | A contingency map that is wrong: a watched response or the timeout with no entry, an entry for a slot the window does not watch, an unknown outcome class, a `line` that is not a level output slot, a probability outside 0–1000 or with no line, `hold` on the timeout or without the window's `holdMs`, a map on a spine with no window | A response that goes nowhere, or pays where nobody meant |
 | `SPN110` | A stored value in `params` that no parameter of the task reads, named by its key | A tuned value silently replaced by the default |
 | `SPN111` | A Hold, or an `abortOnRelease`, on an input that may not be held when the phase starts. An input is held after a Wait on its `enter` edge, and stays held through phases that hold it or abort on its release. The table is still written | The core sees a release only as an edge: an input that is not held never falls, so the Hold completes, or the abort never comes, with the animal elsewhere |
+| `SPN112` | A [driven output](#driven-outputs) slot a row gives no value, or one out of range; a train whose width is not shorter than its period; a `drive` entry for a slot that is not driven | A stimulus at a value nobody chose, or a train held on as a steady output |
 
 > [!CAUTION]
 > **A task's RAM budget is 5000 B**, everything its `TaskSpine.h` puts in RAM (`spine.task_ram_bytes`):
@@ -833,13 +876,14 @@ It rides in the `# task_profile:` header line of every run's `.tsv` ([DATA.md](D
 > - 18 B per parameter plus its wire key's length and terminator, since AVR keeps the key string in RAM;
 > - 14 B per input bit and 5 B per output bit;
 > - 2 B per progressive ratio, and 2 B when there are none, since an empty array still takes one element;
-> - 12 B per block (`InterpBlock`), 2 B per branch entry (`InterpEntry`) when any block selects by weight or side, 3 B per override (`InterpOverride`) and 2 B per pair of slots held in order; an empty array of these is left out (`lowering.BLOCK_BYTES`, `ENTRY_BYTES`, `OVERRIDE_BYTES`, `spine.PAIR_BYTES`, pinned as the rows are).
+> - 12 B per block (`InterpBlock`), 2 B per branch entry (`InterpEntry`) when any block selects by weight or side, 3 B per override (`InterpOverride`) and 2 B per pair of slots held in order; an empty array of these is left out (`lowering.BLOCK_BYTES`, `ENTRY_BYTES`, `OVERRIDE_BYTES`, `spine.PAIR_BYTES`, pinned as the rows are);
+> - for a task with [driven outputs](#driven-outputs), 9 B (`spine.DRIVE_RUN_BYTES`) and 8 B per driven bit (`DRIVE_BYTES`), and 32 B for `tone()`'s own when it plays one (`TONE_RAM_BYTES`). A task with none compiles none of it.
 >
 > The rest of a spine sketch's globals is at most 462 B (`spine.RUNNER_RAM_BYTES`): the core's block state, with its ring of 32 responses for anti-bias, is about 60 B of it. A test compiles generated tasks for the Mega, up to the largest under the budget, and holds each build's globals at or under that sum, within 24 B: a task of three inputs and three outputs is the sum to the byte, and a smaller one comes in under it where the compiler folds a small constant channel array away. It skips without `arduino-cli`, except in CI's firmware compile job, which sets `REQUIRE_ARDUINO_CLI=1` so a changed row or array fails there. So a task within the budget compiles to at most 5462 B of globals (67% of a Mega's 8192 B). An 18-row 2AFC of one block (4978 B) fits; 19 rows (5242 B) do not. A task compiles at any size up to 254 states, so past the budget a board would run short of stack mid-session with no error at all.
 >
 > Two free-RAM figures, which differ:
-> - **The compiler's**, 8192 B less the globals, which `arduino-cli` prints as what is left for local variables. The budget guarantees at least **2730 B** of it.
-> - **The board's `FREE_RAM`**, announced at `setup()` ([Confirming the parameters](#confirming-the-parameters)). It is about 20–80 B lower, since `setup()`'s own stack is already in use when it is measured: a Mega has measured 68–78 B. In this build the 18-row 2AFC compiles to 5439 B of globals, 2753 B free by the compiler, so it should announce about 2675 B, and a task at the full budget about 2650 B.
+> - **The compiler's, at compile time**: 8192 B less the globals, which `arduino-cli` prints as what is left for local variables. The budget guarantees at least **2730 B** of it, and that guarantee is the one the budget makes.
+> - **The board's `FREE_RAM`, at run time**: announced from `setup()` ([Confirming the parameters](#confirming-the-parameters)), so it is measured with the stack frame it is called from already in use. That frame is `box_spine::setup()` with `awaitStart()` inlined into it, about 230 B. A Mega reads **139–217 B** under the compiler's figure: 217 B for every task with an input or a driven output, and 139 B for a task with neither, which the compiler inlines differently. This is where the board measures, not RAM it has lost: the deepest stack while it waits for `START` is that same frame. In this build the 18-row 2AFC compiles to 5439 B of globals, 2753 B free by the compiler, so it should announce about 2536 B, and a task at the full budget about 2513 B.
 
 ## Rig wiring
 
@@ -875,7 +919,7 @@ The editor and the wire see the same **one document**, `{rig_version, channels, 
 >   - **The machine's first start seeds it**, and nothing else does. With no record yet (an upgrade from a build without one, or a fresh install), that start records the stored wiring if it passes every check, since that is the wiring the build before would have put in force, and writes the file even when it is empty. Over a record in an earlier build's shape (a list of `digests`), it records the stored wiring only if that list names it. Older layouts beside `wiring.json`, which the build before left mid-migration and would have removed, become leftovers; any other older layout is shown. A normal upgrade asks nothing; wiring copied in after it is held. A record that will not parse holds everything, at the first start too.
 >   - **"First start" takes two witnesses, neither of them the record**: `ephymeris.db` has no `wiring_record` [machine mark](DATA.md#machine-marks) (set once that start connects), **and** the data dir has no `wiring-record-started` (written at every start). So a record lost or unwritable at a later start, or lost while the app runs, holds every stored wiring behind RIG108 with a notice saying the record is missing, until a save records it again; and so does a database restored from a snapshot taken before the mark, because the data dir still says this build has run. Two witnesses because each covers the other's way of being lost: a restore brings back an old database but leaves the data dir's files, and a tidy-up of the data dir leaves the database.
 >   - **What still seeds again**: only a data directory that has lost both its `ephymeris.db` mark and `wiring-record-started`: wiped, or a new machine, a first start by definition. Running an older build in between seeds nothing: it leaves both in place.
-> - **When stored wiring will not load** (unreadable, unparseable, out of shape, a channel without a pin, a wiring rule broken (RIG101–RIG107, checked at load as a save checks them), or an older layout that disagrees with itself), **or is held**:
+> - **When stored wiring will not load** (unreadable, unparseable, out of shape, a channel without a pin, a wiring rule broken (RIG101–RIG107, RIG109, checked at load as a save checks them), or an older layout that disagrees with itself), **or is held**:
 >   - the registry composes the shipped pinout, so the sidecar still starts;
 >   - the startup log says the stored wiring failed to load;
 >   - `hardware.get` serves the stored document itself as the editor's draft, so it can be repaired and saved. What the draft is depends on what the file is now:
@@ -897,7 +941,7 @@ The editor and the wire see the same **one document**, `{rig_version, channels, 
 > - **The sidecar decides Save (`status.canSave`), and the editor renders it.** A draft may be saved when it has no problems, the rig's state allows a save, and it either differs from the served draft or would clear a notice. Every `hardware.get`, `hardware.preview` and `hardware.save` reply carries the answer for the draft it describes.
 >   - The editor holds Save while a preview is in flight.
 >   - When an edit is undone back to the served draft, the editor shows the served draft's own answer again; no preview describes that draft.
-> - **A save validates the whole document before it costs it or issues any edge code**: its shape, a pin for every channel, and every wiring rule (RIG101–RIG107, refused as `RIG_SAVE_BLOCKED`). So a draft that is going to be refused never asks the operator to accept the tasks it would break, a refused save never touches the vocabulary, and the editor's own hold on Save is never the only guard.
+> - **A save validates the whole document before it costs it or issues any edge code**: its shape, a pin for every channel, and every wiring rule (RIG101–RIG107, RIG109, refused as `RIG_SAVE_BLOCKED`). So a draft that is going to be refused never asks the operator to accept the tasks it would break, a refused save never touches the vocabulary, and the editor's own hold on Save is never the only guard.
 > - **Reset forgets the record first, then removes the lowest-precedence file first and `wiring.json` last, and stops at the first file it cannot remove.** A partial reset therefore leaves either the wiring that was in force or a load problem, never an older wiring in force, and a restart holds whatever it left. Its confirm dialog lists `status.resetReplaces`, built from the same list Reset walks (`HardwareStore.removal_order`), so a staged pin map holding the pins in force is named too.
 > - **No `edited_at` in any digest or hash.** Identical wiring copied from another machine compares equal.
 
@@ -914,7 +958,8 @@ Beside its kind, every channel declares what it is ([ADR 0003](adr/0003-phase-sp
 
 | Field | Values | Notes |
 |---|---|---|
-| `type` | `digital_in`, `digital_out` | Fixes the channel's edges: `enter`/`exit` on an input, `on`/`off` on an output. Must agree with the kind's direction (RIG107) |
+| `type` | `digital_in`, `digital_out`, `pwm_out`, `tone_out` | Fixes the channel's edges: `enter`/`exit` on an input, `on`/`off` on an output. Must agree with the kind's direction (RIG107). `pwm_out` and `tone_out` are [driven outputs](#driven-outputs) |
+| `mode` | `level` (or absent), `train` | A `digital_out`'s only: a pulse train, whose edges are `train_on`/`train_off`. Joins the channel-set hash only when it is `train`: a level line hashes the same whether it names `level` or nothing |
 | `role` | `port`, `stimulus`, `reward`, `cue`, `routing`, `sync` | What the line is for in a task |
 | `active_level`, `debounce_ms` | `low`/`high`, ms | Inputs only |
 | `serves` | a channel name | Reward lines only: the port the line pays at, equal to `well` while both exist |
@@ -922,7 +967,7 @@ Beside its kind, every channel declares what it is ([ADR 0003](adr/0003-phase-sp
 
 A channel that declares none of these, as every rig saved before they existed does, takes its type and role from its kind (`registry.channel_set_defaults`).
 
-**The trial-runner generator reads none of the new fields.** It still generates from `kind`, `well`, `port_slot` and `onset_strobe`, so every saved task and bundled sketch regenerates byte-identical (`test_channel_set.py`). A [spine task](#spine-tasks) reads `type`, `active_level`, `debounce_ms` and `edges`, and nothing else of a channel but its pin.
+**The trial-runner generator reads none of the new fields.** It still generates from `kind`, `well`, `port_slot` and `onset_strobe`, so every saved task and bundled sketch regenerates byte-identical (`test_channel_set.py`). A [spine task](#spine-tasks) reads `type`, `mode`, `active_level`, `debounce_ms` and `edges`, and nothing else of a channel but its pin.
 
 ### Registry rules
 
@@ -960,7 +1005,7 @@ flowchart TD
 7–12 on the odd pins 23–33, which is why [odor index](#order-is-meaning) must come from declaration order,
 not pin order.*
 
-**The inspector edits what a channel is.** Beside its kind, it edits the channel's type and role; for an input, its active level and debounce; for a reward line, the port it serves. A channel's edge codes are shown read-only, and an edge with no code yet reads "issued on save".
+**The inspector edits what a channel is.** Beside its kind, it edits the channel's type and role; for a `digital_out`, its mode (level or train); for an input, its active level and debounce; for a reward line, the port it serves. A channel's edge codes are shown read-only, and an edge with no code yet reads "issued on save".
 
 **Export channel set** and **Import channel set** move the channel set and the vocabulary to and from the other lab machine ([Moving the channel set between machines](#moving-the-channel-set-between-machines)). The import dialog renders the sidecar's plan, and holds Import on any conflict.
 
@@ -980,8 +1025,9 @@ A well-formed document describing an impossible box is a successful reply carryi
 | `RIG104` | A response port with no strobe slot ([Port slots](#port-slots)) |
 | `RIG105` | More than one `sync` channel |
 | `RIG106` | An odor line with no onset code, one that is not a live onset code, two lines on one code, or an onset on a channel that is not an emitter ([Onset codes](#onset-codes)) |
-| `RIG107` | A type that contradicts the kind's direction, an active level or debounce on an output, an edge the type does not have, an edge code that is not live, or one code on two edges ([Edge codes](#edge-codes)) |
+| `RIG107` | A type that contradicts the kind's direction, an active level or debounce on an output, a mode on a channel that is not a `digital_out` or one other than `train`, a [driven output](#driven-outputs) on a channel that is not a `cue` or on a pin the trial runner drives as a plain line, an edge the type does not have, an edge code that is not live, or one code on two edges ([Edge codes](#edge-codes)) |
 | `RIG108` | A draft read from a stored file that is not in force and that the record cannot vouch for (copied in, changed outside the app, not loaded even once repaired, a pin map not written with its channel set, or saved here when a save after it did not finish), its pins not yet confirmed by the operator ([The channel set and the pin map](#the-channel-set-and-the-pin-map)) |
+| `RIG109` | A [driven output](#driven-outputs) the board cannot run (`rig/board.py`): a `pwm_out` on a pin no timer drives, a `pwm_out` on Timer2's pins 9 or 10 beside a `tone_out`, or a second `tone_out` |
 
 ### The sync channel
 
@@ -1122,7 +1168,7 @@ A declared code that nothing can emit is a name in every picker that no session 
 
 ### Edge codes
 
-**Every edge of every channel names the code that announces it**: `edges: {"on": "FLUID_2_ON", "off": "FLUID_2_OFF"}` in the channel set. The channel's type fixes its edges. A code is a **name**, and the number lives only in the vocabulary.
+**Every edge of every channel names the code that announces it**: `edges: {"on": "FLUID_2_ON", "off": "FLUID_2_OFF"}` in the channel set. The channel's type and mode fix its edges: a train's are `train_on` and `train_off` (`LASER_TRAIN_ON`). A type or mode change drops the codes, and the next save issues fresh ones. A code is a **name**, and the number lives only in the vocabulary.
 
 **A save issues a code for every edge that has none** (`rig/allocation.py`):
 
@@ -1197,7 +1243,7 @@ Before a run starts, the board proves it holds exactly what the host meant it to
 sequenceDiagram
     participant Host as Sidecar
     participant Board as Mega2560
-    Board-->>Host: INTERP=1 (a spine task: INTERP=5)
+    Board-->>Host: INTERP=1 (a spine task: INTERP=6)
     Board-->>Host: FREE_RAM=n
     Board-->>Host: READY
     Host->>Board: BEGIN
@@ -1218,7 +1264,7 @@ sequenceDiagram
   > [!CAUTION]
   > **A parameter whose declared `max` is above 32767 can be refused by the board.** GRGL's `task.json` allows `ERR`, `ITI`, `NPH`, `LZD` up to 120000, `NWP`, `LZS`, `S<n>W`, `S<n>O` up to 60000 and `LZM` up to 300000, but the board holds them in a 16-bit `int`. Such a value now refuses the start with `PARAMS_CLAMPED` instead of running wrapped; the form does not yet stop it being typed.
 - **`START SEED=<n>`** is sent only after the answer clears. It carries the seed and nothing else ([SEED](#seed)); the board clamps and applies ramp row 0 then.
-- **`INTERP=<n>`** is printed before `READY` and names the firmware interpreter, in one numbering space: `1` is `BehaviorBox.h`'s trial runner (GRGL), `2` to `5` are table formats of the state-table interpreter that runs a [spine task](#the-runner) (`BoxInterp.h`'s `INTERP_VERSION`, which a spine board announces as `5`). The run's `.tsv` header records it as `# interp: <n>` ([DATA.md](DATA.md#the-tsv-log)), so the header alone tells a spine run from a legacy one; a board that announced none leaves the line out. Replay runs only the state-table versions and refuses `1`.
+- **`INTERP=<n>`** is printed before `READY` and names the firmware interpreter, in one numbering space: `1` is `BehaviorBox.h`'s trial runner (GRGL), `2` to `6` are versions of the state-table interpreter that runs a [spine task](#the-runner) (`BoxInterp.h`'s `INTERP_VERSION`, which a spine board announces as `6`). The run's `.tsv` header records it as `# interp: <n>` ([DATA.md](DATA.md#the-tsv-log)), so the header alone tells a spine run from a legacy one; a board that announced none leaves the line out. Replay runs only the state-table versions and refuses `1`.
 - **`FREE_RAM=<n>`** follows it: the bytes of RAM free between the heap and the stack, measured in `setup()` with the sketch's tables already resident (`boxFreeRam()` in `BehaviorBox.h`). The header records it as `# free_ram: <n>`, and the `.json` as `free_ram`. A host build has no RAM to measure and reports a fixed value.
 
 The start is refused, with nothing started and the port in `ERROR` until acknowledged, on any of:

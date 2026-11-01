@@ -5,7 +5,7 @@ import type { RigAllocation, RigImpact, RigProblem, RigStatus } from "./types";
  *
  * Two kinds of "wrong" with different owners, kept apart on purpose:
  *
- * - `problems` are the DRAFT's (schema and RIG101–RIG107). Every preview
+ * - `problems` are the DRAFT's (schema and RIG101–RIG107, RIG109). Every preview
  *   replaces them, and any of them blocks Save.
  * - `status.notices` are the RIG's: stored wiring that did not load, or a file
  *   changed on disk since it was installed (`TASKS.md#the-channel-set-and-the-pin-map`).

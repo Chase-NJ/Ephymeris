@@ -20,6 +20,8 @@ export interface RigChannel {
   /** The channel set (`TASKS.md#the-channel-set-and-the-pin-map`): what the
    *  line is, beside the kind it still generates from. */
   type?: string;
+  /** A `digital_out`'s mode: `train`, or absent for a level line (`TASKS.md#driven-outputs`). */
+  mode?: string;
   role?: string;
   /** Inputs only. */
   active_level?: string;

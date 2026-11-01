@@ -38,11 +38,12 @@ from ephymeris_sidecar.sessions import recovery
 from ephymeris_sidecar.sessions import runner as runner_module
 from ephymeris_sidecar.sessions.runner import BoxConfig, SessionRunner
 from ephymeris_sidecar.taskdef import lowering
+from ephymeris_sidecar.taskdef import spine as spine_module
 from ephymeris_sidecar.taskdef.model import TaskDefinition
 from ephymeris_sidecar.taskdef.store import TaskStore
 from ephymeris_sidecar.taskdef.validate import validate
 from ephymeris_sidecar.tasks import profile as task_profile
-from ephymeris_sidecar.tasks.start_command import build_start_command
+from ephymeris_sidecar.tasks.start_command import ParamsExchange, StartRefused, build_start_command
 from tests.fixtures import spine as fixture
 from tests.scripted_board import Bench, ScriptedBoard, until
 
@@ -94,12 +95,13 @@ def animal(pin: int) -> list[tuple[int, int, int]]:
 
 
 def run_board(folder: Path, host_lines: list[str], events, ticks: int, tmp_path: Path,
-              animal: str = "") -> list[str]:
+              animal: str = "", trace_pin: int = -1) -> list[str]:
     """Compile the generated folder for the host and run it: its serial transcript.
 
     `events` are scripted (ms, pin, level) moves; `animal` is C++ defining
     `static void animal(unsigned long t)`, called every tick before `loop()`,
-    for an animal that reacts to what the board drives."""
+    for an animal that reacts to what the board drives. With `trace_pin`, each
+    change of that pin's level is appended as `~PIN <tick> <level>`."""
     ino = folder / f"{folder.name}.ino"
     channels = registry.channels()
     profile = task_profile.load_profile(folder)
@@ -121,13 +123,21 @@ def run_board(folder: Path, host_lines: list[str], events, ticks: int, tmp_path:
         "  setup();\n"
         "  unsigned long t0 = millis();\n"
         "  size_t k = 0, n = sizeof(kMoves) / sizeof(kMoves[0]);\n"
+        f"  const int tracePin = {trace_pin};\n"
+        "  int traced = tracePin >= 0 ? bb_pinValue[tracePin] : 0;\n"
+        "  std::string trace;\n"
         f"  for (unsigned long t = 1; t <= {ticks}UL; ++t) {{\n"
         "    while (k < n && kMoves[k].t == t) { bb_pinValue[kMoves[k].pin] = kMoves[k].level; k++; }\n"
         "    animal(t);\n"
         "    bb_ms = t0 + t;\n"
         "    loop();\n"
+        "    if (tracePin >= 0 && bb_pinValue[tracePin] != traced) {\n"
+        "      traced = bb_pinValue[tracePin];\n"
+        "      trace += \"~PIN \" + std::to_string(t) + \" \" + std::to_string(traced) + \"\\n\";\n"
+        "    }\n"
         "  }\n"
         "  fputs(bb_output().c_str(), stdout);\n"
+        "  fputs(trace.c_str(), stdout);\n"
         "}\n",
         encoding="utf-8",
     )
@@ -218,14 +228,14 @@ async def test_a_saved_spine_task_runs_a_session_and_its_tsv_alone_replays(tmp_p
     folder = save_tracer(tmp_path)
     port = registry.channels().get("odor_port").index
     transcript = run_board(folder, host_lines(folder), animal(port), 16000, tmp_path)
-    assert transcript[:3] == ["INTERP=5", f"FREE_RAM={FREE_RAM}", "READY"]
+    assert transcript[:3] == ["INTERP=6", f"FREE_RAM={FREE_RAM}", "READY"]
     assert not any(line.startswith("CLAMPED") for line in transcript)
 
     tsv = await run_session(tmp_path, folder, transcript, monkeypatch)
     text = tsv.read_text(encoding="utf-8")
     header = text[: text.index("\n", text.index("# task_profile:"))]
     # Everything replay needs is in the header, before the first strobe.
-    assert "# interp: 5\n" in header and f"# free_ram: {FREE_RAM}\n" in header
+    assert "# interp: 6\n" in header and f"# free_ram: {FREE_RAM}\n" in header
     assert f"# trial_seed: {SEED}\n" in header and "# block_b1_trials: 3\n" in header
     assert '"spine":' in header
 
@@ -439,7 +449,7 @@ async def run_task(tmp_path, monkeypatch, raw: dict, overrides: dict, ticks: int
     """`run_generated`, for scripted (ms, pin, level) `events` or any animal."""
     folder = save(tmp_path, raw)
     transcript = run_board(folder, host_lines(folder, overrides), list(events), ticks, tmp_path, animal)
-    assert transcript[:3] == ["INTERP=5", f"FREE_RAM={FREE_RAM}", "READY"]
+    assert transcript[:3] == ["INTERP=6", f"FREE_RAM={FREE_RAM}", "READY"]
     assert not any(line.startswith("CLAMPED") for line in transcript)
     tsv = await run_session(tmp_path, folder, transcript, monkeypatch, overrides)
     document = json.loads(json_of(tsv).read_text(encoding="utf-8"))
@@ -496,6 +506,107 @@ async def test_a_go_no_go_pair_runs_and_replays_to_its_outcome_classes(tmp_path,
     assert not any(t["rewarded"] for t in trials if t["outcome"] != "correct")
 
 
+async def test_pwm_tone_and_a_train_drive_their_pins_and_replay_to_every_pulse(tmp_path, monkeypatch):
+    """The driven outputs (`TASKS.md#driven-outputs`): the board's stream holds a
+    train's start and end only, replay predicts both (the dim row's train runs
+    out mid-phase, at a tick the core leaves idle), and replay's pulses are the
+    pin's every edge as the compiled board drove it."""
+    fixture.install(*fixture.issued_rig(driven=True))
+    overrides = {"block_b1_trials": 4}
+    folder = save(tmp_path, fixture.stimulus())
+    channels = registry.channels()
+    laser = channels.get("laser").index
+    port = channels.get("odor_port").index
+    events = [(200, port, 0), (1500, port, 1), (2000, port, 0), (2100, port, 1),
+              (5000, port, 0), (5300, port, 1), (6800, port, 0), (6900, port, 1)]
+    out = run_board(folder, host_lines(folder, overrides), events, 9000, tmp_path, trace_pin=laser)
+    transcript = [line for line in out if not line.startswith("~PIN")]
+    trace = [tuple(int(v) for v in line.split()[1:]) for line in out if line.startswith("~PIN")]
+    assert transcript[:3] == ["INTERP=6", f"FREE_RAM={FREE_RAM}", "READY"]
+    assert not any(line.startswith("CLAMPED") for line in transcript)
+
+    tsv = await run_session(tmp_path, folder, transcript, monkeypatch, overrides)
+    document = json.loads(json_of(tsv).read_text(encoding="utf-8"))
+    assert document["stop_reason"] == runner_module.CLEAN_STOP_REASON
+    record = spine_stream.decode(document)
+    assert spine_stream.expected_stream(record) == [tuple(s) for s in document["ts_data"]], \
+        "replay predicts every strobe, a train running out on its own included"
+
+    vocab = registry.vocabulary()
+    named = [(vocab.name_of(c), t) for c, t in document["ts_data"]]
+    names = {n for n, _ in named}
+    assert {"LIGHT_ON", "LIGHT_OFF", "TONE_ON", "TONE_OFF", "LASER_TRAIN_ON", "LASER_TRAIN_OFF"} <= names
+    rows = [r["row"] for r in trials_of(document)]
+    assert set(rows) == {"dim", "bright"}, "the pick state drew both rows"
+    starts = [t for n, t in named if n == "LASER_TRAIN_ON"]
+    stops = [t for n, t in named if n == "LASER_TRAIN_OFF"]
+    assert [b - a for a, b in zip(starts, stops)] == [300 if r == "dim" else 1000 for r in rows]
+
+    edges = sorted((t, level) for _, rise, fall in spine_stream.pulses(record) for t, level in ((rise, 1), (fall, 0)))
+    assert edges == trace, "replay reconstructs every pulse the board fired, at its tick"
+    assert len(trace) > 2 * len(rows)
+
+    # The run is scored by #99's replay: no divergence, a trial per row drawn.
+    result = spine_stream.replayed(document)
+    assert result.divergence is None
+    assert [t.row for t in result.trials] == rows
+
+    # A train's start and end are the record of its pulses (the pulses
+    # themselves are never strobed): a TRAIN_OFF moved by a tick or dropped,
+    # or a train length the board did not run, is a diverged run, never scored.
+    dim_off = next(i for i, (n, t) in enumerate(named) if n == "LASER_TRAIN_OFF"
+                   and t - starts[stops.index(t)] == 300)
+
+    def diverged(edit) -> spine_stream.Divergence | None:  # noqa: ANN001
+        damaged = json.loads(json.dumps(document))
+        edit(damaged)
+        return spine_stream.replayed(damaged).divergence
+
+    def shift(d: dict) -> None:
+        d["ts_data"][dim_off][1] += 1
+
+    shifted = diverged(shift)
+    assert shifted is not None and shifted.index == dim_off and "LASER_TRAIN_OFF" in shifted.expected
+    assert diverged(lambda d: d["ts_data"].pop(dim_off)) is not None
+    assert diverged(lambda d: d.update(train_ms_dim_laser=301)) is not None
+    assert spine_stream.trial_table(document) is not None
+
+
+def test_a_per_box_override_that_makes_a_train_steady_is_refused_by_the_board(tmp_path):
+    """Each value in its own range, a box's override can still make a pulse no
+    shorter than its period, which would hold the laser on. The compiled board
+    judges the pair after the SET lines and answers CLAMPED, so the host never
+    sends START (`TASKS.md#confirming-the-parameters`)."""
+    fixture.install(*fixture.issued_rig(driven=True))
+    folder = save(tmp_path, fixture.stimulus())
+    profile = task_profile.load_profile(folder)
+    for overrides, refused in (({"block_b1_trials": 4, "train_width_ms_dim_laser": 50}, True),
+                               ({"block_b1_trials": 4, "train_hz_bright_laser": 100}, True),
+                               ({"block_b1_trials": 4, "train_width_ms_dim_laser": 49}, False)):
+        config = {f.metadata_key: overrides.get(f.metadata_key, f.default) for f in profile.config}
+        command = build_start_command(profile, config)
+        # The board blocks until a START it can run: a START the host would never
+        # send, then one typed by hand with every width at 1 ms, so it exits.
+        widths = " ".join(f"{f.wire_key}=1" for f in profile.config
+                          if f.metadata_key.startswith("train_width_ms_"))
+        lines = [command.begin_line, *command.set_lines, "START SEED=1", f"START SEED=1 {widths}"]
+        out = run_board(folder, lines, [], 10, tmp_path)
+        answers = out[: next(i for i, line in enumerate(out) if line.startswith("PARAMS")
+                             and sum(1 for o in out[: i + 1] if o.startswith("PARAMS")) == len(command.set_lines)) + 1]
+        exchange = ParamsExchange(command)
+        if refused:
+            with pytest.raises(StartRefused) as caught:
+                for line in answers:
+                    exchange.hear(line)
+            assert caught.value.reason == "clamped" and caught.value.detail["keys"][0].startswith("TW")
+            after = out[len(answers):]
+            assert after[0].startswith("CLAMPED TW") and after.index("SEED\t1") > 0, \
+                "the board refuses a START on the pair too, and starts on the one that fits"
+        else:
+            for line in answers:
+                exchange.hear(line)
+            assert exchange.done, "a pair that fits starts"
+            assert out[len(answers)] == "SEED\t1"
 # --- Hold, aborts and the Counter (#102) ----------------------------------------
 
 
@@ -528,6 +639,35 @@ async def test_a_fixed_ratio_session_pays_every_fifth_press(tmp_path, monkeypatc
     trials = trials_of(document)
     assert [(t["outcome"], t["presses"], t["rewarded"]) for t in trials] == [("correct", 5, True)] * 6
     assert scored(document) == [("correct", 5, True)] * 6, "the trial table counts each ratio's presses"
+
+
+async def test_a_counter_with_a_train_lowers_replays_and_fits_the_budget(tmp_path, monkeypatch):
+    """#102's Counter and #105's driven outputs in one table: a 20 Hz laser train
+    runs while the lever is worked toward FR-5, ending with the Counter. The
+    table lowers, replays strobe for strobe, scores each ratio, and fits RAM."""
+    from ephymeris_sidecar.taskdef import spine as spine_module
+
+    fixture.install(*fixture.issued_rig(driven=True))
+    raw = fixture.fixed_ratio(5, id="spine_fr_laser", name="Spine FR Laser")
+    raw["slots"].append({"id": "laser", "type": "digital_out", "mode": "train"})
+    raw["spine"][0]["outputs"] = ["light", "laser"]
+    raw["rows"][0]["bind"]["laser"] = "laser"
+    raw["rows"][0]["drive"] = {"laser": {"hz": 20, "widthMs": 5, "ms": 0}}
+    definition = TaskDefinition.from_json(raw)
+    low = spine_module._resolve(definition).lowered
+    assert low.counter is not None and [k for _, k, _ in low.drives] == ["train"]
+    assert spine_module.task_ram_bytes(low) <= spine_module.TASK_RAM_MAX
+
+    document = await run_task(tmp_path, monkeypatch, raw, {"block_b1_trials": 4}, 6000,
+                              events=presses(lever(), 100, 5000))
+    assert scored(document) == [("correct", 5, True)] * 4
+    vocab = registry.vocabulary()
+    named = [(vocab.name_of(c), t) for c, t in document["ts_data"]]
+    starts = [t for n, t in named if n == "LASER_TRAIN_ON"]
+    stops = [t for n, t in named if n == "LASER_TRAIN_OFF"]
+    assert len(starts) == len(stops) >= 4, "the train starts with each Counter and ends with it"
+    pulses = spine_stream.pulses(spine_stream.decode(document))
+    assert pulses and all(any(a <= rise < b for a, b in zip(starts, stops)) for _, rise, _ in pulses)
 
 
 async def test_a_variable_ratio_session_draws_n_for_each_reward(tmp_path, monkeypatch):
@@ -750,6 +890,49 @@ async def test_a_looping_bandit_runs_blocks_of_40_to_60_until_its_trial_cap(tmp_
     assert board_names(document).count("BLOCK_START") == 3
     paid = {b: sum(t.rewarded for t in result.trials if t.block == b) / blocks.count(b) for b in "ab"}
     assert paid["a"] > 0.6 > 0.4 > paid["b"], paid
+
+
+def blocks_counter_and_train() -> dict:
+    """The driven-output task with a Counter in front (FR-2 on the port, with a
+    limit) and two looping blocks: the dim row for 2-3 trials drawn, then the
+    bright row until 2 of the last 3 trials are correct, a session of 8."""
+    raw = fixture.stimulus(id="spine_mixed", name="Spine Mixed")
+    raw["spine"] = [{"phase": "counter", "on": "port", "count": 2, "timeoutMs": 3000, "outputs": ["cue"]},
+                    {"phase": "present", "outputs": ["light", "tone", "laser"], "ms": 400},
+                    {"phase": "outcome", "line": "cue", "ms": 0},
+                    {"phase": "iti", "ms": 200}]
+    raw["blocks"] = [{"id": "a", "rows": ["dim"], "trials": 2, "trialsMax": 3},
+                     {"id": "b", "rows": ["bright"], "criterion": {"correct": 2, "of": 3}, "next": "a"}]
+    raw["sessionTrials"] = 8
+    return raw
+
+
+def test_blocks_a_counter_and_a_train_lower_together_within_the_budget():
+    fixture.install(*fixture.issued_rig(driven=True))
+    definition = TaskDefinition.from_json(blocks_counter_and_train())
+    assert validate(definition) == []
+    assert "#error" not in spine_module.task_spine_h(definition, "")
+    low = spine_module._resolve(definition).lowered
+    assert low.counter is not None and low.drives and len(low.blocks) == 2
+    assert spine_module.task_ram_bytes(low) <= spine_module.TASK_RAM_MAX
+
+
+async def test_blocks_a_counter_and_a_train_run_and_replay_together(tmp_path, monkeypatch):
+    """Blocks switch, the counter counts and the train runs in one session, and
+    replay predicts every strobe: BLOCK_START, the trains' starts and ends, all."""
+    fixture.install(*fixture.issued_rig(driven=True))
+    port = registry.channels().get("odor_port").index
+    document = await run_task(tmp_path, monkeypatch, blocks_counter_and_train(), {}, 12000,
+                              events=presses(port, 100, 11000, every=60))
+    result = spine_stream.replayed(document)
+    assert result.divergence is None
+    blocks = [t.block for t in result.trials]
+    assert len(blocks) == 8 and blocks[:2] == ["a", "a"] and "b" in blocks
+    assert {t.row for t in result.trials if t.block == "a"} == {"dim"}
+    assert {t.row for t in result.trials if t.block == "b"} == {"bright"}
+    names = board_names(document)
+    assert names.count("BLOCK_START") == len([b for i, b in enumerate(blocks) if i == 0 or b != blocks[i - 1]])
+    assert "LASER_TRAIN_ON" in names and "LASER_TRAIN_OFF" in names
 
 
 async def test_a_shuffle_bag_draws_each_row_its_weight_in_every_refill(tmp_path, monkeypatch):

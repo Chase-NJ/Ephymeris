@@ -43,6 +43,26 @@
   replay needs only what was strobed.
 
 
+  DRIVEN OUTPUTS (docs/TASKS.md#driven-outputs). An output bit the table drives
+  HIGH is a level line, unless TaskSpine.h's SPINE_DRIVES names it:
+    PWM    analogWrite(pin, duty), the duty its parameter slot holds
+    TONE   tone(pin, hz); off is noTone(pin)
+    TRAIN  a pulse train from parameter slots hz, width, ms: BoxInterp.h's
+           interp_train_high() on every tick, the pin written only when its
+           level changes. A train with a non-zero ms RUNS OUT that many ticks
+           after it started: it goes LOW and strobes its off code (TRAIN_OFF)
+           at that tick, among the tick's offs, though the core still holds
+           the bit HIGH. A train strobes nothing else: never a pulse's edge.
+  So the board's LIVE outputs are the core's less every train that ran out. The
+  end rule's "every output still HIGH" means the live ones, and a train that
+  ran out is not turned off twice. A task with no driven output compiles none
+  of this (SPINE_NUM_DRIVES 0).
+  A train whose width is not shorter than its period, 1000 / hz, would hold
+  its line HIGH. Each value alone is in range, so the pair is judged over the
+  whole block after every SET line (CLAMPED <width key>), and a hand-typed
+  START that leaves one is answered the same way and starts nothing.
+
+
   THE SESSION END RULE, which replay reproduces:
     The session ends at the tick that would start trial NT+1, where NT is
     parameter slot SPINE_TRIALS_SLOT (the session's trial cap, when the task
@@ -79,6 +99,9 @@
 #if SPINE_NUM_INPUTS > 32 || SPINE_NUM_OUTPUTS > 32
 #error "a state table speaks of at most 32 inputs and 32 outputs"
 #endif
+#ifndef SPINE_NUM_DRIVES
+#error "TaskSpine.h names no SPINE_NUM_DRIVES: save the task again."
+#endif
 #if !defined(SPINE_RATIOS) || !defined(SPINE_COUNT_MIN)
 #error "TaskSpine.h names no counter (SPINE_COUNT_MIN, SPINE_RATIOS): save the task again."
 #endif
@@ -89,9 +112,24 @@
 
 /* The generator holds a task's RAM to a budget at save, counting these rows and
    arrays at their AVR sizes (taskdef/spine.py's PARAM_BYTES, INPUT_BYTES,
-   OUTPUT_BYTES, RATIO_BYTES for kRatios and PAIR_BYTES for kPairs below, and
-   lowering.py's row sizes; docs/TASKS.md#spine-diagnostics). test_spine_task.py holds the
+   OUTPUT_BYTES, RATIO_BYTES for kRatios and PAIR_BYTES for kPairs below,
+   DRIVE_BYTES, DRIVE_RUN_BYTES and TONE_RAM_BYTES, and lowering.py's row
+   sizes; docs/TASKS.md#spine-diagnostics). test_spine_task.py holds the
    count to a Mega build: change a struct or array here and it fails. */
+
+/* SpineDrive.kind, which TaskSpine.h's SPINE_DRIVES names. */
+#define SPINE_DRIVE_PWM 1
+#define SPINE_DRIVE_TONE 2
+#define SPINE_DRIVE_TRAIN 3
+
+/* One driven output bit: which bit, how it is driven, and its first parameter
+   slot (a train's hz; its width and ms are the next two). */
+struct SpineDrive
+{
+  uint8_t output;
+  uint8_t kind;
+  uint8_t param;
+};
 
 /* One input bit: its pin, which level is ACTIVE, and the codes of its edges. */
 struct SpineInput
@@ -137,7 +175,66 @@ struct SpineTick
   InterpActions actions;
   bool ends;       // the session ends at this tick (the end rule)
   uint32_t endOff; // then: the outputs that were HIGH, to drive LOW
+  uint32_t off;    // otherwise: the outputs driven LOW and HIGH this tick, the
+  uint32_t on;     // core's, and any train that ran out (spine_drives_step)
 };
+
+/*  The driven outputs' pure part: which outputs are live, and when each
+    train started. No pin; the host test drives it like the rest. */
+struct SpineDriveRun
+{
+  const SpineDrive *drives;
+  uint8_t count;
+  uint32_t *since; // per drive: the tick its train started
+  uint32_t live;   // outputs HIGH on the board
+};
+
+/*  Whether a train of this rate and width is pulses at all: a width at least the
+    period, 1000 / hz, holds the line HIGH (BoxInterp.h, PULSE TRAINS). The
+    generator refuses one at save (SPN112); the board refuses one a SET makes. */
+inline bool spine_train_fits(uint32_t hz, uint32_t width)
+{
+  return hz >= 1 && width >= 1 && width < 1000UL / hz;
+}
+
+inline void spine__trains_started(SpineDriveRun &d, uint32_t on, uint32_t now)
+{
+  for (uint8_t i = 0; i < d.count; i++)
+    if (d.drives[i].kind == SPINE_DRIVE_TRAIN && (on & ((uint32_t)1 << d.drives[i].output)))
+      d.since[i] = now;
+}
+
+/*  The session's first tick: its outputs are the live ones. */
+inline void spine_drives_begin(SpineDriveRun &d, const InterpActions &a, uint32_t now)
+{
+  d.live = a.on;
+  spine__trains_started(d, a.on, now);
+}
+
+/*  Every tick after: a live train whose ms has run out goes LOW, and the core's
+    off for a train that already did is dropped. At the end, every live output
+    goes LOW. */
+inline void spine_drives_step(SpineDriveRun &d, const uint32_t *params, SpineTick &t, uint32_t now)
+{
+  uint32_t ranOut = 0;
+  for (uint8_t i = 0; i < d.count; i++)
+  {
+    const SpineDrive &s = d.drives[i];
+    uint32_t bit = (uint32_t)1 << s.output;
+    uint32_t ms = s.kind == SPINE_DRIVE_TRAIN ? params[s.param + 2] : 0;
+    if ((d.live & bit) && ms != 0 && (uint32_t)(now - d.since[i]) >= ms)
+      ranOut |= bit;
+  }
+  if (t.ends)
+  {
+    t.endOff = d.live;
+    d.live = 0;
+    return;
+  }
+  t.off = (t.off | ranOut) & d.live;
+  d.live = (d.live & ~t.off) | t.on;
+  spine__trains_started(d, t.on, now);
+}
 
 inline InterpActions spine_begin(SpineRun &r, const InterpTable *table, const uint32_t *params,
                                  uint32_t seed, uint32_t now)
@@ -158,6 +255,8 @@ inline SpineTick spine_step(SpineRun &r, InterpEdges edges, uint32_t now, uint32
   t.actions = interp_step(&r.core, edges, now);
   t.ends = false;
   t.endOff = 0;
+  t.off = t.actions.off;
+  t.on = t.actions.on;
   if (t.actions.flags & INTERP_ACT_LAST_TRIAL)
     r.last = true;
   if (t.actions.flags & INTERP_ACT_TRIAL_START)
@@ -227,6 +326,78 @@ inline uint32_t maxTrials()
 #endif
 }
 
+#if SPINE_NUM_DRIVES > 0
+static const SpineDrive kDrives[] = SPINE_DRIVES;
+static uint32_t driveSince[SPINE_NUM_DRIVES];
+static bool driveHigh[SPINE_NUM_DRIVES]; // a train's pin, as last written
+static SpineDriveRun drives = {kDrives, SPINE_NUM_DRIVES, driveSince, 0};
+
+inline int driveOf(int output)
+{
+  for (int i = 0; i < SPINE_NUM_DRIVES; i++)
+    if (kDrives[i].output == output) return i;
+  return -1;
+}
+
+inline bool trainHigh(int i, uint32_t now)
+{
+  return interp_train_high((uint32_t)(now - driveSince[i]), params[kDrives[i].param],
+                           params[kDrives[i].param + 1]);
+}
+#endif
+
+/*  Drive output bit j LOW or HIGH, as its drive says (DRIVEN OUTPUTS). */
+inline void drive(int j, bool high, uint32_t now)
+{
+  uint8_t pin = kOutputs[j].pin;
+#if SPINE_NUM_DRIVES > 0
+  int i = driveOf(j);
+  uint8_t kind = i < 0 ? 0 : kDrives[i].kind;
+#if SPINE_HAS_TONE
+  if (kind == SPINE_DRIVE_TONE)
+  {
+    if (high) tone(pin, (unsigned int)params[kDrives[i].param]);
+    else noTone(pin);
+    return;
+  }
+#endif
+  if (high && kind == SPINE_DRIVE_PWM)
+  {
+    analogWrite(pin, (int)params[kDrives[i].param]);
+    return;
+  }
+  if (kind == SPINE_DRIVE_TRAIN)
+  {
+    driveHigh[i] = high && trainHigh(i, now);
+    digitalWrite(pin, driveHigh[i] ? HIGH : LOW);
+    return;
+  }
+#else
+  (void)now;
+#endif
+  digitalWrite(pin, high ? HIGH : LOW);
+}
+
+/*  Every live train's pin at tick `now`, written only when its level changes. */
+inline void stepTrains(uint32_t now)
+{
+#if SPINE_NUM_DRIVES > 0
+  for (int i = 0; i < SPINE_NUM_DRIVES; i++)
+  {
+    if (kDrives[i].kind != SPINE_DRIVE_TRAIN || !(drives.live & ((uint32_t)1 << kDrives[i].output)))
+      continue;
+    bool high = trainHigh(i, now);
+    if (high != driveHigh[i])
+    {
+      digitalWrite(kOutputs[kDrives[i].output].pin, high ? HIGH : LOW);
+      driveHigh[i] = high;
+    }
+  }
+#else
+  (void)now;
+#endif
+}
+
 inline void defaults()
 {
   for (int s = 0; s < SPINE_NUM_PARAMS; s++)
@@ -275,6 +446,28 @@ inline void takeTokens(char *line, ParamAudit *audit)
 
 /*  Answer one SET line: CLAMPED for each value not held as written, then the
     running PARAMS. As applySetLine() does for the trial runner. */
+/*  CLAMPED <width key> for every train whose width, as the block stands, is not
+    shorter than its period: each value in its own range, the pair would hold
+    the line HIGH. Judged over the whole block after every line, as the host
+    reads only the last line's answer. True when any was. */
+inline bool clampTrains()
+{
+  bool any = false;
+#if SPINE_NUM_DRIVES > 0
+  char buf[32];
+  for (int i = 0; i < SPINE_NUM_DRIVES; i++)
+  {
+    uint8_t p = kDrives[i].param;
+    if (kDrives[i].kind != SPINE_DRIVE_TRAIN || spine_train_fits(params[p], params[p + 1]))
+      continue;
+    snprintf(buf, sizeof(buf), "CLAMPED %s", kParams[p + 1].key);
+    Serial.println(buf);
+    any = true;
+  }
+#endif
+  return any;
+}
+
 inline void answerSet(char *line, ParamAudit &audit)
 {
   takeTokens(line, &audit);
@@ -286,6 +479,7 @@ inline void answerSet(char *line, ParamAudit &audit)
   }
   if (audit.inexactLost)
     Serial.println("CLAMPED *");
+  clampTrains();
   snprintf(buf, sizeof(buf), "PARAMS %d %lu", audit.accepted, (unsigned long)audit.finalCrc());
   Serial.println(buf);
 }
@@ -297,6 +491,7 @@ inline uint32_t awaitStart()
 {
   char cmd[SET_LINE_MAX];
   ParamAudit audit;
+  unsigned long seed = 0;
   defaults();
   while (true)
   {
@@ -310,15 +505,17 @@ inline uint32_t awaitStart()
     else if (lineIsCommand(cmd, "SET"))
       answerSet(cmd, audit);
     else if (lineIsCommand(cmd, "START"))
-      break;
+    {
+      // START may carry SEED=<n> and, typed by hand, parameters of its own. SEED
+      // is no parameter key, so takeTokens() passes over it. A train they leave
+      // not fitting is refused here: no run starts on it.
+      const char *at = strstr(cmd, "SEED=");
+      seed = at != NULL && (at == cmd || at[-1] == ' ') ? strtoul(at + 5, NULL, 10) : 0;
+      takeTokens(cmd, NULL);
+      if (!clampTrains())
+        break;
+    }
   }
-  // START may carry SEED=<n> and, typed by hand, parameters of its own. SEED is
-  // no parameter key, so takeTokens() passes over it.
-  unsigned long seed = 0;
-  const char *at = strstr(cmd, "SEED=");
-  if (at != NULL && (at == cmd || at[-1] == ' '))
-    seed = strtoul(at + 5, NULL, 10);
-  takeTokens(cmd, NULL);
   if (seed == 0)
     seed = micros();
   seed %= 2147483647UL;
@@ -360,17 +557,19 @@ inline InterpEdges sample(uint32_t now)
 }
 
 /*  Drive and strobe one tick's actions, in the core's order (THE STREAM). */
-inline void emitTick(const InterpActions &a, uint32_t now, bool ends, uint32_t endOff)
+inline void emitTick(const SpineTick &t, uint32_t now)
 {
+  const InterpActions &a = t.actions;
+  bool ends = t.ends;
   unsigned long ts = (unsigned long)(uint32_t)(now - run.start);
-  uint32_t off = ends ? endOff : a.off;
-  uint32_t on = ends ? 0 : a.on;
+  uint32_t off = ends ? t.endOff : t.off;
+  uint32_t on = ends ? 0 : t.on;
   // The pins first, so the physical edge is as close to its tick as it can be.
+  // Every off before any on: a driven slot's rows are two bits on one pin.
   for (int j = 0; j < SPINE_NUM_OUTPUTS; j++)
-  {
-    if (off & ((uint32_t)1 << j)) digitalWrite(kOutputs[j].pin, LOW);
-    if (on & ((uint32_t)1 << j)) digitalWrite(kOutputs[j].pin, HIGH);
-  }
+    if (off & ((uint32_t)1 << j)) drive(j, false, now);
+  for (int j = 0; j < SPINE_NUM_OUTPUTS; j++)
+    if (on & ((uint32_t)1 << j)) drive(j, true, now);
   if (a.flags & INTERP_ACT_SESSION_START) emitStrobeAt(BF_START_SESSION, ts);
   for (int i = 0; i < SPINE_NUM_INPUTS; i++)
     if (a.rose & ((uint32_t)1 << i)) emitStrobeAt(kInputs[i].riseCode, ts);
@@ -410,7 +609,16 @@ inline void setup()
   stopRequested = false;
   done = false;
   lastTick = now;
-  emitTick(spine_begin(run, &kTable, params, seed, now), now, false, 0);
+  SpineTick first;
+  first.actions = spine_begin(run, &kTable, params, seed, now);
+  first.ends = false;
+  first.endOff = 0;
+  first.off = first.actions.off;
+  first.on = first.actions.on;
+#if SPINE_NUM_DRIVES > 0
+  spine_drives_begin(drives, first.actions, now);
+#endif
+  emitTick(first, now);
 }
 
 inline void loop()
@@ -426,14 +634,18 @@ inline void loop()
     ++lastTick;
     InterpEdges none = {0, 0};
     SpineTick t = spine_step(run, lastTick == now ? in : none, lastTick, maxTrials(), stopRequested);
-    if (t.ends || !interp_idle(&t.actions))
-      emitTick(t.actions, lastTick, t.ends, t.endOff);
+#if SPINE_NUM_DRIVES > 0
+    spine_drives_step(drives, params, t, lastTick);
+#endif
+    if (t.ends || !interp_idle(&t.actions) || t.off != 0 || t.on != 0)
+      emitTick(t, lastTick);
     if (t.ends)
     {
       shutdownHardware();
       done = true;
       return;
     }
+    stepTrains(lastTick);
   }
 }
 

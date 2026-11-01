@@ -15,10 +15,25 @@ from ephymeris_sidecar.hardware.store import default_document
 from ephymeris_sidecar.rig import allocation, registry
 
 
-def issued_rig() -> tuple[dict, dict]:
-    """(rig document, vocabulary document): the shipped rig after its first save."""
+#: Driven outputs a rig can add (`TASKS.md#driven-outputs`): (entry, pin). Pins
+#: 45 and 12 are PWM pins clear of Timer2, so a tone beside them is legal.
+DRIVEN_CHANNELS = {
+    "light": ({"kind": "cue", "type": "pwm_out", "role": "stimulus"}, 45),
+    "tone": ({"kind": "cue", "type": "tone_out", "role": "stimulus"}, 12),
+    "laser": ({"kind": "cue", "type": "digital_out", "mode": "train", "role": "stimulus"}, 11),
+}
+
+
+def issued_rig(driven: bool = False) -> tuple[dict, dict]:
+    """(rig document, vocabulary document): the shipped rig after its first save,
+    with `DRIVEN_CHANNELS` added first when `driven`."""
     vocab_doc = registry.default_vocabulary_document()
-    rig, allocations = allocation.plan(default_document(), registry.Vocabulary(vocab_doc))
+    doc = default_document()
+    if driven:
+        for name, (entry, pin) in DRIVEN_CHANNELS.items():
+            doc["channels"][name] = copy.deepcopy(entry)
+            doc["pins"][name] = {"index": pin}
+    rig, allocations = allocation.plan(doc, registry.Vocabulary(vocab_doc))
     return rig, allocation.issue(vocab_doc, allocations)
 
 
@@ -154,6 +169,44 @@ def go_no_go(**edits) -> dict:
              "map": {"resp": {"outcome": "false_alarm"}, "timeout": {"outcome": "withheld"}}},
         ],
         "blocks": [{"id": "b1", "rows": ["go", "no_go"], "trials": 20}],
+        "params": {},
+    }
+    doc.update(edits)
+    return doc
+
+
+def stimulus(**edits) -> dict:
+    """The driven outputs (`TASKS.md#driven-outputs`), on `issued_rig(driven=True)`:
+    a poke starts a second of the light at the row's duty, the tone at its
+    pitch and the laser's train, then an ITI. Two rows drive them differently;
+    the dim row's 300 ms train runs out before its phase, the bright row's
+    runs as long as the phase."""
+    bind = {"port": "odor_port", "cue": "trial_light", "light": "light", "tone": "tone", "laser": "laser"}
+    doc = {
+        "id": "spine_stimulus",
+        "name": "Spine Stimulus",
+        "category": "Tasks",
+        "slots": [
+            {"id": "port", "type": "digital_in"},
+            {"id": "cue", "type": "digital_out"},
+            {"id": "light", "type": "pwm_out"},
+            {"id": "tone", "type": "tone_out"},
+            {"id": "laser", "type": "digital_out", "mode": "train"},
+        ],
+        "spine": [
+            {"phase": "wait", "on": "port", "outputs": ["cue"]},
+            {"phase": "present", "outputs": ["light", "tone", "laser"], "ms": 1000},
+            {"phase": "iti", "ms": 500},
+        ],
+        "rows": [
+            {"id": "dim", "name": "Dim", "bind": dict(bind),
+             "drive": {"light": {"duty": 64}, "tone": {"hz": 2000},
+                       "laser": {"hz": 20, "widthMs": 5, "ms": 300}}},
+            {"id": "bright", "name": "Bright", "bind": dict(bind),
+             "drive": {"light": {"duty": 255}, "tone": {"hz": 4000},
+                       "laser": {"hz": 30, "widthMs": 10, "ms": 0}}},
+        ],
+        "blocks": [{"id": "b1", "rows": ["dim", "bright"], "trials": 3}],
         "params": {},
     }
     doc.update(edits)

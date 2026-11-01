@@ -591,7 +591,7 @@ def test_a_column_added_to_the_trial_row_is_written_with_no_change_here(tmp_path
 #: A fingerprint of the derived blocks of fixed runs. **When this fails, a run's
 #: trial table has changed: bump `spine.REPLAY_VERSION`, then update this pin**,
 #: so a file's stamp says which replay wrote its table (`DATA.md#the-derived-trial-table`).
-REPLAY_PIN = "279b8601930fd6d9"
+REPLAY_PIN = "e741cd7cb95619f3"
 
 
 def test_the_replay_version_pins_the_trial_table() -> None:

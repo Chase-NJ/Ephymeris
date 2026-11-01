@@ -637,7 +637,7 @@ It has limits, and each is diagnosed rather than guessed around:
 
 - the phases are Wait, Hold, Present, Delay, Response window, Counter, Outcome and ITI;
 - a task has one block, which draws each of its rows uniformly;
-- nothing is scored live yet: Mission Control says so, from the profile (`src/lib/sessions/liveScoring.ts`);
+- nothing is scored live yet: Mission Control says so, from the profile (`src/lib/sessions/liveScoring.ts`). Analytics scores a finished run by replaying it ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#how-a-spine-run-is-scored));
 - it is proven on the host. On a Mega it has run only with nothing wired, so no response, hold, abort or press has yet come from a real input ([README.md](../README.md#not-yet-done)).
 
 ### What a spine task holds

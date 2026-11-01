@@ -304,7 +304,7 @@ macOS as run-from-source. Packaged-only path bugs exist (Windows verbatim `\\?\`
   ([Spine tasks](docs/TASKS.md#spine-tasks)). On a Mega one has run only with nothing wired, which
   measured the `free_ram` of the largest table ([the RAM budget](docs/TASKS.md#spine-diagnostics)). Not
   yet done: running one with an animal or a catch vessel, so that a response, a hold, an abort or a
-  press comes from a real input.
+  press comes from a real input, and reading that run's trial table in Analytics.
 
 ### Known bugs
 

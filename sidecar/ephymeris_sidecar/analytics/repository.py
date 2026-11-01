@@ -370,10 +370,21 @@ class AnalyticsRepository:
         (`DATA.md#the-database-copy`), so committing per row would trigger repeated
         whole-file copies to a possibly-networked target during a single
         indexing pass.
+
+        The same unit records each read run's replay verdict on its run record
+        (`DATA.md#run-records`): `diverged` is 1 for a diverged spine run, 0 for
+        one replay scored, NULL for a run replay did not score. A missing or
+        stale file says nothing new, so its record keeps what it had. An
+        adopted run has no record; its verdict is its cached status.
         """
         if not entries:
             return
         with self._db.write(tx) as unit:
+            unit.executemany(
+                "UPDATE session_animal_runs SET diverged = ? WHERE id = ?",
+                [(replay_verdict(entry), entry.run_id) for entry in entries
+                 if entry.status != "missing" and not entry.stale],
+            )
             unit.executemany(
                 "INSERT OR REPLACE INTO run_metrics_cache"
                 " (run_id, file_path, file_mtime_ns, file_size, profile_hash,"
@@ -400,6 +411,13 @@ class AnalyticsRepository:
                     for entry in entries
                 ],
             )
+
+
+def replay_verdict(entry: CachedRun) -> int | None:
+    """`session_animal_runs.diverged` for a scored row: 1, 0, or None (not replayed)."""
+    if entry.status == "diverged":
+        return 1
+    return 0 if entry.status == "ok" and entry.summary.get("replay") else None
 
 
 @dataclass(frozen=True)

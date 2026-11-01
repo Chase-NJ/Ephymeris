@@ -336,7 +336,15 @@ Every session listing is ordered by `(date, startedAt)` and carries an `ordinal`
 
 ### Run records
 
-One row in `session_animal_runs` per animal per session — the unit Analytics scores (`SessionAnimalRun`): `sessionId`, `animalId`, `boxNumber`, `sketchPath`, `filePath` (the finalized `.json`; null if the writer never opened), `startedAt`, `endedAt`, `stopReason`, `profileHash`, `config` (stored as `config_json`, the merged parameter values) and `paramsHash`.
+One row in `session_animal_runs` per animal per session — the unit Analytics scores (`SessionAnimalRun`): `sessionId`, `animalId`, `boxNumber`, `sketchPath`, `filePath` (the finalized `.json`; null if the writer never opened), `startedAt`, `endedAt`, `stopReason`, `profileHash`, `config` (stored as `config_json`, the merged parameter values), `paramsHash`, `interp`, `channelSetHash` (stored as `channel_set_hash`) and `diverged`.
+
+- **`interp` and `channel_set_hash`** are written at finalization: the interpreter the board announced as `INTERP=<n>`, and the channel set its sketch was generated against. They are the same values as the run's [`.tsv` header](#the-tsv-log). Null on a run recorded before they existed, and `interp` on a board that announced none.
+- **`diverged`** is written by the Analytics pass that reads the run's file, never at finalization:
+  - 1 when replay could not predict the run's recorded outputs;
+  - 0 when replay scored it;
+  - null when replay has not scored it: a legacy run, an unreplayable one, or one not read since the column existed.
+
+  A missing or stale file leaves it as it was ([how a spine run is scored](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#how-a-spine-run-is-scored)).
 
 > [!IMPORTANT]
 > **`profileHash` records which Task Profile this run used.** A `task.json` lives beside its sketch, outside the data directory, and can be edited or deleted long after the session; without a snapshot, an old run would be silently re-read with today's codes and metrics. Null means the run predates snapshotting, which is exactly what Analytics needs in order to flag it. How the hashes are computed: [TASKS.md](TASKS.md#profile-and-params-hashes).
@@ -637,6 +645,9 @@ erDiagram
         TEXT file_path
         TEXT profile_hash
         TEXT params_hash
+        INTEGER interp
+        TEXT channel_set_hash
+        INTEGER diverged
     }
     task_profiles {
         TEXT hash PK
@@ -673,7 +684,7 @@ erDiagram
 | `folder_moves` | `id`, `cohort_id`, `source`, `target`, `state`, `created_at`, `updated_at`, `error` | The journal of a [data-folder move](#data-folder) that carries the records' paths with it |
 | `prefixes` | `id`, `name` (`UNIQUE COLLATE NOCASE`) | Hard delete; nothing on disk depends on it |
 | `sessions` | `id`, `cohort_id`, `prefix_id`, `prefix_name`, `session_number`, `date`, `started_at`, `ended_at`, `status`, `folder_path`, `group_runs` (JSON), `duration_minutes`, `recording_json` | No FK on `prefix_id` |
-| `session_animal_runs` | `id`, `session_id`, `animal_id`, `box_number`, `sketch_path`, `file_path`, `started_at`, `ended_at`, `stop_reason`, `profile_hash`, `config_json`, `params_hash` | Cascades from `sessions`; **no FK on `animal_id`** |
+| `session_animal_runs` | `id`, `session_id`, `animal_id`, `box_number`, `sketch_path`, `file_path`, `started_at`, `ended_at`, `stop_reason`, `profile_hash`, `config_json`, `params_hash`, `interp`, `channel_set_hash`, `diverged` | Cascades from `sessions`; **no FK on `animal_id`**. `diverged` is the one column Analytics writes ([run records](#run-records)) |
 | `machine_marks` | `name`, `at` | [Machine marks](#machine-marks). Never deleted |
 | `task_profiles` | `hash`, `task_name`, `kind`, `profile_json`, `first_seen_at` | **Content-addressed** snapshots: identical profiles store once, and comparability is an indexed equality test |
 | `run_metrics_cache` | `run_id`, `file_path`, `file_mtime_ns`, `file_size`, `profile_hash`, `profile_source`, `scored_profile_hash`, `params_hash`, `config_json`, `codec_version`, `computed_at`, `status`, `detail`, `summary_json` | A pure cache. **No FK on `run_id`** — adopted runs have no run record. `profile_hash` is what *resolution* reached; `scored_profile_hash` what the run was *scored* with ([why both](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#which-profile-decodes-a-run)). `codec_version` holds the [cache version](#caching) |
@@ -895,7 +906,7 @@ This is the **only** path by which a pre-Ephymeris archive reaches Analytics, an
 
 ### Caching
 
-**Persist summaries; never persist series.** Summaries go in `run_metrics_cache` and survive a sidecar restart (every app launch). Series (`analytics.series`) are computed from the file on each request: persisted, a cohort's floats would bloat a database the backup copies wholesale on a 5 s debounce.
+**Persist summaries; never persist series.** Summaries go in `run_metrics_cache` and survive a sidecar restart (every app launch). Series (`analytics.series`), and a spine run's trial table with them, are computed from the file on each request: persisted, a cohort's floats would bloat a database the backup copies wholesale on a 5 s debounce.
 
 The cache key (`repository.CacheKey`) is file path, mtime, size, profile hash and the **cache version**. **Every part is answerable without opening the file, so a cache hit opens nothing**: `stat_run` settles the key and `parse_run` runs only on a miss. On a networked 444-run archive that is the difference between reading 30 MB per dashboard open and reading nothing.
 

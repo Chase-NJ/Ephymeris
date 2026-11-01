@@ -31,6 +31,7 @@ import pytest
 
 from ephymeris_sidecar.analytics.stream import replay as rp
 from ephymeris_sidecar.analytics.stream import spine as spine_stream
+from ephymeris_sidecar.analytics.stream.summary import summarize
 from ephymeris_sidecar.ports import handler as handler_module
 from ephymeris_sidecar.rig import registry
 from ephymeris_sidecar.sessions import recovery
@@ -240,6 +241,18 @@ async def test_a_saved_spine_task_runs_a_session_and_its_tsv_alone_replays(tmp_p
     record = spine_stream.decode(document)
     assert spine_stream.expected_stream(record) == [tuple(s) for s in document["ts_data"]], \
         "replay predicts every strobe the board sent, at its tick"
+
+    # And Analytics scores it from that replay (`ANALYTICS.md#how-a-spine-run-is-scored`):
+    # trials 1 and 3 held through the odor, trial 2 let go during it.
+    summary = summarize(document, None)
+    assert summary.status == "ok" and summary.divergence is None
+    [metric] = summary.metrics
+    assert (metric.hits, metric.counted, metric.triggered) == (2, 3, 3), "the abort is a classed miss"
+    table = spine_stream.trial_table(document)
+    assert [t["outcome"] for t in table["trials"]] == ["correct", "abort_during_sampling", "correct"]
+    assert [t["phaseEntries"][1] for t in table["trials"]] == [200, 5000, 8500], \
+        "the present begins at each poke, on the board's own clock"
+    assert summary.replay.rewarded.n == sum(t["rewarded"] for t in table["trials"])
 
 
 async def test_a_crashed_runs_tsv_alone_replays_as_far_as_it_goes(tmp_path, monkeypatch):
@@ -488,11 +501,22 @@ def lever() -> int:
     return registry.channels().get("right_well").index
 
 
+def scored(document: dict) -> list[tuple[str | None, int, bool]]:
+    """The run's trial table, as #99's `replayed()` reads it from the table's own
+    annotations: each trial's class, the presses it counts in the Counter
+    phase (phase 0) on the lever's channel, and whether it paid."""
+    result = spine_stream.replayed(document)
+    assert result.divergence is None and all(t.complete for t in result.trials)
+    return [(t.outcome, sum(c.count for c in t.input_counts if c.phase == 0 and c.channel == "right_well"),
+             t.rewarded) for t in result.trials]
+
+
 async def test_a_fixed_ratio_session_pays_every_fifth_press(tmp_path, monkeypatch):
     document = await run_task(tmp_path, monkeypatch, fixture.fixed_ratio(5), {"block_trials": 6}, 8000,
                               events=presses(lever(), 100, 7000))
     trials = trials_of(document)
     assert [(t["outcome"], t["presses"], t["rewarded"]) for t in trials] == [("correct", 5, True)] * 6
+    assert scored(document) == [("correct", 5, True)] * 6, "the trial table counts each ratio's presses"
 
 
 async def test_a_variable_ratio_session_draws_n_for_each_reward(tmp_path, monkeypatch):
@@ -502,6 +526,7 @@ async def test_a_variable_ratio_session_draws_n_for_each_reward(tmp_path, monkey
     assert [t["outcome"] for t in trials] == ["correct"] * 12
     counts = [t["presses"] for t in trials]
     assert all(1 <= n <= 9 for n in counts) and len(set(counts)) >= 3, counts
+    assert scored(document) == [("correct", n, True) for n in counts]
 
 
 async def test_a_progressive_ratio_session_ends_at_its_breakpoint(tmp_path, monkeypatch):
@@ -520,6 +545,11 @@ async def test_a_progressive_ratio_session_ends_at_its_breakpoint(tmp_path, monk
     vocab = registry.vocabulary()
     assert vocab.name_of(document["ts_data"][-1][0]) == "END_SESSION"
     assert len(trials) < 50
+    # The trial table holds the breakpoint's data: each trial's counted presses,
+    # the omission that ended the session complete and last.
+    table = scored(document)
+    assert table == [(t["outcome"], t["presses"], t["rewarded"]) for t in trials]
+    assert max(n for outcome, n, _ in table if outcome == "correct") == breakpoint_
 
 
 async def test_a_broken_hold_and_each_abort_replay_to_their_class(tmp_path, monkeypatch):
@@ -538,8 +568,12 @@ async def test_a_broken_hold_and_each_abort_replay_to_their_class(tmp_path, monk
     ]
     document = await run_task(tmp_path, monkeypatch, fixture.held_trial(), {"block_trials": 5}, 16000,
                               events=events)
-    assert [t["outcome"] for t in trials_of(document)] == [
-        "abort_before_stimulus", "hold_broken", "abort_during_sampling", "abort_during_sampling", "correct"]
+    classes = ["abort_before_stimulus", "hold_broken", "abort_during_sampling", "abort_during_sampling", "correct"]
+    assert [t["outcome"] for t in trials_of(document)] == classes
+    result = spine_stream.replayed(document)
+    assert result.divergence is None and [t.outcome for t in result.trials] == classes
+    assert [t.rewarded for t in result.trials] == [False] * 4 + [True]
+    assert all(t.row == "r1" for t in result.trials), "an end the rows share still names the trial's row"
 
 
 def test_an_unknown_table_format_is_refused_rather_than_replayed():

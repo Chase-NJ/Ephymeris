@@ -15,7 +15,9 @@ keeps it that way.
 | `curves` | The run trial by trial: learning curves and the strategy walk |
 | `infer` | Which conditions ran, read from the strobes when no profile declares them |
 | `false_starts` | Which restarted runs to set aside |
-| `stats`, `document` | The Wilson interval; reading `ts_data` out of a file's document |
+| `replay`, `spine` | A spine run replayed from its own file, and checked against what it recorded |
+| `trial_table`, `table_metrics` | A spine run's trial table, and the numbers that are functions of it |
+| `stats`, `document`, `metric_summary` | The Wilson interval; reading `ts_data` out of a file's document; the metric shape |
 
 Cached summaries are versioned by `scoring.current_version`, which moves by
 itself when anything here changes what a summary holds — the maths or the

@@ -123,17 +123,17 @@ static void handshake()
   bb_feed("START SEED=7");
   boot();
   std::vector<std::string> l = lines();
-  expect("INTERP, then FREE_RAM, then READY, first", l.size() > 3 && l[0] == "INTERP=5" &&
+  expect("INTERP, then FREE_RAM, then READY, first", l.size() > 3 && l[0] == "INTERP=6" &&
          l[1].compare(0, 9, "FREE_RAM=") == 0 && l[2] == "READY");
   expect("each SET answered with the running count and CRC",
          indexOf("PARAMS 2 1564777853") < indexOf("PARAMS 3 2992546637"));
   expect("a value past its bound is CLAMPED", indexOf("CLAMPED RP") + 1 == indexOf("PARAMS 4 119361984"));
   expect("junk and a sign are CLAMPED too", indexOf("CLAMPED NT") != (size_t)-1 &&
          indexOf("CLAMPED T1") != (size_t)-1 && indexOf("PARAMS 2 1290238464") != (size_t)-1);
-  expect("BEGIN forgets the earlier block", l.size() > 12 && l[l.size() - 5] == "PARAMS 2 1564777853");
+  expect("BEGIN forgets the earlier block", l.size() > 13 && l[l.size() - 6] == "PARAMS 2 1564777853");
   expect("START echoes the seed it runs on", indexOf("SEED\t7") != (size_t)-1);
   expect("the session opens at t=0", indexOf("017\t0") == indexOf("SEED\t7") + 1);
-  expect("the block's trial count is what was SET", box_spine::params[0] == 2);
+  expect("the session's trial cap is what was SET", box_spine::params[0] == 2);
 }
 
 static void stream()
@@ -153,11 +153,11 @@ static void stream()
   advanceTo(500);
 
   const std::vector<std::pair<int, unsigned long>> want = {
-    {BF_START_SESSION, 0}, {BF_TRIAL_START, 0}, {BF_LIGHT_ON, 0},
+    {BF_START_SESSION, 0}, {BF_BLOCK_START, 0}, {BF_TRIAL_START, 0}, {BF_LIGHT_ON, 0},
     {BF_PORT_ENTER, 10}, {BF_SAMPLE_ON, 10},
     {BF_LIGHT_OFF, 110}, {BF_SAMPLE_OFF, 110}, {BF_FLUID_ON, 110},
     {BF_FLUID_OFF, 140},
-    {BF_TRIAL_START, 191}, {BF_LIGHT_ON, 191},
+    {BF_BLOCK_START, 191}, {BF_TRIAL_START, 191}, {BF_LIGHT_ON, 191},
     {BF_PORT_ENTER, 300}, {BF_SAMPLE_ON, 300},
     {BF_PORT_EXIT, 350}, {BF_LIGHT_OFF, 350}, {BF_SAMPLE_OFF, 350},
     {BF_END_SESSION, 400},
@@ -205,6 +205,38 @@ static void last()
   expect("the trial it ended is never reported", !second);
 }
 
+static void blocks()
+{
+  bb_feed("BEGIN");
+  bb_feed("SET NT=10 T1=100 T3=50 BN1=1 BN2=1 BNX2=1");
+  bb_feed("START SEED=7");
+  boot();
+  port(true, 10);
+  port(false, 200); // not watched in the ITI: nothing strobes
+  port(true, 300);
+  advanceTo(600);
+  std::vector<std::pair<int, unsigned long>> got = strobes();
+  // Block 0 runs one trial; block 1 one more, then the blocks are done: the
+  // session ends where trial 3 would start, well before NT.
+  bool second = false;
+  for (auto &s : got) second |= s.first == BF_BLOCK_START && s.second == 191UL;
+  expect("the second block starts with BLOCK_START, before its TRIAL_START", second);
+  expect("the last block's end ends the session at the next trial start",
+         !got.empty() && got.back() == std::make_pair(BF_END_SESSION, 481UL));
+  bool third = false;
+  for (auto &s : got) third |= (s.first == BF_TRIAL_START || s.first == BF_BLOCK_START) && s.second == 481UL;
+  expect("neither the trial nor a block is reported at the end", !third);
+}
+
+static void pairs()
+{
+  bb_feed("BEGIN");
+  bb_feed("SET BN2=5 BNX2=3");
+  bb_feed("START SEED=7");
+  boot();
+  expect("a drawn N's high end below its low end is CLAMPED", indexOf("CLAMPED BNX2") != (size_t)-1);
+  expect("and held as the range's low end", box_spine::params[8] == 5);
+}
 #ifdef SPINE_FIXTURE_DRIVES
 static void dump(const std::vector<std::pair<int, unsigned long>> &got)
 {
@@ -235,7 +267,7 @@ static void drives()
   advanceTo(300);
 
   const std::vector<std::pair<int, unsigned long>> want = {
-    {BF_START_SESSION, 0}, {BF_TRIAL_START, 0}, {BF_LIGHT_ON, 0},
+    {BF_START_SESSION, 0}, {BF_BLOCK_START, 0}, {BF_TRIAL_START, 0}, {BF_LIGHT_ON, 0},
     {BF_PORT_ENTER, 10}, {BF_SAMPLE_ON, 10}, {BF_LED_ON, 10}, {BF_TONE_ON, 10}, {BF_LASER_TRAIN_ON, 10},
     {BF_LASER_TRAIN_OFF, 70},
     {BF_LIGHT_OFF, 110}, {BF_SAMPLE_OFF, 110}, {BF_LED_OFF, 110}, {BF_TONE_OFF, 110}, {BF_FLUID_ON, 110},
@@ -307,6 +339,8 @@ int main(int argc, char **argv)
   else if (which == "stream") stream();
   else if (which == "stop") stop();
   else if (which == "last") last();
+  else if (which == "blocks") blocks();
+  else if (which == "pairs") pairs();
 #endif
   else { std::cout << "  [FAIL] unknown scenario\n"; return 2; }
   return failures == 0 ? 0 : 1;

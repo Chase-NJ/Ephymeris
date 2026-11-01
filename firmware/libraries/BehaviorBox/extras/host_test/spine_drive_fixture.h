@@ -28,8 +28,9 @@
 #define BF_TONE_OFF 51
 #define BF_LASER_TRAIN_ON 52
 #define BF_LASER_TRAIN_OFF 53
+#define BF_BLOCK_START 54
 
-#define SPINE_INTERP 5
+#define SPINE_INTERP 6
 
 #define SPINE_NUM_STATES 6
 #define SPINE_STATES { \
@@ -70,5 +71,15 @@
   {"TH", 20UL, 1UL, 100UL}, \
   {"TW", 5UL, 1UL, 999UL}, \
   {"TL", 60UL, 0UL, 3600000UL} }
+
+/* One block that never ends: NT caps the session. */
+#define SPINE_TRIALS_SLOT 0
+#define SPINE_NUM_BLOCKS 1
+#define SPINE_BLOCKS { {0, 1, 0, 255, 255, 255, 255, 255, 255, 255, 0} }
+#define SPINE_BLOCK_SKIPPED 192
+#define SPINE_BLOCK_HITS 17
+#define SPINE_NUM_ENTRIES 0
+#define SPINE_NUM_OVERRIDES 0
+#define SPINE_NUM_PAIRS 0
 
 #endif // SPINE_FIXTURE_H

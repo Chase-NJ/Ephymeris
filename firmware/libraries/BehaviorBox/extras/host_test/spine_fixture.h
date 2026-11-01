@@ -14,7 +14,9 @@
     6  the abort's end: ITI for T3, a LAST-TRIAL state
                                                -> 0, where the session ends
 
-  No counter state, so the counter reads no slot and no ratio.
+  No counter state, so the counter reads no slot and no ratio. Two blocks of
+  the one row: block 0 runs BN1 trials, then block 1 runs N, drawn from
+  [BN2, BNX2], and ends the session when it ends. NT caps the session.
 
   The channel codes are fixture codes, like strobe_fixture.h's: a host test
   that passes with them proves the runner reads its table, not the lab's codes.
@@ -30,8 +32,9 @@
 #define BF_SAMPLE_OFF 45
 #define BF_FLUID_ON 46
 #define BF_FLUID_OFF 47
+#define BF_BLOCK_START 48
 
-#define SPINE_INTERP 5
+#define SPINE_INTERP 6
 
 #define SPINE_NUM_STATES 7
 #define SPINE_STATES { \
@@ -58,13 +61,26 @@
 #define SPINE_HAS_TONE 0
 #define SPINE_OUTPUTS { {36, BF_LIGHT_ON, BF_LIGHT_OFF}, {22, BF_SAMPLE_ON, BF_SAMPLE_OFF}, {44, BF_FLUID_ON, BF_FLUID_OFF} }
 
-#define SPINE_NUM_PARAMS 6
+#define SPINE_NUM_PARAMS 9
 #define SPINE_PARAMS { \
   {"NT", 2UL, 1UL, 10000UL}, \
   {"T1", 100UL, 0UL, 3600000UL}, \
   {"T2", 0UL, 0UL, 3600000UL}, \
   {"T3", 50UL, 0UL, 3600000UL}, \
   {"RW", 30UL, 0UL, 5000UL}, \
-  {"RP", 1000UL, 0UL, 1000UL} }
+  {"RP", 1000UL, 0UL, 1000UL}, \
+  {"BN1", 1UL, 1UL, 10000UL}, \
+  {"BN2", 5UL, 1UL, 10000UL}, \
+  {"BNX2", 5UL, 1UL, 10000UL} }
+
+#define SPINE_TRIALS_SLOT 0
+#define SPINE_NUM_BLOCKS 2
+#define SPINE_BLOCKS { {0, 1, 0, 6, 6, 255, 255, 255, 255, 1, 0}, {0, 1, 0, 7, 8, 255, 255, 255, 255, 255, 0} }
+#define SPINE_BLOCK_SKIPPED 192
+#define SPINE_BLOCK_HITS 17
+#define SPINE_NUM_ENTRIES 0
+#define SPINE_NUM_OVERRIDES 0
+#define SPINE_NUM_PAIRS 1
+#define SPINE_PAIRS { {7, 8} }
 
 #endif // SPINE_FIXTURE_H

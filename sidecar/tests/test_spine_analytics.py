@@ -81,7 +81,7 @@ def recorded_document(*, trials: int = 3, seed: int = 99, animal=ANIMAL, end_at:
     snapshot = spine_snapshot()
     code = {name: int(c) for c, name in snapshot["strobes"].items()}
     config = {f["metadataKey"]: f["default"] for f in snapshot["config"]}
-    config["block_trials"] = trials
+    config["block_b1_trials"] = trials
     document = {
         "rat": "remy1", "sketch": "Spine Tracer", "stop_reason": "BF_END_SESSION received",
         "interp": replay.INTERP_VERSION, "trial_seed": seed, "channel_set_hash": "abc123",
@@ -266,7 +266,7 @@ def simulated_document(definition: dict, animal, *, trials: int = 10, seed: int 
     snapshot = generate.build_profile(TaskDefinition.from_json(definition)).to_json()
     spine = snapshot["spine"]
     code = {name: int(c) for c, name in snapshot["strobes"].items()}
-    config = {f["metadataKey"]: f["default"] for f in snapshot["config"]} | {"block_trials": trials}
+    config = {f["metadataKey"]: f["default"] for f in snapshot["config"]} | {"block_b1_trials": trials}
     document = {
         "rat": "remy1", "sketch": definition["name"], "stop_reason": "BF_END_SESSION received",
         "interp": spine["interp"], "trial_seed": seed, task_profile.SNAPSHOT_KEY: snapshot, **config,

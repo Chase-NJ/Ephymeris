@@ -274,10 +274,11 @@ def test_the_trial_runner_s_interpreter_is_never_replayed_as_a_table() -> None:
     recorded GRGL run names, and the state-table interpreter is 2. So a run's
     header alone tells a spine run from a legacy one, and replay never walks a
     legacy run's strobes as if a table had produced them. 2 is the tracer's
-    table format, kept so its runs still replay; 3 adds the pick state, and 4
-    the counter and last-trial states; 5 adds driven outputs and changes no table."""
-    assert rp.INTERP_VERSIONS == {2, 3, 4, 5}
-    assert rp.INTERP_VERSION == 5
+    table format, kept so its runs still replay; 3 adds the pick state, 4
+    the counter and last-trial states, 5 driven outputs (no table change),
+    and 6 blocks."""
+    assert rp.INTERP_VERSIONS == {2, 3, 4, 5, 6}
+    assert rp.INTERP_VERSION == 6
     with pytest.raises(ValueError, match="INTERP 1"):
         rp.replay(TRIAL, PARAMS, seed=1, events=[], ticks=10, interp=1)
 
@@ -359,3 +360,17 @@ def _one(state: StateRow, *more: StateRow, edges: tuple[EdgeRow, ...] = ()) -> T
 def test_a_table_the_core_cannot_run_is_refused(build, why: str) -> None:
     with pytest.raises(ValueError, match=why):
         build()
+
+
+@pytest.mark.parametrize(("first", "count", "valid"), [(250, 5, True), (0, 255, True), (251, 5, False),
+                                                       (255, 1, False)])
+def test_a_block_slice_ends_at_255_at_most(first: int, count: int, valid: bool) -> None:
+    """BoxInterp.h walks a block's branches up to first + count, which a valid
+    table holds to 255: past it a slice is refused here, so never run on a board."""
+    states = (rp.StateRow(timer_min=0, timer_max=0, on_timeout=0, flags=rp.STARTS_TRIAL),)
+    blocks = rp.Blocks(rows=(rp.Block(first=first, count=count),))
+    if valid:
+        assert rp.Table(states=states, blocks=blocks).blocks is blocks
+    else:
+        with pytest.raises(ValueError, match="branches, each below 255"):
+            rp.Table(states=states, blocks=blocks)

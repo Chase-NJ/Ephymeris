@@ -14,6 +14,15 @@ from ephymeris_sidecar.analytics.stream import replay as rp
 from ephymeris_sidecar.taskdef import lowering
 
 N = lowering.NONE
+
+
+def lower(*args, **kwargs) -> lowering.Lowered:  # noqa: ANN002, ANN003
+    """The lowering of a task with a session trial cap, as every worked table
+    here has: `NT` is slot 0, so each table's slots are numbered from 1."""
+    return lowering.lower(*args, session_cap=True, **kwargs)
+
+
+R = lowering.RESPONSE
 ABORT_BEFORE, ABORT_DURING = (lowering.OUTCOME_CLASSES.index(name) + 1
                               for name in ("abort_before_stimulus", "abort_during_sampling"))
 TRACER = [
@@ -26,7 +35,7 @@ TRACER = [
 
 
 def test_the_tracer_spine_lowers_to_the_worked_table():
-    low = lowering.lower(TRACER, inputs=["port"], outputs=["cue", "sample", "reward"])
+    low = lower(TRACER, inputs=["port"], outputs=["cue", "sample", "reward"])
     #        outputs watch tmin tmax  on_to chance hit miss first count flags outcome
     assert low.states == (
         (0b001, 1, N, N, N, N, N, N, 0, 1, lowering.STARTS_TRIAL, 0),  # wait for the port, cue on
@@ -45,7 +54,7 @@ def test_the_tracer_spine_lowers_to_the_worked_table():
 
 
 def test_the_lowered_table_is_one_replay_accepts():
-    low = lowering.lower(TRACER, inputs=["port"], outputs=["cue", "sample", "reward"])
+    low = lower(TRACER, inputs=["port"], outputs=["cue", "sample", "reward"])
     table = rp.Table(states=[rp.StateRow(*s) for s in low.states],
                      edges=[rp.EdgeRow(*e) for e in low.edges])
     assert table.slots_used() == len(low.params)
@@ -58,7 +67,7 @@ def test_a_wait_timeout_goes_to_an_end_and_takes_its_own_slot():
              {"phase": "present", "ms": 10},
              {"phase": "wait", "on": "port", "edge": "exit", "timeoutMs": 4000},
              {"phase": "iti", "ms": 100}]
-    low = lowering.lower(spine, inputs=["port"], outputs=[])
+    low = lower(spine, inputs=["port"], outputs=[])
     assert low.params == ("NT", "T0", "T1", "T2", "T3")
     assert low.states[0][2:5] == (1, 1, 4), "timer T0, out to its end"
     assert low.states[2][2:5] == (3, 3, 5)
@@ -74,7 +83,7 @@ def test_a_hold_moves_on_after_its_time_and_a_release_is_hold_broken():
              {"phase": "hold", "on": "port", "ms": 300, "outputs": ["cue"]},
              {"phase": "present", "outputs": ["sample"], "ms": 500},
              {"phase": "iti", "ms": 100}]
-    low = lowering.lower(spine, inputs=["port"], outputs=["cue", "sample"])
+    low = lower(spine, inputs=["port"], outputs=["cue", "sample"])
     assert low.params == ("NT", "T1", "T2", "T3")
     #        outputs watch tmin tmax  on_to chance hit miss first count flags outcome
     assert low.states == (
@@ -89,7 +98,7 @@ def test_a_hold_moves_on_after_its_time_and_a_release_is_hold_broken():
 
 def test_a_wait_on_an_exit_moves_on_at_the_fall():
     spine = [{"phase": "wait", "on": "port", "edge": "exit"}, {"phase": "iti", "ms": 1}]
-    assert lowering.lower(spine, inputs=["port"], outputs=[]).edges == ((0, lowering.FALL, 1),)
+    assert lower(spine, inputs=["port"], outputs=[]).edges == ((0, lowering.FALL, 1),)
 
 
 def test_present_and_delay_abort_on_either_edge_and_the_class_says_where():
@@ -98,7 +107,7 @@ def test_present_and_delay_abort_on_either_edge_and_the_class_says_where():
               "abortOnEnter": "lick"},
              {"phase": "delay", "ms": 100, "abortOnRelease": "port"},
              {"phase": "iti", "ms": 100}]
-    low = lowering.lower(spine, inputs=["port", "lick"], outputs=["sample"])
+    low = lower(spine, inputs=["port", "lick"], outputs=["sample"])
     ends = {s: row[11] for s, row in enumerate(low.states) if row[11]}
     assert ends == {4: ABORT_BEFORE, 5: ABORT_DURING}, "one end per class, after the ITI"
     assert low.edges == ((1, lowering.RISE, 4),
@@ -111,7 +120,7 @@ def test_one_end_per_class_serves_every_row():
     """An end is the ITI with a class, and the rows share it: an 18-row task
     pays one state for its aborts, not 18."""
     spine = [GO_NO_GO[0], dict(GO_NO_GO[1], abortOnRelease="port"), *GO_NO_GO[2:]]
-    low = lowering.lower(spine, inputs=["port", "resp"], outputs=["cue", "sample", "reward"], rows=[GO, NO_GO])
+    low = lower(spine, inputs=["port", "resp"], outputs=["cue", "sample", "reward"], rows=[GO, NO_GO])
     end = len(low.states) - 1
     assert end == 15, "the go/no-go pair's 15 states, then one end"
     assert low.states[end][11] == ABORT_DURING and low.rows[end] is None and low.phases[end] == 4
@@ -126,7 +135,7 @@ FR_SLOTS = {"inputs": ["lever"], "outputs": ["light", "reward"]}
 
 
 def test_a_fixed_ratio_counter_lowers_to_one_counter_state_reading_its_n():
-    low = lowering.lower(FR, **FR_SLOTS)
+    low = lower(FR, **FR_SLOTS)
     assert low.params == ("NT", "N0", "T1", "T2", "RW1", "RP1")
     assert low.states == (
         (0b01, 1, N, N, N, N, N, N, 0, 1, COUNT, 0),                   # 0 count lever rises
@@ -141,7 +150,7 @@ def test_a_fixed_ratio_counter_lowers_to_one_counter_state_reading_its_n():
 
 def test_a_variable_ratio_draws_n_between_two_slots():
     spine = [dict(FR[0], count=1, countMax=9), *FR[1:]]
-    low = lowering.lower(spine, **FR_SLOTS)
+    low = lower(spine, **FR_SLOTS)
     assert low.params == ("NT", "N0", "NX0", "T1", "T2", "RW1", "RP1")
     assert low.counter == (1, 2, ())
 
@@ -149,21 +158,21 @@ def test_a_variable_ratio_draws_n_between_two_slots():
 def test_a_progressive_ratio_with_a_limit_that_ends_the_session():
     spine = [{"phase": "counter", "on": "lever", "ratios": [1, 2, 4, 6], "timeoutMs": 60000,
               "endsSession": True}, *FR[1:]]
-    low = lowering.lower(spine, **FR_SLOTS)
+    low = lower(spine, **FR_SLOTS)
     assert low.params == ("NT", "T0", "T1", "T2", "RW1", "RP1")
     assert low.counter == (N, N, (1, 2, 4, 6))
     assert low.states[0][2:5] == (1, 1, 5), "the limit, out to its end"
     assert low.states[5] == (0, 0, 3, 3, 0, N, N, N, 0, 0, lowering.LAST_TRIAL, OMISSION)
     # Without endsSession the limit's end is an omission that leaves the session running.
     spine[0] = dict(spine[0], endsSession=False)
-    assert lowering.lower(spine, **FR_SLOTS).states[5][10] == 0
+    assert lower(spine, **FR_SLOTS).states[5][10] == 0
 
 
 def test_every_lowered_table_with_a_counter_is_one_replay_accepts():
     for spine in (FR, [dict(FR[0], count=1, countMax=9), *FR[1:]],
                   [{"phase": "counter", "on": "lever", "ratios": [1, 2], "timeoutMs": 5, "endsSession": True},
                    *FR[1:]]):
-        low = lowering.lower(spine, **FR_SLOTS)
+        low = lower(spine, **FR_SLOTS)
         cmin, cmax, ratios = low.counter
         table = rp.Table(states=[rp.StateRow(*s) for s in low.states], edges=[rp.EdgeRow(*e) for e in low.edges],
                          counter=rp.Counter(cmin, cmax, ratios))
@@ -172,7 +181,7 @@ def test_every_lowered_table_with_a_counter_is_one_replay_accepts():
 
 def test_two_counters_are_not_a_table():
     with pytest.raises(lowering.LoweringError, match="Counter"):
-        lowering.lower([FR[0], FR[0], FR[2]], **FR_SLOTS)
+        lower([FR[0], FR[0], FR[2]], **FR_SLOTS)
 
 
 def most_marks(low: lowering.Lowered) -> int:
@@ -216,7 +225,7 @@ EXIT_AFTER_OUTCOME = [
 def test_an_early_exit_after_the_outcome_marks_nothing():
     """The trial is decided at its Outcome: an abort, a Wait's timeout or a broken
     Hold after it goes to the plain ITI, so a paid trial stays correct."""
-    low = lowering.lower(EXIT_AFTER_OUTCOME, **FR_SLOTS)
+    low = lower(EXIT_AFTER_OUTCOME, **FR_SLOTS)
     # 0 counter, 1-3 the outcome, 4 delay, 5 wait, 6 hold, 7 ITI: no end at all.
     assert len(low.states) == 8 and low.phases[7] == 5
     assert [row[11] for row in low.states if row[11]] == [CORRECT]
@@ -230,7 +239,7 @@ def test_a_counter_limit_after_the_outcome_still_ends_the_session_unmarked():
     spine = [{"phase": "wait", "on": "lever"}, {"phase": "outcome", "line": "reward", "ms": 0},
              {"phase": "counter", "on": "lever", "count": 3, "timeoutMs": 50, "endsSession": True},
              {"phase": "iti", "ms": 10}]
-    low = lowering.lower(spine, **FR_SLOTS)
+    low = lower(spine, **FR_SLOTS)
     end = low.states[-1]
     assert end[10] == lowering.LAST_TRIAL and end[11] == 0 and low.rows[-1] is None
     assert most_marks(low) == 1
@@ -292,7 +301,7 @@ def test_any_path_through_a_trial_marks_at_most_one_class(seed):
     for _ in range(rng.randint(0, 3)):
         spine.append(plain(palette, any(p["phase"] == "counter" for p in spine)))
     spine.append({"phase": "iti", "ms": 5})
-    low = lowering.lower(spine, inputs=inputs, outputs=outputs, rows=rows)
+    low = lower(spine, inputs=inputs, outputs=outputs, rows=rows)
     assert most_marks(low) == 1, spine
 
 
@@ -303,7 +312,7 @@ def test_an_outcome_keeps_its_outputs_high_through_the_reward():
     spine = [{"phase": "wait", "on": "port"},
              {"phase": "outcome", "line": "reward", "outputs": ["cue"], "ms": 10},
              {"phase": "iti", "ms": 10}]
-    low = lowering.lower(spine, inputs=["port"], outputs=["cue", "reward"])
+    low = lower(spine, inputs=["port"], outputs=["cue", "reward"])
     chance, reward, settle = low.states[1], low.states[2], low.states[3]
     assert chance[0] == 0, "a chance state takes no time and drives nothing"
     assert reward[0] == 0b11, "the reward line opens beside the phase's own outputs"
@@ -330,7 +339,7 @@ def test_no_output_a_phase_names_ever_drops_while_in_that_phase():
                 p["line"] = rng.choice(outputs)
             spine.append(p)
         spine.append({"phase": "iti", "ms": 5, "outputs": rng.sample(outputs, rng.randint(0, 1))})
-        low = lowering.lower(spine, inputs=inputs, outputs=outputs)
+        low = lower(spine, inputs=inputs, outputs=outputs)
         for s, row in enumerate(low.states):
             if row[5] != lowering.NONE:
                 continue  # a chance state never rests
@@ -341,9 +350,9 @@ def test_no_output_a_phase_names_ever_drops_while_in_that_phase():
 
 def test_a_spine_lowering_refuses_is_not_a_table():
     with pytest.raises(lowering.LoweringError):
-        lowering.lower([{"phase": "wait", "on": "port"}], inputs=["port"], outputs=[])  # no ITI
+        lower([{"phase": "wait", "on": "port"}], inputs=["port"], outputs=[])  # no ITI
     with pytest.raises(lowering.LoweringError):
-        lowering.lower(TRACER, inputs=[], outputs=["cue", "sample", "reward"])  # "port" unresolved
+        lower(TRACER, inputs=[], outputs=["cue", "sample", "reward"])  # "port" unresolved
 
 
 # --- the Response window, the contingency map and several rows (#101) ----------
@@ -369,7 +378,7 @@ NO_GO = {"id": "nogo", "bind": {"port": "P", "resp": "R", "cue": "C", "sample": 
 
 
 def test_a_go_no_go_pair_lowers_to_a_pick_state_and_a_copy_of_the_spine_per_row():
-    low = lowering.lower(GO_NO_GO, inputs=["port", "resp"], outputs=["cue", "sample", "reward"],
+    low = lower(GO_NO_GO, inputs=["port", "resp"], outputs=["cue", "sample", "reward"],
                          rows=[GO, NO_GO])
     # Bits are channels: `sample` is O1 in one row and O2 in the other, two bits.
     assert low.inputs == (("port", "P"), ("resp", "R"))
@@ -380,7 +389,7 @@ def test_a_go_no_go_pair_lowers_to_a_pick_state_and_a_copy_of_the_spine_per_row(
         (0, 0, N, N, N, N, N, N, 0, 2, PICK, 0),                # 0  pick a row
         (0b0001, 0b01, N, N, N, N, N, N, 2, 1, 0, 0),           # 1  go: wait for the port
         (0b0011, 0, 1, 1, 3, N, N, N, 0, 0, 0, 0),              # 2  present odor 1
-        (0b0001, 0b10, 2, 2, 7, N, N, N, 3, 1, 0, 0),           # 3  the window
+        (0b0001, 0b10, 2, 2, 7, N, N, N, 3, 1, R, 0),           # 3  the window: a response state
         (0, 0, N, N, N, 6, 5, 6, 0, 0, 0, CORRECT),             # 4  resp: draw the reward
         (0b1000, 0, 5, 5, 6, N, N, N, 0, 0, 0, 0),              # 5  the reward line open
         (0, 0, 3, 3, 8, N, N, N, 0, 0, 0, 0),                   # 6  the class timeout
@@ -388,7 +397,7 @@ def test_a_go_no_go_pair_lowers_to_a_pick_state_and_a_copy_of_the_spine_per_row(
         (0, 0, 4, 4, 0, N, N, N, 0, 0, 0, 0),                   # 8  ITI, back to the pick
         (0b0001, 0b01, N, N, N, N, N, N, 4, 1, 0, 0),           # 9  no-go: wait for the port
         (0b0101, 0, 1, 1, 11, N, N, N, 0, 0, 0, 0),             # 10 present odor 2
-        (0b0001, 0b10, 2, 2, 13, N, N, N, 5, 1, 0, 0),          # 11 the window
+        (0b0001, 0b10, 2, 2, 13, N, N, N, 5, 1, R, 0),          # 11 the window
         (0, 0, 3, 3, 14, N, N, N, 0, 0, 0, FALSE_ALARM),        # 12 resp: no line
         (0, 0, 3, 3, 14, N, N, N, 0, 0, 0, WITHHELD),           # 13 timeout
         (0, 0, 4, 4, 0, N, N, N, 0, 0, 0, 0),                   # 14 ITI
@@ -416,12 +425,12 @@ AFC_SLOTS = {"inputs": ["port", "left", "right"], "outputs": ["cue", "reward_l",
 
 
 def test_a_2afc_row_with_a_hold_lowers_to_the_worked_table():
-    low = lowering.lower(TWO_AFC, **AFC_SLOTS, rows=[RIGHT_IS_CORRECT])
+    low = lower(TWO_AFC, **AFC_SLOTS, rows=[RIGHT_IS_CORRECT])
     # The window's H1 straight after its T1; right is entry 2 (responses, then timeout).
     assert low.params == ("NT", "T1", "H1", "T2", "T3", "RW1", "RP1_2")
     assert low.states == (
         (0b001, 0b001, N, N, N, N, N, N, 0, 1, lowering.STARTS_TRIAL, 0),  # 0 wait; one row, no pick
-        (0b001, 0b110, 1, 1, 7, N, N, N, 1, 2, 0, 0),                      # 1 the window
+        (0b001, 0b110, 1, 1, 7, N, N, N, 1, 2, R, 0),                      # 1 the window: a response state
         (0, 0, 3, 3, 9, N, N, N, 0, 0, 0, WRONG),                          # 2 left: wrong
         (0b001, 0b100, 2, 2, 4, N, N, N, 3, 1, 0, 0),                      # 3 right: hold it
         (0, 0, N, N, N, 6, 5, 6, 0, 0, 0, CORRECT),                        # 4 held: draw the reward
@@ -441,7 +450,7 @@ def test_every_resolved_branch_enters_exactly_one_outcome_state_and_a_line_is_dr
     """The contract the trial table reads (#99): each branch out of the window
     marks its class once, and with a line that state is the chance state whose
     on_hit is the reward state."""
-    low = lowering.lower(TWO_AFC, **AFC_SLOTS, rows=[RIGHT_IS_CORRECT])
+    low = lower(TWO_AFC, **AFC_SLOTS, rows=[RIGHT_IS_CORRECT])
     marked = [s for s, row in enumerate(low.states) if row[11]]
     assert [low.states[s][11] for s in marked] == [WRONG, CORRECT, OMISSION, HOLD_BROKEN]
     chance = low.states[4]
@@ -450,12 +459,148 @@ def test_every_resolved_branch_enters_exactly_one_outcome_state_and_a_line_is_dr
 
 def test_a_tracer_row_pays_by_its_own_keys_and_lowers_as_before():
     rows = [{"id": "r1", "bind": {"port": "odor_port", "cue": "a", "sample": "b", "reward": "c"}}]
-    low = lowering.lower(TRACER, inputs=["port"], outputs=["cue", "sample", "reward"], rows=rows)
-    assert low.states == lowering.lower(TRACER, inputs=["port"], outputs=["cue", "sample", "reward"]).states
+    low = lower(TRACER, inputs=["port"], outputs=["cue", "sample", "reward"], rows=rows)
+    assert low.states == lower(TRACER, inputs=["port"], outputs=["cue", "sample", "reward"]).states
     assert low.params == ("NT", "T1", "T2", "T3", "T4", "RW1", "RP1")
 
 
 def test_a_window_whose_map_is_incomplete_is_not_a_table():
     row = dict(RIGHT_IS_CORRECT, map={"right": {"outcome": "correct"}})
     with pytest.raises(lowering.LoweringError, match="left"):
-        lowering.lower(TWO_AFC, **AFC_SLOTS, rows=[row])
+        lower(TWO_AFC, **AFC_SLOTS, rows=[row])
+
+
+# --- blocks (#103) ----------------------------------------------------------------
+
+
+def afc_row(row_id: str, correct: str) -> dict:
+    """A 2AFC row whose `correct` response is `correct`, the other one wrong."""
+    wrong = "left" if correct == "right" else "right"
+    return {"id": row_id, "bind": dict(RIGHT_IS_CORRECT["bind"]),
+            "map": {correct: {"outcome": "correct", "line": f"reward_{correct[0]}"},
+                    wrong: {"outcome": "wrong_response"}, "timeout": {"outcome": "omission"}}}
+
+
+REVERSAL_ROWS = [afc_row("go_right", "right"), afc_row("go_left", "left")]
+
+
+def test_without_a_session_cap_no_slot_is_nt_and_one_block_draws_every_row():
+    low = lowering.lower(TWO_AFC, **AFC_SLOTS, rows=REVERSAL_ROWS)
+    assert "NT" not in low.params
+    #                 first count select n_min n_max k  n  window correct next errors
+    assert low.blocks == ((0, 2, 0, N, N, N, N, N, N, N, 0),)
+    assert low.skipped == lowering.class_mask(["abort_before_stimulus", "abort_during_sampling"])
+    assert low.entries == () and low.overrides == ()
+    assert [low.edges[e][2] for e in range(2)] == [1, low.rows.index(1)], "the pick's branches are the rows"
+
+
+def test_a_reversal_is_two_blocks_one_ending_on_a_criterion():
+    """Block a draws both rows until 8 of the last 10 are correct; block b draws
+    them again for 40 trials, repeating an error up to twice, and ends the session."""
+    blocks = [{"id": "a", "rows": ["go_right", "go_left"], "criterion": {"correct": 8, "of": 10}},
+              {"id": "b", "rows": ["go_left", "go_right"], "trials": 40, "correction": 2}]
+    low = lowering.lower(TWO_AFC, **AFC_SLOTS, rows=REVERSAL_ROWS, blocks=blocks)
+    assert low.params[-4:] == ("BK1", "BKN1", "BN2", "BC2")
+    bk, bkn, bn, bc = (low.params.index(k) for k in ("BK1", "BKN1", "BN2", "BC2"))
+    errors = lowering.class_mask(["wrong_response", "false_alarm"])  # the default error set
+    assert low.blocks == ((0, 2, 0, N, N, bk, bkn, N, N, 1, 0),
+                          (2, 2, 0, bn, bn, N, N, N, bc, N, errors))
+    go_right, go_left = low.rows.index(0), low.rows.index(1)
+    assert [low.edges[e][2] for e in range(4)] == [go_right, go_left, go_left, go_right]
+    assert low.states[0][9] == 4, "one branch per row of each block"
+    assert [s.block for s in low.slots[-4:]] == [0, 0, 1, 1]
+
+
+def test_a_looping_bandit_draws_each_block_s_length_and_loops_back():
+    blocks = [{"id": "a", "rows": ["go_right"], "trials": 40, "trialsMax": 60},
+              {"id": "b", "rows": ["go_left"], "trials": 40, "trialsMax": 60, "next": "a"}]
+    low = lowering.lower(TWO_AFC, **AFC_SLOTS, rows=REVERSAL_ROWS, blocks=blocks)
+    slot = {k: low.params.index(k) for k in ("BN1", "BNX1", "BN2", "BNX2")}
+    assert low.blocks == ((0, 1, 0, slot["BN1"], slot["BNX1"], N, N, N, N, 1, 0),
+                          (1, 1, 0, slot["BN2"], slot["BNX2"], N, N, N, N, 0, 0))
+
+
+def test_a_selection_by_weight_or_side_gives_each_branch_an_entry():
+    """A weight slot per branch of a block that reads weights; a side, the input
+    bit of the row's one correct response, per branch of every block."""
+    blocks = [{"id": "a", "rows": ["go_right", "go_left"], "select": "antibias", "biasWindow": 10},
+              {"id": "b", "rows": ["go_right", "go_left"], "select": "bag", "weights": [2, 1]},
+              {"id": "c", "rows": ["go_left"]}]
+    low = lowering.lower(TWO_AFC, **AFC_SLOTS, rows=REVERSAL_ROWS, blocks=blocks)
+    left, right = 1, 2  # input bits: port, left, right
+    w = {k: low.params.index(k) for k in ("W1_1", "W1_2", "W2_1", "W2_2")}
+    assert low.entries == ((right, w["W1_1"]), (left, w["W1_2"]), (right, w["W2_1"]), (left, w["W2_2"]),
+                           (left, N))
+    assert [b[2] for b in low.blocks] == [lowering.SELECTIONS[s] for s in ("antibias", "bag", "uniform")]
+    assert low.blocks[0][7] == low.params.index("BA1")
+
+
+def test_a_row_with_no_single_correct_response_has_no_side():
+    both = afc_row("both", "right")
+    both["map"]["left"] = {"outcome": "correct"}
+    low = lowering.lower(TWO_AFC, **AFC_SLOTS, rows=[both, REVERSAL_ROWS[1]],
+                         blocks=[{"rows": ["both", "go_left"], "select": "weighted"}])
+    assert [e[0] for e in low.entries] == [N, 1]
+
+
+def test_a_block_overrides_a_phase_s_duration_through_its_own_slot():
+    blocks = [{"id": "a", "rows": ["go_right", "go_left"], "trials": 10},
+              {"id": "b", "rows": ["go_right", "go_left"], "phaseMs": {"3": 6000}}]
+    low = lowering.lower(TWO_AFC, **AFC_SLOTS, rows=REVERSAL_ROWS, blocks=blocks)
+    assert low.overrides == ((1, low.params.index("T3"), low.params.index("B2T3")),)
+    with pytest.raises(lowering.LoweringError, match="phase 0"):
+        lowering.lower(TWO_AFC, **AFC_SLOTS, rows=REVERSAL_ROWS,
+                       blocks=[{"rows": ["go_right"], "phaseMs": {"0": 5}}])  # a Wait with no timeout
+
+
+def test_every_lowered_table_with_blocks_is_one_replay_accepts():
+    blocks = [{"id": "a", "rows": ["go_right", "go_left"], "select": "antibias",
+               "criterion": {"correct": 2, "of": 3}, "correction": 1, "phaseMs": {"3": 10}},
+              {"id": "b", "rows": ["go_left"], "trials": 2, "trialsMax": 4, "next": "a", "select": "bag"}]
+    low = lowering.lower(TWO_AFC, **AFC_SLOTS, rows=REVERSAL_ROWS, blocks=blocks, session_cap=True)
+    table = rp.Table(states=[rp.StateRow(*s) for s in low.states], edges=[rp.EdgeRow(*e) for e in low.edges],
+                     blocks=rp.Blocks(rows=[rp.Block(*b) for b in low.blocks],
+                                      entries=[rp.Entry(*e) for e in low.entries],
+                                      overrides=[rp.Override(*o) for o in low.overrides],
+                                      skipped=low.skipped))
+    assert table.slots_used() == len(low.params)
+
+
+def test_a_criterion_skips_exactly_the_classes_p_correct_excludes():
+    """The aborts a criterion's window passes over are the scorer's own EXCLUDED set."""
+    from ephymeris_sidecar.analytics.stream import table_metrics
+    assert set(lowering.EXCLUDED_CLASSES) == set(table_metrics.EXCLUDED)
+    low = lowering.lower(TWO_AFC, **AFC_SLOTS, rows=REVERSAL_ROWS)
+    assert low.skipped == lowering.class_mask(table_metrics.EXCLUDED)
+
+
+def test_a_criterion_counts_exactly_the_classes_p_correct_counts_right():
+    """A criterion's correct trials are the scorer's hits, a correct withhold
+    included: one list, so a block cannot end on what P(correct) calls wrong."""
+    from ephymeris_sidecar.analytics.stream import table_metrics
+    assert set(lowering.HIT_CLASSES) == set(table_metrics.HITS) == {"correct", "withheld"}
+    low = lowering.lower(TWO_AFC, **AFC_SLOTS, rows=REVERSAL_ROWS)
+    assert low.hits == lowering.class_mask(table_metrics.HITS)
+
+
+def test_a_block_s_correction_repeats_after_its_own_classes_or_the_default_errors():
+    blocks = [{"id": "a", "rows": ["go_right", "go_left"], "correction": 2},
+              {"id": "b", "rows": ["go_right"], "correction": 1, "correctionAfter": ["omission", "wrong_response"]},
+              {"id": "c", "rows": ["go_left"], "correctionAfter": ["omission"]}]
+    low = lowering.lower(TWO_AFC, **AFC_SLOTS, rows=REVERSAL_ROWS, blocks=blocks)
+    bit = {name: 1 << (lowering.OUTCOME_CLASSES.index(name)) for name in lowering.OUTCOME_CLASSES}
+    assert [b[10] for b in low.blocks] == [bit["wrong_response"] | bit["false_alarm"],
+                                           bit["omission"] | bit["wrong_response"], 0], \
+        "no correction, no error set"
+    with pytest.raises(lowering.LoweringError, match="correctionAfter"):
+        lowering.lower(TWO_AFC, **AFC_SLOTS, rows=REVERSAL_ROWS,
+                       blocks=[{"rows": ["go_right"], "correction": 1, "correctionAfter": ["oops"]}])
+
+
+@pytest.mark.parametrize("bad", [
+    [{"rows": []}], [{"rows": ["nope"]}], [{"rows": ["go_right"], "next": "nope"}],
+    [{"rows": ["go_right"], "select": "lottery"}], [{"rows": ["go_right"], "trialsMax": 4}],
+])
+def test_a_block_that_draws_no_row_or_names_no_block_is_not_a_table(bad):
+    with pytest.raises(lowering.LoweringError):
+        lowering.lower(TWO_AFC, **AFC_SLOTS, rows=REVERSAL_ROWS, blocks=bad)

@@ -248,3 +248,112 @@ def test_adding_an_outcome_class_moves_the_score_version(monkeypatch) -> None:
 
     monkeypatch.setattr(lowering, "OUTCOME_CLASSES", (*lowering.OUTCOME_CLASSES, "new_class"))
     assert scoring.canary_fingerprint() != before
+
+
+# --- the generated go/no-go and 2AFC tasks, replayed and scored -----------------
+
+
+def simulated_document(definition: dict, animal, *, trials: int = 10, seed: int = 99,
+                       ticks: int = 200_000) -> dict:
+    """A run of a generated spine task, its animal reacting tick by tick.
+
+    `animal(phase, row, ms_in_phase)` gives the level of each input bit. Only
+    the edges the state in force watches are strobed, as the board does; every
+    other strobe is what replay predicts, so the file is what a board running
+    this table with this animal must have sent.
+    """
+    snapshot = generate.build_profile(TaskDefinition.from_json(definition)).to_json()
+    spine = snapshot["spine"]
+    code = {name: int(c) for c, name in snapshot["strobes"].items()}
+    config = {f["metadataKey"]: f["default"] for f in snapshot["config"]} | {"block_trials": trials}
+    document = {
+        "rat": "remy1", "sketch": definition["name"], "stop_reason": "BF_END_SESSION received",
+        "interp": spine["interp"], "trial_seed": seed, task_profile.SNAPSHOT_KEY: snapshot, **config,
+        "ts_data": [],
+    }
+    record = spine_stream.decode(document)
+    phases, rows = spine["table"]["phases"], spine["table"]["rows"]
+    rise = [i["rise"] for i in spine["inputs"]]
+    fall = [i["fall"] for i in spine["inputs"]]
+    core, _ = replay.begin(record.table, record.params, seed, 0, record.interp)
+    levels, entered, started, strobes, end = 0, 0, 1, [], None
+    for now in range(1, ticks):
+        phase = phases[core.state]
+        want = animal(phase, rows[core.state], now - entered)
+        rose, fell = want & ~levels, levels & ~want
+        levels = want
+        watch = record.table.states[core.state].watch
+        strobes += [[code[rise[b]], now] for b in range(len(rise)) if (rose & watch) >> b & 1]
+        strobes += [[code[fall[b]], now] for b in range(len(fall)) if (fell & watch) >> b & 1]
+        before = phase
+        core, a = replay.step(core, replay.Edges(rose, fell), now)
+        if a.flags & replay.ACT_TRIAL_START:
+            started += 1
+            if started > trials:
+                end = now
+                break
+        if phases[core.state] != before:
+            entered = now
+    document["ts_data"] = strobes + [[code["END_SESSION"], end]]
+    document["ts_data"] = [list(s) for s in spine_stream.expected_stream(spine_stream.decode(document))]
+    document["n_events"] = len(document["ts_data"])
+    return document
+
+
+PORT, RESP = 0b01, 0b10
+
+
+def go_no_go_animal(phase, row, ms):  # noqa: ANN001
+    """Pokes at every wait; licks 300 ms into a go window, never into a no-go one."""
+    if phase == 0:
+        return PORT
+    if phase == 2 and row == 0 and ms >= 300:
+        return RESP
+    return 0
+
+
+async def test_a_perfect_go_no_go_session_scores_one_overall_and_per_row() -> None:
+    from ephymeris_sidecar.analytics import stream
+
+    document = simulated_document(fixture.go_no_go(), go_no_go_animal)
+    summary = stream.summarize(document, None)
+    assert summary.status == "ok", summary.detail
+    assert [(m.label, m.p_session) for m in summary.metrics] == [
+        ("P(correct | Go)", 1.0), ("P(correct | No-go)", 1.0)]
+    assert summary.overall.p_session == 1.0 and summary.replay.trials == 10
+    table = spine_stream.trial_table(document)
+    go = [t for t in table["trials"] if t["row"] == "go"]
+    no_go = [t for t in table["trials"] if t["row"] == "no_go"]
+    assert go and no_go, "the pick drew both rows"
+    assert {t["outcome"] for t in go} == {"correct"} and {t["outcome"] for t in no_go} == {"withheld"}
+    assert all(t["response"] == "right_well" and t["latencyMs"] == 300 for t in go)
+    assert all(t["response"] is None for t in no_go), "a withhold has no response"
+    assert all(t["phaseEntries"][0] is not None for t in table["trials"]), "the pick's null phase is skipped"
+
+
+def two_afc_animal(phase, row, ms):  # noqa: ANN001
+    """Holds the port through the odor, then 300 ms into the window goes to the
+    row's correct well (odor 1 right, odor 2 left) and holds it."""
+    left, right = 0b010, 0b100
+    if phase in (0, 1):
+        return 0b001
+    if phase == 2 and ms >= 300:
+        return right if row == 0 else left
+    return 0
+
+
+async def test_a_2afc_session_replays_to_its_responses_and_rewards() -> None:
+    from ephymeris_sidecar.analytics import stream
+
+    document = simulated_document(fixture.two_afc(), two_afc_animal)
+    summary = stream.summarize(document, None)
+    assert summary.status == "ok", summary.detail
+    assert summary.overall.p_session == 1.0 and summary.replay.rewarded.n == 10
+    table = spine_stream.trial_table(document)
+    assert table["phases"] == ["wait", "present", "response", "outcome", "iti"]
+    for t in table["trials"]:
+        right = t["row"] == "odor_1"
+        assert t["outcome"] == "correct" and t["rewarded"]
+        assert t["response"] == ("right_well" if right else "left_well") and t["latencyMs"] == 300
+        assert t["rewardLine"] == ("fluid_2" if right else "fluid_1")
+        assert t["rewardMs"] == 100 and t["rowName"] == ("Odor 1" if right else "Odor 2")

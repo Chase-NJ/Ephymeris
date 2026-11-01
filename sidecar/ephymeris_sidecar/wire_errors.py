@@ -51,6 +51,7 @@ from .sessions.models import PrefixNameTaken, SessionNotFound
 from .rig.transfer import ChannelSetImportConflict, ChannelSetInvalid
 from .strobes.store import StrobeRefused
 from .taskdef.model import TaskDefinitionError
+from .taskdef.transfer import TaskImportConflict, TaskImportReplaces, TaskTransferInvalid
 from .tasks.profile import TaskProfileError
 from .tasks.start_command import StartRefused
 from .utility import UtilityUnavailable
@@ -227,6 +228,12 @@ ERRORS: ErrorTable = [
         ErrCode.CHANNEL_SET_IMPORT_CONFLICT, str(e), {"conflicts": e.conflicts}
     )),
     (TaskDefinitionError, _fixed(ErrCode.TASK_INVALID)),
+    # --- moving a task between machines (TASKS.md#moving-a-task-between-machines) ---
+    (TaskTransferInvalid, _fixed(ErrCode.TASK_TRANSFER_INVALID)),
+    (TaskImportConflict, lambda e, _a: CommandError(
+        ErrCode.TASK_IMPORT_CONFLICT, str(e), {"conflicts": e.conflicts}
+    )),
+    (TaskImportReplaces, _fixed(ErrCode.TASK_IMPORT_REPLACES)),
     (TaskProfileError, _task_profile),
     # --- recording (RECORDING.md) ---
     # Three codes, because the operator's next step differs: click Connect in

@@ -105,7 +105,19 @@ jobs:
           cache-dependency-path: sidecar/pyproject.toml
       - uses: arduino/setup-arduino-cli@v2
       - run: arduino-cli core update-index && arduino-cli core install arduino:avr
-      - run: pip install -e sidecar
+      - run: pip install -e "sidecar[dev]"
+      # A spine task's RAM budget (docs/TASKS.md#spine-diagnostics) is counted
+      # at the AVR sizes of the runner's rows; these compile generated tasks for
+      # the Mega and hold the count to the build. This is the one job with
+      # arduino-cli, so here they must run, never skip.
+      - name: Pin a spine task's RAM count to the AVR build
+        working-directory: sidecar
+        env:
+          REQUIRE_ARDUINO_CLI: "1"
+        run: >-
+          python -m pytest -p no:cacheprovider
+          "tests/test_spine_task.py::test_the_ram_budget_is_what_an_avr_build_adds_for_the_task"
+          "tests/test_spine_task.py::test_the_row_sizes_are_boxinterp_hs_structs_as_avr_packs_them"
       - name: Generate the bundled sketches
         run: python -c "import sys, pathlib; from ephymeris_sidecar.taskdef.bundled import repin_all; n = repin_all(pathlib.Path(sys.argv[1])); print(n, 'sketches'); sys.exit(n == 0)" "$RUNNER_TEMP/sketches"
       # A saved spine task has no bundled sketch of its own: its folder is the

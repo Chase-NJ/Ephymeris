@@ -134,7 +134,25 @@ the top left.
 
 **Task.** What the animal does: the trial types, the shaping ramp and every number the box uses. Saving
 a task makes a program that can be put on a box. Usually managed by the lab manager. The landing page
-lists each saved task with its number of conditions, its stages and whether it is **ready**.
+lists each saved task with its number of conditions, its stages and whether it is **ready**. A task
+whose saved file can no longer be read is still listed, in red, with the reason.
+
+To use a task on the lab's other computer, click **Export** on its row and save the file. On the other
+computer, click **Import task** on the Task tab and choose that file. The task runs on that computer's own
+pins and records the same codes. Before you import, both computers must already share their channels:
+export the channel set on **Rig → Wiring** and import it on the other computer first.
+
+The import is refused, and nothing is written, if the two computers disagree about anything the task
+uses:
+
+- a channel the task uses is missing on this computer;
+- a channel the task uses is set up differently here;
+- the task's channels are listed in another order here;
+- a code the task records has a different number here;
+- another task already has its name.
+
+The dialog lists every difference. Fix each one, then import again. If this computer already has the
+task, the import replaces it, and the dialog asks first.
 
 ![The Task tab: a + New task row, then three saved tasks — 4-Odor Discrimination (weighted, 4 conditions, no ramp), Shaping - Both Sides (pool, 5 stages) and 2-Odor Discrimination (anti-bias, 5 stages) — each marked ready, with the Strobes door below](images/task-landing.webp)
 

@@ -35,6 +35,7 @@ Everything between "a box runs firmware that emits strobes" and "the app draws i
   - [Rebuilt bundled sketches](#rebuilt-bundled-sketches)
   - [The box utility](#the-box-utility)
   - [Order is meaning](#order-is-meaning)
+  - [Moving a task between machines](#moving-a-task-between-machines)
 - [Spine tasks](#spine-tasks)
   - [What a spine task holds](#what-a-spine-task-holds)
   - [Lowering](#lowering)
@@ -64,6 +65,7 @@ Everything between "a box runs firmware that emits strobes" and "the app draws i
   - [The length cap](#the-length-cap)
   - [SEED](#seed)
 - [Profile and params hashes](#profile-and-params-hashes)
+  - [A spine task's hash covers behaviour only](#a-spine-tasks-hash-covers-behaviour-only)
 - [Derived state machine](#derived-state-machine)
   - [Why derived](#why-derived)
   - [The model](#the-model)
@@ -198,7 +200,7 @@ The three values are themselves guarded in `BehaviorBox.h`. A header that once o
 
 The host tests compile `BehaviorBox.h` off-target against a minimal `Arduino.h` shim. They do not replace a real AVR compile and flash.
 
-`run_interp.sh` tests `BoxInterp.h`, the phase interpreter's pure core ([ADR 0003](adr/0003-phase-spine-task-model.md)), which includes no Arduino header and needs no shim. `run_diff.sh` is the **differential test**: it runs that core and its Python port, `analytics/stream/replay.py`, over generated state tables and randomized input logs, and fails on the first tick where their actions differ. It then changes the Python tie rule and expects a difference, so a run that generates too few ties fails rather than passing on nothing. Change the header and the port together; the header documents the table format and the tick rules for both. A third of the differential test's tables are lowered by the generator itself (`taskdef/lowering.py`), so the tables a saved spine task compiles are held to both interpreters. Those tables hold no ties (a lowered state has at most one exit), so their family has a self-check of its own: with every RNG draw reflected, they must differ.
+`run_interp.sh` tests `BoxInterp.h`, the phase interpreter's pure core ([ADR 0003](adr/0003-phase-spine-task-model.md)), which includes no Arduino header and needs no shim. `run_diff.sh` is the **differential test**: it runs that core and its Python port, `analytics/stream/replay.py`, over generated state tables and randomized input logs, and fails on the first tick where their actions differ. It then changes the Python tie rule and expects a difference, so a run that generates too few ties fails rather than passing on nothing. Change the header and the port together; the header documents the table format and the tick rules for both. A third of the differential test's tables are lowered by the generator itself (`taskdef/lowering.py`), so the tables a saved spine task compiles are held to both interpreters. They have Response windows, contingency maps, holds and several rows, and the raw tables have pick states. Two more self-checks: with the pick draw mirrored, the raw tables and the generator's tables must each differ, and with every RNG draw reflected, the generator's tables alone must differ.
 
 `run_spine.sh` tests `BoxSpine.h`, the runner around that core, on the instrumented shim with a hand-written table: the handshake, the stream's order and tick times, skipped `millis()` values, and the [session end rule](#the-runner). `sidecar/tests/test_spine_run.py` compiles a **generated** spine task the same way, plays its serial output through the real session path, and replays the `.tsv` that path wrote.
 
@@ -428,6 +430,21 @@ Four answers, nothing derivable (`taskdef/model.py`):
 
 Plus `id`, `name` (becomes the sketch folder and must be a legal folder name), `category`, `legacyNames` and `notes`.
 
+**`category` is free text and `name` follows the shape above, but each must be one folder name that is safe on Windows and macOS** (`folder_name_problem` in `taskdef/model.py`). Each save deletes and rewrites `<category>/<name>/`, so the rule refuses:
+
+- a path: `.` or `..`, a separator (`/` or `\`), a drive or UNC prefix;
+- a character Windows forbids (`<>:"|?*`), or a control character;
+- a trailing dot or space, which Windows drops, so `Tracer.` and `Tracer` would be one folder;
+- a name Windows reserves for a device (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`), in any case, with or without an extension.
+
+A definition breaking the rule is not a definition (`TASK_INVALID`, or `TASK_TRANSFER_INVALID` on import), and nothing is written.
+
+- **A stored task that no longer reads is listed, never dropped.** `tasks.list` lists it with `unreadable` saying why, and its name still holds its folder.
+- **Two names clash as Windows compares them** (`folder_key`: case-folded, trailing dots and spaces dropped), on save and on import.
+- **`TaskStore` refuses any generated folder outside `<data_dir>/tasks/`** before it deletes or writes. It judges by the path's normalised components, not by resolving it, so a symlinked category folder keeps working.
+- **An id that is not an id names no file.**
+- **Listing and regeneration skip one bad task** and report it, so the rest go on.
+
 A definition stores **channel names and strobe code names, never pins or numbers.** That indirection makes "odor line 3 means go-left on this rig" an edit to one document rather than to firmware, and lets a rewiring be costed before it is written.
 
 > [!CAUTION]
@@ -515,7 +532,7 @@ The [rig definition](../GLOSSARY.md#rig-definition) is the rig wiring plus the s
 
 **The in-force values are cached, and a cache never keeps a value composed before a clear.** `set_rig_source` / `set_vocabulary_source` drop the cache and bump a generation; a reader that began composing from the old document returns its value without storing it.
 
-**A write runs end to end, alone.** Every command that rewrites a generated folder is a rig definition write: `hardware.save` and `hardware.reset`, every vocabulary edit, `tasks.save` and `tasks.delete`. Each takes `RigDefinition.writing()` and holds it through judge → store → install → rebuild → rescan → announce, so no second write, reset or task save interleaves with a rebuild.
+**A write runs end to end, alone.** Every command that rewrites a generated folder is a rig definition write: `hardware.save` and `hardware.reset`, every vocabulary edit, `tasks.save`, `tasks.import` and `tasks.delete`. Each takes `RigDefinition.writing()` and holds it through judge → store → install → rebuild → rescan → announce, so no second write, reset or task save interleaves with a rebuild.
 
 **Everything that uses a generated folder holds `RigDefinition.reading()`** for as long as it uses it, including any belief it records about what a board now carries: a flash from the discovery lookup through the record `PortManager.flash` writes and `utility.note_flashed`, a utility restore through that same record, `port.sendStart`, confirm mapping from the first profile read until the rig is held, `tasks.getProfile`, `strobes.usage`, and every rescan outside a write. So a write waits for flashes already in progress (at most one per box, though restores on different boxes run side by side), and a flash, a `START` or a mapping waits for a write. A waiting write goes before readers that arrive after it, so a stream of restores cannot starve a save. Commands that may wait carry long client timeouts (`client.ts`). Reads of the registries alone — `tasks.list`, `tasks.get`, the previews — take nothing. **Analytics is the one reader that takes nothing**: a cold index runs for minutes and would stall every save; it decodes from each run's own profile snapshot first.
 
@@ -567,14 +584,59 @@ Two orderings carry meaning and both are emitted from a single pass so they cann
 - **Odor index.** `Odors[i]` is odor line i+1, and the pins are not monotonic past line 6. Use `ChannelMap.declared_of_kind()`, never `of_kind()` (which sorts by pin) — the wrong one swaps lines, drives the wrong valve and announces it with the wrong onset code while every trial looks correct.
 - **Trial-table slot.** Slot i is `kTrials[i]`, is `poolWeights[i]` (wire `PW<i+1>`), and is `rewardTimes[i]` (wire `RW<i+1>`). Reordering the table re-weights a pool task and re-pays every condition, which is why the trial table has no drag handle.
 
+### Moving a task between machines
+
+A task exported on one lab machine imports on the other, where it compiles against that machine's pins and strobes the same codes ([ADR 0003](adr/0003-phase-spine-task-model.md)). The operator exports a task from its row on the Task landing page and imports it with **Import task** there (`tasks.export`, `tasks.import`; rules in `taskdef/transfer.py`).
+
+**The export** is one file:
+
+```json
+{"task_export_version": 1,
+ "channel_set_hash": "3f0c…",
+ "channel_set_hash_version": 2,
+ "channels": {"odor_port": {"kind": "engagement", "type": "digital_in", "role": "port", …}, …},
+ "codes": {"END_SESSION": 246, "ODOR_PORT_ENTER": 117, …},
+ "definition": {…}}
+```
+
+- **`definition`** is the stored `<id>.json`, verbatim. It is never re-serialised through `TaskDefinition`, which drops fields this build does not know, so a newer build's fields reach the other machine whole. An older build stores them and generates without them: update both machines before moving a task, as for a channel set.
+- **`channels`** holds the channels the task names, in this machine's declaration order. These are a trial row's odor, response and reward channels, and every channel a spine row binds (`named_channels`). Each entry holds what the channel is: the fields `ChannelSet.content_hash` covers, with edge and onset code names. It holds no pin, label or rationale.
+- **`codes`** gives this vocabulary's number for each code the task strobes (`codes_used`): each named channel's edge codes and declared onset, a trial row's onset code and its response port's [slot codes](#port-slots), and a spine's structural codes.
+- **`channel_set_hash`** identifies the whole channel set the task was written against. The plan says whether the importing rig has the same one (`sameChannelSet`), but the hash is never a reason to refuse.
+- **Export is refused** in three cases:
+  - the task names a channel this rig lacks, or strobes a code this vocabulary does not hold live (`TASK_TRANSFER_INVALID`). The file could not state that channel or number;
+  - the stored wiring is not in force (`RIG_WIRING_UNLOADED`);
+  - the task is unknown, or its stored file will not read as a definition (`TASK_NOT_FOUND`).
+
+**The import judges only the channels and codes the task names.** A difference elsewhere in the channel set changes nothing this task compiles or strobes. An import never touches the channel set or the vocabulary. It never adds, edits or reorders a channel, and never adds or renumbers a code: the vocabulary is [append only](#append-only) and lab-wide, and only [the channel-set import](#moving-the-channel-set-between-machines) brings codes over. **Any conflict refuses the whole import, and the plan lists every one** (`TaskImportConflict.kind`):
+
+| Kind | When |
+|---|---|
+| `not_here` | A channel the task names and this rig lacks. It has no pin here |
+| `differs` | A channel the task names whose entry differs: kind, type, role, active level, debounce, the port it serves, well, port slot, onset code or an edge code. The message names each field and both values |
+| `order` | Two channels the task names, declared in the other order, counted among those both sides have as the channel-set import counts them. Declaration order is the [odor index](#order-is-meaning) |
+| `code` | A code the task strobes that the file numbers otherwise than this vocabulary, that is not live here, or that the file does not number. The message names both numbers |
+| `bundled_name` | A sketch that ships with Ephymeris has the task's name |
+| `name_taken` | Another saved task has the name, case-folded. Two tasks with one name share a sketch folder |
+
+**Besides conflicts:**
+
+- **A task saved here under the same id is replaced** (`replaces`, and `replacesName` names it, since the other machine may have renamed it). A stored file under that id that will not read counts too (`replacesUnreadable`): it is still somebody's work. Applying needs `confirm`; without it the import is `TASK_IMPORT_REPLACES`.
+- **An import identical to the stored document writes nothing** (`identical`).
+- **The plan carries the definition's diagnostics on this rig.** As with any save, a task with diagnostics still imports.
+- **A file that is not an export is `TASK_TRANSFER_INVALID`.** That covers another version, no definition, a definition that will not read, or a channel the definition names that the file does not describe.
+- **An import is refused** while the stored wiring did not load or is held, and while a session is set up or a box is running.
+
+**A clean import is one [rig definition write](#the-rig-definition)**, as `tasks.save` is. It plans again inside the write, writes `<id>.json` verbatim (`TaskStore.save_document`), regenerates the task's folder against this rig's pins, rescans and broadcasts `tasks.updated`.
+
 ## Spine tasks
 
 A **spine task** is ADR 0003's model, one tracer ahead of the rest: an ordered spine of phases, lowered by the generator to a state table that one interpreter walks ([ADR 0003](adr/0003-phase-spine-task-model.md)). It needs no firmware written for it. The definition is saved with `tasks.save` like any task, and its folder is generated, flashed and run through the ordinary session flow. Nothing in the app names a sketch: what a spine task does differently is read from its definition and its profile. The Task editor does not edit one yet, so today a spine definition is written as JSON.
 
-The tracer has limits, and each is diagnosed rather than guessed around:
+It has limits, and each is diagnosed rather than guessed around:
 
-- the phases are Wait, Present, Delay, Outcome and ITI;
-- a task has one row and one block;
+- the phases are Wait, Present, Delay, Response window, Outcome and ITI;
+- a task has one block, which draws each of its rows uniformly;
 - nothing is scored live yet: Mission Control says so, from the profile (`src/lib/sessions/liveScoring.ts`). Analytics scores a finished run by replaying it ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#how-a-spine-run-is-scored));
 - it is proven on the host, not yet on a Mega: the free RAM a board reports with a table loaded is still to be measured ([README.md](../README.md#not-yet-done)).
 
@@ -585,29 +647,48 @@ A definition with a top-level `spine` key is a spine task (`taskdef/model.py`, `
 | Field | Holds |
 |---|---|
 | `slots[]` | The spine's roles, each `{id, type}` with type `digital_in` or `digital_out` |
-| `spine[]` | The phases, in order. Each `{phase, …}`:<br>• `wait` moves on at a rise on input slot `on`, with an optional `timeoutMs` that goes to the ITI;<br>• `present` lasts `ms`, and `abortOnRelease` names an input slot whose release aborts to the ITI;<br>• `delay` lasts `ms`;<br>• `outcome` opens output slot `line`, then waits `ms`;<br>• `iti` lasts `ms`.<br>Any phase may name `outputs`, the output slots HIGH while in it |
-| `rows[]` | One row: a stable `id`, a required `name`, `bind` (slot → channel name), `rewardMs`, and `rewardPermille` |
-| `blocks[]` | One block: `{id, rows: [the row's id], trials}` |
+| `spine[]` | The phases, in order. Each `{phase, …}`:<br>• `wait` moves on at a rise on input slot `on`, with an optional `timeoutMs` that goes to the ITI;<br>• `present` lasts `ms`, and `abortOnRelease` names an input slot whose release aborts to the ITI;<br>• `delay` lasts `ms`;<br>• `response`, the Response window, watches the input slots in `responses` for `ms`; each row's `map` says where a response or the timeout goes. Optional `holdMs` is how long a response must be held when its map entry asks for a hold. At most one per spine, followed by exactly one Outcome;<br>• `outcome`, at most one per spine, opens output slot `line`, then waits `ms`. After a Response window it names no `line`: the row's map does;<br>• `iti` lasts `ms`.<br>Any phase may name `outputs`, the output slots HIGH while in it, a window's through its holds |
+| `rows[]` | The trial types. Each has a stable `id` (lower case, digits and underscores: it names the row's parameters), a required `name`, `bind` (slot → channel name), `rewardMs`, `rewardPermille` (read only by an Outcome with no window before it), and, with a Response window, a `map` |
+| `rows[].map` | The row's **contingency map**: one entry per watched response slot and one for `timeout`, each `{outcome, line, rewardPermille, hold}`:<br>• `outcome`, a class from `lowering.OUTCOME_CLASSES`;<br>• `line`, optional: an output slot, which the row binds to a reward channel;<br>• `rewardPermille`, with a `line` only, default 1000;<br>• `hold`, on a response only: it must be held for the window's `holdMs`, and letting go sooner is `hold_broken` |
+| `blocks[]` | One block: `{id, rows: [every row's id, once], trials}` |
 | `params{}` | Only divergences from the defaults the spine itself states, keyed by metadata key |
 
-Plus `id`, `name`, `category`, `legacyNames` and `notes`, as for any task. A slot binds a channel by **name**, never a pin.
+Plus `id`, `name`, `category`, `legacyNames` and `notes`, as for any task. A slot binds a channel by **name**, never a pin. One channel serves one slot, across every row.
+
+A go/no-go pair, the window and the two rows' maps:
+
+```json
+{"phase": "response", "responses": ["resp"], "ms": 3000}
+"go":    {"resp": {"outcome": "correct", "line": "reward", "rewardPermille": 1000}, "timeout": {"outcome": "omission"}}
+"no_go": {"resp": {"outcome": "false_alarm"}, "timeout": {"outcome": "withheld"}}
+```
 
 ### Lowering
 
-`taskdef/lowering.py` writes each phase as states, as `BoxInterp.h`'s *Lowering the first phases* describes. It is pure and standard-library only, so the differential test loads it by path and holds its tables to both interpreters ([Compiling and the host tests](#compiling-and-the-host-tests)).
+`taskdef/lowering.py` writes each phase as states, as `BoxInterp.h`'s *Lowering the first phases* describes and this section extends. It is pure and standard-library only, so the differential test loads it by path and holds its tables to both interpreters ([Compiling and the host tests](#compiling-and-the-host-tests)).
 
-- **Channels are bits.** Input bit i is the i-th `digital_in` slot and output bit j is the j-th `digital_out` slot, in slot order. No pin enters the table.
+- **Channels are bits.** Input bit i is the i-th distinct channel bound to a `digital_in` slot, ordered by slot and then by row; outputs the same. A slot bound to one channel in every row is one bit; `sample` bound to two odor lines in two rows is two. No pin enters the table.
 - **Every duration and probability is a parameter slot**, set by a `SET` line. One table therefore serves every tuning and every pin map.
 
 | Slot | Wire key | Metadata key | What |
 |---|---|---|---|
 | 0 | `NT` | `block_trials` | The block's trial count. The session ends at the start of the next trial |
 | 1… | `T<i>` | `<phase>_<i>_ms`, or `wait_<i>_timeout_ms` | Phase i's timer, one per timed phase |
-| then | `RW1`, `RP1` | `reward_ms`, `reward_permille` | The row's reward time and probability, when the spine has an Outcome |
+| | `H<i>` | `response_<i>_hold_ms` | The window's hold, straight after its `T<i>`, when it gives `holdMs` |
+| then, per row r from 1 | `RW<r>` | `reward_ms_<row id>` | The row's reward time, when it can pay |
+| | `RP<r>` | `reward_permille_<row id>` | Its reward probability, for an Outcome with no window before it |
+| | `RP<r>_<k>` | `reward_permille_<row id>_<slot or timeout>` | The probability of map entry k, numbered from 1 in branch order (the window's responses, then `timeout`), for each entry with a line |
 
-- **The ITI comes last.** A spine ends in exactly one ITI, which is where every abort and timeout goes; its timer leads back to state 0, which starts a trial.
-- **The Outcome's states.** An Outcome is a chance state on `RP1`, recording the outcome class `correct`, then the reward line's state (`RW1`), then the class timeout. The phase's own `outputs` stay HIGH through all of it, the reward included.
+- **One row's stored reward keys.** In a spine of exactly one row, a stored `reward_ms` or `reward_permille` in `params` is read as that row's `reward_ms_<row id>` or `reward_permille_<row id>`, and a save stores it under that key. Any other stored key no parameter reads is `SPN110`.
+- **Two rows' keys can meet.** Ids and slots both hold underscores, and a metadata key must stay a valid `.mat` field name, so no separator is reserved: two rows whose keys would be equal are `SPN106` instead.
+- **Rows.** Each row gets its own copy of the spine, ITI included, since its bindings differ. With two or more rows, state 0 is a **pick state** carrying `STARTS_TRIAL`: it draws one of its branches, each row's first state in `rows` order, uniformly from the session RNG, and goes on in the same tick ([`BoxInterp.h`](../firmware/libraries/BehaviorBox/BoxInterp.h)). A trial's row is the branch it took. With one row, the row's first state is state 0 and there is no pick state. So the first phase of a task with several rows is never an Outcome.
+- **The ITI comes last.** A spine ends in exactly one ITI per row, which is where every abort and timeout goes; its timer leads back to state 0, which starts a trial.
+- **The Response window** is one state per row. It watches the response bits, each rise leads to its map entry's branch, and the timer `T<i>` leads to the `timeout` branch.
+- **Branches.** Each map entry gets its own copy of the phases from after the window up to the ITI, and so does a `hold_broken` branch when any entry holds. An entry with `hold` starts with a hold state: the window's outputs, watching only that response; its fall leads to the `hold_broken` branch and its timer `H<i>` on into the entry's branch.
+- **The Outcome's states.** With a line, an Outcome is a chance state on the row's probability, marked with the outcome class, then the reward line's state (`RW<r>`), then the class timeout. Without one, it is the class timeout alone, marked with the class. With no window before it the class is `correct` and the line is the phase's own. The phase's own `outputs` stay HIGH through all of it, the reward included.
+- **One mark per trial.** Every trial that resolves enters exactly one state with a non-zero `outcome`; with a line, that is the chance state whose `on_hit` is the reward state. A reward probability below 1000 is drawn there from the seeded session RNG, so replay draws it identically. An abort or a wait's timeout before the window marks nothing.
 - **Outcome class numbers** come from `lowering.OUTCOME_CLASSES` and are append-only.
+- **A table holds at most 254 states and 254 edge rows.**
 
 ### The generated folder
 
@@ -629,7 +710,7 @@ Plus `id`, `name`, `category`, `legacyNames` and `notes`, as for any task. A slo
 - **Ticks.** The core is stepped once per millisecond of `millis()`, including each value AVR `millis()` skips.
 - **Outputs and strobes.** The runner drives each tick's outputs, then strobes the tick's actions, each stamped with the tick.
 - **The handshake.** It is the one in [Confirming the parameters](#confirming-the-parameters), over the table's parameter slots. A value is held only when it is a whole number within its slot's declared range; otherwise the board answers `CLAMPED` and the start is refused.
-- **The announcement.** The runner announces `INTERP=2`.
+- **The announcement.** The runner announces `INTERP=3`, `BoxInterp.h`'s `INTERP_VERSION`. Replay also runs `2`, the same table format without the pick state, and refuses a version-2 table that holds one. `replay.INTERP_VERSIONS` is the one list of the versions it runs.
 
 **The stream** holds only what the board observed and what it did. Within a tick it runs in this order:
 
@@ -650,14 +731,14 @@ An edge on an input no state is watching is never strobed: the interpreter ignor
 The profile's `spine` key is everything replay needs that the run's own header does not already hold:
 
 - the definition's slots, phases, rows and blocks;
-- the table exactly as lowered, with its `interp`;
+- the table exactly as lowered, with its `interp`, and per state its phase index (`table.phases`) and its row index into `rows` (`table.rows`), null for the pick state. The trial table reads these; the board never does;
 - each bit's channel and edge code **names**;
 - each parameter slot's wire key;
 - the structural code names.
 
-It rides in the `# task_profile:` header line of every run's `.tsv` ([DATA.md](DATA.md#the-tsv-log)), beside the parameter values, the seed and `# interp: 2`, so a crashed run's `.tsv` alone replays. Code numbers come from the snapshot's own `strobes` map, which is the vocabulary when the run started. `analytics/stream/spine.py` reads a run's document back into the table, parameters, seed and input edges, and predicts every strobe the board must have sent ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#the-folder-at-a-glance)).
+It rides in the `# task_profile:` header line of every run's `.tsv` ([DATA.md](DATA.md#the-tsv-log)), beside the parameter values, the seed and `# interp: 3`, so a crashed run's `.tsv` alone replays. Code numbers come from the snapshot's own `strobes` map, which is the vocabulary when the run started. `analytics/stream/spine.py` reads a run's document back into the table, parameters, seed and input edges, and predicts every strobe the board must have sent ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#the-folder-at-a-glance)).
 
-`profile_hash` hashes the snapshot with the rest of the profile, names and all. Covering behaviour only, and leaving out every string meant for a person, is still to come (ADR 0003, *Hashes and data*).
+`profile_hash` hashes the snapshot for its behaviour only: row names and the profile's other words for a person are left out of the hash, never out of the snapshot ([A spine task's hash covers behaviour only](#a-spine-tasks-hash-covers-behaviour-only)).
 
 ### Spine diagnostics
 
@@ -669,10 +750,20 @@ It rides in the `# task_profile:` header line of every run's `.tsv` ([DATA.md](D
 | `SPN102` | A channel whose type is not the slot's, or the sync line | A sensor driven as a valve; a pulse in a recording |
 | **`SPN103`** | **A channel edge with no live code.** The shipped channel set names none, so the rig's first wiring save issues them ([Edge codes](#edge-codes)) | An edge recorded as a number nothing decodes |
 | `SPN104` | The vocabulary lacks `START_SESSION`, `TRIAL_START` or `END_SESSION`. A machine seeded before `TRIAL_START` existed adds it on Task > Strobes, at the number the shipped vocabulary gives it (`rig/schema/strobe_vocab.default.json`) | A stream with no trials in it |
-| `SPN105` | A spine of the wrong shape: an unknown phase, no ITI or not last, a slot of the wrong direction, a missing duration | A table the interpreter cannot walk |
-| `SPN106` | More than one row or block, a block that does not draw the row, a trial count or probability out of range | What the tracer cannot express yet |
-| `SPN107` | Two slots on one channel | One pin, two roles |
+| `SPN105` | A spine of the wrong shape: an unknown phase, no ITI or not last, a slot of the wrong direction, a missing duration, a slot called `timeout`, more than one Outcome; a window whose `responses` are not distinct input slots, more than one window, a window not followed by exactly one Outcome, an Outcome after a window that names its own `line`; with several rows, a first phase that is an Outcome; a table over 254 states, or a task whose states, edge rows, parameters and channels take more than 5000 B of RAM | A table the interpreter cannot walk, or a board with too little RAM left for its stack |
+| `SPN106` | No row, more than one block, a block that does not draw every row exactly once, a row id that is not lower case or not its own, two rows whose parameters would share a metadata key, a trial count, reward time or probability out of range | What the session cannot run yet, or a parameter the board would clamp |
+| `SPN107` | Two slots on one channel, in one row or across rows | One pin, two roles |
 | `SPN108` | A row with no name | Every readout titled after nothing |
+| `SPN109` | A contingency map that is wrong: a watched response or the timeout with no entry, an entry for a slot the window does not watch, an unknown outcome class, a `line` that is not an output slot, a probability outside 0–1000 or with no line, `hold` on the timeout or without the window's `holdMs`, a map on a spine with no window | A response that goes nowhere, or pays where nobody meant |
+| `SPN110` | A stored value in `params` that no parameter of the task reads, named by its key | A tuned value silently replaced by the default |
+
+> [!CAUTION]
+> **A task's RAM budget is 5000 B**, everything its `TaskSpine.h` puts in RAM (`spine.task_ram_bytes`):
+> - 18 B per state and 3 B per edge row, `InterpStateRow` and `InterpEdgeRow` as AVR packs them (`lowering.STATE_ROW_BYTES` and `EDGE_ROW_BYTES`, pinned against `BoxInterp.h` by a test and by a `static_assert` in AVR builds);
+> - 18 B per parameter plus its wire key's length and terminator, since AVR keeps the key string in RAM;
+> - 14 B per input bit and 5 B per output bit.
+>
+> The rest of a spine sketch's globals is at most 384 B (`spine.RUNNER_RAM_BYTES`). A test compiles generated tasks for the Mega, up to the largest under the budget, and holds each build's globals to within a few bytes under that sum. It skips without `arduino-cli`, except in CI's firmware compile job, which sets `REQUIRE_ARDUINO_CLI=1` so a changed row or array fails there. So a task within the budget compiles to at most 5384 B of globals (66% of a Mega's 8192 B), and the stack and serial buffers keep at least 2808 B. An 18-row 2AFC (4945 B) fits; 19 rows (5209 B) do not. A task compiles at any size up to 254 states, so past the budget a board would run short of stack mid-session with no error at all.
 
 ## Rig wiring
 
@@ -1030,7 +1121,7 @@ Before a run starts, the board proves it holds exactly what the host meant it to
 sequenceDiagram
     participant Host as Sidecar
     participant Board as Mega2560
-    Board-->>Host: INTERP=1 (a spine task: INTERP=2)
+    Board-->>Host: INTERP=1 (a spine task: INTERP=3)
     Board-->>Host: FREE_RAM=n
     Board-->>Host: READY
     Host->>Board: BEGIN
@@ -1051,7 +1142,7 @@ sequenceDiagram
   > [!CAUTION]
   > **A parameter whose declared `max` is above 32767 can be refused by the board.** GRGL's `task.json` allows `ERR`, `ITI`, `NPH`, `LZD` up to 120000, `NWP`, `LZS`, `S<n>W`, `S<n>O` up to 60000 and `LZM` up to 300000, but the board holds them in a 16-bit `int`. Such a value now refuses the start with `PARAMS_CLAMPED` instead of running wrapped; the form does not yet stop it being typed.
 - **`START SEED=<n>`** is sent only after the answer clears. It carries the seed and nothing else ([SEED](#seed)); the board clamps and applies ramp row 0 then.
-- **`INTERP=<n>`** is printed before `READY` and names the firmware interpreter, in one numbering space: `1` is `BehaviorBox.h`'s trial runner (GRGL), `2` is the state-table interpreter that runs a [spine task](#the-runner) (`BoxInterp.h`'s `INTERP_VERSION`). The run's `.tsv` header records it as `# interp: <n>` ([DATA.md](DATA.md#the-tsv-log)), so the header alone tells a spine run from a legacy one; a board that announced none leaves the line out. Replay runs only the state-table versions and refuses `1`.
+- **`INTERP=<n>`** is printed before `READY` and names the firmware interpreter, in one numbering space: `1` is `BehaviorBox.h`'s trial runner (GRGL), `2` and `3` are table formats of the state-table interpreter that runs a [spine task](#the-runner) (`BoxInterp.h`'s `INTERP_VERSION`, which a spine board announces as `3`). The run's `.tsv` header records it as `# interp: <n>` ([DATA.md](DATA.md#the-tsv-log)), so the header alone tells a spine run from a legacy one; a board that announced none leaves the line out. Replay runs only the state-table versions and refuses `1`.
 - **`FREE_RAM=<n>`** follows it: the bytes of RAM free between the heap and the stack, measured in `setup()` with the sketch's tables already resident (`boxFreeRam()` in `BehaviorBox.h`). The header records it as `# free_ram: <n>`, and the `.json` as `free_ram`. A host build has no RAM to measure and reports a fixed value.
 
 The start is refused, with nothing started and the port in `ERROR` until acknowledged, on any of:
@@ -1092,7 +1183,7 @@ Both are SHA-256 over canonical JSON (`sort_keys`, compact separators), truncate
 
 | | `profile_hash` | `params_hash` |
 |---|---|---|
-| Input | the serialized profile — `taskName`, `kind`, the full `config` array **including presentation keys** (`group`, `label`, `unit`, `help`, ranges), `liveMetrics` (as codes), `controls`, `legacyNames`, and `telemetry`/`identify`/`spine` when present — **not** `strobes` | one run's merged parameter values, keyed by `metadataKey` |
+| Input | the serialized profile — `taskName`, `kind`, the full `config` array **including presentation keys** (`group`, `label`, `unit`, `help`, ranges), `liveMetrics` (as codes), `controls`, `legacyNames`, and `telemetry`/`identify` when present — **not** `strobes`. A [spine task](#spine-tasks)'s profile is hashed for its behaviour only ([below](#a-spine-tasks-hash-covers-behaviour-only)) | one run's merged parameter values, keyed by `metadataKey` |
 | `None` input | n/a | returns `None` — a run with no recorded parameters is not a run recorded with none |
 | Stored on | `task_profiles.hash` (content-addressed) | `session_animal_runs.params_hash`, beside `config_json` |
 
@@ -1101,10 +1192,22 @@ Both are SHA-256 over canonical JSON (`sort_keys`, compact separators), truncate
 
 What this rests on:
 
-- **Anything in `to_json` moves `profile_hash`**, and a moved hash permanently splits a task's runs in Analytics (old hashes cannot be recomputed). This is why the diagram is derived rather than declared, why the parameter dial's tab fold is the app's rather than the profile's ([Parameter dial](#parameter-dial)), and why `group` must not be re-filed in `fields.py` casually. Editing a saved task — renaming a condition, which renames its metric label — is a new declaration and correctly a new hash. So is a generator change that alters what every regenerated `task.json` contains; earlier runs then group separately and still decode by their own snapshot.
+- **Anything in `to_json` moves `profile_hash`** (on a spine task, anything not on [the unhashed list](#a-spine-tasks-hash-covers-behaviour-only)), and a moved hash permanently splits a task's runs in Analytics (old hashes cannot be recomputed). This is why the diagram is derived rather than declared, why the parameter dial's tab fold is the app's rather than the profile's ([Parameter dial](#parameter-dial)), and why `group` must not be re-filed in `fields.py` casually. Editing a saved trial-table task — renaming a condition, which renames its metric label — is a new declaration and correctly a new hash. So is a generator change that alters what every regenerated `task.json` contains; earlier runs then group separately and still decode by their own snapshot.
 - **`strobes` is left out** because a loaded profile's map is the machine's whole vocabulary: hashing it would split every task's history the first time anyone added a code, and codes are never renumbered, so the map says nothing about comparability. Stored hashes were re-keyed once when this changed (`cohorts/db.py` `_to_v13`, [DATA.md](DATA.md#changing-the-schema)).
 - **`to_json` must round-trip through `parse_profile` byte-for-byte.** A finalized session file embeds its profile ([DATA.md](DATA.md#per-animal-files)); if the round trip drifts, a copied run lands under a different hash than its origin.
 - **`intan_*` fields are core, not config** (`CORE_METADATA_KEYS`), so they stay out of `params_hash`: two runs of one tuning are comparable whether or not one was recorded.
+
+### A spine task's hash covers behaviour only
+
+A profile with a `spine` key is hashed through `tasks/behaviour.py` ([ADR 0003](adr/0003-phase-spine-task-model.md#hashes-and-data)): what the board runs and how replay scores it, and none of the words a person reads. So renaming a row or rewording help text keeps one history, and changing a phase, a block, a binding or a contingency moves the hash. Every other profile hashes exactly as the table above says.
+
+- **The list is of what is left out.** `behaviour.UNHASHED` names each string meant for a person by path (`*` is any list element; a dict step is always a key): `legacyNames`, `config[*].label`, `.help`, `.group` and `.unit`, `liveMetrics[*].label`, and `spine.rows[*].name`. A config label is on it because the generator writes the row's name into the reward fields' labels. Everything else is hashed, `taskName` included, and so is any field added to a row, phase or block later. **A new field meant for a person is hashed until its path is added**, deliberately: `tests/test_behaviour_hash.py` pins the list and changes every leaf of a generated profile in turn.
+- **Rows are keyed by their stable `id`**, hashed as `{id: row}`, so reordering `spine.rows` moves nothing; a block's `rows` list keeps its order. Anything the lowering derives from row order (a wire key, a config entry, the table) is hashed where it appears, so a reorder that changes what the board runs still moves the hash. When an id is missing or repeated, the rows are hashed as a list, so none is dropped.
+- **The snapshot keeps the names.** Only the hash leaves them out: `to_json` and `parse_profile` still round-trip every byte, so a run's own file says what its rows were called. A spine run decodes by its file's snapshot when the file embeds one ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#which-profile-decodes-a-run)).
+
+  > [!CAUTION]
+  > **Without a snapshot in its file, a spine run decodes by its `task_profiles` row, and that row may carry another declaration's words.** `task_profiles` is content-addressed, so its row for a hash holds the first declaration seen with it: the same behaviour, but possibly another task's or an earlier edit's row and metric names. Read a row's name from the run's own file, never from that row.
+- **No migration re-keys a spine run's stored hash.** A spine run whose file embeds its snapshot is scored by it, so a change to this projection moves the [canary](DATA.md#caching), and the cache version moving recomputes its scored hash. Only `session_animal_runs.profile_hash` keeps the digest it was recorded with, and that digest's `task_profiles` row still resolves.
 
 ## Derived state machine
 

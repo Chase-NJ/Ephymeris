@@ -197,6 +197,28 @@ int main() {
     assert(idle(interp_step(&c, NOTHING, 0x53UL)));
     assert(interp_step(&c, NOTHING, 0x54UL).entered[0] == 3); }   // 0xFFFFFFF0 + 100
 
+  // --- a pick state (INTERP 3): draw(edge_count) picks a branch, in the same tick ---
+  // Its edge rows (input 0, edge 0) are its branches. From seed 1 the first
+  // value is 16807, odd: the second branch. From seed 42 it ends in 894, even:
+  // the first. test_analytics_replay.py pins the Python port to the same.
+  { static const InterpEdgeRow E[] = {{0, 0, 1}, {0, 0, 2}};
+    static const InterpStateRow S[] = {
+      {0,          0, NO,    NO,    NO, NO, NO, NO, 0, 2, INTERP_STARTS_TRIAL | INTERP_PICK, 0},
+      {BIT(LIGHT), 0, P_100, P_100, 0,  NO, NO, NO, 0, 0, 0, 0},
+      {BIT(ODOR),  0, P_100, P_100, 0,  NO, NO, NO, 0, 0, 0, 0},
+    };
+    static const InterpTable T = {S, E};
+    InterpCore c; InterpActions a = interp_begin(&c, &T, PARAMS, 1, 0);
+    assert(a.entered[0] == 0 && a.entered[1] == 2 && c.state == 2);
+    assert(a.flags == (INTERP_ACT_SESSION_START | INTERP_ACT_TRIAL_START) && a.on == BIT(ODOR));
+    a = interp_begin(&c, &T, PARAMS, 42, 0);
+    assert(a.entered[1] == 1 && a.on == BIT(LIGHT));
+    // Entered again from a timer, it draws again; every entry is one draw.
+    uint32_t ctx = c.rng;
+    uint8_t want = (uint8_t)(interp_draw(&ctx, 2) + 1);
+    a = interp_step(&c, NOTHING, 100);
+    assert(a.entered[0] == 0 && a.entered[1] == want && a.flags == INTERP_ACT_TRIAL_START && c.rng == ctx); }
+
   std::printf("test_interp: all passed\n");
   return 0;
 }

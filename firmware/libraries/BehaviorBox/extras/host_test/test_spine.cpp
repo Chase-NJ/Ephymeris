@@ -118,7 +118,7 @@ static void handshake()
   bb_feed("START SEED=7");
   boot();
   std::vector<std::string> l = lines();
-  expect("INTERP, then FREE_RAM, then READY, first", l.size() > 3 && l[0] == "INTERP=2" &&
+  expect("INTERP, then FREE_RAM, then READY, first", l.size() > 3 && l[0] == "INTERP=3" &&
          l[1].compare(0, 9, "FREE_RAM=") == 0 && l[2] == "READY");
   expect("each SET answered with the running count and CRC",
          indexOf("PARAMS 2 1564777853") < indexOf("PARAMS 3 2992546637"));

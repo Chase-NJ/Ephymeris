@@ -26,6 +26,8 @@
   records it (docs/TASKS.md#confirming-the-parameters). 1 is BehaviorBox.h's
   trial runner (BOX_INTERP), which every recorded GRGL run names, so this
   interpreter starts at 2: a run's header alone says whether a table ran it.
+  3 adds the pick state and changes nothing else, so replay.py runs a version-2
+  table by the same rules and refuses only a pick state in one.
 
 
   THE TICK RULES
@@ -51,8 +53,8 @@
        current at the start of a tick, so a state lasts at least one tick, even
        with a zero duration.
     5. ENTERING a state records the tick as its entry time and draws its
-       duration. A chance state branches at once (below); its target is entered
-       in the same tick.
+       duration. A chance or pick state branches at once (below); its target is
+       entered in the same tick.
   A tick that reports no edge and moves nothing changes nothing at all, the RNG
   included, so a replay may jump straight to the next edge or timer.
 
@@ -60,7 +62,7 @@
   uint32_t, over a generator the core carries in its own state.
 
 
-  THE STATE TABLE (INTERP_VERSION 2)
+  THE STATE TABLE (INTERP_VERSION 3)
   ----------------------------------
   Generated data. A table is an array of InterpStateRow, indexed 0..254, and an
   array of InterpEdgeRow the states point into. State 0 is where a session
@@ -98,8 +100,14 @@
     on_hit,     A chance state's two targets.
     on_miss
     edge_first, The state's edge rows: edges[edge_first .. edge_first+edge_count).
-    edge_count
+    edge_count  A pick state's edge rows are its branches instead.
     flags       INTERP_STARTS_TRIAL: entering it reports TRIAL_START.
+                INTERP_PICK: a PICK STATE, a branch that takes no time, like a
+                chance state: on entry it draws k = interp_draw(rng, edge_count)
+                and goes on at once to the k-th edge row's next. Every entry
+                draws, a single branch included. The generator makes state 0 one
+                when a block has several rows, so a trial's row is the branch it
+                took.
     outcome     The outcome class this state records, or 0. The core carries it
                 and never reads it; replay reads it off the states a trial
                 entered.
@@ -108,13 +116,17 @@
     input       The input's bit number; it must be in the state's `watch`.
     edge        INTERP_RISE (the input became active) or INTERP_FALL.
     next        The state entered.
+  A pick state's branch is an edge row with input 0 and edge 0.
 
   A VALID TABLE, which the core assumes and replay.py's Table refuses to break:
     - every state index, edge row and parameter slot is in range;
     - an edge row's input is watched, and a state has at most one edge row per
       (input, edge);
     - a chance state has no outputs, watch, timer or edge rows, and neither of
-      its targets is a chance state, so a tick enters at most two states.
+      its targets is a chance or pick state;
+    - a pick state has no outputs, watch, timer or chance, and at least one
+      branch, and no branch is a chance or pick state.
+    So a tick enters at most two states.
 
 
   LOWERING THE FIRST PHASES
@@ -133,6 +145,10 @@
                               HIGH in every state it rests in.
     ITI(t)                    timer t -> the trial's first state, which carries
                               INTERP_STARTS_TRIAL.
+
+  The Response window, the contingency map and several rows are written as
+  docs/TASKS.md#lowering describes; they need no state kind beyond these and
+  the pick state.
 
 
   THE ACTIONS OF A TICK
@@ -156,7 +172,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define INTERP_VERSION 2
+#define INTERP_VERSION 3
 
 #define INTERP_NONE 0xFF       // "no state / no slot / no timer" in a uint8_t field
 #define INTERP_PERMILLE 1000UL // a chance state draws over [0, 1000)
@@ -165,6 +181,7 @@
 #define INTERP_FALL 2
 
 #define INTERP_STARTS_TRIAL 0x01       // InterpStateRow.flags
+#define INTERP_PICK 0x02
 
 #define INTERP_ACT_SESSION_START 0x01  // InterpActions.flags
 #define INTERP_ACT_TRIAL_START 0x02
@@ -189,6 +206,14 @@ typedef struct {
   uint8_t flags;
   uint8_t outcome;
 } InterpStateRow;
+
+/*  A table sits in RAM, and the generator holds its size to a budget at save
+    (lowering.py's STATE_ROW_BYTES and EDGE_ROW_BYTES, docs/TASKS.md#spine-diagnostics).
+    Change a row here and those change with it. */
+#if defined(__AVR__) && defined(__cplusplus)
+static_assert(sizeof(InterpStateRow) == 18, "lowering.py's STATE_ROW_BYTES is this row's size");
+static_assert(sizeof(InterpEdgeRow) == 3, "lowering.py's EDGE_ROW_BYTES is this row's size");
+#endif
 
 typedef struct {
   const InterpStateRow *states;
@@ -264,8 +289,9 @@ static inline InterpActions interp__none(void)
   return a;
 }
 
-/*  Enter `target` at `now`: follow a chance state's branch, draw the resting
-    state's duration, and diff its outputs against the previous resting state's. */
+/*  Enter `target` at `now`: follow a chance or pick state's branch, draw the
+    resting state's duration, and diff its outputs against the previous resting
+    state's. */
 static inline void interp__enter(InterpCore *c, uint8_t target, uint32_t now, InterpActions *a)
 {
   const InterpStateRow *s;
@@ -275,9 +301,12 @@ static inline void interp__enter(InterpCore *c, uint8_t target, uint32_t now, In
     if (s->flags & INTERP_STARTS_TRIAL) a->flags |= INTERP_ACT_TRIAL_START;
     c->state = target;
     c->entered_at = now;
-    // A valid table never chains two chance states; hop bounds an invalid one.
-    if (s->chance == INTERP_NONE || hop == 1) break;
-    target = interp_draw(&c->rng, INTERP_PERMILLE) < c->params[s->chance] ? s->on_hit : s->on_miss;
+    // A valid table never chains two branching states; hop bounds an invalid one.
+    if ((s->chance == INTERP_NONE && !(s->flags & INTERP_PICK)) || hop == 1) break;
+    if (s->chance != INTERP_NONE)
+      target = interp_draw(&c->rng, INTERP_PERMILLE) < c->params[s->chance] ? s->on_hit : s->on_miss;
+    else
+      target = c->table->edges[s->edge_first + interp_draw(&c->rng, s->edge_count)].next;
   }
   c->duration = 0;
   if (s->timer_min != INTERP_NONE) {

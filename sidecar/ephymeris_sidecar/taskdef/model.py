@@ -36,6 +36,46 @@ ID_RE = re.compile(r"^[a-z][a-z0-9_]{0,47}$")
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _.\-]{0,47}$")
 
 
+#: Characters no folder name may hold on Windows, where the lab machines run,
+#: or that make it a path: separators, a drive's colon, and the rest of
+#: Windows' list. Control characters are refused separately.
+_NOT_IN_A_FOLDER_NAME = frozenset('<>:"/\\|?*')
+
+#: Device names Windows reserves, with or without an extension, any case.
+_WINDOWS_RESERVED = re.compile(r"^(CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])(\..*)?$", re.IGNORECASE)
+
+
+def folder_name_problem(value: str) -> str | None:
+    """Why `value` cannot be one folder name on both Windows and macOS, or None.
+
+    A task's category and name each become a folder under `<data_dir>/tasks/`
+    that every save deletes and rewrites, so either one being a path -- `..`,
+    a separator, a drive or UNC prefix -- would delete and write outside the
+    library. A trailing dot or space is dropped by Windows, so "Tracer." and
+    "Tracer" would be one folder there; a reserved device name is no folder
+    at all. Anything else is the operator's free text."""
+    if not value.strip():
+        return "it is empty"
+    if value in (".", ".."):
+        return "it is a relative path, not a folder name"
+    bad = sorted({c for c in value if c in _NOT_IN_A_FOLDER_NAME or ord(c) < 32})
+    if bad:
+        return f"it holds {' '.join(repr(c) for c in bad)}, which a folder name cannot"
+    if value[-1] in ". ":
+        return "it ends in a dot or a space, which Windows drops from a folder name"
+    if _WINDOWS_RESERVED.match(value):
+        return "Windows reserves it for a device"
+    if len(value) > 64:
+        return "it is over 64 characters"
+    return None
+
+
+def folder_key(name: str) -> str:
+    """`name` as Windows compares folder names: case-folded, with trailing
+    dots and spaces dropped. Two tasks whose names share a key share a folder."""
+    return name.rstrip(". ").casefold()
+
+
 class TaskDefinitionError(ValueError):
     """The document is not a task definition. Not the same as an invalid one."""
 
@@ -163,40 +203,80 @@ class SpinePhase:
     """One phase from the palette. Fields a phase does not use stay None.
 
     `ms` is the default of the phase's timer parameter (`T<i>` on the wire);
-    a Wait has one only when it declares `timeout_ms`.
+    a Wait has one only when it declares `timeout_ms`. A Response window's
+    `hold_ms` is the default of its `H<i>`.
     """
 
     phase: str
     on: str | None = None              # wait: the input slot whose edge moves on
     outputs: tuple[str, ...] = ()      # output slots HIGH while in the phase
-    ms: int | None = None              # present, delay, outcome (class timeout), iti
+    ms: int | None = None              # present, delay, response (the window), outcome (class timeout), iti
     timeout_ms: int | None = None      # wait: optional, out to the ITI
     abort_on_release: str | None = None  # present: an input slot whose release aborts
-    line: str | None = None            # outcome: the reward line's slot
+    line: str | None = None            # outcome with no window before it: the reward line's slot
+    responses: tuple[str, ...] = ()    # response: the input slots it watches
+    hold_ms: int | None = None         # response: how long an entry that holds must be held
 
     def to_json(self) -> dict[str, Any]:
         out: dict[str, Any] = {"phase": self.phase}
         for key, value in (("on", self.on), ("outputs", list(self.outputs) or None),
                            ("ms", self.ms), ("timeoutMs", self.timeout_ms),
-                           ("abortOnRelease", self.abort_on_release), ("line", self.line)):
+                           ("abortOnRelease", self.abort_on_release), ("line", self.line),
+                           ("responses", list(self.responses) or None), ("holdMs", self.hold_ms)):
             if value is not None:
                 out[key] = value
         return out
 
 
 @dataclass(frozen=True)
+class MapEntry:
+    """Where one watched response, or the window's timeout, takes a trial.
+
+    `line` is an output slot the row binds to a reward channel; the reward is
+    drawn with `reward_permille`, which goes only with a line. `hold` asks for
+    the response to be held for the window's `holdMs`, and letting go early is
+    `hold_broken`.
+    """
+
+    outcome: str
+    line: str | None = None
+    reward_permille: int = 1000
+    hold: bool = False
+
+    def to_json(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"outcome": self.outcome}
+        if self.line is not None:
+            out["line"] = self.line
+        if self.line is not None or self.reward_permille != 1000:
+            out["rewardPermille"] = self.reward_permille
+        if self.hold:
+            out["hold"] = True
+        return out
+
+
+@dataclass(frozen=True)
 class SpineRow:
-    """A trial type: a stable id, the operator's name, and a channel per slot."""
+    """A trial type: a stable id, the operator's name, a channel per slot, and
+    its contingency map: each of the window's responses, and `timeout`, to an
+    outcome class (`MapEntry`).
+
+    `reward_permille` is read only by an Outcome with no Response window before
+    it; after a window each map entry carries its own.
+    """
 
     id: str
     name: str
     bind: dict[str, str]
     reward_ms: int = 100
     reward_permille: int = 1000
+    map: dict[str, MapEntry] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, Any]:
-        return {"id": self.id, "name": self.name, "bind": dict(self.bind),
-                "rewardMs": self.reward_ms, "rewardPermille": self.reward_permille}
+        out: dict[str, Any] = {"id": self.id, "name": self.name, "bind": dict(self.bind),
+                               "rewardMs": self.reward_ms, "rewardPermille": self.reward_permille}
+        if self.map:
+            out["map"] = {key: entry.to_json() for key, entry in self.map.items()}
+        return out
 
 
 @dataclass(frozen=True)
@@ -261,6 +341,8 @@ class Spine:
                 timeout_ms=opt_int(p.get("timeoutMs"), "timeoutMs"),
                 abort_on_release=_opt_str(p.get("abortOnRelease")),
                 line=_opt_str(p.get("line")),
+                responses=strings(p.get("responses"), "a window's responses"),
+                hold_ms=opt_int(p.get("holdMs"), "holdMs"),
             )
             for p in objects("spine")
         )
@@ -275,6 +357,7 @@ class Spine:
                 bind={str(k): v for k, v in bind.items()},
                 reward_ms=_int(r.get("rewardMs", 100), "rewardMs"),
                 reward_permille=_int(r.get("rewardPermille", 1000), "rewardPermille"),
+                map=_contingency_map(r.get("map")),
             ))
         return Spine(
             slots=tuple(SpineSlot(id=str(s.get("id", "")), type=str(s.get("type", ""))) for s in objects("slots")),
@@ -374,6 +457,15 @@ class TaskDefinition:
                 "it must start alphanumeric and hold only letters, digits, "
                 "spaces, dots, dashes and underscores"
             )
+        problem = folder_name_problem(name)
+        if problem:
+            raise TaskDefinitionError(f"name {name!r} is not a usable folder name: {problem}")
+
+        # Free text, but one folder under `<data_dir>/tasks/` (`folder_name_problem`).
+        category = str(raw.get("category") or "Tasks")
+        problem = folder_name_problem(category)
+        if problem:
+            raise TaskDefinitionError(f"category {category!r} is not a usable folder name: {problem}")
 
         mode = raw.get("selectionMode", "antibias")
         if mode not in ("antibias", "pool", "weighted"):
@@ -395,24 +487,70 @@ class TaskDefinition:
             raise TaskDefinitionError("legacyNames must be a list of strings")
 
         stages = [StageRow.from_json(s) for s in stages_raw] or [StageRow()]
+        spine = Spine.from_json(raw) if "spine" in raw else None
         return TaskDefinition(
             id=task_id,
             name=name,
-            category=str(raw.get("category") or "Tasks"),
+            category=category,
             selection_mode=mode,
             trials=[TrialTypeDef.from_json(t) for t in trials_raw],
             stages=stages,
-            params=dict(params),
+            params=_one_row_reward_keys(dict(params), spine),
             legacy_names=[n for n in legacy],
             notes=str(raw.get("notes", "")),
             # The `spine` key is what makes a definition a spine task.
-            spine=Spine.from_json(raw) if "spine" in raw else None,
+            spine=spine,
         )
 
 
 # --------------------------------------------------------------------------- #
 # Parsing helpers
 # --------------------------------------------------------------------------- #
+
+
+#: The reward keys a one-row spine stored before rewards were keyed by row id.
+_ONE_ROW_REWARD_KEYS = ("reward_ms", "reward_permille")
+
+
+def _one_row_reward_keys(params: dict[str, Any], spine: Spine | None) -> dict[str, Any]:
+    """Carry a one-row spine's `reward_ms` and `reward_permille` over to its row's keys.
+
+    A spine of one row stored them unkeyed; its row's parameters are now
+    `reward_ms_<row id>` and `reward_permille_<row id>`
+    (`TASKS.md#lowering`). Read as the row's, never dropped for its default.
+    A key the row already holds wins, and the old one is left for SPN110 to name.
+    """
+    if spine is None or len(spine.rows) != 1:
+        return params
+    row = spine.rows[0].id
+    for old in _ONE_ROW_REWARD_KEYS:
+        new = f"{old}_{row}"
+        if old in params and new not in params:
+            params[new] = params.pop(old)
+    return params
+
+
+def _contingency_map(raw: Any) -> dict[str, MapEntry]:
+    """A row's `map`, refused only for a value of the wrong JSON type."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict) or any(not isinstance(v, dict) for v in raw.values()):
+        raise TaskDefinitionError("a row's map takes each response, and timeout, to an object")
+    out: dict[str, MapEntry] = {}
+    for key, entry in raw.items():
+        hold = entry.get("hold", False)
+        if not isinstance(hold, bool):
+            raise TaskDefinitionError(f"map entry {key!r}: hold is true or false, not {hold!r}")
+        outcome = entry.get("outcome", "")
+        if not isinstance(outcome, str):
+            raise TaskDefinitionError(f"map entry {key!r}: outcome is a class name, not {outcome!r}")
+        out[str(key)] = MapEntry(
+            outcome=outcome,
+            line=_opt_str(entry.get("line")),
+            reward_permille=_int(entry.get("rewardPermille", 1000), "rewardPermille"),
+            hold=hold,
+        )
+    return out
 
 
 def _req_str(raw: dict, key: str) -> str:

@@ -138,6 +138,46 @@ def test_replay_runs_across_the_millis_wrap() -> None:
     assert got == [((start + t) & 0xFFFFFFFF, a) for t, a in expected]
 
 
+# --- the pick state (INTERP 3) -------------------------------------------------
+
+ROW_1, ROW_2 = 1, 2
+#: State 0 draws one of two rows, each a state that rests for 100 ms and goes back.
+PICK = Table(
+    states=(
+        StateRow(edge_first=0, edge_count=2, flags=STARTS_TRIAL | rp.PICK),
+        StateRow(outputs=LIGHT, timer_min=0, timer_max=0, on_timeout=0),
+        StateRow(outputs=ODOR, timer_min=0, timer_max=0, on_timeout=0),
+    ),
+    edges=(EdgeRow(0, 0, ROW_1), EdgeRow(0, 0, ROW_2)),
+)
+
+
+def test_a_pick_state_draws_its_branch_and_goes_on_in_the_same_tick() -> None:
+    # Seed 1's first value is 16807: 16807 % 2 = 1, the second branch.
+    _, first = rp.begin(PICK, (100,), seed=1, now=0)
+    assert first == Actions(on=ODOR, entered=(0, ROW_2), flags=rp.ACT_SESSION_START | rp.ACT_TRIAL_START)
+    # Seed 42's first value ends in 894 (test_a_draw_is_random_mod_n): even, the first.
+    _, first = rp.begin(PICK, (100,), seed=42, now=0)
+    assert first.entered == (0, ROW_1) and first.on == LIGHT
+
+
+def test_a_pick_state_draws_every_time_it_is_entered() -> None:
+    run = rp.replay(PICK, (100,), seed=1, events=[], ticks=400)
+    ctx, rows = 1, []
+    for _ in range(5):
+        k, ctx = rp.draw(ctx, 2)
+        rows.append((0, (ROW_1, ROW_2)[k]))
+    assert [a.entered for _, a in run] == rows
+    assert {a.entered[1] for _, a in run} == {ROW_1, ROW_2}
+
+
+def test_a_version_2_table_with_a_pick_state_is_refused() -> None:
+    """INTERP 2 has no pick state: its core would rest in one forever."""
+    with pytest.raises(ValueError, match="pick"):
+        rp.replay(PICK, (100,), seed=1, events=[], ticks=10, interp=2)
+    rp.replay(TRIAL, PARAMS, seed=1, events=[], ticks=10, interp=2)  # a plain table still runs
+
+
 # --- what replay refuses ------------------------------------------------------
 
 
@@ -150,8 +190,10 @@ def test_the_trial_runner_s_interpreter_is_never_replayed_as_a_table() -> None:
     """One numbering space: INTERP 1 is BehaviorBox.h's trial runner, which every
     recorded GRGL run names, and the state-table interpreter is 2. So a run's
     header alone tells a spine run from a legacy one, and replay never walks a
-    legacy run's strobes as if a table had produced them."""
-    assert rp.INTERP_VERSIONS == {2}
+    legacy run's strobes as if a table had produced them. 2 is the tracer's
+    table format, kept so its runs still replay; 3 adds the pick state."""
+    assert rp.INTERP_VERSIONS == {2, 3}
+    assert rp.INTERP_VERSION == 3
     with pytest.raises(ValueError, match="INTERP 1"):
         rp.replay(TRIAL, PARAMS, seed=1, events=[], ticks=10, interp=1)
 
@@ -197,6 +239,21 @@ def _one(state: StateRow, *more: StateRow, edges: tuple[EdgeRow, ...] = ()) -> T
         (lambda: _one(StateRow(chance=0, on_hit=0, on_miss=0, timer_min=0, timer_max=0, on_timeout=0)), "chance"),
         (lambda: _one(StateRow(outputs=1 << 32)), "outputs"),
         (lambda: Table(states=(), edges=()), "states"),
+        # A pick state: no outputs, watch, timer or chance; at least one branch,
+        # each an edge row (input 0, edge 0) to a state that does not branch.
+        (lambda: _one(StateRow(flags=rp.PICK)), "branch"),
+        (lambda: _one(StateRow(outputs=LIGHT, edge_count=1, flags=rp.PICK), StateRow(),
+                      edges=(EdgeRow(0, 0, 1),)), "pick state has no"),
+        (lambda: _one(StateRow(edge_count=1, timer_min=0, timer_max=0, on_timeout=1, flags=rp.PICK),
+                      StateRow(), edges=(EdgeRow(0, 0, 1),)), "pick state has no"),
+        (lambda: _one(StateRow(edge_count=1, flags=rp.PICK), StateRow(),
+                      edges=(EdgeRow(0, RISE, 1),)), "input 0, edge 0"),
+        (lambda: _one(StateRow(edge_count=1, flags=rp.PICK), StateRow(chance=0, on_hit=0, on_miss=0),
+                      edges=(EdgeRow(0, 0, 1),)), "branches"),
+        (lambda: _one(StateRow(edge_count=1, flags=rp.PICK), edges=(EdgeRow(0, 0, 0),)), "branches"),
+        (lambda: _one(StateRow(chance=0, on_hit=1, on_miss=1), StateRow(edge_count=1, flags=rp.PICK),
+                      StateRow(), edges=(EdgeRow(0, 0, 2),)), "pick state"),
+        (lambda: _one(StateRow(chance=0, on_hit=0, on_miss=0, flags=rp.PICK)), "chance"),
     ],
 )
 def test_a_table_the_core_cannot_run_is_refused(build, why: str) -> None:

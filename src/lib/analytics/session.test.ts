@@ -41,7 +41,7 @@ describe("why a run has no numbers", () => {
   });
 
   it("prefers the sidecar's own detail", () => {
-    expect(unscoredReason(run("unreplayable", "the header says INTERP 3"))).toBe("the header says INTERP 3");
+    expect(unscoredReason(run("unreplayable", "the header says INTERP 4"))).toBe("the header says INTERP 4");
   });
 
   it("gives a scored run no reason", () => {

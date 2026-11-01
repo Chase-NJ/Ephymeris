@@ -374,6 +374,27 @@ def test_a_populated_channel_set_import_plan_matches_schema() -> None:
     assert validate(("ref", "ChannelSetImportPlan"), plan.to_json()) == []
 
 
+def test_a_populated_task_import_plan_matches_schema() -> None:
+    from ephymeris_sidecar.taskdef.transfer import ImportPlan
+
+    plan = ImportPlan(
+        task_id="t1",
+        name="Task one",
+        definition={"id": "t1", "name": "Task one"},
+        here_hash="aaaa",
+        file_hash="bbbb",
+        file_hash_version=2,
+        same_channel_set=False,
+        replaces=True,
+        replaces_name="Task one, before",
+        replaces_unreadable=False,
+        conflicts=[{"kind": "not_here", "channel": "lever", "message": "lever …"},
+                   {"kind": "code", "channel": None, "message": "FLUID_2_ON …"}],
+        diagnostics=[{"location": "rows[0].bind.port", "message": "…", "code": "SPN101"}],
+    )
+    assert validate(("ref", "TaskImportPlan"), plan.to_json()) == []
+
+
 def test_hardware_payloads_match_schema() -> None:
     line = OutputLine(dir="rx", text="READY", ts=1721600000.1)
     assert validate(("ref", "OutputLine"), line.to_json()) == []

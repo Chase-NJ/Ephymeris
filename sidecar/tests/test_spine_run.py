@@ -1,4 +1,4 @@
-"""A saved spine task runs a session end to end, with no box — issue #98.
+"""A saved spine task runs a session end to end, with no box — issues #98 and #101.
 
 No hardware is needed to prove the path, only to measure it. The saved task's
 GENERATED folder is compiled for the host against the instrumented shim
@@ -7,6 +7,10 @@ running the real generated table on a simulated animal. Its serial transcript
 is then played into the real session path (`PortManager`, the handshake,
 `SessionRunner`, `AnimalWriter`), and the `.tsv` that path wrote is replayed
 from nothing but itself: every strobe the board sent must be predicted.
+
+A 2AFC task and a go/no-go pair run the same way, with an animal that reacts
+to the board's own outputs, and the outcome class of each trial is read off
+the states its replay entered.
 
 What still needs a real box: an AVR build flashed and run, and the free RAM a
 Mega reports with the table loaded (the host shim reports a fixed number).
@@ -23,6 +27,7 @@ from pathlib import Path
 
 import pytest
 
+from ephymeris_sidecar.analytics.stream import replay as rp
 from ephymeris_sidecar.analytics.stream import spine as spine_stream
 from ephymeris_sidecar.analytics.stream.summary import summarize
 from ephymeris_sidecar.ports import handler as handler_module
@@ -30,6 +35,7 @@ from ephymeris_sidecar.rig import registry
 from ephymeris_sidecar.sessions import recovery
 from ephymeris_sidecar.sessions import runner as runner_module
 from ephymeris_sidecar.sessions.runner import BoxConfig, SessionRunner
+from ephymeris_sidecar.taskdef import lowering
 from ephymeris_sidecar.taskdef.model import TaskDefinition
 from ephymeris_sidecar.taskdef.store import TaskStore
 from ephymeris_sidecar.tasks import profile as task_profile
@@ -44,7 +50,7 @@ SEED = 1234567
 FREE_RAM = 4321
 #: The run's per-box overrides: three trials, and a reward drawn 60% of the
 #: time so the session RNG is exercised and must replay.
-OVERRIDES = {"block_trials": 3, "reward_permille": 600}
+OVERRIDES = {"block_trials": 3, "reward_permille_r1": 600}
 
 compiler = shutil.which("clang++") or shutil.which("g++")
 pytestmark = [
@@ -62,8 +68,12 @@ def _issued_rig():
 
 
 def save_tracer(tmp_path: Path) -> Path:
+    return save(tmp_path, fixture.tracer())
+
+
+def save(tmp_path: Path, raw: dict) -> Path:
     store = TaskStore(tmp_path / "data", library_root=FIRMWARE)
-    definition = TaskDefinition.from_json(fixture.tracer())
+    definition = TaskDefinition.from_json(raw)
     assert store.save(definition) == []
     return store.sketch_dir(definition)
 
@@ -80,26 +90,37 @@ def animal(pin: int) -> list[tuple[int, int, int]]:
     ]
 
 
-def run_board(folder: Path, host_lines: list[str], events, ticks: int, tmp_path: Path) -> list[str]:
-    """Compile the generated folder for the host and run it: its serial transcript."""
+def run_board(folder: Path, host_lines: list[str], events, ticks: int, tmp_path: Path,
+              animal: str = "") -> list[str]:
+    """Compile the generated folder for the host and run it: its serial transcript.
+
+    `events` are scripted (ms, pin, level) moves; `animal` is C++ defining
+    `static void animal(unsigned long t)`, called every tick before `loop()`,
+    for an animal that reacts to what the board drives."""
     ino = folder / f"{folder.name}.ino"
-    port = registry.channels().get("odor_port").index
+    channels = registry.channels()
+    profile = task_profile.load_profile(folder)
+    # Every input starts inactive: the rig's beams are active LOW.
+    idle = "".join(f"  bb_pinValue[{channels.get(i['channel']).index}] = HIGH;\n"
+                   for i in profile.spine["inputs"])
     feed = "\n".join(f"  bb_feed({json.dumps(line)});" for line in host_lines)
-    moves = ", ".join(f"{{{t}UL, {p}, {v}}}" for t, p, v in events)
+    moves = ", ".join(f"{{{t}UL, {p}, {v}}}" for t, p, v in events) or "{0UL, 0, 0}"
     source = tmp_path / "board.cpp"
     source.write_text(
         "#include <Arduino.h>\n"
         f'#include "{ino}"\n'
         "struct Move { unsigned long t; int pin; int level; };\n"
         f"static const Move kMoves[] = {{ {moves} }};\n"
+        f"{animal or 'static void animal(unsigned long) {}'}\n"
         "int main() {\n"
-        f"  bb_pinValue[{port}] = HIGH;\n"
+        f"{idle}"
         f"{feed}\n"
         "  setup();\n"
         "  unsigned long t0 = millis();\n"
         "  size_t k = 0, n = sizeof(kMoves) / sizeof(kMoves[0]);\n"
         f"  for (unsigned long t = 1; t <= {ticks}UL; ++t) {{\n"
         "    while (k < n && kMoves[k].t == t) { bb_pinValue[kMoves[k].pin] = kMoves[k].level; k++; }\n"
+        "    animal(t);\n"
         "    bb_ms = t0 + t;\n"
         "    loop();\n"
         "  }\n"
@@ -120,10 +141,12 @@ def run_board(folder: Path, host_lines: list[str], events, ticks: int, tmp_path:
     return ran.stdout.splitlines()
 
 
-async def run_session(tmp_path: Path, folder: Path, transcript: list[str], monkeypatch) -> Path:
+async def run_session(tmp_path: Path, folder: Path, transcript: list[str], monkeypatch,
+                      overrides: dict | None = None) -> Path:
     """Play the board's transcript into the real session path; the `.tsv` it wrote."""
     profile = task_profile.load_profile(folder)
-    config = {f.metadata_key: OVERRIDES.get(f.metadata_key, f.default) for f in profile.config}
+    overrides = OVERRIDES if overrides is None else overrides
+    config = {f.metadata_key: overrides.get(f.metadata_key, f.default) for f in profile.config}
     command = build_start_command(profile, config)
     ready = transcript.index("READY")
     replies = [line for line in transcript if line.startswith(("PARAMS", "CLAMPED"))]
@@ -180,9 +203,10 @@ def json_of(tsv: Path) -> Path:
     return tsv.parent.parent / "behavior.json" / f"{tsv.stem}.json"
 
 
-def host_lines(folder: Path) -> list[str]:
+def host_lines(folder: Path, overrides: dict | None = None) -> list[str]:
     profile = task_profile.load_profile(folder)
-    config = {f.metadata_key: OVERRIDES.get(f.metadata_key, f.default) for f in profile.config}
+    overrides = OVERRIDES if overrides is None else overrides
+    config = {f.metadata_key: overrides.get(f.metadata_key, f.default) for f in profile.config}
     command = build_start_command(profile, config)
     return [command.begin_line, *command.set_lines, command.start_line(SEED)]
 
@@ -191,14 +215,14 @@ async def test_a_saved_spine_task_runs_a_session_and_its_tsv_alone_replays(tmp_p
     folder = save_tracer(tmp_path)
     port = registry.channels().get("odor_port").index
     transcript = run_board(folder, host_lines(folder), animal(port), 16000, tmp_path)
-    assert transcript[:3] == ["INTERP=2", f"FREE_RAM={FREE_RAM}", "READY"]
+    assert transcript[:3] == ["INTERP=3", f"FREE_RAM={FREE_RAM}", "READY"]
     assert not any(line.startswith("CLAMPED") for line in transcript)
 
     tsv = await run_session(tmp_path, folder, transcript, monkeypatch)
     text = tsv.read_text(encoding="utf-8")
     header = text[: text.index("\n", text.index("# task_profile:"))]
     # Everything replay needs is in the header, before the first strobe.
-    assert "# interp: 2\n" in header and f"# free_ram: {FREE_RAM}\n" in header
+    assert "# interp: 3\n" in header and f"# free_ram: {FREE_RAM}\n" in header
     assert f"# trial_seed: {SEED}\n" in header and "# block_trials: 3\n" in header
     assert '"spine":' in header
 
@@ -317,6 +341,134 @@ async def test_an_edited_output_strobe_is_not_what_replay_predicts(tmp_path, mon
     assert spine_stream.expected_stream(record) != [tuple(s) for s in edited]
 
 
+# --- the Response window and the contingency map (#101) -------------------------
+
+
+def answering_animal(plan: list[tuple[int, int, int]]) -> str:
+    """C++ for an animal that pokes the port when the trial light comes on, holds
+    it until the odor goes off, and 100 ms later answers trial k as plan[k] says:
+    (the input pin it pokes after odor 1, after odor 2, how long it holds), a
+    pin of -1 to withhold. It reads the odor off the board's own output pins,
+    so it answers whichever row the board drew."""
+    pin = {name: registry.channels().get(name).index
+           for name in ("odor_port", "trial_light", "odor_line_1", "odor_line_2")}
+    rows = ", ".join(f"{{{a}, {b}, {hold}}}" for a, b, hold in plan)
+    return f"""
+static const int kPlan[][3] = {{ {rows} }};
+static const int kPlanLen = {len(plan)};
+static int stage = 0, odor = 0, trial = -1, held = -1;
+static unsigned long answerAt = 0, releaseAt = 0;
+static void animal(unsigned long t) {{
+  if (held >= 0 && t == releaseAt) {{ bb_pinValue[held] = HIGH; held = -1; }}
+  if (stage == 0 && bb_pinValue[{pin['trial_light']}] == HIGH) {{
+    trial++; odor = 0; bb_pinValue[{pin['odor_port']}] = LOW; stage = 1;
+  }} else if (stage == 1) {{
+    if (bb_pinValue[{pin['odor_line_1']}] == HIGH) odor = 1;
+    if (bb_pinValue[{pin['odor_line_2']}] == HIGH) odor = 2;
+    if (odor && bb_pinValue[{pin['odor_line_1']}] == LOW && bb_pinValue[{pin['odor_line_2']}] == LOW) {{
+      bb_pinValue[{pin['odor_port']}] = HIGH; answerAt = t + 100; stage = 2;
+    }}
+  }} else if (stage == 2 && t == answerAt) {{
+    int at = trial < kPlanLen ? kPlan[trial][odor - 1] : -1;
+    if (at >= 0) {{ bb_pinValue[at] = LOW; held = at; releaseAt = t + (unsigned long)kPlan[trial][2]; }}
+    stage = 3;
+  }} else if (stage == 3 && bb_pinValue[{pin['trial_light']}] == LOW) {{
+    stage = 0;
+  }}
+}}
+"""
+
+
+def trials_of(document: dict) -> list[dict]:
+    """Each trial's row id, outcome class and whether it paid, read off the
+    states its replay entered: the row from the snapshot's `table.rows`, the
+    class from the one state with an outcome, the pay from a chance state's hit."""
+    record = spine_stream.decode(document)
+    snapshot = document["task_profile"]["spine"]
+    states, row_of = record.table.states, snapshot["table"]["rows"]
+    trials: list[dict] = []
+    for now, a in rp.replay(record.table, record.params, record.seed, record.events, record.end_tick,
+                            interp=record.interp):
+        if a.flags & rp.ACT_TRIAL_START:
+            if now == record.end_tick:
+                break  # the start that ends the session is no trial
+            trials.append({"row": None, "outcome": None, "rewarded": False})
+        trial = trials[-1]
+        for s in (e for e in a.entered if e != rp.NONE):
+            if row_of[s] is not None:
+                trial["row"] = snapshot["rows"][row_of[s]]["id"]
+            if states[s].outcome:
+                assert trial["outcome"] is None, "a trial marks its class once"
+                trial["outcome"] = lowering.OUTCOME_CLASSES[states[s].outcome - 1]
+        first = states[a.entered[0]] if a.entered[0] != rp.NONE else None
+        if first is not None and first.is_chance and a.entered[1] == first.on_hit:
+            trial["rewarded"] = True
+    return trials
+
+
+async def run_generated(tmp_path, monkeypatch, raw: dict, overrides: dict, plan, ticks: int) -> dict:
+    """Save `raw`, run its generated board on the answering animal, play it
+    through the session path, and check the `.tsv`'s replay predicts every
+    strobe. The run's document."""
+    folder = save(tmp_path, raw)
+    transcript = run_board(folder, host_lines(folder, overrides), [], ticks, tmp_path, answering_animal(plan))
+    assert transcript[:3] == ["INTERP=3", f"FREE_RAM={FREE_RAM}", "READY"]
+    assert not any(line.startswith("CLAMPED") for line in transcript)
+    tsv = await run_session(tmp_path, folder, transcript, monkeypatch, overrides)
+    document = json.loads(json_of(tsv).read_text(encoding="utf-8"))
+    assert document["stop_reason"] == runner_module.CLEAN_STOP_REASON
+    record = spine_stream.decode(document)
+    assert spine_stream.expected_stream(record) == [tuple(s) for s in document["ts_data"]], \
+        "replay predicts every strobe the board sent, at its tick"
+    return document
+
+
+async def test_a_2afc_task_runs_and_replays_to_its_outcome_classes(tmp_path, monkeypatch):
+    port = registry.channels()
+    left, right = port.get("left_well").index, port.get("right_well").index
+    answers = {  # odor 1 pays at the right well, odor 2 at the left; each must be held 200 ms
+        "correct": (right, left, 300),
+        "wrong_response": (left, right, 50),
+        "omission": (-1, -1, 0),
+        "hold_broken": (right, left, 50),
+    }
+    plan = ["correct", "wrong_response", "omission", "hold_broken", "correct", "correct", "correct", "correct"]
+    overrides = {"block_trials": len(plan), "reward_permille_odor_1_right": 600,
+                 "reward_permille_odor_2_left": 600}
+    document = await run_generated(tmp_path, monkeypatch, fixture.two_afc(), overrides,
+                                   [answers[a] for a in plan], 70000)
+
+    trials = trials_of(document)
+    assert [t["outcome"] for t in trials] == plan
+    assert {t["row"] for t in trials} == {"odor_1", "odor_2"}, "the pick state drew both rows"
+    # A reward drawn at 600 permille: some correct trials paid and some did not,
+    # and nothing else ever pays.
+    paid = [t["rewarded"] for t in trials if t["outcome"] == "correct"]
+    assert True in paid and False in paid
+    assert not any(t["rewarded"] for t in trials if t["outcome"] != "correct")
+    vocab = registry.vocabulary()
+    fluid = [vocab.name_of(c) for c, _ in document["ts_data"] if vocab.name_of(c).startswith("FLUID_")]
+    expected = [f"FLUID_{2 if t['row'] == 'odor_1' else 1}_{edge}" for t in trials if t["rewarded"]
+                for edge in ("ON", "OFF")]
+    assert fluid == expected, "each paid trial opened its own row's line"
+
+
+async def test_a_go_no_go_pair_runs_and_replays_to_its_outcome_classes(tmp_path, monkeypatch):
+    resp = registry.channels().get("right_well").index
+    respond, withhold = (resp, resp, 50), (-1, -1, 0)
+    plan = [respond, withhold] * 5
+    overrides = {"block_trials": len(plan), "reward_permille_go_resp": 600}
+    document = await run_generated(tmp_path, monkeypatch, fixture.go_no_go(), overrides, plan, 80000)
+
+    trials = trials_of(document)
+    assert {t["row"] for t in trials} == {"go", "no_go"}, "the pick state drew both rows"
+    classes = {("go", True): "correct", ("go", False): "omission",
+               ("no_go", True): "false_alarm", ("no_go", False): "withheld"}
+    assert [t["outcome"] for t in trials] == [classes[t["row"], answer == respond]
+                                              for t, answer in zip(trials, plan)]
+    assert not any(t["rewarded"] for t in trials if t["outcome"] != "correct")
+
+
 def test_an_unknown_table_format_is_refused_rather_than_replayed():
     document = {"interp": 99, "task_profile": {"spine": {"interp": 99}}, "ts_data": []}
     with pytest.raises(spine_stream.SpineDecodeError, match="INTERP 99"):
@@ -347,6 +499,29 @@ def test_a_malformed_document_is_refused_by_name(damage):
     damage(document)
     with pytest.raises(spine_stream.SpineDecodeError):
         spine_stream.expected_stream(spine_stream.decode(document))
+
+
+def test_a_version_2_run_whose_table_holds_a_pick_state_is_refused():
+    """INTERP 2 had no pick state, so a run claiming it with one in its table
+    was not run by the table it carries."""
+    n = rp.NONE
+    pick = [0, 0, n, n, n, n, n, n, 0, 1, rp.STARTS_TRIAL | rp.PICK, 0]
+    rest = [0, 0, 0, 0, 0, n, n, n, 0, 0, 0, 0]
+    document = {
+        "interp": 2, "trial_seed": 7, "ts_data": [], "block_trials": 1,
+        "task_profile": {"strobes": {"1": "START_SESSION", "2": "TRIAL_START", "3": "END_SESSION"},
+                         "config": [{"wireKey": "NT", "metadataKey": "block_trials"}], "spine": {
+            "interp": 2, "params": ["NT"], "inputs": [], "outputs": [],
+            "table": {"states": [pick, rest], "edges": [[0, 0, 1]]},
+            "structural": {"sessionStart": "START_SESSION", "trialStart": "TRIAL_START",
+                           "sessionEnd": "END_SESSION"},
+        }},
+    }
+    with pytest.raises(spine_stream.SpineDecodeError, match="pick"):
+        spine_stream.decode(document)
+    for version in (document, document["task_profile"]["spine"]):
+        version["interp"] = 3
+    assert spine_stream.decode(document).interp == 3
 
 
 @pytest.mark.parametrize("header", [1, None])

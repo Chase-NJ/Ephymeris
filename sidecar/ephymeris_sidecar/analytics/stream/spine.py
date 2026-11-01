@@ -147,6 +147,10 @@ def _decode(document: dict[str, Any]) -> SpineRecord:
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise SpineDecodeError(f"the snapshot's state table is not one: {exc}") from exc
+    try:
+        rp.check_interp(table, interp)
+    except ValueError as exc:  # a pick state in a table that claims INTERP 2
+        raise SpineDecodeError(f"the snapshot's state table cannot have run: {exc}") from exc
 
     code_of = {str(name): int(code) for code, name in (snapshot.get("strobes") or {}).items()}
 

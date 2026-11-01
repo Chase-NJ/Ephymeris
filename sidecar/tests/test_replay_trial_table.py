@@ -311,8 +311,8 @@ def test_a_wait_that_can_abort_gives_an_omission_no_response_when_phases_name_th
     assert structural.response == (0, rp.RISE)
 
 
-#: #101's generated go/no-go table (PR #150, `test_spine_lowering.py`), with its
-#: pick state written as a 50% chance state so this interpreter version runs it.
+#: #101's generated go/no-go table (`test_spine_lowering.py`), with its pick
+#: state, and with the pick written as a 50% chance state for INTERP 2.
 _PICK_PARAMS = (10, 500, 3000, 0, 1000, 100, 1000, 500)
 
 
@@ -321,7 +321,7 @@ def go_no_go_table(*, pick_as_chance: bool = True) -> rp.Table:
     false_alarm = lowering.OUTCOME_CLASSES.index("false_alarm") + 1
     withheld = lowering.OUTCOME_CLASSES.index("withheld") + 1
     first = (rp.StateRow(chance=7, on_hit=1, on_miss=9, flags=rp.STARTS_TRIAL) if pick_as_chance
-             else rp.StateRow(*(0, 0, n, n, n, n, n, n, 0, 2, rp.STARTS_TRIAL | 0x02, 0)))
+             else rp.StateRow(*(0, 0, n, n, n, n, n, n, 0, 2, rp.STARTS_TRIAL | rp.PICK, 0)))
     rows = [
         (0b0001, 0b01, n, n, n, n, n, n, 2, 1, 0, 0),
         (0b0011, 0, 1, 1, 3, n, n, n, 0, 0, 0, 0),
@@ -372,14 +372,10 @@ def animal_licking_only_on_go(table: rp.Table, params, ticks: int, interp: int =
     return actions
 
 
-@pytest.mark.parametrize("pick", [
-    False,
-    pytest.param(True, marks=pytest.mark.skipif(
-        3 not in rp.INTERP_VERSIONS, reason="the pick state is INTERP 3, #150's; runs once replay has it")),
-], ids=["chance", "pick"])
+@pytest.mark.parametrize("pick", [False, True], ids=["chance", "pick"])
 def test_a_perfect_go_no_go_session_scores_one_with_withheld_as_a_hit(pick: bool) -> None:
     table = go_no_go_table(pick_as_chance=not pick)
-    actions = animal_licking_only_on_go(table, _PICK_PARAMS, 40000, interp=3 if pick else rp.INTERP_VERSION)
+    actions = animal_licking_only_on_go(table, _PICK_PARAMS, 40000, interp=3 if pick else 2)
     trials = trial_table.trials_of(table, actions, end=None, phase_of=GO_NO_GO_PHASES, windows=frozenset({2}))
     naming = trial_table.Naming(inputs=("port", "resp"), outputs=("cue", "o1", "o2", "reward"),
                                 phase_of=GO_NO_GO_PHASES, phases=5, row_of=GO_NO_GO_ROWS,

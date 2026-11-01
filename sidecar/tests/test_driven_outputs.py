@@ -116,6 +116,74 @@ def test_rig107_a_driven_output_off_a_cue_or_a_misplaced_mode_is_reported(name, 
     assert ("RIG107", f"channels.{name}") in codes(doc), change
 
 
+@pytest.mark.parametrize("change", [{"mode": "train"}, {"type": "tone_out"}, {"type": "pwm_out"}])
+def test_rig107_the_trial_light_is_never_a_driven_output(change):
+    """GRGL and GRGL_Sim `digitalWrite(trialLight, HIGH)`: a train there is a laser
+    held on, a tone a speaker on DC."""
+    doc = store.default_document()
+    doc["channels"]["trial_light"].update(change)
+    assert ("RIG107", "channels.trial_light") in codes(doc), change
+
+
+def without(doc: dict, *names: str) -> dict:
+    for name in names:
+        doc["channels"].pop(name)
+        doc["pins"].pop(name)
+    return doc
+
+
+@pytest.mark.parametrize(
+    ("dropped", "pin"),
+    [
+        (("trial_light",), 36),                                   # BoxPins.h's trial light, kept
+        (("vacuum",), 40),
+        (tuple(f"odor_line_{i}" for i in range(1, 13)), 22),       # BOX_ODOR_PINS' first, kept
+        (("fluid_0", "fluid_1", "fluid_2", "fluid_3"), 42),
+    ],
+)
+def test_rig107_a_driven_output_where_the_trial_runner_keeps_a_level_line(dropped, pin):
+    """A rig without the channel leaves BoxPins.h's pin to the trial runner, so
+    the line is judged by where it lands, not by its name."""
+    doc = with_outputs(laser=(LASER, pin))
+    without(doc, *dropped)
+    assert ("RIG107", "channels.laser") in codes(doc)
+
+
+def test_every_level_line_the_trial_runner_writes_is_one_rig107_knows():
+    """Every `digitalWrite` in BehaviorBox.h and the bundled trial-runner sketches
+    writes a pin from a BoxPins.h macro that `registry.LEVEL_LINES` lists, or one
+    derived from those arrays. BoxSpine.h and BoxUtility.h drive by the rig's
+    drive, so they are not trial runners."""
+    import re
+    from pathlib import Path
+
+    firmware = Path(__file__).resolve().parents[2] / "firmware"
+    pins_h = (firmware / "libraries" / "BehaviorBox" / "BoxPins.h").read_text(encoding="utf-8")
+    macro_of = dict(re.findall(r"const int (\w+)(?:\[\w*\])?\s*=\s*(BOX_\w+);", pins_h))
+    # Pins a trial runner reaches through its trial table, each read from these arrays.
+    derived = {"trial.odorPin": "Odors", "trial->odorPin": "Odors", "activeTrial->odorPin": "Odors",
+               "fluidPin": "Fluids"}
+    sources = [firmware / "libraries" / "BehaviorBox" / "BehaviorBox.h",
+               *[p for p in firmware.rglob("*.ino") if "extras" not in p.parts]]
+    written = set()
+    for source in sources:
+        text = re.sub(r"/\*.*?\*/", "", source.read_text(encoding="utf-8"), flags=re.S)
+        text = re.sub(r"//.*", "", text)
+        written |= set(re.findall(r"digitalWrite\(\s*([\w.>\-]+)", text))
+    assert written, "the grep found the writes"
+    macros = {macro_of[derived.get(w, w).split("[")[0]] for w in written}
+    assert macros <= {m for m, *_ in registry.LEVEL_LINES}, macros
+    assert {m for m, *_ in registry.LEVEL_LINES} <= macros, "and every listed line is written"
+    # A macro filled by name is the generator's own (`PIN_MACROS`), and a kept
+    # default is the shipped pinout's, which is BoxPins.h's.
+    named = dict((m, n) for n, m in registry.PIN_MACROS)
+    shipped = registry.shipped_channels()
+    for macro, by, key, _ in registry.LEVEL_LINES:
+        if by == "name":
+            assert named[macro] == key
+            assert f"#define {macro} {shipped.get(key).index}" in pins_h
+
+
 @pytest.mark.parametrize(
     ("channels", "where"),
     [
@@ -259,6 +327,19 @@ def test_each_drive_problem_is_located(driven_rig, edit, code, where):
     raw = fixture.stimulus()
     edit(raw)
     assert (code, where) in spn(TaskDefinition.from_json(raw))
+
+
+@pytest.mark.parametrize(("hz", "width"), [(20, 50), (20, 60), (100, 15)])
+def test_a_train_whose_width_is_not_shorter_than_its_period_is_never_compiled(driven_rig, hz, width):
+    """It would hold the line HIGH: a steady output where a train was asked for,
+    which replay would agree with. So the folder refuses to compile."""
+    raw = fixture.stimulus()
+    raw["rows"][0]["drive"]["laser"].update(hz=hz, widthMs=width)
+    definition = TaskDefinition.from_json(raw)
+    assert ("SPN111", "rows[0].drive.laser.widthMs") in spn(definition)
+    assert "#error" in generate.task_spine_h(definition)
+    raw["rows"][0]["drive"]["laser"].update(widthMs=1000 // hz - 1)
+    assert "#error" not in generate.task_spine_h(TaskDefinition.from_json(raw))
 
 
 def test_a_reward_line_is_a_level_output(driven_rig):

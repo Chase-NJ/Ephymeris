@@ -11,7 +11,7 @@
   Each scenario runs in its own process (the runner's state is the sketch's
   own, as on a board): run_spine.sh runs `test_spine handshake`, `stream` and
   `stop`, then, built over spine_drive_fixture.h (-DSPINE_FIXTURE_DRIVES), the
-  driven outputs: `test_spine_drives drives` and `train_held`.
+  driven outputs: `test_spine_drives drives`, `train_held` and `train_refused`.
 
   Usage:  sh run_spine.sh
 */
@@ -229,6 +229,32 @@ static void drives()
   if (got != want) dump(got);
 }
 
+/* A width not shorter than the period would hold the line HIGH: a steady output
+   where a train was asked for. Each range alone holds it, so the board judges
+   the pair after every SET line, and refuses a hand-typed START with one. */
+static void trainRefused()
+{
+  bb_feed("SET TH=100 TW=15");         // 15 ms at 100 Hz: a 10 ms period
+  bb_feed("SET TH=20");                // 15 ms at 20 Hz: fine again
+  bb_feed("START SEED=7 TW=60");       // 60 ms at 20 Hz: refused, not started
+  bb_feed("START SEED=7 TW=5");
+  boot();
+  std::vector<std::string> l = lines();
+  size_t first = (size_t)-1, second = (size_t)-1;
+  for (size_t i = 0; i < l.size(); i++)
+    if (l[i].compare(0, 9, "PARAMS 2 ") == 0 && first == (size_t)-1) first = i;
+    else if (l[i].compare(0, 9, "PARAMS 3 ") == 0) second = i;
+  expect("a width past the period is CLAMPED with its SET line",
+         first != (size_t)-1 && first > 0 && l[first - 1] == "CLAMPED TW");
+  expect("and clears once the pair fits", second != (size_t)-1 && l[second - 1] != "CLAMPED TW");
+  size_t refused = (size_t)-1;
+  for (size_t i = second + 1; i < l.size(); i++)
+    if (l[i] == "CLAMPED TW") refused = i;
+  expect("a START that makes the pair not fit is refused", refused != (size_t)-1 &&
+         refused < indexOf("SEED\t7") && indexOf("SEED\t7") != (size_t)-1);
+  expect("the run starts on the START that fits", box_spine::params[9] == 5);
+}
+
 /* A train of length 0 runs as long as its phase holds it, and stops once. */
 static void trainHeld()
 {
@@ -257,6 +283,7 @@ int main(int argc, char **argv)
 #ifdef SPINE_FIXTURE_DRIVES
   if (which == "drives") drives();
   else if (which == "train_held") trainHeld();
+  else if (which == "train_refused") trainRefused();
 #else
   if (which == "handshake") handshake();
   else if (which == "stream") stream();

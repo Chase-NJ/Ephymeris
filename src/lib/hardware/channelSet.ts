@@ -68,7 +68,9 @@ export function patchChannel(current: RigChannel, patch: Partial<RigChannel>): R
   if (next.type !== "digital_out" || next.mode === "level") {
     delete next.mode;
   }
-  if (next.type !== current.type || next.mode !== current.mode) {
+  // "level" is stored as no mode, so a channel saved with it is not changing mode.
+  const was = current.mode === "level" ? undefined : current.mode;
+  if (next.type !== current.type || next.mode !== was) {
     delete next.edges;
   }
   if (next.type === "digital_in") {

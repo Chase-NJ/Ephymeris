@@ -54,6 +54,10 @@
   end rule's "every output still HIGH" means the live ones, and a train that
   ran out is not turned off twice. A task with no driven output compiles none
   of this (SPINE_NUM_DRIVES 0).
+  A train whose width is not shorter than its period, 1000 / hz, would hold
+  its line HIGH. Each value alone is in range, so the pair is judged over the
+  whole block after every SET line (CLAMPED <width key>), and a hand-typed
+  START that leaves one is answered the same way and starts nothing.
 
 
   THE SESSION END RULE, which replay reproduces:
@@ -171,6 +175,14 @@ struct SpineDriveRun
   uint32_t *since; // per drive: the tick its train started
   uint32_t live;   // outputs HIGH on the board
 };
+
+/*  Whether a train of this rate and width is pulses at all: a width at least the
+    period, 1000 / hz, holds the line HIGH (BoxInterp.h, PULSE TRAINS). The
+    generator refuses one at save (SPN111); the board refuses one a SET makes. */
+inline bool spine_train_fits(uint32_t hz, uint32_t width)
+{
+  return hz >= 1 && width >= 1 && width < 1000UL / hz;
+}
 
 inline void spine__trains_started(SpineDriveRun &d, uint32_t on, uint32_t now)
 {
@@ -378,6 +390,28 @@ inline void takeTokens(char *line, ParamAudit *audit)
 
 /*  Answer one SET line: CLAMPED for each value not held as written, then the
     running PARAMS. As applySetLine() does for the trial runner. */
+/*  CLAMPED <width key> for every train whose width, as the block stands, is not
+    shorter than its period: each value in its own range, the pair would hold
+    the line HIGH. Judged over the whole block after every line, as the host
+    reads only the last line's answer. True when any was. */
+inline bool clampTrains()
+{
+  bool any = false;
+#if SPINE_NUM_DRIVES > 0
+  char buf[32];
+  for (int i = 0; i < SPINE_NUM_DRIVES; i++)
+  {
+    uint8_t p = kDrives[i].param;
+    if (kDrives[i].kind != SPINE_DRIVE_TRAIN || spine_train_fits(params[p], params[p + 1]))
+      continue;
+    snprintf(buf, sizeof(buf), "CLAMPED %s", kParams[p + 1].key);
+    Serial.println(buf);
+    any = true;
+  }
+#endif
+  return any;
+}
+
 inline void answerSet(char *line, ParamAudit &audit)
 {
   takeTokens(line, &audit);
@@ -389,6 +423,7 @@ inline void answerSet(char *line, ParamAudit &audit)
   }
   if (audit.inexactLost)
     Serial.println("CLAMPED *");
+  clampTrains();
   snprintf(buf, sizeof(buf), "PARAMS %d %lu", audit.accepted, (unsigned long)audit.finalCrc());
   Serial.println(buf);
 }
@@ -400,6 +435,7 @@ inline uint32_t awaitStart()
 {
   char cmd[SET_LINE_MAX];
   ParamAudit audit;
+  unsigned long seed = 0;
   defaults();
   while (true)
   {
@@ -413,15 +449,17 @@ inline uint32_t awaitStart()
     else if (lineIsCommand(cmd, "SET"))
       answerSet(cmd, audit);
     else if (lineIsCommand(cmd, "START"))
-      break;
+    {
+      // START may carry SEED=<n> and, typed by hand, parameters of its own. SEED
+      // is no parameter key, so takeTokens() passes over it. A train they leave
+      // not fitting is refused here: no run starts on it.
+      const char *at = strstr(cmd, "SEED=");
+      seed = at != NULL && (at == cmd || at[-1] == ' ') ? strtoul(at + 5, NULL, 10) : 0;
+      takeTokens(cmd, NULL);
+      if (!clampTrains())
+        break;
+    }
   }
-  // START may carry SEED=<n> and, typed by hand, parameters of its own. SEED is
-  // no parameter key, so takeTokens() passes over it.
-  unsigned long seed = 0;
-  const char *at = strstr(cmd, "SEED=");
-  if (at != NULL && (at == cmd || at[-1] == ' '))
-    seed = strtoul(at + 5, NULL, 10);
-  takeTokens(cmd, NULL);
   if (seed == 0)
     seed = micros();
   seed %= 2147483647UL;

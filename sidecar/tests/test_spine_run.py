@@ -39,7 +39,7 @@ from ephymeris_sidecar.taskdef import lowering
 from ephymeris_sidecar.taskdef.model import TaskDefinition
 from ephymeris_sidecar.taskdef.store import TaskStore
 from ephymeris_sidecar.tasks import profile as task_profile
-from ephymeris_sidecar.tasks.start_command import build_start_command
+from ephymeris_sidecar.tasks.start_command import ParamsExchange, StartRefused, build_start_command
 from tests.fixtures import spine as fixture
 from tests.scripted_board import Bench, ScriptedBoard, until
 
@@ -542,6 +542,43 @@ async def test_pwm_tone_and_a_train_drive_their_pins_and_replay_to_every_pulse(t
     assert diverged(lambda d: d["ts_data"].pop(dim_off)) is not None
     assert diverged(lambda d: d.update(train_ms_dim_laser=301)) is not None
     assert spine_stream.trial_table(document) is not None
+
+
+def test_a_per_box_override_that_makes_a_train_steady_is_refused_by_the_board(tmp_path):
+    """Each value in its own range, a box's override can still make a pulse no
+    shorter than its period, which would hold the laser on. The compiled board
+    judges the pair after the SET lines and answers CLAMPED, so the host never
+    sends START (`TASKS.md#confirming-the-parameters`)."""
+    fixture.install(*fixture.issued_rig(driven=True))
+    folder = save(tmp_path, fixture.stimulus())
+    profile = task_profile.load_profile(folder)
+    for overrides, refused in (({"block_trials": 4, "train_width_ms_dim_laser": 50}, True),
+                               ({"block_trials": 4, "train_hz_bright_laser": 100}, True),
+                               ({"block_trials": 4, "train_width_ms_dim_laser": 49}, False)):
+        config = {f.metadata_key: overrides.get(f.metadata_key, f.default) for f in profile.config}
+        command = build_start_command(profile, config)
+        # The board blocks until a START it can run: a START the host would never
+        # send, then one typed by hand with every width at 1 ms, so it exits.
+        widths = " ".join(f"{f.wire_key}=1" for f in profile.config
+                          if f.metadata_key.startswith("train_width_ms_"))
+        lines = [command.begin_line, *command.set_lines, "START SEED=1", f"START SEED=1 {widths}"]
+        out = run_board(folder, lines, [], 10, tmp_path)
+        answers = out[: next(i for i, line in enumerate(out) if line.startswith("PARAMS")
+                             and sum(1 for o in out[: i + 1] if o.startswith("PARAMS")) == len(command.set_lines)) + 1]
+        exchange = ParamsExchange(command)
+        if refused:
+            with pytest.raises(StartRefused) as caught:
+                for line in answers:
+                    exchange.hear(line)
+            assert caught.value.reason == "clamped" and caught.value.detail["keys"][0].startswith("TW")
+            after = out[len(answers):]
+            assert after[0].startswith("CLAMPED TW") and after.index("SEED\t1") > 0, \
+                "the board refuses a START on the pair too, and starts on the one that fits"
+        else:
+            for line in answers:
+                exchange.hear(line)
+            assert exchange.done, "a pair that fits starts"
+            assert out[len(answers)] == "SEED\t1"
 
 
 def test_an_unknown_table_format_is_refused_rather_than_replayed():

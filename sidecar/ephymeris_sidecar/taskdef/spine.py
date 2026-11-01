@@ -409,10 +409,15 @@ def _drive_problems(spine: Spine, drives: dict[str, str], out: _Resolved, proble
             hz, width = values.get("hz"), values.get("widthMs")
             if kind == "train" and isinstance(hz, int) and isinstance(width, int) and 1 <= hz <= 100 \
                     and width >= 1000 // hz:
+                # Each value is in its own range, but the pair would hold the
+                # line HIGH: a steady output where a train was asked for.
                 problem(f"rows[{r}].drive.{slot}.widthMs", "SPN111", f"a {width} ms pulse at {hz} Hz is not "
-                        f"shorter than its {1000 // hz} ms period, so the pulses would run together")
+                        f"shorter than its {1000 // hz} ms period, so the line would stay on: a steady "
+                        "output, not a train")
+                ok = False
     if not ok:
-        out.blockers.append("a row gives a PWM, tone or train slot no value, or one out of range")
+        out.blockers.append("a row gives a PWM, tone or train slot no value, one out of range, or a "
+                            "train whose pulse is not shorter than its period")
     return ok
 
 

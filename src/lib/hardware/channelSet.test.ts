@@ -41,6 +41,14 @@ describe("patchChannel and driven outputs", () => {
     expect(next.edges).toBeUndefined();
   });
 
+  it("keeps the codes of a line stored as mode level through any other edit", () => {
+    const stored: RigChannel = { ...cue, mode: "level" };
+    const next = patchChannel(stored, { role: "cue" });
+    expect(next.edges).toEqual(cue.edges);
+    expect("mode" in next).toBe(false);
+    expect(patchChannel(stored, { mode: "level" }).edges).toEqual(cue.edges);
+  });
+
   it("stores a level line with no mode, and drops a mode with the type", () => {
     expect("mode" in patchChannel({ ...cue, mode: "train" }, { mode: "level" })).toBe(false);
     expect("mode" in patchChannel({ ...cue, mode: "train" }, { type: "pwm_out" })).toBe(false);

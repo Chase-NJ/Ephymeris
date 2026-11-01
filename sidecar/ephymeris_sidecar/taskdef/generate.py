@@ -546,16 +546,9 @@ _SELECTION_MACRO: dict[str, str] = {
 }
 
 
-#: Channel name -> the guarded macro in BoxPins.h. Resolution is by KIND for the
-#: structural three, so a rig may rename them; the two response ports are named
-#: because the trial runner has a left and a right and nothing else.
-_PIN_MACROS: tuple[tuple[str, str], ...] = (
-    ("odor_port", "BOX_PIN_ODOR_PORT"),
-    ("right_well", "BOX_PIN_RIGHT_WELL"),
-    ("left_well", "BOX_PIN_LEFT_WELL"),
-    ("trial_light", "BOX_PIN_TRIAL_LIGHT"),
-    ("vacuum", "BOX_PIN_VACUUM"),
-)
+#: Channel name -> the guarded macro in BoxPins.h (`registry.PIN_MACROS`, which
+#: RIG107 reads too: a driven output may not sit where these put a level line).
+_PIN_MACROS = registry.PIN_MACROS
 
 
 def _sync_lines(channels: Any) -> list[str]:

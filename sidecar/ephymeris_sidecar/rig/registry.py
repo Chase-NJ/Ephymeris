@@ -362,10 +362,37 @@ TYPE_DIRECTION: dict[str, str] = {
 }
 
 #: The kinds a driven output (`pwm_out`, `tone_out`, a `train`) may be declared
-#: on (RIG107). The trial runner drives a cue only by the name `trial_light`,
-#: but every emitter and reward line by `digitalWrite`, which would hold a
-#: train's laser on and put DC on a tone's speaker.
+#: on (RIG107). The trial runner drives every emitter and reward line by
+#: `digitalWrite`, which would hold a train's laser on and put DC on a tone's
+#: speaker; it drives a cue only where `LEVEL_LINES` puts one.
 DRIVE_KINDS: tuple[str, ...] = ("cue",)
+
+#: Channel name -> the guarded macro in BoxPins.h that the generator sets from
+#: that channel's pin (`generate.py`'s `TaskPins.h`). A rig without the channel
+#: leaves the macro at BoxPins.h's own pin, which the shipped pinout transcribes.
+PIN_MACROS: tuple[tuple[str, str], ...] = (
+    ("odor_port", "BOX_PIN_ODOR_PORT"),
+    ("right_well", "BOX_PIN_RIGHT_WELL"),
+    ("left_well", "BOX_PIN_LEFT_WELL"),
+    ("trial_light", "BOX_PIN_TRIAL_LIGHT"),
+    ("vacuum", "BOX_PIN_VACUUM"),
+)
+
+#: The outputs BehaviorBox.h and the bundled sketches drive as plain level
+#: lines (`digitalWrite`), by the BoxPins.h macro that holds their pins, and how
+#: a rig fills it: a channel's name (`PIN_MACROS`), or every channel of a kind,
+#: in declaration order; and whether a rig with none keeps BoxPins.h's pins
+#: (the shipped pinout's) or none (the sync line is always emitted, -1 for none).
+#: A driven output on any pin these land on would be switched on and off by a
+#: trial-runner sketch (RIG107). `test_driven_outputs.py` holds this to every
+#: `digitalWrite` in those sources.
+LEVEL_LINES: tuple[tuple[str, str, str, bool], ...] = (
+    ("BOX_PIN_TRIAL_LIGHT", "name", "trial_light", True),
+    ("BOX_PIN_VACUUM", "name", "vacuum", True),
+    ("BOX_ODOR_PINS", "kind", "emitter", True),
+    ("BOX_FLUID_PINS", "kind", "reward", True),
+    ("BOX_PIN_SYNC_OUT", "kind", "sync", False),
+)
 
 
 def edges_of(channel_type: str | None, mode: str | None = None) -> tuple[str, ...]:
@@ -444,7 +471,8 @@ class Channel:
     pin_note: str = ""             # why THIS pin, when there is anything to say
     pin_source: str = ""           # the BehaviorBox.h line the number came from
     # -- the channel set (TASKS.md#the-channel-set-and-the-pin-map). Beside the
-    # fields above, never instead of them: nothing generated reads these yet.
+    # fields above, never instead of them. The trial-runner generator reads none
+    # of these; a spine task and BOX_Utility do (TASKS.md#driven-outputs).
     type: str = ""                 # digital_in | digital_out | pwm_out | tone_out
     #: A `digital_out`'s mode: "train", or None for a level line. A stored
     #: "level" reads as None, so the two spellings are one channel.
@@ -733,6 +761,7 @@ class ChannelMap:
         out: list[tuple[str, str]] = []
         where = self.channels_source
         claimed: dict[str, list[str]] = {}
+        level_pins = self.level_line_pins()
         for c in sorted(self._by_name.values(), key=lambda c: c.name):
             at = self._at(where, c.name)
             if c.type not in EDGES:
@@ -762,6 +791,13 @@ class ChannelMap:
                     f"output is a {' or '.join(DRIVE_KINDS)} channel: the trial runner switches every "
                     f"{c.kind} line on and off, which would hold it on.",
                 ))
+            elif c.drive is not None and c.index in level_pins:
+                out.append((
+                    at,
+                    f"{c.name!r} is driven as {c.drive} on pin {c.index}, which the trial runner "
+                    f"drives as a plain on/off line ({level_pins[c.index]}): a GRGL sketch would hold "
+                    "it on. Give it a pin of its own, or keep it a level line.",
+                ))
             edges = edges_of(c.type, c.mode)
             for edge, code in c.edges:
                 if edge not in edges:
@@ -785,6 +821,22 @@ class ChannelMap:
                     f"{code} is the code of {', '.join(edges)}. Two edges announced by one "
                     "code are indistinguishable in the data.",
                 ))
+        return out
+
+    def level_line_pins(self) -> dict[int, str]:
+        """Pin -> the `LEVEL_LINES` macro that puts a plain on/off line there on
+        this rig, as a trial-runner sketch built against it would. By pin, not
+        name: a rig that drops or renames its trial light leaves BoxPins.h's
+        pin 36 to the trial runner all the same."""
+        shipped: ChannelMap | None = None
+        out: dict[int, str] = {}
+        for macro, by, key, keeps_default in LEVEL_LINES:
+            mine = ([self.get(key)] if self.get(key) else []) if by == "name" else self.declared_of_kind(key)
+            if not mine and keeps_default:
+                shipped = shipped or shipped_channels()
+                mine = ([shipped.get(key)] if shipped.get(key) else []) if by == "name" \
+                    else shipped.declared_of_kind(key)
+            out.update((c.index, macro) for c in mine if isinstance(c.index, int))
         return out
 
     def drive_problems(self) -> list[tuple[str, str]]:
@@ -998,8 +1050,8 @@ class ChannelSet:
         if version not in CHANNEL_SET_HASH_VERSIONS:
             raise ValueError(f"no channel-set hash version {version!r}")
         channels = self._channels if version >= 2 else sorted(self._channels, key=lambda c: c.name)
-        # A channel's `mode` joins its entry only when it has one, so a channel
-        # set with no train hashes as it did before modes existed.
+        # A channel's `mode` joins its entry only when it is a train, so a level
+        # line's entry is the same whether its file names `level` or nothing.
         payload = [
             [
                 c.name, c.kind, c.type, c.role, c.active_level, c.debounce_ms,

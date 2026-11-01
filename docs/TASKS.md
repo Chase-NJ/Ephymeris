@@ -745,7 +745,7 @@ Beside the level line, an output can be driven three more ways ([ADR 0003](adr/0
 "rows":  [{"id": "opto", …, "drive": {"laser": {"hz": 20, "widthMs": 5, "ms": 1000}}}]
 ```
 
-- **The channel.** A driven output is a `cue`-kind channel, whatever its `role` (RIG107). The trial runner drives a cue only by the name `trial_light`, and every `emitter` and `reward` line by `digitalWrite`, which would hold a laser on.
+- **The channel.** A driven output is a `cue`-kind channel, whatever its `role`, on a pin of its own (RIG107). The trial runner switches every `emitter` and `reward` line by `digitalWrite`, which would hold a laser on, and so it does the lines `registry.LEVEL_LINES` lists: the trial light, the vacuum, the odor and fluid arrays and the sync line. RIG107 refuses a driven output on any pin those land on for this rig, judged by pin: a rig without a `trial_light` channel still leaves BoxPins.h's pin 36 to the trial runner.
 - **The board can run it** (RIG109, `rig/board.py`): a `pwm_out` sits on a pin a timer drives, and a rig has at most one `tone_out`, which `tone()` plays on Timer2, so no `pwm_out` may then sit on Timer2's pins 9 and 10. Two PWM lines on one timer are fine: each holds its own duty at the timer's frequency.
 
   | Timer | PWM pins |
@@ -758,7 +758,10 @@ Beside the level line, an output can be driven three more ways ([ADR 0003](adr/0
   | 5 | 44, 45, 46 |
 
 - **A slot.** It binds only a channel of its own type and mode (SPN102), goes only in a phase's `outputs`, and is never a reward `line`. Its values are [parameters](#lowering), so the board clamps each to its range, and a row that gives none, or one out of range, is SPN111.
-- **A pulse train** fires pulse j of every second at `floor(j × 1000 / hz)` ms into it, `widthMs` long, from the tick the phase drives it HIGH: `BoxInterp.h`'s `interp_train_high()`, stepped on every tick, skipped `millis()` values included, with no `delay()`. A train of `ms` 0 runs as long as its phase holds it; otherwise it **runs out** `ms` ticks after it started, earlier than its phase if the phase is longer. A width not shorter than the period, `1000 / hz`, is SPN111.
+- **A pulse train** fires pulse j of every second at `floor(j × 1000 / hz)` ms into it, `widthMs` long, from the tick the phase drives it HIGH: `BoxInterp.h`'s `interp_train_high()`, stepped on every tick, skipped `millis()` values included, with no `delay()`. A train of `ms` 0 runs as long as its phase holds it; otherwise it **runs out** `ms` ticks after it started, earlier than its phase if the phase is longer.
+
+> [!CAUTION]
+> **A width not shorter than the period, `1000 / hz`, would hold the line HIGH**: a steady output where a train was asked for, which replay would agree with. Each value can be within its own range and the pair still be wrong, so it is refused twice. At save it is SPN111, and the folder carries an `#error`. On the board, after every `SET` line, each train whose pair does not fit answers `CLAMPED <width key>`, so a per-box override that makes one never gets a `START`. A hand-typed `START` that makes one is answered the same way, and no run starts.
 - **The stream.** A train strobes `<CHANNEL>_TRAIN_ON` at its first tick and `<CHANNEL>_TRAIN_OFF` when it stops: its phase drives it LOW, it runs out, or the session ends. Never a pulse's edge. A PWM or tone line strobes its `on` and `off` as a level line does.
 - **Replay** predicts each train's `TRAIN_OFF`, from the snapshot's `drive` and parameter keys for each bit, and reconstructs every pulse in between (`spine.pulses`, by `replay.train_pulses`). The differential test holds that reconstruction to the C train on every edge's tick ([Compiling and the host tests](#compiling-and-the-host-tests)).
 
@@ -795,7 +798,7 @@ It rides in the `# task_profile:` header line of every run's `.tsv` ([DATA.md](D
 | `SPN108` | A row with no name | Every readout titled after nothing |
 | `SPN109` | A contingency map that is wrong: a watched response or the timeout with no entry, an entry for a slot the window does not watch, an unknown outcome class, a `line` that is not a level output slot, a probability outside 0–1000 or with no line, `hold` on the timeout or without the window's `holdMs`, a map on a spine with no window | A response that goes nowhere, or pays where nobody meant |
 | `SPN110` | A stored value in `params` that no parameter of the task reads, named by its key | A tuned value silently replaced by the default |
-| `SPN111` | A [driven output](#driven-outputs) slot a row gives no value, or one out of range; a train whose width is not shorter than its period; a `drive` entry for a slot that is not driven | A stimulus at a value nobody chose, or a train whose pulses run together |
+| `SPN111` | A [driven output](#driven-outputs) slot a row gives no value, or one out of range; a train whose width is not shorter than its period; a `drive` entry for a slot that is not driven | A stimulus at a value nobody chose, or a train held on as a steady output |
 
 > [!CAUTION]
 > **A task's RAM budget is 5000 B**, everything its `TaskSpine.h` puts in RAM (`spine.task_ram_bytes`):
@@ -880,7 +883,7 @@ Beside its kind, every channel declares what it is ([ADR 0003](adr/0003-phase-sp
 | Field | Values | Notes |
 |---|---|---|
 | `type` | `digital_in`, `digital_out`, `pwm_out`, `tone_out` | Fixes the channel's edges: `enter`/`exit` on an input, `on`/`off` on an output. Must agree with the kind's direction (RIG107). `pwm_out` and `tone_out` are [driven outputs](#driven-outputs) |
-| `mode` | `level` (or absent), `train` | A `digital_out`'s only: a pulse train, whose edges are `train_on`/`train_off`. Joins the channel-set hash only when it is `train`, so a set with no train hashes as before |
+| `mode` | `level` (or absent), `train` | A `digital_out`'s only: a pulse train, whose edges are `train_on`/`train_off`. Joins the channel-set hash only when it is `train`: a level line hashes the same whether it names `level` or nothing |
 | `role` | `port`, `stimulus`, `reward`, `cue`, `routing`, `sync` | What the line is for in a task |
 | `active_level`, `debounce_ms` | `low`/`high`, ms | Inputs only |
 | `serves` | a channel name | Reward lines only: the port the line pays at, equal to `well` while both exist |
@@ -946,7 +949,7 @@ A well-formed document describing an impossible box is a successful reply carryi
 | `RIG104` | A response port with no strobe slot ([Port slots](#port-slots)) |
 | `RIG105` | More than one `sync` channel |
 | `RIG106` | An odor line with no onset code, one that is not a live onset code, two lines on one code, or an onset on a channel that is not an emitter ([Onset codes](#onset-codes)) |
-| `RIG107` | A type that contradicts the kind's direction, an active level or debounce on an output, a mode on a channel that is not a `digital_out` or one other than `train`, a [driven output](#driven-outputs) on a channel that is not a `cue`, an edge the type does not have, an edge code that is not live, or one code on two edges ([Edge codes](#edge-codes)) |
+| `RIG107` | A type that contradicts the kind's direction, an active level or debounce on an output, a mode on a channel that is not a `digital_out` or one other than `train`, a [driven output](#driven-outputs) on a channel that is not a `cue` or on a pin the trial runner drives as a plain line, an edge the type does not have, an edge code that is not live, or one code on two edges ([Edge codes](#edge-codes)) |
 | `RIG108` | A draft read from a stored file that is not in force and that the record cannot vouch for (copied in, changed outside the app, not loaded even once repaired, a pin map not written with its channel set, or saved here when a save after it did not finish), its pins not yet confirmed by the operator ([The channel set and the pin map](#the-channel-set-and-the-pin-map)) |
 | `RIG109` | A [driven output](#driven-outputs) the board cannot run (`rig/board.py`): a `pwm_out` on a pin no timer drives, a `pwm_out` on Timer2's pins 9 or 10 beside a `tone_out`, or a second `tone_out` |
 

@@ -1,4 +1,4 @@
-"""The wiring rules, RIG101-RIG107 (TASKS.md#wiring-rules).
+"""The wiring rules, RIG101-RIG107 and RIG109 (TASKS.md#wiring-rules).
 
 They judge a COMPOSED `ChannelMap`, never the file, so a problem is reported
 once whichever half of the wiring caused it. Two callers: `hardware/service.py`
@@ -32,6 +32,7 @@ def rule_problems(document: Any) -> list[tuple[str, str, str]]:
             ("RIG105", chans.sync_problems()),
             ("RIG106", chans.onset_problems(vocab)),
             ("RIG107", chans.edge_problems(vocab)),
+            ("RIG109", chans.drive_problems()),
         )
         for loc, msg in pairs
     ]

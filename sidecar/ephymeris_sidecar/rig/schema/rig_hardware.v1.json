@@ -115,9 +115,18 @@
           "type": {
             "enum": [
               "digital_in",
-              "digital_out"
+              "digital_out",
+              "pwm_out",
+              "tone_out"
             ],
-            "description": "Channel set (TASKS.md#the-channel-set-and-the-pin-map): what the line electrically is. It fixes which edges the channel has -- enter/exit on an input, on/off on an output -- and must agree with the kind's direction (RIG107). Defaults from the kind when absent."
+            "description": "Channel set (TASKS.md#the-channel-set-and-the-pin-map): what the line electrically is. It fixes which edges the channel has -- enter/exit on an input, on/off on an output, train_on/train_off on a train -- and must agree with the kind's direction (RIG107). pwm_out and tone_out are driven outputs (TASKS.md#driven-outputs), on a cue channel only. Defaults from the kind when absent."
+          },
+          "mode": {
+            "enum": [
+              "level",
+              "train"
+            ],
+            "description": "digital_out only: level (the default, as when absent) or train, a pulse train a spine task's row sets the rate, width and length of (TASKS.md#driven-outputs). A train is a cue channel only (RIG107)."
           },
           "role": {
             "enum": [
@@ -165,6 +174,14 @@
                 "pattern": "^[A-Z][A-Z0-9_]*$"
               },
               "off": {
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9_]*$"
+              },
+              "train_on": {
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9_]*$"
+              },
+              "train_off": {
                 "type": "string",
                 "pattern": "^[A-Z][A-Z0-9_]*$"
               }

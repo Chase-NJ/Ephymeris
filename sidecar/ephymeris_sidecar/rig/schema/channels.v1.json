@@ -46,7 +46,7 @@
     },
     "cue": {
       "direction": "out",
-      "doc": "A trial-availability signal driven by entry actions, not a stimulus."
+      "doc": "A trial-availability signal driven by entry actions, not a stimulus. Also the kind of every driven output -- a pwm_out, a tone_out or a digital_out train (TASKS.md#driven-outputs), whatever its role -- because the trial runner drives a cue only by the name trial_light, and would switch any other kind's line on and off."
     },
     "vacuum": {
       "direction": "out",

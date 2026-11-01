@@ -211,7 +211,7 @@ class _Record:
 #:                 (copied in, or changed by hand), or it was saved here but a
 #:                 save after it did not finish. Its pins must be confirmed
 #:   invalid       it parses but is out of shape, a channel lacks a pin, or it
-#:                 breaks a wiring rule (RIG101-RIG107): a document to repair
+#:                 breaks a wiring rule (RIG101-RIG107, RIG109): a document to repair
 #:   mismatched    a two-file pair whose pin map was not written with its
 #:                 channel set: a document whose PINS must be confirmed
 #:   unrepairable  nothing to repair: unreadable, too large, unparseable, not

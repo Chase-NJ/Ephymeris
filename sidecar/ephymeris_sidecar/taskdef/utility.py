@@ -77,12 +77,24 @@ def inputs(channels: registry.ChannelMap) -> list[registry.Channel]:
     return [c for kind in INPUT_KINDS for c in channels.declared_of_kind(kind)]
 
 
+#: A driven output's `BoxUtilDrive`, and what the utility drives it with, which
+#: its label says (`TASKS.md#driven-outputs`). A plain output is a level line.
+DRIVES: dict[str | None, tuple[str, str | None]] = {
+    None: ("BOX_UTIL_LEVEL", None),
+    "pwm": ("BOX_UTIL_PWM", None),            # fully on: analogWrite(255) is HIGH
+    "tone": ("BOX_UTIL_TONE", "1 kHz test tone"),
+    "train": ("BOX_UTIL_TRAIN", "20 Hz test train"),
+}
+
+
 def row_label(channel: registry.Channel) -> str:
     """The Rig page's label, with the well a reward line serves when known —
-    "which well does fluid 2 feed?" is the question priming is for."""
+    "which well does fluid 2 feed?" is the question priming is for — or what a
+    driven output plays while it is on."""
     if channel.kind == "reward" and channel.well:
         return f"{channel.label} · {channel.well.replace('_', ' ')}"
-    return channel.label
+    test = DRIVES[channel.drive][1]
+    return f"{channel.label} · {test}" if test else channel.label
 
 
 def utility_channels_h(sketch_name: str) -> str:
@@ -93,7 +105,7 @@ def utility_channels_h(sketch_name: str) -> str:
     kind_macro = dict(OUTPUT_KINDS)
 
     out_rows = [
-        f'  {{{_c(c.name)}, {_c(row_label(c))}, {c.index}, {kind_macro[c.kind]}}}'
+        f'  {{{_c(c.name)}, {_c(row_label(c))}, {c.index}, {kind_macro[c.kind]}, {DRIVES[c.drive][0]}}}'
         for c in outs
     ]
     in_rows = [f"  {{{_c(c.name)}, {_c(c.label)}, {c.index}}}" for c in ins]
@@ -126,6 +138,8 @@ def utility_channels_h(sketch_name: str) -> str:
         "#define BOX_UTILITY_INPUTS { \\",
         *(row + (", \\" if i < len(in_rows) - 1 else " \\") for i, row in enumerate(in_rows)),
         "}",
+        "/*  tone() is linked only for a rig with a tone output. */",
+        f"#define BOX_UTILITY_HAS_TONE {1 if any(c.drive == 'tone' for c in outs) else 0}",
         f"#define BOX_UTILITY_STATUS_BYTES {status_bytes}",
         "",
         "#endif // UTILITY_CHANNELS_H",

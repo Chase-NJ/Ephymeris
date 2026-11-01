@@ -10,6 +10,7 @@ import { RowDensityContext } from "@/components/common/rowDensity";
 import { BoardMap } from "@/components/hardware/BoardMap";
 import {
   CHANNEL_TYPES,
+  MODES,
   ROLES,
   edgesOf,
   kindDefaults,
@@ -566,9 +567,26 @@ function ChannelInspector({
         <span className="text-[10px] leading-relaxed text-static">
           What the line electrically is. It decides the channel&apos;s edges — an input
           is entered and left, an output switched on and off — and each edge gets a
-          strobe code of its own.
+          strobe code of its own. A PWM or tone line is driven at the value each trial
+          type sets; it goes on a cue channel, on a pin the board can run it on.
         </span>
       </label>
+
+      {entry.type === "digital_out" && (
+        <label className="flex flex-col gap-1">
+          <span className="text-[11px] text-starlight">Mode</span>
+          <Select
+            label="Mode"
+            value={entry.mode ?? "level"}
+            options={MODES.map((m) => ({ value: m as string, label: m }))}
+            onChange={(v) => onEdit(selected, { mode: v })}
+          />
+          <span className="text-[10px] leading-relaxed text-static">
+            A train pulses at the rate, width and length each trial type sets, and
+            records only its start and end. A train goes on a cue channel.
+          </span>
+        </label>
+      )}
 
       <label className="flex flex-col gap-1">
         <span className="text-[11px] text-starlight">Role</span>
@@ -615,9 +633,9 @@ function ChannelInspector({
 
       <div className="flex flex-col gap-1">
         <span className="text-[11px] text-starlight">Strobe codes</span>
-        {edgesOf(entry.type).map((edge) => (
+        {edgesOf(entry.type, entry.mode).map((edge) => (
           <div key={edge} className="flex items-baseline gap-2 text-[11px]">
-            <span className="w-10 shrink-0 font-mono text-[10px] text-static">{edge}</span>
+            <span className="w-14 shrink-0 font-mono text-[10px] text-static">{edge}</span>
             <span className="font-mono text-starlight">
               {entry.edges?.[edge] ?? <span className="text-static">issued on save</span>}
             </span>

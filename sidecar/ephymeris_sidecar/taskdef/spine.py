@@ -40,11 +40,19 @@ from .validate import Diagnostic
 #: START_SESSION and END_SESSION: the same events, so no code is spent twice.
 STRUCTURAL = {"sessionStart": "START_SESSION", "trialStart": "TRIAL_START", "sessionEnd": "END_SESSION"}
 
-#: Which edge of a channel's type a bit reports as its rise and its fall.
-_INPUT_EDGES = ("enter", "exit")
-_OUTPUT_EDGES = ("on", "off")
+SLOT_TYPES = ("digital_in", "digital_out", "pwm_out", "tone_out")
+OUTPUT_TYPES = ("digital_out", "pwm_out", "tone_out")
 
-SLOT_TYPES = ("digital_in", "digital_out")
+#: Each driven output's row values (`TASKS.md#driven-outputs`), in parameter
+#: order: (drive key, metadata prefix, label, unit, min, max). A train's width
+#: must also be shorter than its period, 1000 // hz (SPN112).
+DRIVE_VALUES: dict[str, tuple[tuple[str, str, str, str | None, int, int], ...]] = {
+    "pwm": (("duty", "pwm_duty", "PWM duty", None, 0, 255),),
+    "tone": (("hz", "tone_hz", "Tone", "Hz", 31, 65535),),
+    "train": (("hz", "train_hz", "Train rate", "Hz", 1, 100),
+              ("widthMs", "train_width_ms", "Pulse width", "ms", 1, 999),
+              ("ms", "train_ms", "Train length", "ms", 0, 3_600_000)),
+}
 
 #: Bounds on each parameter, held by the board too: a value outside them is
 #: CLAMPED and the start refused (`TASKS.md#confirming-the-parameters`).
@@ -64,6 +72,14 @@ RATIOS_MAX = lowering.NONE - 1
 PARAM_BYTES = 18
 INPUT_BYTES = 14
 OUTPUT_BYTES = 5
+#: A driven output bit adds its `SpineDrive` (3 B), its train's start tick (4 B)
+#: and its pin's level (1 B), and a task with any adds the `SpineDriveRun` that
+#: tracks them (9 B). A task with no driven output compiles none of it.
+DRIVE_BYTES = 8
+DRIVE_RUN_BYTES = 9
+#: What linking the AVR core's `tone()` adds, only when a task has a tone
+#: output (`SPINE_HAS_TONE`). Measured by the same test.
+TONE_RAM_BYTES = 32
 #: The globals of a spine sketch apart from its task's data: the runner,
 #: BehaviorBox.h and the Arduino core, measured by that same test. A build can
 #: come in some bytes under the sum (the compiler folds a small constant channel
@@ -82,12 +98,14 @@ RATIO_BYTES = 2
 
 def task_ram_bytes(low: lowering.Lowered) -> int:
     """The bytes of RAM a task's generated `TaskSpine.h` adds to a Mega build:
-    its states and edge rows, its parameters, its channel bits and its ratios."""
+    its states and edge rows, its parameters, its channel bits, its ratios and its driven outputs."""
     ratios = len(low.counter[2]) if low.counter is not None else 0
     return (lowering.table_bytes(len(low.states), max(1, len(low.edges)))
             + sum(PARAM_BYTES + len(key) + 1 for key in low.params)
             + INPUT_BYTES * max(1, len(low.inputs)) + OUTPUT_BYTES * max(1, len(low.outputs))
-            + RATIO_BYTES * max(1, ratios))
+            + RATIO_BYTES * max(1, ratios)
+            + (DRIVE_RUN_BYTES + DRIVE_BYTES * len(low.drives) if low.drives else 0)
+            + (TONE_RAM_BYTES if any(kind == "tone" for _, kind, _ in low.drives) else 0))
 
 
 @dataclass
@@ -103,7 +121,7 @@ class _Resolved:
 
 
 def diagnostics(definition: TaskDefinition) -> list[Diagnostic]:
-    """Every problem with a spine task, located (SPN101–SPN111)."""
+    """Every problem with a spine task, located (SPN101–SPN112)."""
     return _resolve(definition).problems
 
 
@@ -117,6 +135,8 @@ def _resolve(definition: TaskDefinition) -> _Resolved:
         out.problems.append(Diagnostic(location, message, code))
 
     slot_type: dict[str, str] = {}
+    slot_mode: dict[str, str | None] = {}
+    drives: dict[str, str] = {}
     slots_before = len(out.problems)
     for i, slot in enumerate(spine.slots):
         if not slot.id or slot.id in slot_type:
@@ -126,15 +146,25 @@ def _resolve(definition: TaskDefinition) -> _Resolved:
                     "keeps that key for the window running out")
         elif slot.type not in SLOT_TYPES:
             problem(f"slots[{i}].type", "SPN105", f"slot {slot.id!r} is {slot.type!r}, not one of {SLOT_TYPES}")
+        elif slot.mode not in (None, "level") and (slot.type, slot.mode) != ("digital_out", "train"):
+            problem(f"slots[{i}].mode", "SPN105", f"slot {slot.id!r} is a {slot.type} in {slot.mode!r} mode; "
+                    "only a digital_out takes a mode, and it is level or train")
         else:
             slot_type[slot.id] = slot.type
+            slot_mode[slot.id] = None if slot.mode == "level" else slot.mode
+            drive = registry.drive_of(slot.type, slot_mode[slot.id])
+            if drive is not None:
+                drives[slot.id] = drive
     inputs = [s for s, t in slot_type.items() if t == "digital_in"]
-    outputs = [s for s, t in slot_type.items() if t == "digital_out"]
+    outputs = [s for s, t in slot_type.items() if t in OUTPUT_TYPES]
+    # A reward line, the only output a phase or map names outside `outputs`, is a level line.
+    lines = {s for s in outputs if s not in drives}
 
-    shape_ok = _shape_problems(spine, slot_type, problem) and len(out.problems) == slots_before
+    shape_ok = _shape_problems(spine, slot_type, lines, problem) and len(out.problems) == slots_before
     _held_problems(spine, problem)
     rows_ok = _row_problems(spine, problem)
-    map_ok = _map_problems(spine, slot_type, problem)
+    map_ok = _map_problems(spine, lines, problem)
+    drive_ok = _drive_problems(spine, drives, out, problem)
     rows = [r.to_json() for r in spine.rows]
 
     # Every row's bindings. One channel serves one slot, across rows too; the
@@ -150,22 +180,28 @@ def _resolve(definition: TaskDefinition) -> _Resolved:
                         else f"this rig has no channel {name!r}")
                 out.blockers.append(f"slot {slot} is bound to no channel of this rig")
                 continue
-            if channel.type != slot_type[slot] or channel.kind == "sync":
-                problem(at, "SPN102", f"{name} is a {channel.type} {channel.kind} channel; slot {slot!r} "
-                        f"needs a {slot_type[slot]}" + (" other than the sync line" if channel.kind == "sync" else ""))
-                out.blockers.append(f"{name} is not a {slot_type[slot]} channel")
+            if not _fits(channel, slot_type[slot], slot_mode[slot]):
+                wants = _type_name(slot_type[slot], slot_mode[slot])
+                problem(at, "SPN102", f"{name} is a {_type_name(channel.type, channel.mode)} {channel.kind} "
+                        f"channel; slot {slot!r} needs a {wants}"
+                        + (" other than the sync line" if channel.kind == "sync" else ""))
+                out.blockers.append(f"{name} is not a {wants} channel")
                 continue
             if slot_of.setdefault(name, slot) != slot:
                 problem(at, "SPN107", f"{name} is already slot {slot_of[name]!r}; one channel is one slot")
 
-    # One entry per bit, each with its channel's pin and edge codes.
-    for kind, slots, edges in (("in", inputs, _INPUT_EDGES), ("out", outputs, _OUTPUT_EDGES)):
-        bits, _ = lowering.channel_bits(slots, rows)
+    # One entry per bit, each with its channel's pin and edge codes. A driven
+    # slot has a bit per row, so its channel's codes are checked once.
+    uncoded: set[tuple[str, str]] = set()
+    for kind, slots in (("in", inputs), ("out", outputs)):
+        bits, _ = lowering.channel_bits(slots, rows, per_row=drives)
         for slot, name in bits:
             entry: dict[str, Any] = {"slot": slot, "channel": name}
+            if slot in drives:
+                entry["drive"] = drives[slot]
             (out.inputs if kind == "in" else out.outputs).append(entry)
             channel = channels.get(name) if name else None
-            if channel is None or channel.type != slot_type[slot] or channel.kind == "sync":
+            if channel is None or not _fits(channel, slot_type[slot], slot_mode[slot]):
                 continue  # diagnosed above
             at = next(f"rows[{r}].bind.{slot}" for r, row in enumerate(spine.rows) if row.bind.get(slot) == name)
             entry["pin"] = channel.index
@@ -173,22 +209,26 @@ def _resolve(definition: TaskDefinition) -> _Resolved:
                 entry["activeHigh"] = channel.active_level == "high"
                 entry["debounceMs"] = int(channel.debounce_ms or 0)
             named = dict(channel.edges)
-            for role, edge in zip(("rise", "fall") if kind == "in" else ("on", "off"), edges):
+            for role, edge in zip(("rise", "fall") if kind == "in" else ("on", "off"),
+                                  registry.edges_of(channel.type, channel.mode)):
                 code = named.get(edge)
-                if code is None or code not in vocab:
+                if code is not None and code in vocab:
+                    entry[role] = code
+                elif (name, edge) not in uncoded:
+                    uncoded.add((name, edge))
                     problem(at, "SPN103", f"the {edge} edge of {name} has no live strobe code. Save the "
                             "wiring on the Rig page to issue one")
                     out.blockers.append(f"the {edge} edge of {name} has no strobe code")
-                else:
-                    entry[role] = code
 
-    if shape_ok and rows_ok and map_ok:
+    if shape_ok and rows_ok and map_ok and drive_ok:
         try:
             out.lowered = lowering.lower([p.to_json() for p in spine.phases], inputs=inputs, outputs=outputs,
-                                         rows=rows)
+                                         rows=rows, drives=drives)
         except lowering.LoweringError as exc:  # too many states, or two responses on one channel
             problem("spine", "SPN105", str(exc))
     if out.lowered is not None:
+        for bit, kind, first in out.lowered.drives:  # output bit j is out.outputs[j]
+            out.outputs[bit]["params"] = list(out.lowered.params[first : first + len(lowering.DRIVE_PARAMS[kind])])
         _table_problems(definition, out, problem)
     if out.lowered is None:
         out.blockers.append("this spine cannot be lowered to a state table; see the task's diagnostics")
@@ -201,8 +241,9 @@ def _resolve(definition: TaskDefinition) -> _Resolved:
     return out
 
 
-def _shape_problems(spine: Spine, slot_type: dict[str, str], problem) -> bool:  # noqa: ANN001
-    """The spine's own shape (SPN105). True when it can be lowered."""
+def _shape_problems(spine: Spine, slot_type: dict[str, str], lines: set[str], problem) -> bool:  # noqa: ANN001
+    """The spine's own shape (SPN105). True when it can be lowered. `lines` are
+    the output slots that can be a reward line: the level ones."""
     ok = True
 
     def bad(location: str, message: str) -> None:
@@ -237,7 +278,7 @@ def _shape_problems(spine: Spine, slot_type: dict[str, str], problem) -> bool:  
             bad(f"{at}.phase", f"{p.phase!r} is not a phase of this palette {lowering.PHASES}")
             continue
         for slot in p.outputs:
-            if slot_type.get(slot) != "digital_out":
+            if slot_type.get(slot) not in OUTPUT_TYPES:
                 bad(f"{at}.outputs", f"{slot!r} is not an output slot")
         if p.phase in ("wait", "hold", "counter") and slot_type.get(p.on or "") != "digital_in":
             bad(f"{at}.on", f"a {p.phase} watches an input slot; {p.on!r} is not one")
@@ -258,8 +299,8 @@ def _shape_problems(spine: Spine, slot_type: dict[str, str], problem) -> bool:  
                 if p.line is not None:
                     bad(f"{at}.line", "an Outcome after a Response window pays as each row's map says, so it "
                         "names no line of its own")
-            elif slot_type.get(p.line or "") != "digital_out":
-                bad(f"{at}.line", f"an outcome opens an output slot's line; {p.line!r} is not one")
+            elif (p.line or "") not in lines:
+                bad(f"{at}.line", f"an outcome opens a level output slot's line; {p.line!r} is not one")
         if p.phase in ("hold", "present", "delay", "response", "iti") and p.ms is None:
             bad(f"{at}.ms", f"a {p.phase} lasts a set time; give it ms")
         for key, value in (("ms", p.ms), ("timeoutMs", p.timeout_ms), ("holdMs", p.hold_ms)):
@@ -348,7 +389,7 @@ def _row_problems(spine: Spine, problem) -> bool:  # noqa: ANN001
     return bool(spine.rows) and ids_ok
 
 
-def _map_problems(spine: Spine, slot_type: dict[str, str], problem) -> bool:  # noqa: ANN001
+def _map_problems(spine: Spine, lines: set[str], problem) -> bool:  # noqa: ANN001
     """Each row's contingency map (SPN109). True when every map can be written as states."""
     ok = True
 
@@ -380,8 +421,8 @@ def _map_problems(spine: Spine, slot_type: dict[str, str], problem) -> bool:  # 
             if entry.outcome not in lowering.OUTCOME_CLASSES:
                 bad(f"{at}.{key}.outcome", f"{entry.outcome!r} is not an outcome class "
                     f"{lowering.OUTCOME_CLASSES}")
-            if entry.line is not None and slot_type.get(entry.line) != "digital_out":
-                bad(f"{at}.{key}.line", f"a reward line is an output slot; {entry.line!r} is not one")
+            if entry.line is not None and entry.line not in lines:
+                bad(f"{at}.{key}.line", f"a reward line is a level output slot; {entry.line!r} is not one")
             if not 0 <= entry.reward_permille <= 1000:
                 bad(f"{at}.{key}.rewardPermille", "a reward probability is 0 to 1000 permille", blocks=False)
             elif entry.line is None and entry.reward_permille != 1000:
@@ -391,6 +432,52 @@ def _map_problems(spine: Spine, slot_type: dict[str, str], problem) -> bool:  # 
                 bad(f"{at}.{key}.hold", "the window running out is no response to hold")
             elif entry.hold and window.hold_ms is None:
                 bad(f"{at}.{key}.hold", "a hold lasts the window's holdMs, and the window gives none")
+    return ok
+
+
+def _fits(channel: registry.Channel, slot_type: str, slot_mode: str | None) -> bool:
+    """Whether a channel can fill a slot: the same type and mode, and never the sync line."""
+    return channel.type == slot_type and channel.mode == slot_mode and channel.kind != "sync"
+
+
+def _type_name(channel_type: str, mode: str | None) -> str:
+    return f"{channel_type} train" if mode == "train" else channel_type
+
+
+def _drive_problems(spine: Spine, drives: dict[str, str], out: _Resolved, problem) -> bool:  # noqa: ANN001
+    """Each row's values for each driven output slot (SPN112). True when every
+    row gives every value in range, so the parameters can be declared."""
+    ok = True
+    for r, row in enumerate(spine.rows):
+        for slot, values in row.drive.items():
+            if slot not in drives:
+                problem(f"rows[{r}].drive.{slot}", "SPN112", f"{slot!r} is not a PWM, tone or train slot, so it "
+                        "takes no drive values")
+        for slot, kind in drives.items():
+            values = row.drive.get(slot, {})
+            for key, _, label, unit, lo, hi in DRIVE_VALUES[kind]:
+                at = f"rows[{r}].drive.{slot}.{key}"
+                value = values.get(key)
+                if value is None:
+                    problem(at, "SPN112", f"this row gives slot {slot!r} no {key}: {label.lower()}, "
+                            f"{lo} to {hi}{' ' + unit if unit else ''}")
+                elif not lo <= value <= hi:
+                    problem(at, "SPN112", f"{label} is {lo} to {hi}{' ' + unit if unit else ''}, not {value}")
+                else:
+                    continue
+                ok = False
+            hz, width = values.get("hz"), values.get("widthMs")
+            if kind == "train" and isinstance(hz, int) and isinstance(width, int) and 1 <= hz <= 100 \
+                    and width >= 1000 // hz:
+                # Each value is in its own range, but the pair would hold the
+                # line HIGH: a steady output where a train was asked for.
+                problem(f"rows[{r}].drive.{slot}.widthMs", "SPN112", f"a {width} ms pulse at {hz} Hz is not "
+                        f"shorter than its {1000 // hz} ms period, so the line would stay on: a steady "
+                        "output, not a train")
+                ok = False
+    if not ok:
+        out.blockers.append("a row gives a PWM, tone or train slot no value, one out of range, or a "
+                            "train whose pulse is not shorter than its period")
     return ok
 
 
@@ -452,7 +539,7 @@ def profile_json(definition: TaskDefinition) -> dict[str, Any]:
         "interp": lowering.INTERP_VERSION,
         **spine.to_json(),
         "inputs": [_public(e, ("slot", "channel", "rise", "fall")) for e in resolved.inputs],
-        "outputs": [_public(e, ("slot", "channel", "on", "off")) for e in resolved.outputs],
+        "outputs": [_public(e, ("slot", "channel", "on", "off", "drive", "params")) for e in resolved.outputs],
         "params": list(low.params) if low else [],
         # `phases` and `rows`: the phase index and the row index (into `rows`)
         # each state belongs to: no phase for the pick state, no row for it or
@@ -538,7 +625,15 @@ def _param_fields(spine: Spine, low: lowering.Lowered | None) -> list[dict[str, 
                                   "sooner is hold broken."))
         else:
             row = spine.rows[s.row]
-            if s.role == "reward_ms":
+            if s.slot is not None:  # a driven output's value
+                kind = next(k for k, roles in lowering.DRIVE_PARAMS.items() if s.role in dict(roles))
+                key, prefix, label, unit, lo, hi = next(
+                    v for v, (role, _) in zip(DRIVE_VALUES[kind], lowering.DRIVE_PARAMS[kind]) if role == s.role)
+                value = row.drive.get(s.slot, {}).get(key)
+                out.append(_int_field(f"{prefix}_{row.id}_{s.slot}", s.key, f"{label} — {row.name}, {s.slot}",
+                                      value if isinstance(value, int) and lo <= value <= hi else lo,
+                                      "Outputs", unit, lo, hi, _DRIVE_HELP[s.role]))
+            elif s.role == "reward_ms":
                 out.append(_int_field(f"reward_ms_{row.id}", s.key, f"Reward — {row.name}", row.reward_ms,
                                       "Reward volume", "ms", 0, _REWARD_MS_MAX,
                                       "How long the reward line opens: the reward volume."))
@@ -552,6 +647,15 @@ def _param_fields(spine: Spine, low: lowering.Lowered | None) -> list[dict[str, 
                                       row.map[s.entry].reward_permille, "Reward volume", "‰", 0, 1000,
                                       f"The chance, in thousandths, that {s.entry} opens its line."))
     return out
+
+
+_DRIVE_HELP = {
+    "pwm_duty": "The PWM duty this row drives the line at while a phase holds it on: 0 is off, 255 fully on.",
+    "tone_hz": "The tone this row plays while a phase holds it on.",
+    "train_hz": "How many pulses a second this row's train fires while a phase holds it on.",
+    "train_width": "How long each pulse of this row's train is HIGH. Shorter than the period, 1000 / rate.",
+    "train_ms": "How long this row's train runs from its first pulse; 0 runs it as long as the phase holds it.",
+}
 
 
 def _int_field(metadata: str, wire: str, label: str, default: int, group: str, unit: str | None,
@@ -625,6 +729,7 @@ def task_spine_h(definition: TaskDefinition, banner: str) -> str:
         for e in resolved.inputs
     ]
     outputs = [f"{{{e['pin']}, BF_{e['on']}, BF_{e['off']}}}" for e in resolved.outputs]
+    drives = [f"{{{bit}, {_DRIVE_MACRO[kind]}, {first}}}" for bit, kind, first in low.drives]
     params = [f'{{"{f["wireKey"]}", {f["default"]}UL, {f["min"]}UL, {f["max"]}UL}}' for f in fields]
     counter = low.counter if low.counter is not None else (lowering.NONE, lowering.NONE, ())
     lines += [
@@ -645,9 +750,16 @@ def task_spine_h(definition: TaskDefinition, banner: str) -> str:
         "    debounce ms, rise code, fall code}. */",
         f"#define SPINE_NUM_INPUTS {len(inputs)}",
         f"#define SPINE_INPUTS {initialiser(inputs)}",
-        "/*  Output bit j, one per channel, by slot then by row: {pin, on code, off code}. */",
+        "/*  Output bit j, one per channel (one per row for a driven slot), by slot",
+        "    then by row: {pin, on code, off code}. */",
         f"#define SPINE_NUM_OUTPUTS {len(outputs)}",
         f"#define SPINE_OUTPUTS {initialiser(outputs)}",
+        "/*  Each driven output bit (docs/TASKS.md#driven-outputs): {output bit,",
+        "    kind, first parameter slot}. A train's rate, width and length are three",
+        "    slots from it. SPINE_HAS_TONE links tone() only when a task plays one. */",
+        f"#define SPINE_NUM_DRIVES {len(drives)}",
+        f"#define SPINE_DRIVES {initialiser(drives)}",
+        f"#define SPINE_HAS_TONE {1 if any(kind == 'tone' for _, kind, _ in low.drives) else 0}",
         "",
         "/*  Parameter slot s: {wire key, default, min, max}. Slot 0 is the block's",
         "    trial count. A SET value outside [min, max] is CLAMPED. */",
@@ -665,6 +777,10 @@ def task_spine_h(definition: TaskDefinition, banner: str) -> str:
         "",
     ]
     return "\n".join(lines)
+
+
+#: A drive kind -> its `SpineDrive.kind` in BoxSpine.h.
+_DRIVE_MACRO = {"pwm": "SPINE_DRIVE_PWM", "tone": "SPINE_DRIVE_TONE", "train": "SPINE_DRIVE_TRAIN"}
 
 
 def _c_text(text: str) -> str:

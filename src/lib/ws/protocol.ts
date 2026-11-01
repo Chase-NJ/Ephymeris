@@ -2046,8 +2046,8 @@ export interface ChannelSetConflict {
    * `only_here` (a channel this rig has and the file lacks), `order` (a channel both have,
    * declared at another position: declaration order is the odor index,
    * `TASKS.md#order-is-meaning`), `no_code` (an edge the file names no code for), `rule` (a
-   * wiring rule RIG101–RIG107 the imported channel set breaks here, judged against the merged
-   * vocabulary), or `hash` (the file changed after it was exported).
+   * wiring rule, RIG101–RIG107 or RIG109, that the imported channel set breaks here, judged
+   * against the merged vocabulary), or `hash` (the file changed after it was exported).
    */
   kind: string;
   /** The channel it is about, when it is about one. */
@@ -2100,7 +2100,7 @@ export interface TaskDiagnostic {
   message: string;
   /**
    * TSK101–TSK111, TSK113 and TSK114 from the sidecar; TSK112 is derived on the Task tab;
-   * SPN101–SPN111 for a phase-spine task (`TASKS.md#spine-tasks`). Each names a failure that is
+   * SPN101–SPN112 for a phase-spine task (`TASKS.md#spine-tasks`). Each names a failure that is
    * silent without it.
    */
   code: string;

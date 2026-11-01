@@ -152,6 +152,26 @@ int main()
   expect("commands are case-insensitive", digitalRead(RIGHT_REWARD) == HIGH);
   sendCommand("alloff");
 
+  // --- driven outputs: a click never holds a laser on --------------------------
+  const int LASER = 11, TONE = 12;
+  sendCommand("ON laser");
+  expect("a train starts HIGH", digitalRead(LASER) == HIGH);
+  bool fell = false, rose = false;
+  for (int i = 0; i < 40; i++) { // 80 ms of polling: a 20 Hz, 5 ms test train
+    ::loop();
+    fell |= digitalRead(LASER) == LOW;
+    rose |= fell && digitalRead(LASER) == HIGH;
+  }
+  expect("and pulses while it is on, never held", fell && rose);
+  sendCommand("OFF laser");
+  expect("OFF ends the train LOW", digitalRead(LASER) == LOW);
+  sendCommand("TOGGLE tone");
+  expect("a tone line plays its test tone", bb_tone[TONE] == BOX_UTIL_TONE_HZ && statusHas("tone=1"));
+  sendCommand("TOGGLE tone");
+  expect("and stops", bb_tone[TONE] == 0);
+  sendCommand("PULSE laser");
+  expect("a pulsed train ends LOW", digitalRead(LASER) == LOW);
+
   // --- the self-test: the operator wasn't there ---------------------------------
   bb_resetCapture();
   sendCommand("SELFTEST");

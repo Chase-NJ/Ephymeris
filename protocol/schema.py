@@ -2194,7 +2194,7 @@ SHAPES = (
                 "code",
                 STR,
                 doc="TSK101–TSK111, TSK113 and TSK114 from the sidecar; TSK112 is derived "
-                "on the Task tab; SPN101–SPN110 for a phase-spine task "
+                "on the Task tab; SPN101–SPN112 for a phase-spine task "
                 "(`TASKS.md#spine-tasks`). Each names a failure that is silent without it.",
             ),
         ),

@@ -211,3 +211,71 @@ def stimulus(**edits) -> dict:
     }
     doc.update(edits)
     return doc
+def ratio(**edits) -> dict:
+    """An operant ratio schedule: count the right well's pokes, pay at the N-th,
+    a short ITI, again. FR-5 as written; `counter` edits make it VR or PR."""
+    doc = {
+        "id": "spine_fr",
+        "name": "Spine FR",
+        "category": "Tasks",
+        "slots": [
+            {"id": "lever", "type": "digital_in"},
+            {"id": "light", "type": "digital_out"},
+            {"id": "reward", "type": "digital_out"},
+        ],
+        "spine": [
+            {"phase": "counter", "on": "lever", "count": 5, "outputs": ["light"]},
+            {"phase": "outcome", "line": "reward", "ms": 0},
+            {"phase": "iti", "ms": 500},
+        ],
+        "rows": [
+            {"id": "r1", "name": "Lever", "bind": {"lever": "right_well", "light": "trial_light", "reward": "fluid_2"},
+             "rewardMs": 100, "rewardPermille": 1000},
+        ],
+        "blocks": [{"id": "b1", "rows": ["r1"], "trials": 50}],
+        "params": {},
+    }
+    counter = edits.pop("counter", None)
+    if counter is not None:
+        doc["spine"][0] = {"phase": "counter", "on": "lever", "outputs": ["light"], **counter}
+    doc.update(edits)
+    return doc
+
+
+def fixed_ratio(n: int = 5, **edits) -> dict:
+    return ratio(**{"id": f"spine_fr_{n}", "name": f"Spine FR {n}", "counter": {"count": n}, **edits})
+
+
+def variable_ratio(low: int = 1, high: int = 9, **edits) -> dict:
+    """VR-(low+high)/2: N drawn uniformly from [low, high] at each reward."""
+    return ratio(**{"id": "spine_vr", "name": "Spine VR", "counter": {"count": low, "countMax": high}, **edits})
+
+
+#: Richardson and Roberts (1996)'s progressive ratio, its first ten steps.
+RICHARDSON_ROBERTS = [1, 2, 4, 6, 9, 12, 15, 20, 25, 32]
+
+
+def progressive_ratio(limit_ms: int = 2000, **edits) -> dict:
+    """PR: the k-th reward needs the k-th ratio; a ratio left unfinished for
+    `limit_ms` is an omission that ends the session, after its ITI."""
+    counter = {"ratios": list(RICHARDSON_ROBERTS), "timeoutMs": limit_ms, "endsSession": True}
+    return ratio(**{"id": "spine_pr", "name": "Spine PR", "counter": counter, **edits})
+
+
+def held_trial(**edits) -> dict:
+    """Self-initiated, with every early exit: a poke within 5 s (or an abort
+    before the stimulus), held 300 ms (a release is hold broken), odor 1 while
+    the poke is held (a release aborts during sampling), a Delay that a poke at
+    the right well aborts, a reward, an ITI."""
+    doc = tracer(**{"id": "spine_held", "name": "Spine Held", **edits})
+    doc["slots"].append({"id": "early", "type": "digital_in"})
+    doc["spine"] = [
+        {"phase": "wait", "on": "port", "outputs": ["cue"], "timeoutMs": 5000},
+        {"phase": "hold", "on": "port", "ms": 300, "outputs": ["cue"]},
+        {"phase": "present", "outputs": ["cue", "sample"], "ms": 500, "abortOnRelease": "port"},
+        {"phase": "delay", "ms": 400, "abortOnEnter": "early"},
+        {"phase": "outcome", "line": "reward", "ms": 0},
+        {"phase": "iti", "ms": 1000},
+    ]
+    doc["rows"][0]["bind"]["early"] = "right_well"
+    return doc

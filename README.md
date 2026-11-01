@@ -302,10 +302,10 @@ macOS as run-from-source. Packaged-only path bugs exist (Windows verbatim `\\?\`
   Every rig with a saved wiring document has no sync channel until one is added on the wiring page.
 - **A spine task on a real box.** Spine tasks are proven on the host: the generated sketch on the
   instrumented shim, through the real session path, replayed from its `.tsv`
-  ([Spine tasks](docs/TASKS.md#spine-tasks)). Not yet done on a Mega: flashing one, running it with an
-  animal or a catch vessel, reading that run's trial table in Analytics, and recording the `free_ram` it
-  reports with its table loaded
-  (the RAM budget, [ADR 0003](docs/adr/0003-phase-spine-task-model.md#open-questions)).
+  ([Spine tasks](docs/TASKS.md#spine-tasks)). On a Mega one has run only with nothing wired, which
+  measured how far `free_ram` sits below the compiler's figure ([the RAM budget](docs/TASKS.md#spine-diagnostics)).
+  Not yet done: running one with an animal or a catch vessel, so that a response, a hold, an abort or a
+  press comes from a real input, and reading that run's trial table in Analytics.
 - **PWM, tone and pulse trains on a real box.** [Driven outputs](docs/TASKS.md#driven-outputs) are
   proven on the host, every pulse's tick included. Not yet seen on a Mega: an LED at a duty, a
   speaker at a pitch, and a 20 Hz, 5 ms train's edges measured against their ticks, which needs an

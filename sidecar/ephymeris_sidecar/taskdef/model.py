@@ -211,26 +211,36 @@ class SpinePhase:
     """One phase from the palette. Fields a phase does not use stay None.
 
     `ms` is the default of the phase's timer parameter (`T<i>` on the wire);
-    a Wait has one only when it declares `timeout_ms`. A Response window's
-    `hold_ms` is the default of its `H<i>`.
+    a Wait and a Counter have one only when they declare `timeout_ms`. A
+    Response window's `hold_ms` is the default of its `H<i>`, and a Counter's
+    `count` and `count_max` of its `N<i>` and `NX<i>`.
     """
 
     phase: str
-    on: str | None = None              # wait: the input slot whose edge moves on
+    on: str | None = None              # wait, hold, counter: the input slot it watches
     outputs: tuple[str, ...] = ()      # output slots HIGH while in the phase
-    ms: int | None = None              # present, delay, response (the window), outcome (class timeout), iti
-    timeout_ms: int | None = None      # wait: optional, out to the ITI
-    abort_on_release: str | None = None  # present: an input slot whose release aborts
+    ms: int | None = None              # hold, present, delay, response (the window), outcome (class timeout), iti
+    timeout_ms: int | None = None      # wait, counter: optional, out to an end
+    edge: str | None = None            # wait: `enter` (the default) or `exit`
+    abort_on_release: str | None = None  # present, delay: an input slot whose release aborts
+    abort_on_enter: str | None = None  # present, delay: an input slot whose entry aborts
     line: str | None = None            # outcome with no window before it: the reward line's slot
     responses: tuple[str, ...] = ()    # response: the input slots it watches
     hold_ms: int | None = None         # response: how long an entry that holds must be held
+    count: int | None = None           # counter: N, or the low end of a drawn N
+    count_max: int | None = None       # counter: the high end of a drawn N
+    ratios: tuple[int, ...] = ()       # counter: a progressive N, one per completion
+    ends_session: bool = False         # counter: its time limit is the session's last trial
 
     def to_json(self) -> dict[str, Any]:
         out: dict[str, Any] = {"phase": self.phase}
         for key, value in (("on", self.on), ("outputs", list(self.outputs) or None),
-                           ("ms", self.ms), ("timeoutMs", self.timeout_ms),
-                           ("abortOnRelease", self.abort_on_release), ("line", self.line),
-                           ("responses", list(self.responses) or None), ("holdMs", self.hold_ms)):
+                           ("ms", self.ms), ("timeoutMs", self.timeout_ms), ("edge", self.edge),
+                           ("abortOnRelease", self.abort_on_release), ("abortOnEnter", self.abort_on_enter),
+                           ("line", self.line),
+                           ("responses", list(self.responses) or None), ("holdMs", self.hold_ms),
+                           ("count", self.count), ("countMax", self.count_max),
+                           ("ratios", list(self.ratios) or None), ("endsSession", self.ends_session or None)):
             if value is not None:
                 out[key] = value
         return out
@@ -347,6 +357,13 @@ class Spine:
         def opt_int(value: Any, what: str) -> int | None:
             return None if value is None else _int(value, what)
 
+        def ints(value: Any, what: str) -> tuple[int, ...]:
+            if value is None:
+                return ()
+            if not isinstance(value, list):
+                raise TaskDefinitionError(f"{what} must be a list of whole numbers")
+            return tuple(_int(v, what) for v in value)
+
         phases = tuple(
             SpinePhase(
                 phase=str(p.get("phase", "")),
@@ -354,10 +371,16 @@ class Spine:
                 outputs=strings(p.get("outputs"), "a phase's outputs"),
                 ms=opt_int(p.get("ms"), "ms"),
                 timeout_ms=opt_int(p.get("timeoutMs"), "timeoutMs"),
+                edge=_opt_str(p.get("edge")),
                 abort_on_release=_opt_str(p.get("abortOnRelease")),
+                abort_on_enter=_opt_str(p.get("abortOnEnter")),
                 line=_opt_str(p.get("line")),
                 responses=strings(p.get("responses"), "a window's responses"),
                 hold_ms=opt_int(p.get("holdMs"), "holdMs"),
+                count=opt_int(p.get("count"), "count"),
+                count_max=opt_int(p.get("countMax"), "countMax"),
+                ratios=ints(p.get("ratios"), "a counter's ratios"),
+                ends_session=_bool(p.get("endsSession", False), "endsSession"),
             )
             for p in objects("spine")
         )
@@ -601,4 +624,10 @@ def _int(value: Any, what: str) -> int:
     # bool before int: `True` is an int in Python and would silently become 1.
     if isinstance(value, bool) or not isinstance(value, int):
         raise TaskDefinitionError(f"{what} must be a whole number, not {value!r}")
+    return value
+
+
+def _bool(value: Any, what: str) -> bool:
+    if not isinstance(value, bool):
+        raise TaskDefinitionError(f"{what} is true or false, not {value!r}")
     return value

@@ -26,15 +26,16 @@ from typing import Iterable, Sequence
 #: and the one place they are listed. Not 1: that is BehaviorBox.h's trial
 #: runner (`BOX_INTERP`), which every recorded GRGL run names, and which no table
 #: describes. The two share one numbering space so a run's header alone says
-#: which ran it. 2 is the tracer's format; 3 adds the pick state and is
-#: otherwise the same, so a version-2 table runs under the same rules here and
-#: only a pick state in one is refused (`check_interp`). 4 changes no table and
-#: no rule here: it adds driven outputs, whose pulse trains are `train_pulses`
-#: and whose strobes `stream/spine.py` predicts.
-INTERP_VERSIONS = frozenset({2, 3, 4})
-INTERP_VERSION = 4
+#: which ran it. 2 is the tracer's format; 3 adds the pick state, and 4 the
+#: counter and last-trial states. Each is otherwise the one before, so an older
+#: table runs under the same rules here, and only what its version lacks is
+#: refused in it (`check_interp`). 5 changes no table and no rule here: it adds
+#: driven outputs, whose pulse trains are `train_pulses` and whose strobes
+#: `stream/spine.py` predicts.
+INTERP_VERSIONS = frozenset({2, 3, 4, 5})
+INTERP_VERSION = 5
 #: The first version whose outputs can be driven (PWM, tone, a pulse train).
-DRIVES_SINCE = 4
+DRIVES_SINCE = 5
 
 NONE = 0xFF
 PERMILLE = 1000
@@ -42,8 +43,11 @@ RISE = 1
 FALL = 2
 STARTS_TRIAL = 0x01
 PICK = 0x02
+COUNT = 0x04
+LAST_TRIAL = 0x08
 ACT_SESSION_START = 0x01
 ACT_TRIAL_START = 0x02
+ACT_LAST_TRIAL = 0x04
 
 _U32 = 0xFFFFFFFF
 _CHANNELS = 32
@@ -124,6 +128,10 @@ class StateRow:
         return bool(self.flags & PICK)
 
     @property
+    def is_count(self) -> bool:
+        return bool(self.flags & COUNT)
+
+    @property
     def branches(self) -> bool:
         """A state that takes no time: it goes on at once, by a draw."""
         return self.is_chance or self.is_pick
@@ -132,6 +140,23 @@ class StateRow:
     def slots(self) -> tuple[int, ...]:
         """The parameter slots this state reads."""
         return tuple(s for s in (self.timer_min, self.timer_max, self.chance) if s != NONE)
+
+
+@dataclass(frozen=True)
+class Counter:
+    """`InterpCounter`: where a counter state's N comes from.
+
+    `count_min` and `count_max` are parameter slots (equal fixes N, unequal
+    draws it); both NONE means N is `ratios[min(step, len - 1)]`.
+    """
+
+    count_min: int = NONE
+    count_max: int = NONE
+    ratios: tuple[int, ...] = ()
+
+    @property
+    def slots(self) -> tuple[int, ...]:
+        return tuple(s for s in (self.count_min, self.count_max) if s != NONE)
 
 
 @dataclass(frozen=True)
@@ -144,6 +169,7 @@ class Table:
 
     states: tuple[StateRow, ...]
     edges: tuple[EdgeRow, ...] = ()
+    counter: Counter | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "states", tuple(self.states))
@@ -152,12 +178,28 @@ class Table:
             raise ValueError(f"a table has 1 to {NONE - 1} states, not {len(self.states)}")
         if len(self.edges) >= NONE:
             raise ValueError(f"a table has at most {NONE - 1} edge rows")
+        if self.counter is not None:
+            _check_counter(self.counter)
         for i, s in enumerate(self.states):
             _check_state(self, i, s)
 
     def slots_used(self) -> int:
-        """One more than the highest parameter slot any state reads."""
-        return max((slot + 1 for s in self.states for slot in s.slots), default=0)
+        """One more than the highest parameter slot any state, or the counter, reads."""
+        counter = self.counter.slots if self.counter is not None else ()
+        return max((slot + 1 for slot in (*counter, *(x for s in self.states for x in s.slots))), default=0)
+
+
+def _check_counter(k: Counter) -> None:
+    if (k.count_min == NONE) != (k.count_max == NONE):
+        raise ValueError("a counter's count_min and count_max are both slots, or both NONE")
+    for name in ("count_min", "count_max"):
+        if not 0 <= getattr(k, name) <= 0xFF:
+            raise ValueError(f"the counter's {name} does not fit a uint8_t")
+    if k.count_min == NONE:
+        if not 1 <= len(k.ratios) < NONE:
+            raise ValueError(f"a counter with no slots reads 1 to {NONE - 1} ratios, not {len(k.ratios)}")
+    if any(not 1 <= r <= 0xFFFF for r in k.ratios):
+        raise ValueError("every ratio is 1 to 65535")
 
 
 def _check_state(table: Table, i: int, s: StateRow) -> None:
@@ -177,8 +219,19 @@ def _check_state(table: Table, i: int, s: StateRow) -> None:
                  "edge_first", "edge_count", "flags", "outcome"):
         if not 0 <= getattr(s, name) <= 0xFF:
             fail(f"{name} does not fit a uint8_t")
-    if s.flags & ~(STARTS_TRIAL | PICK):
+    if s.flags & ~(STARTS_TRIAL | PICK | COUNT | LAST_TRIAL):
         fail(f"unknown flags {s.flags:#x}")
+    if s.flags & LAST_TRIAL and (s.branches or s.flags & STARTS_TRIAL):
+        fail("a last-trial state neither branches nor starts a trial")
+    if s.is_count:
+        if s.branches:
+            fail("a counter state is neither a chance nor a pick state")
+        if table.counter is None:
+            fail("a counter state in a table with no counter")
+        if s.edge_count != 1:
+            fail("a counter state has exactly one edge row, its counted rise")
+        elif s.edge_first < len(table.edges) and table.edges[s.edge_first].edge != RISE:
+            fail("a counter state counts a RISE")
 
     if s.is_chance:
         if s.outputs or s.watch or s.timer_min != NONE or s.edge_count:
@@ -271,6 +324,9 @@ class Core:
     entered_at: int = 0
     duration: int = 0
     outputs: int = 0
+    count: int = 0
+    target: int = 0
+    step: int = 0
     state: int = 0
 
 
@@ -303,6 +359,8 @@ def _enter(core: Core, target: int, now: int, a: _Tick) -> Core:
         a.entered[hop] = target
         if s.flags & STARTS_TRIAL:
             a.flags |= ACT_TRIAL_START
+        if s.flags & LAST_TRIAL:
+            a.flags |= ACT_LAST_TRIAL
         state = target
         if not s.branches or hop == 1:
             break
@@ -313,6 +371,16 @@ def _enter(core: Core, target: int, now: int, a: _Tick) -> Core:
             k, rng = _pick(rng, s.edge_count)
             target = core.table.edges[s.edge_first + k].next
         hop += 1
+    count, n = core.count, core.target
+    if s.is_count:
+        # N first, then the duration: the order the core draws them in.
+        k = core.table.counter
+        assert k is not None
+        count = 0
+        if k.count_min == NONE:
+            n = k.ratios[min(core.step, len(k.ratios) - 1)]
+        else:
+            n, rng = _count_of(rng, params[k.count_min], params[k.count_max])
     duration = 0
     if s.timer_min != NONE:
         lo, hi = params[s.timer_min], params[s.timer_max]
@@ -323,15 +391,38 @@ def _enter(core: Core, target: int, now: int, a: _Tick) -> Core:
             duration = lo
     a.on = s.outputs & ~core.outputs & _U32
     a.off = core.outputs & ~s.outputs & _U32
-    return replace(core, rng=rng, entered_at=now, duration=duration, outputs=s.outputs, state=state)
+    return replace(core, rng=rng, entered_at=now, duration=duration, outputs=s.outputs, count=count,
+                   target=n, state=state)
+
+
+def _count_of(rng: int, lo: int, hi: int) -> tuple[int, int]:
+    """A drawn or fixed N, as the core's uint16_t holds it."""
+    if hi > lo:
+        value, rng = draw(rng, hi - lo + 1)
+        return (lo + value) & 0xFFFF, rng
+    return lo & 0xFFFF, rng
+
+
+def _counted(core: Core) -> tuple[Core, bool]:
+    """A counter state's counted rise: the new core, and whether it is the N-th,
+    so an exit. Below N it moves nothing and leaves the timer to run."""
+    count = core.count + 1
+    if count < core.target:
+        return replace(core, count=count), False
+    return replace(core, count=count, step=min(core.step + 1, 0xFF)), True
 
 
 def check_interp(table: Table, interp: int) -> None:
-    """Refuse a table `interp` cannot have run: an unknown version, or a pick state before 3."""
+    """Refuse a table `interp` cannot have run: an unknown version, a pick state
+    before 3, or a counter or last-trial state before 4."""
     if interp not in INTERP_VERSIONS:
         raise ValueError(f"INTERP {interp} is not a version this replay knows ({sorted(INTERP_VERSIONS)})")
     if interp < 3 and any(s.is_pick for s in table.states):
         raise ValueError(f"INTERP {interp} has no pick state, and this table holds one")
+    if interp < 4 and (table.counter is not None or any(s.is_count for s in table.states)):
+        raise ValueError(f"INTERP {interp} has no counter, and this table holds one")
+    if interp < 4 and any(s.flags & LAST_TRIAL for s in table.states):
+        raise ValueError(f"INTERP {interp} has no last-trial state, and this table holds one")
 
 
 def begin(
@@ -370,6 +461,10 @@ def step(core: Core, edges: Edges, now: int) -> tuple[Core, Actions]:
     a = _Tick(rose=edges.rose & s.watch, fell=edges.fell & s.watch)
 
     matching = [e for e in rows if _matches(e, a)]
+    if matching and s.is_count:
+        core, exits = _counted(core)
+        if not exits:
+            matching = []
     target = NONE
     if matching:
         taken, rng = _break_tie(core.rng, matching)

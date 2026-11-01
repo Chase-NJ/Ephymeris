@@ -281,7 +281,7 @@ def test_a_task_driving_all_three_is_clean_and_its_snapshot_names_each_drive(dri
     definition = stimulus()
     assert spn(definition) == []
     snapshot = generate.build_profile(definition).spine
-    assert snapshot["interp"] == 4
+    assert snapshot["interp"] == 5
     laser = [o for o in snapshot["outputs"] if o["slot"] == "laser"]
     assert laser == [
         {"slot": "laser", "channel": "laser", "on": "LASER_TRAIN_ON", "off": "LASER_TRAIN_OFF",
@@ -314,11 +314,11 @@ def test_the_folder_names_each_drive_and_links_tone_only_when_there_is_one(drive
         (lambda d: d["rows"][0]["bind"].update(laser="light"), "SPN102", "rows[0].bind.laser"),
         # A level slot bound to a train channel.
         (lambda d: d["rows"][0]["bind"].update(cue="laser"), "SPN102", "rows[0].bind.cue"),
-        (lambda d: d["rows"][0]["drive"].pop("tone"), "SPN111", "rows[0].drive.tone.hz"),
-        (lambda d: d["rows"][1]["drive"]["light"].update(duty=256), "SPN111", "rows[1].drive.light.duty"),
-        (lambda d: d["rows"][1]["drive"]["laser"].update(hz=101), "SPN111", "rows[1].drive.laser.hz"),
-        (lambda d: d["rows"][0]["drive"]["laser"].update(widthMs=50), "SPN111", "rows[0].drive.laser.widthMs"),
-        (lambda d: d["rows"][0]["drive"].update(cue={"duty": 1}), "SPN111", "rows[0].drive.cue"),
+        (lambda d: d["rows"][0]["drive"].pop("tone"), "SPN112", "rows[0].drive.tone.hz"),
+        (lambda d: d["rows"][1]["drive"]["light"].update(duty=256), "SPN112", "rows[1].drive.light.duty"),
+        (lambda d: d["rows"][1]["drive"]["laser"].update(hz=101), "SPN112", "rows[1].drive.laser.hz"),
+        (lambda d: d["rows"][0]["drive"]["laser"].update(widthMs=50), "SPN112", "rows[0].drive.laser.widthMs"),
+        (lambda d: d["rows"][0]["drive"].update(cue={"duty": 1}), "SPN112", "rows[0].drive.cue"),
         (lambda d: d["slots"][4].update(mode="burst"), "SPN105", "slots[4].mode"),
         (lambda d: d["slots"][2].update(mode="train"), "SPN105", "slots[2].mode"),
     ],
@@ -336,7 +336,7 @@ def test_a_train_whose_width_is_not_shorter_than_its_period_is_never_compiled(dr
     raw = fixture.stimulus()
     raw["rows"][0]["drive"]["laser"].update(hz=hz, widthMs=width)
     definition = TaskDefinition.from_json(raw)
-    assert ("SPN111", "rows[0].drive.laser.widthMs") in spn(definition)
+    assert ("SPN112", "rows[0].drive.laser.widthMs") in spn(definition)
     assert "#error" in generate.task_spine_h(definition)
     raw["rows"][0]["drive"]["laser"].update(widthMs=1000 // hz - 1)
     assert "#error" not in generate.task_spine_h(TaskDefinition.from_json(raw))

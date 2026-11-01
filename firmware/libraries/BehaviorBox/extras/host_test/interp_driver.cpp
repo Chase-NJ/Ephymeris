@@ -10,6 +10,7 @@
                   on_miss edge_first edge_count flags outcome
       n_edges  x  input edge next
       n_params x  value
+      has_counter count_min count_max n_ratios   then n_ratios x ratio
       n_events x  offset rose fell        (offset: ticks after start, increasing)
     Out: "INTERP <version>" once, then per case
       CASE
@@ -80,10 +81,16 @@ int main()
     }
     std::vector<uint32_t> params(n_params + 1);
     for (uint32_t i = 0; i < n_params; ++i) params[i] = num();
+    InterpCounter counter;
+    uint32_t has_counter = num();
+    counter.count_min = byte(); counter.count_max = byte(); counter.ratio_count = byte();
+    std::vector<uint16_t> ratios(counter.ratio_count + 1u);
+    for (uint32_t i = 0; i < counter.ratio_count; ++i) ratios[i] = (uint16_t)num();
+    counter.ratios = ratios.data();
     std::vector<uint32_t> at(n_events), rose(n_events), fell(n_events);
     for (uint32_t i = 0; i < n_events; ++i) { at[i] = num(); rose[i] = num(); fell[i] = num(); }
 
-    InterpTable table = {states.data(), edges.data()};
+    InterpTable table = {states.data(), edges.data(), has_counter ? &counter : NULL};
     InterpCore core;
     std::printf("CASE\n");
     print(start, interp_begin(&core, &table, params.data(), seed, start));

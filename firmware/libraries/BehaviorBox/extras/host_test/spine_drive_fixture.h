@@ -29,7 +29,7 @@
 #define BF_LASER_TRAIN_ON 52
 #define BF_LASER_TRAIN_OFF 53
 
-#define SPINE_INTERP 4
+#define SPINE_INTERP 5
 
 #define SPINE_NUM_STATES 6
 #define SPINE_STATES { \
@@ -41,6 +41,11 @@
   {0x0UL, 0x0UL, 3, 3, 0, 255, 255, 255, 0, 0, 0, 0} }
 #define SPINE_NUM_EDGES 2
 #define SPINE_EDGES { {0, 1, 1}, {0, 2, 5} }
+
+#define SPINE_COUNT_MIN 255
+#define SPINE_COUNT_MAX 255
+#define SPINE_NUM_RATIOS 0
+#define SPINE_RATIOS { 0 }
 
 #define SPINE_NUM_INPUTS 1
 #define SPINE_INPUTS { {2, 0, 0, BF_PORT_ENTER, BF_PORT_EXIT} }

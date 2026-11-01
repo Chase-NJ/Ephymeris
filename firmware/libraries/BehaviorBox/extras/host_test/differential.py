@@ -1,10 +1,12 @@
 """Hold BoxInterp.h and replay.py equal: the differential test (run_diff.sh).
 
 Generates state tables (spines lowered by the generator itself,
-`taskdef/lowering.py`, with Response windows, contingency maps, holds and
-several rows; spines of the first phases lowered here; and raw tables that
-stress the format, pick states included), randomized input logs with simultaneous edges, seeds
-and start times near the millis() wrap. Runs every case through the C core
+`taskdef/lowering.py`, with every phase of the palette: Holds, Waits on either
+edge, aborts on either edge, Counters over a fixed, drawn or progressive N,
+Response windows, contingency maps and several rows; spines of the first
+phases lowered here; and raw tables that stress the format, pick, counter and
+last-trial states included), randomized input logs with simultaneous edges,
+seeds and start times near the millis() wrap. Runs every case through the C core
 (`interp_driver`, stepping every tick as a board does) and through the Python
 replay (jumping between edges and timers), and fails on the first tick where
 their actions differ.
@@ -14,7 +16,8 @@ cases must differ. A differential test that cannot see a changed tie rule is
 generating too few ties to be trusted. So too a changed pick draw, which the
 raw tables and the generator's tables must each see. And with every RNG draw
 reflected, the generator's tables alone must differ, through their chance and
-pick states.
+pick states. And a counter that exits one rise late, or a progressive step that
+never advances, must each be seen by both the raw and the generator's tables.
 
 Last, PULSE TRAINS: the C side steps `interp_train_high()` on every tick of a
 train, as a board drives one, and replay works each pulse out by arithmetic
@@ -59,14 +62,16 @@ NONE, RISE, FALL = rp.NONE, rp.RISE, rp.FALL
 
 def raw_table(rng: random.Random, n_params: int) -> rp.Table:
     """Any valid table: every field, ties between up to four exits, chance states,
-    and pick states of one to four branches (state 0 often one, as a block of
-    several rows lowers)."""
+    pick states of one to four branches (state 0 often one, as a block of
+    several rows lowers), counter states over a fixed, drawn or progressive N,
+    and last-trial states."""
     n = rng.randint(3, 8)
     kind = ["pick" if rng.random() < (0.5 if i == 0 else 0.15) else
-            "chance" if i > 0 and rng.random() < 0.2 else "plain" for i in range(n)]
+            "chance" if i > 0 and rng.random() < 0.2 else
+            "count" if rng.random() < 0.25 else "plain" for i in range(n)]
     if kind.count("plain") < 2:
         kind[-2:] = ["plain", "plain"]
-    plain = [i for i in range(n) if kind[i] == "plain"]
+    plain = [i for i in range(n) if kind[i] in ("plain", "count")]
     inputs = [0, 1, 2, 3] + ([31] if rng.random() < 0.2 else [])
     states, edges = [], []
     for i in range(n):
@@ -81,6 +86,25 @@ def raw_table(rng: random.Random, n_params: int) -> rp.Table:
             states.append(rp.StateRow(chance=rng.randrange(n_params), on_hit=rng.choice(plain),
                                       on_miss=rng.choice(plain), flags=rng.choice((0, rp.STARTS_TRIAL)),
                                       outcome=rng.randrange(8)))
+            continue
+        if kind[i] == "count":
+            # One counted rise; often more inputs watched, whose edges move nothing.
+            c = rng.choice(inputs)
+            first = len(edges)
+            edges.append(rp.EdgeRow(c, RISE, rng.randrange(n)))
+            timed = rng.random() < 0.7
+            t = rng.randrange(n_params)
+            states.append(rp.StateRow(
+                outputs=rng.getrandbits(6),
+                watch=1 << c | (1 << rng.choice(inputs) if rng.random() < 0.4 else 0),
+                timer_min=t if timed else NONE,
+                timer_max=t if timed else NONE,
+                on_timeout=rng.randrange(n) if timed else NONE,
+                edge_first=first,
+                edge_count=1,
+                flags=rp.COUNT | rng.choice((0, rp.STARTS_TRIAL, rp.LAST_TRIAL)),
+                outcome=rng.randrange(8),
+            ))
             continue
         watch_list = [c for c in inputs if rng.random() < 0.6]
         exits = [(c, e) for c in watch_list for e in (RISE, FALL) if rng.random() < 0.5]
@@ -97,10 +121,18 @@ def raw_table(rng: random.Random, n_params: int) -> rp.Table:
             on_timeout=rng.randrange(n) if timed else NONE,
             edge_first=first if exits else 0,
             edge_count=len(exits),
-            flags=rng.choice((0, rp.STARTS_TRIAL)),
+            flags=rng.choice((0, 0, rp.STARTS_TRIAL, rp.LAST_TRIAL)),
             outcome=rng.randrange(8),
         ))
-    return rp.Table(states=tuple(states), edges=tuple(edges))
+    counter = None
+    if "count" in kind:
+        source = rng.choice(("fixed", "drawn", "ratios"))
+        if source == "ratios":
+            counter = rp.Counter(ratios=tuple(rng.randint(1, 6) for _ in range(rng.randint(1, 5))))
+        else:
+            lo = rng.randrange(n_params)
+            counter = rp.Counter(count_min=lo, count_max=lo if source == "fixed" else rng.randrange(n_params))
+    return rp.Table(states=tuple(states), edges=tuple(edges), counter=counter)
 
 
 PORT, LEFT, RIGHT = 0, 1, 2       # inputs
@@ -109,8 +141,9 @@ LIGHT, FLUID_L, FLUID_R = 0, 5, 6  # outputs; odors are 1-4
 
 def spine_table(rng: random.Random, n_params: int) -> rp.Table:
     """A random spine of Wait, Present, Delay and Outcome phases ending in an ITI,
-    lowered as BoxInterp.h's "Lowering the first phases" describes. Every abort
-    and timeout goes to the ITI, the last state."""
+    written here by hand as raw states, not by the generator: every abort and
+    timeout goes to the one ITI, the last state, with no end. The generator's
+    own tables, ends included, are `generated_table`'s."""
     phases = [rng.choice(("wait", "present", "delay", "outcome")) for _ in range(rng.randint(1, 5))]
     phases.insert(0, "wait")
     slot = lambda: rng.randrange(n_params)  # noqa: E731
@@ -188,24 +221,49 @@ def generated_table(rng: random.Random, n_params: int) -> tuple[rp.Table, int, i
     def some_outputs():
         return rng.sample(outputs, rng.randint(0, min(3, len(outputs))))
 
+    counted = [False]  # a spine has at most one Counter
+
     def plain_phase(kinds):
         kind = rng.choice(kinds)
+        if kind == "counter" and counted[0]:
+            kind = "hold"
         p = {"phase": kind, "outputs": some_outputs()}
         if kind == "wait":
             p["on"] = rng.choice(inputs)
+            if rng.random() < 0.4:
+                p["edge"] = "exit"
             if rng.random() < 0.5:
                 p["timeoutMs"] = 1
-        elif kind == "present" and rng.random() < 0.6:
-            p["abortOnRelease"] = rng.choice(inputs)
+        elif kind == "hold":
+            p["on"] = rng.choice(inputs)
+        elif kind in ("present", "delay"):
+            if rng.random() < 0.5:
+                p["abortOnRelease"] = rng.choice(inputs)
+            if rng.random() < 0.3:
+                p["abortOnEnter"] = rng.choice(inputs)
+        elif kind == "counter":
+            counted[0] = True
+            p["on"] = rng.choice(inputs)
+            source = rng.choice(("fixed", "drawn", "ratios"))
+            if source == "ratios":
+                p["ratios"] = [rng.randint(1, 6) for _ in range(rng.randint(1, 5))]
+            else:
+                p["count"] = 1
+                if source == "drawn":
+                    p["countMax"] = 1
+            if rng.random() < 0.6:
+                p["timeoutMs"] = 1
+                p["endsSession"] = rng.random() < 0.5
         elif kind == "outcome":
             p["line"] = rng.choice(outputs)
         return p
 
     phases = []
+    palette = ("wait", "hold", "present", "delay", "counter", "counter")
     for n in range(rng.randint(0 if rng.random() < 0.6 else 1, 4)):
         # With several rows a pick branch never lands on an Outcome's chance state.
         first = n == 0 and n_rows > 1
-        phases.append(plain_phase(("wait", "present", "delay") if first else ("wait", "present", "delay", "outcome")))
+        phases.append(plain_phase(palette if first else (*palette, "outcome")))
     window = None
     if rng.random() < 0.6 or not phases:
         window = {"phase": "response", "responses": rng.sample(inputs, rng.randint(1, len(inputs))),
@@ -236,7 +294,8 @@ def generated_table(rng: random.Random, n_params: int) -> tuple[rp.Table, int, i
     # Some outputs driven (PWM, tone, a train): a bit per row rather than per channel.
     drives = {o: rng.choice(tuple(lowering.DRIVE_PARAMS)) for o in outputs if rng.random() < 0.3}
     low = lowering.lower(phases, inputs=inputs, outputs=outputs, rows=rows, drives=drives)
-    table = rp.Table(states=[rp.StateRow(*s) for s in low.states], edges=[rp.EdgeRow(*e) for e in low.edges])
+    table = rp.Table(states=[rp.StateRow(*s) for s in low.states], edges=[rp.EdgeRow(*e) for e in low.edges],
+                     counter=rp.Counter(*low.counter) if low.counter is not None else None)
     return table, len(low.params), len(low.inputs)
 
 
@@ -287,6 +346,10 @@ def make_cases(seed: int, count: int) -> list[dict]:
         else:
             table = (spine_table if i % 3 else raw_table)(rng, n_params)
         params = params_for(rng, n_params)
+        if table.counter is not None:
+            # N small enough to be reached, now and then 0 or past a uint16_t.
+            for slot in table.counter.slots:
+                params[slot] = rng.choice((0, 1, 2, 3, 4, 5, 6, 0x10002)) if rng.random() < 0.9 else rng.randint(0, 60)
         r = rng.random()
         start = 0 if r < 0.4 else 0xFFFFFFFF - rng.randint(0, 3000) if r < 0.7 else rng.getrandbits(32)
         session_seed = rng.choice((1, 0, 0x80000000, 0xFFFFFFFF)) if rng.random() < 0.1 else rng.randint(1, 2**31 - 2)
@@ -306,6 +369,9 @@ def encode(cases: list[dict]) -> str:
                                                    s.on_hit, s.on_miss, s.edge_first, s.edge_count, s.flags, s.outcome)))
         lines.extend(f"{e.input} {e.edge} {e.next}" for e in t.edges)
         lines.append(" ".join(map(str, c["params"])))
+        k = t.counter
+        lines.append("0 255 255 0" if k is None else
+                     " ".join(map(str, (1, k.count_min, k.count_max, len(k.ratios), *k.ratios))))
         lines.extend(f"{o} {r} {f}" for o, r, f in c["log"])
     return "\n".join(lines) + "\n"
 
@@ -509,9 +575,36 @@ def main() -> int:
               "too few chance states")
         return 1
 
+    # A counter, two ways: one that exits a rise late, and a progressive one
+    # whose step never advances. The raw tables and the generator's must each
+    # see both.
+    honest_counted = rp._counted
+
+    def late(core):
+        count = core.count + 1
+        if count <= core.target:
+            return rp.replace(core, count=count), False
+        return rp.replace(core, count=count, step=min(core.step + 1, 0xFF)), True
+
+    def stuck(core):
+        core, exits = honest_counted(core)
+        return (rp.replace(core, step=0) if exits else core), exits
+
+    for mutant, what in ((late, "a counter that exits a rise late"), (stuck, "a progressive step that never advances")):
+        rp._counted = mutant
+        try:
+            for name, family in (("raw", [i for i in range(len(cases)) if i % 3 == 0]),
+                                 ("generated", [i for i in range(len(cases)) if i % 3 == 2])):
+                if not first_difference([c_runs[i] for i in family], [cases[i] for i in family]):
+                    print(f"differential: {what} went unnoticed on the {name} tables; they reach too few "
+                          "counter states")
+                    return 1
+        finally:
+            rp._counted = honest_counted
+
     generated = len(family)
     print(f"differential: {len(cases)} cases ({generated} lowered by the generator), "
-          f"{actions} actions equal; a changed tie rule, pick draw and draw are caught")
+          f"{actions} actions equal; a changed tie rule, pick draw, draw and counter are caught")
     return check_trains(args.driver, args.seed)
 
 

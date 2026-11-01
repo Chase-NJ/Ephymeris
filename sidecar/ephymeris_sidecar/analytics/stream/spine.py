@@ -33,7 +33,8 @@ from . import replay as rp
 from . import trial_table as tt
 
 #: The session end rule BoxSpine.h follows: ends at the start of trial NT+1,
-#: or the first trial start after STOP. NT is parameter slot 0.
+#: or the first trial start after STOP or after a last-trial state. NT is
+#: parameter slot 0.
 TRIALS_SLOT = 0
 
 #: How many parameters each kind of driven output reads (BoxSpine.h, DRIVEN OUTPUTS).
@@ -147,9 +148,12 @@ def _decode(document: dict[str, Any]) -> SpineRecord:
     if not isinstance(table_doc, dict):
         raise SpineDecodeError("the snapshot carries no state table: the task could not be lowered")
     try:
+        counter = table_doc.get("counter")
         table = rp.Table(
             states=[rp.StateRow(*row) for row in table_doc["states"]],
             edges=[rp.EdgeRow(*row) for row in table_doc["edges"]],
+            counter=(rp.Counter(int(counter["min"]), int(counter["max"]), tuple(int(n) for n in counter["ratios"]))
+                     if counter is not None else None),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise SpineDecodeError(f"the snapshot's state table is not one: {exc}") from exc
@@ -274,8 +278,9 @@ def pulses(record: SpineRecord) -> list[tuple[int, int, int]]:
 def _session(record: SpineRecord) -> tuple[list[tuple[int, rp.Actions]], int | None]:
     """The replay's actions through the session's end, and the tick it ended at.
 
-    The end is BoxSpine.h's rule: the tick that would start trial NT+1, or the
-    first trial start at or after the recorded END_SESSION. None for a run cut
+    The end is BoxSpine.h's rule: the tick that would start trial NT+1, the
+    first trial start after a last-trial state, or the first trial start at or
+    after the recorded END_SESSION. None for a run cut
     off before it ended, replayed through its last recorded strobe.
     """
     ticks = record.end_tick if record.end_tick is not None else record.last_tick
@@ -284,11 +289,12 @@ def _session(record: SpineRecord) -> tuple[list[tuple[int, rp.Actions]], int | N
                             start=0, interp=record.interp)
     except ValueError as exc:  # strobes out of order, an edge after the end, a bad parameter
         raise SpineDecodeError(f"the recorded strobes cannot be replayed: {exc}") from exc
-    trials = 0
+    trials, last = 0, False
     max_trials = record.params[TRIALS_SLOT]
     for k, (now, a) in enumerate(actions):
+        last = last or bool(a.flags & rp.ACT_LAST_TRIAL)
         starts = bool(a.flags & rp.ACT_TRIAL_START)
-        if starts and now > 0 and (trials >= max_trials or now == record.end_tick):
+        if starts and now > 0 and (trials >= max_trials or last or now == record.end_tick):
             return actions[: k + 1], now
         if starts:
             trials += 1

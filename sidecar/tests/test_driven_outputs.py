@@ -373,3 +373,30 @@ def test_the_utility_drives_each_one_as_what_it_is(driven_rig):
     assert "#define BOX_UTILITY_HAS_TONE 0" in utility.utility_channels_h("BOX_Utility")
     profile = utility.utility_profile({})
     assert profile["identify"] == {"on": "ON trial_light", "off": "OFF trial_light"}, "the first cue"
+
+
+# --------------------------------------------------------------------------- #
+# The refusal an operator reads
+# --------------------------------------------------------------------------- #
+
+
+def test_a_train_refused_for_its_pair_says_both_values_and_the_rule(driven_rig):
+    """Each value was in its own range: the message names the pulse, the rate and
+    the period, never "outside the range"."""
+    from ephymeris_sidecar.tasks.start_command import ParamsReply, StartRefused, build_start_command
+
+    profile = generate.build_profile(stimulus())
+    config = {f.metadata_key: f.default for f in profile.config} | {"train_hz_dim_laser": 100,
+                                                                   "train_width_ms_dim_laser": 15}
+    command = build_start_command(profile, config)
+    width = next(f.wire_key for f in profile.config if f.metadata_key == "train_width_ms_dim_laser")
+    with pytest.raises(StartRefused) as caught:
+        command.verify(ParamsReply(command.count, command.crc32, (width,)))
+    assert str(caught.value) == ("The train on laser has a 15 ms pulse at 100 Hz; a pulse must be shorter "
+                                 "than the 10 ms between pulses, so lower the width or the frequency, and "
+                                 "start again.")
+    assert caught.value.reason == "clamped" and caught.value.detail == {"keys": [width]}
+
+    # A value truly outside its own range keeps the range message.
+    with pytest.raises(StartRefused, match="outside the range") as caught:
+        command.verify(ParamsReply(command.count, command.crc32, ("NT",)))

@@ -1273,8 +1273,8 @@ export interface WindowRate {
   /** The channel's first counted phase, which `versus` is against; null on that phase itself. */
   reference: number | null;
   /**
-   * This phase's rate minus the reference's, paired within each trial: a Pavlovian task's
-   * anticipatory licking. Null on the reference.
+   * This phase's rate minus the reference's, paired within each trial: in a Pavlovian task's CS
+   * and trace, its anticipatory licking. Null on the reference.
    */
   versus: RateEstimate | null;
   /** `rate.n` < `minCountedTrials`, re-judged on every request. */

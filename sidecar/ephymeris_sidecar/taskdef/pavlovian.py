@@ -11,8 +11,8 @@ ADR 0003's first graded paradigm, and the one place its definition lives:
 There is no response gate: the CS is followed by the US whatever the animal
 does, and what it learned is read from its licks
 (`ANALYTICS.md#phase-window-rates`). `phases()` is the spine with no names,
-which the editor's "trace" seed carries; `definition()` adds the CS+ and CS-
-rows and their block, ready for `tasks.save`.
+the shape a seed spine carries; `definition()` adds the CS+ and CS- rows and
+their block, ready for `tasks.save`.
 
 Plain data in, plain JSON out: nothing here reads the rig. A channel the rig
 lacks (a stock box has no lick sensor or tone) is the validator's SPN101.

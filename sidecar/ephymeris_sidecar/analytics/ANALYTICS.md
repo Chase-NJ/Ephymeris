@@ -508,8 +508,9 @@ last trial's last phase has no next trial to end it.
 > override and an Outcome that pays (its reward time is inside the window) each change it, so dividing
 > by the phase's configured `ms` would misstate the rate with no error.
 
-Live and offline are the same function of the trial table. Mission Control scores no spine run live
-yet ([TASKS.md](../../../docs/TASKS.md#spine-tasks)); live replay will call the same function.
+The rates are a function of the trial table and the state table alone, so a live score must read
+them with this same function. Mission Control scores no spine run live yet
+([TASKS.md](../../../docs/TASKS.md#spine-tasks)).
 
 ### Diverged and unreplayable runs
 

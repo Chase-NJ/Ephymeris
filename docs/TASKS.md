@@ -839,7 +839,7 @@ Beside the level line, an output can be driven three more ways ([ADR 0003](adr/0
 
 ### Pavlovian conditioning
 
-ADR 0003's first graded paradigm, written once in `taskdef/pavlovian.py`: `phases()` is its spine with no names, which the editor's trace seed carries, and `definition()` is the whole task ([ADR 0003](adr/0003-phase-spine-task-model.md#worked-examples)). It needs no firmware and no state kind of its own: only the phase palette and `watch`.
+ADR 0003's first graded paradigm, written once in `taskdef/pavlovian.py`: `phases()` is its spine with no names, the shape a seed spine carries, and `definition()` is the whole task ([ADR 0003](adr/0003-phase-spine-task-model.md#worked-examples)). It needs no firmware and no state kind of its own: only the phase palette and `watch`.
 
 | Phase | Spine entry | Default |
 |---|---|---|

@@ -1246,7 +1246,8 @@ SHAPES = (
             f("reference", nullable(INT), doc="The channel's first counted phase, which `versus` is "
               "against; null on that phase itself."),
             f("versus", nullable(Ref("RateEstimate")), doc="This phase's rate minus the reference's, "
-              "paired within each trial: a Pavlovian task's anticipatory licking. Null on the reference."),
+              "paired within each trial: in a Pavlovian task's CS and trace, its anticipatory licking. Null on the "
+              "reference."),
             f("lowConfidence", BOOL, doc="`rate.n` < `minCountedTrials`, re-judged on every request."),
         ),
         doc="One row's rate in one phase-window (`ANALYTICS.md#phase-window-rates`).",

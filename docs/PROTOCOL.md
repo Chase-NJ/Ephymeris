@@ -3577,5 +3577,5 @@ One row's rate in one phase-window (`ANALYTICS.md#phase-window-rates`).
 | `channel` | string | The input channel counted. |
 | `rate` | [RateEstimate](#shape-rateestimate) | Its rises per second in the phase, clamped at 0. |
 | `reference` | number \| null | The channel's first counted phase, which `versus` is against; null on that phase itself. |
-| `versus` | [RateEstimate](#shape-rateestimate) \| null | This phase's rate minus the reference's, paired within each trial: a Pavlovian task's anticipatory licking. Null on the reference. |
+| `versus` | [RateEstimate](#shape-rateestimate) \| null | This phase's rate minus the reference's, paired within each trial: in a Pavlovian task's CS and trace, its anticipatory licking. Null on the reference. |
 | `lowConfidence` | boolean | `rate.n` < `minCountedTrials`, re-judged on every request. |

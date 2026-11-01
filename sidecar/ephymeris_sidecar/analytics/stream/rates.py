@@ -1,33 +1,11 @@
 """Phase-window rates, read off the trial table (`ANALYTICS.md#phase-window-rates`).
 
-A **window** is a phase that counts an input it never acts on: its states
-watch the input's bit and none of them has an edge row on it. A Pavlovian
-task's baseline, CS, trace and US phases watching the lick sensor are windows
-(`TASKS.md#pavlovian-conditioning`); a Wait's port, a Response window's wells,
-an abort's input and a Counter's lever are acted on, and are not. So which
-phases are windows is read off the table's own fields (`windows_of`), never a
-phase kind.
-
-For each row of the task and each window:
-
-- **the rate** of each trial: its rises in the window × 1000 / the window's
-  span in ticks, events per second. The span runs from the phase's entry to
-  the next phase's entry, or to the next trial's start for the trial's last
-  phase: exactly the ticks the trial table attributes its rises to;
-- **the mean rate** over the row's trials, with its 95% Student-t interval
-  over trials, clamped at 0;
-- **the paired difference** against the channel's **reference**, its first
-  window in the spine (a Pavlovian task's baseline): each trial's rate minus
-  its own reference rate, with the same interval.
-
-The trials are those P(correct) counts: complete, with an outcome class that
-is not an abort (`EXCLUDED`), and with the window entered and its span known
-and above zero.
-
-**Why trials, and why t**: licks come in bursts and their rate moves from
-trial to trial far more than a Poisson count does, so a Poisson (Garwood)
-interval on pooled counts would be falsely narrow. The trial is the unit, and
-the difference is paired within it (`ANALYTICS.md#uncertainty`).
+A **window** is a phase that counts an input it never acts on, read off the
+table's own fields (`windows_of`), never a phase kind. Per row and window:
+each trial's rate over the ticks the trial table attributes its rises to, the
+mean with its t interval over trials, and the paired difference against the
+channel's first window (`window_rates`). The anchor above defines each
+figure, and `ANALYTICS.md#uncertainty` why the interval is t over trials.
 
 **Pure**, like the rest of `stream/`.
 """

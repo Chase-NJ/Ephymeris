@@ -138,7 +138,13 @@ def _shutdown():
         _created.pop().shutdown()
 
 
-def wait_for(predicate, timeout: float = 3.0) -> bool:
+#: How long a wait gives the session thread before calling it a hang. A wait
+#: returns as soon as its condition holds, so this costs a passing test
+#: nothing; it only has to outlast a stall on a loaded machine.
+DEADLINE_S = 30.0
+
+
+def wait_for(predicate, timeout: float = DEADLINE_S) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
         if predicate():
@@ -218,7 +224,7 @@ def test_a_missing_seed_resolves_after_the_window(fake_serial) -> None:
     port = port_opened()
     port.feed("READY\n")
 
-    assert wait_for(lambda: seeds, timeout=3.0)
+    assert wait_for(lambda: seeds)
     assert seeds[0] is None  # proceeded without one
 
 
@@ -243,7 +249,7 @@ def test_never_seeing_ready_lands_in_error(fake_serial) -> None:
     handler, changes = make_handler()
     handler.claim_session("/dev/fake", 115200, CMD, SEED, lambda s, i: None, lambda c, t: None)
     # READY timeout is patched to 2s.
-    assert wait_for(lambda: handler.state is PortState.ERROR, timeout=4.0)
+    assert wait_for(lambda: handler.state is PortState.ERROR)
 
 
 # --- step 6: strobe parsing (`ARCHITECTURE.md#entering-in_session`) ------
@@ -479,7 +485,12 @@ def test_an_old_claim_cannot_end_a_newer_run(fake_serial) -> None:
     """A late release from a finished run must not end the box's next one."""
     handler, _ = make_handler()
     first = handler.claim_session("/dev/fake", 115200, CMD, SEED, lambda s, i: None, lambda c, t: None)
-    first.release("first run over")  # joins the first run's thread, whether or not it opened a port
+    first_thread = handler._reader
+    first.release("first run over")
+    # Teardown's join gives up after a second; wait for the first run's thread
+    # itself, so a port it opens late isn't taken for the second run's.
+    first_thread.join(DEADLINE_S)
+    assert not first_thread.is_alive()
     opened = len(ScriptedSerial.instances)
     second = handler.claim_session("/dev/fake", 115200, CMD, SEED, lambda s, i: None, lambda c, t: None)
     port = port_opened(opened)

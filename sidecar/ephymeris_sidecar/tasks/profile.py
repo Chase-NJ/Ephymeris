@@ -25,6 +25,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Iterable
 
+from .behaviour import behaviour_of
+
 if TYPE_CHECKING:
     from ..rig.registry import Vocabulary
 
@@ -362,9 +364,16 @@ def profile_hash(profile: TaskProfile) -> str:
     renumbered or repurposed, so the map says nothing about whether two runs
     are comparable. Stored hashes were re-keyed once when this changed
     (`cohorts/db.py` `_to_v13`).
+
+    **A spine task's hash covers its behaviour only** (`behaviour.py`): every
+    string meant for a person is left out, by an explicit list, and rows are
+    keyed by their stable id. Every other profile's hash covers its words too,
+    and must: its stored hashes cannot be recomputed.
     """
     declaration = profile.to_json()
     declaration.pop("strobes", None)
+    if profile.spine is not None:
+        declaration = behaviour_of(declaration)
     canonical = json.dumps(declaration, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 

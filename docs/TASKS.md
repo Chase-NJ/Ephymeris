@@ -64,6 +64,7 @@ Everything between "a box runs firmware that emits strobes" and "the app draws i
   - [The length cap](#the-length-cap)
   - [SEED](#seed)
 - [Profile and params hashes](#profile-and-params-hashes)
+  - [A spine task's hash covers behaviour only](#a-spine-tasks-hash-covers-behaviour-only)
 - [Derived state machine](#derived-state-machine)
   - [Why derived](#why-derived)
   - [The model](#the-model)
@@ -657,7 +658,7 @@ The profile's `spine` key is everything replay needs that the run's own header d
 
 It rides in the `# task_profile:` header line of every run's `.tsv` ([DATA.md](DATA.md#the-tsv-log)), beside the parameter values, the seed and `# interp: 2`, so a crashed run's `.tsv` alone replays. Code numbers come from the snapshot's own `strobes` map, which is the vocabulary when the run started. `analytics/stream/spine.py` reads a run's document back into the table, parameters, seed and input edges, and predicts every strobe the board must have sent ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#the-folder-at-a-glance)).
 
-`profile_hash` hashes the snapshot with the rest of the profile, names and all. Covering behaviour only, and leaving out every string meant for a person, is still to come (ADR 0003, *Hashes and data*).
+`profile_hash` hashes the snapshot for its behaviour only: row names and the profile's other words for a person are left out of the hash, never out of the snapshot ([A spine task's hash covers behaviour only](#a-spine-tasks-hash-covers-behaviour-only)).
 
 ### Spine diagnostics
 
@@ -1092,7 +1093,7 @@ Both are SHA-256 over canonical JSON (`sort_keys`, compact separators), truncate
 
 | | `profile_hash` | `params_hash` |
 |---|---|---|
-| Input | the serialized profile — `taskName`, `kind`, the full `config` array **including presentation keys** (`group`, `label`, `unit`, `help`, ranges), `liveMetrics` (as codes), `controls`, `legacyNames`, and `telemetry`/`identify`/`spine` when present — **not** `strobes` | one run's merged parameter values, keyed by `metadataKey` |
+| Input | the serialized profile — `taskName`, `kind`, the full `config` array **including presentation keys** (`group`, `label`, `unit`, `help`, ranges), `liveMetrics` (as codes), `controls`, `legacyNames`, and `telemetry`/`identify` when present — **not** `strobes`. A [spine task](#spine-tasks)'s profile is hashed for its behaviour only ([below](#a-spine-tasks-hash-covers-behaviour-only)) | one run's merged parameter values, keyed by `metadataKey` |
 | `None` input | n/a | returns `None` — a run with no recorded parameters is not a run recorded with none |
 | Stored on | `task_profiles.hash` (content-addressed) | `session_animal_runs.params_hash`, beside `config_json` |
 
@@ -1101,10 +1102,22 @@ Both are SHA-256 over canonical JSON (`sort_keys`, compact separators), truncate
 
 What this rests on:
 
-- **Anything in `to_json` moves `profile_hash`**, and a moved hash permanently splits a task's runs in Analytics (old hashes cannot be recomputed). This is why the diagram is derived rather than declared, why the parameter dial's tab fold is the app's rather than the profile's ([Parameter dial](#parameter-dial)), and why `group` must not be re-filed in `fields.py` casually. Editing a saved task — renaming a condition, which renames its metric label — is a new declaration and correctly a new hash. So is a generator change that alters what every regenerated `task.json` contains; earlier runs then group separately and still decode by their own snapshot.
+- **Anything in `to_json` moves `profile_hash`** (on a spine task, anything not on [the unhashed list](#a-spine-tasks-hash-covers-behaviour-only)), and a moved hash permanently splits a task's runs in Analytics (old hashes cannot be recomputed). This is why the diagram is derived rather than declared, why the parameter dial's tab fold is the app's rather than the profile's ([Parameter dial](#parameter-dial)), and why `group` must not be re-filed in `fields.py` casually. Editing a saved trial-table task — renaming a condition, which renames its metric label — is a new declaration and correctly a new hash. So is a generator change that alters what every regenerated `task.json` contains; earlier runs then group separately and still decode by their own snapshot.
 - **`strobes` is left out** because a loaded profile's map is the machine's whole vocabulary: hashing it would split every task's history the first time anyone added a code, and codes are never renumbered, so the map says nothing about comparability. Stored hashes were re-keyed once when this changed (`cohorts/db.py` `_to_v13`, [DATA.md](DATA.md#changing-the-schema)).
 - **`to_json` must round-trip through `parse_profile` byte-for-byte.** A finalized session file embeds its profile ([DATA.md](DATA.md#per-animal-files)); if the round trip drifts, a copied run lands under a different hash than its origin.
 - **`intan_*` fields are core, not config** (`CORE_METADATA_KEYS`), so they stay out of `params_hash`: two runs of one tuning are comparable whether or not one was recorded.
+
+### A spine task's hash covers behaviour only
+
+A profile with a `spine` key is hashed through `tasks/behaviour.py` ([ADR 0003](adr/0003-phase-spine-task-model.md#hashes-and-data)): what the board runs and how replay scores it, and none of the words a person reads. So renaming a row or rewording help text keeps one history, and changing a phase, a block, a binding or a contingency moves the hash. Every other profile hashes exactly as the table above says.
+
+- **The list is of what is left out.** `behaviour.UNHASHED` names each string meant for a person by path (`*` is any list element; a dict step is always a key): `legacyNames`, `config[*].label`, `.help`, `.group` and `.unit`, `liveMetrics[*].label`, and `spine.rows[*].name`. A config label is on it because the generator writes the row's name into the reward fields' labels. Everything else is hashed, `taskName` included, and so is any field added to a row, phase or block later. **A new field meant for a person is hashed until its path is added**, deliberately: `tests/test_behaviour_hash.py` pins the list and changes every leaf of a generated profile in turn.
+- **Rows are keyed by their stable `id`**, hashed as `{id: row}`, so reordering `spine.rows` moves nothing; a block's `rows` list keeps its order. Anything the lowering derives from row order (a wire key, a config entry, the table) is hashed where it appears, so a reorder that changes what the board runs still moves the hash. When an id is missing or repeated, the rows are hashed as a list, so none is dropped.
+- **The snapshot keeps the names.** Only the hash leaves them out: `to_json` and `parse_profile` still round-trip every byte, so a run's own file says what its rows were called. A spine run decodes by its file's snapshot when the file embeds one ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#which-profile-decodes-a-run)).
+
+  > [!CAUTION]
+  > **Without a snapshot in its file, a spine run decodes by its `task_profiles` row, and that row may carry another declaration's words.** `task_profiles` is content-addressed, so its row for a hash holds the first declaration seen with it: the same behaviour, but possibly another task's or an earlier edit's row and metric names. Read a row's name from the run's own file, never from that row.
+- **No migration re-keys a spine run's stored hash.** A spine run whose file embeds its snapshot is scored by it, so a change to this projection moves the [canary](DATA.md#caching), and the cache version moving recomputes its scored hash. Only `session_animal_runs.profile_hash` keeps the digest it was recorded with, and that digest's `task_profiles` row still resolves.
 
 ## Derived state machine
 

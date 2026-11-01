@@ -67,6 +67,8 @@ DOCUMENTS = {
     "vr": lambda: simulated_document(fixture.variable_ratio(1, 6), pressing_animal, trials=6),
     # Aborts are tallied but EXCLUDED from P(correct): live must leave them out as Analytics does.
     "aborts": lambda: simulated_document(fixture.tracer(), quitting_animal, trials=5),
+    # Blocks, a criterion, a correction trial and a block switch (#155).
+    "reversal": lambda: simulated_document(fixture.reversal(), two_afc_animal, trials=40, ticks=2_000_000),
 }
 
 

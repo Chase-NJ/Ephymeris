@@ -265,7 +265,7 @@ async def test_a_scorer_killed_mid_session_costs_only_the_live_numbers(
 
     down = replays(events)[-1]
     assert down["status"] == "replaying" and down["metrics"] == [] and down["overall"] is None
-    assert "unavailable" in down["unavailable"]
+    assert down["unavailable"] == "the live scorer stopped"
     await board.said(*lines(strobes[half:]))
     await until(lambda: not runner.running_boxes(), timeout=10)
     moving = [r for r in replays(events) if r["unavailable"] and r["phase"] is not None]

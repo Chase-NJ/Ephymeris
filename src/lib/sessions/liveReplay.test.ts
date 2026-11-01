@@ -91,9 +91,10 @@ describe("a spine run's live numbers, as the sidecar sent them", () => {
   });
 
   it("says why its numbers are gone when the live scorer is down, and keeps the token", () => {
-    const down = replay({ unavailable: "the live scorer stopped, so live numbers are unavailable" });
+    const down = replay({ unavailable: "the live scorer stopped" });
     expect(replayStrip(down).metrics).toEqual([]);
     expect(replayNote(down)).toMatch(/live scorer stopped/);
+    expect(replayNote(down).match(/unavailable/g)).toHaveLength(1);
     expect(replayWarns(down)).toBe(false);
   });
 

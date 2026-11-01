@@ -206,10 +206,18 @@ which can hold nothing the sidecar needs.
 
 > [!IMPORTANT]
 > **The scorer dies with the sidecar, is never respawned, and is never waited on.**
-> - It is a `multiprocessing` child started with `spawn` on every platform, on the first spine run's first
->   request, from a sender thread: never the session thread or the loop.
+> - It is a `multiprocessing` child started with `spawn` on every platform, from a sender thread, never the
+>   session thread or the loop. It starts when a mapping holding a spine run is confirmed
+>   (`SessionRunner.configure`), so the interpreter it starts is paid for during set-up, not while a box
+>   strobes.
+> - **It yields the CPU.** It runs below the sidecar: `os.setpriority`, `NICENESS` lower, set by the sidecar
+>   the moment it starts and by the child itself; on Windows the child sets `BELOW_NORMAL_PRIORITY_CLASS`.
+>   It scores one run at most once per `SCORE_INTERVAL_S` and rests after each score as long as the score
+>   took, so it uses at most about half a core. On a machine with fewer free cores than busy threads the
+>   session threads run first.
 > - It exits when its request pipe closes, which a dead sidecar's does, or when its parent changes; the
->   sidecar kills it on the way out (`Application.stop`), without joining it.
+>   sidecar kills it on the way out (`Application.stop`), without joining it. A child seen dead is reaped on
+>   the scorer's own reader thread, so it never lingers as a zombie.
 > - In the frozen build it is the sidecar's own executable started again: `packaging/entry.py` calls
 >   `multiprocessing.freeze_support()` before anything parses arguments, which is where that run turns into
 >   the child instead of a second sidecar. Remove it and the frozen sidecar starts a copy of itself.
@@ -1535,11 +1543,13 @@ path for them. A `diverged` run shows its divergence in the warning colour, with
   monotonic clock, 30 ms late so an edge on its way still wins. The payload marks it `provisional` until a
   strobe confirms it. One loop timer per box; the board is never polled, and a later strobe replaces the
   estimate.
-- **Off the strobe's path.** The feed runs on the port's session thread after the strobe's fsync, a few
-  microseconds. The check and the numbers (`live.scored`, a whole replay) run in [the live
+- **Off the strobe's path.** The feed runs on the port's session thread after the strobe's fsync: a median
+  of 44–67 µs and at most 0.9 ms, measured on a running sidecar. Strobes that arrive within one loop turn
+  are handed to the loop once. The check and the numbers (`live.scored`, a whole replay) run in [the live
   scorer](#the-live-scorer), a process of their own, one request out at a time per box;
   `test_live_replay_load.py` holds six boxes' write-and-fsync latency with live scoring on to twice the
-  figure with it off. A box keeps its last payload after its run ends, until it starts again or a new
+  figure with it off, plus a 5 ms floor (an fsync's own spread), and checks the scorer runs below the
+  sidecar. A box keeps its last payload after its run ends, until it starts again or a new
   mapping is confirmed, and `session.replay` is replayed on connect.
 - **Unavailable, never wrong.** With the scorer down, the payload's `unavailable` says why and the numbers
   go, while the token carries on. A feed that fails makes the whole replay `unavailable` for the rest of

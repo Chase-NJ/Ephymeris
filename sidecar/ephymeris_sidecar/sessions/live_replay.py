@@ -19,8 +19,9 @@ on the port's session thread. What it owns:
 - **the payload** `session.replay` carries, broadcast whenever it changes and
   replayed to a client that connects (`ARCHITECTURE.md#replay-on-connect`).
 
-Per strobe the session thread does `LiveReplay.feed` and `at`, a few
-microseconds, and nothing here can raise into it. A feed that fails anyway
+Per strobe the session thread does `LiveReplay.feed` and `at`, after the fsync:
+a median of 44–67 µs and at most 0.9 ms on a running sidecar. Nothing here can
+raise into it. A feed that fails anyway
 leaves the replay `unavailable` for the rest of the run: never a clean end with
 numbers read from a stream it did not take.
 """
@@ -93,6 +94,12 @@ class BoxReplay:
         self._again = False
         self._closed = False
         self._tasks: set[asyncio.Future] = set()
+        #: What the strobes since the loop last looked asked of it, and whether
+        #: a look is already scheduled: one hand-off per loop turn, however
+        #: many strobes arrive in it.
+        self._pending_moved = False
+        self._pending_check = False
+        self._handed = False
         self._payload = self._build()
         loop.call_soon_threadsafe(self._changed, True, False)
 
@@ -106,8 +113,12 @@ class BoxReplay:
                     return
                 fed = self._replay.feed(code, ts)
                 self._anchor = (ts, self._clock())
-                moved = self._move(self._replay.at(ts))
-            self._loop.call_soon_threadsafe(self._changed, moved, fed.check)
+                self._pending_moved |= self._move(self._replay.at(ts))
+                self._pending_check |= fed.check
+                hand = not self._handed
+                self._handed = True
+            if hand:
+                self._loop.call_soon_threadsafe(self._take_pending)
         except Exception as exc:  # noqa: BLE001 - the live view never costs the session
             log.exception("box %d: live replay could not take a strobe", self.box)
             self._failed(f"the live replay could not take a strobe: {exc!r}")
@@ -148,6 +159,13 @@ class BoxReplay:
         self._view = view
         return before is None or (view.state, view.phase, view.row, view.provisional) != \
             (before.state, before.phase, before.row, before.provisional)
+
+    def _take_pending(self) -> None:
+        """What the strobes since the last look asked for, on the loop."""
+        with self._lock:
+            moved, check = self._pending_moved, self._pending_check
+            self._pending_moved = self._pending_check = self._handed = False
+        self._changed(moved, check)
 
     def _changed(self, moved: bool, check: bool) -> None:
         if moved:

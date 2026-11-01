@@ -97,7 +97,72 @@ def test_a_dead_scorer_is_reported_down_and_never_raises(scorer) -> None:  # noq
     scorer.submit("k2", header_of(document), document["ts_data"], 1,
                   on_result=later.on_result, on_down=later.on_down)
     later.wait(lambda: later.down)
-    assert later.scored == [] and "unavailable" in later.down[0]
+    assert later.scored == [] and later.down[0] == "the live scorer stopped"
+    assert "unavailable" not in later.down[0], "the reason is the cause: the UI says what it costs"
+
+
+def test_a_killed_scorer_is_reaped_without_waiting_on_it(scorer) -> None:  # noqa: ANN001
+    """Seen dead, it is reaped, not left a zombie until the sidecar exits."""
+    document = simulated_document(fixture.go_no_go(), go_no_go_animal, trials=2)
+    got = Results()
+    scorer.submit("k1", header_of(document), document["ts_data"], len(document["ts_data"]),
+                  on_result=got.on_result, on_down=got.on_down)
+    got.wait(lambda: got.scored)
+    scorer.kill_for_test()
+    got.wait(lambda: got.down)
+    deadline = time.monotonic() + 10
+    while scorer.exitcode_for_test() is None:
+        assert time.monotonic() < deadline, "never reaped"
+        time.sleep(0.02)
+    if hasattr(os, "waitpid"):
+        with pytest.raises(ChildProcessError):
+            os.waitpid(scorer.pid, os.WNOHANG)  # already reaped: no zombie left to wait for
+
+
+@pytest.mark.skipif(not hasattr(os, "getpriority"), reason="POSIX niceness")
+def test_the_scorer_runs_below_the_sidecar(scorer) -> None:  # noqa: ANN001
+    """It yields the CPU to the session threads: a lower priority, set in the
+    child at start-up (`ARCHITECTURE.md#the-live-scorer`)."""
+    document = simulated_document(fixture.go_no_go(), go_no_go_animal, trials=2)
+    got = Results()
+    scorer.submit("k1", header_of(document), document["ts_data"], len(document["ts_data"]),
+                  on_result=got.on_result, on_down=got.on_down)
+    got.wait(lambda: got.scored)
+    scorer.wait_ready_for_test()
+    ours = os.getpriority(os.PRIO_PROCESS, 0)
+    assert os.getpriority(os.PRIO_PROCESS, scorer.pid) >= min(ours + scorer_module.NICENESS, 19)
+
+
+def test_one_run_is_scored_at_most_once_per_interval(monkeypatch, scorer) -> None:  # noqa: ANN001
+    """However fast a box asks, a run's whole replay runs at most once per
+    `SCORE_INTERVAL_S`; the latest request still lands."""
+    document = simulated_document(fixture.go_no_go(), go_no_go_animal, trials=8)
+    strobes = document["ts_data"]
+    got = Results()
+    times: list[float] = []
+
+    def on_result(n: int, fields: dict) -> None:
+        times.append(time.monotonic())
+        got.on_result(n, fields)
+
+    sent = 0
+    for n in range(5, len(strobes) + 1, 5):
+        scorer.submit("k1", header_of(document) if sent == 0 else None, strobes[sent:n], n,
+                      on_result=on_result, on_down=got.on_down)
+        sent = n
+        time.sleep(0.02)
+    scorer.submit("k1", None, strobes[sent:], len(strobes), on_result=on_result, on_down=got.on_down)
+    got.wait(lambda: got.scored and got.scored[-1][0] == len(strobes))
+    gaps = [b - a for a, b in zip(times, times[1:])]
+    assert all(gap >= scorer_module.SCORE_INTERVAL_S * 0.9 for gap in gaps), gaps
+
+
+def test_warming_starts_the_scorer_before_any_request(scorer) -> None:  # noqa: ANN001
+    """A mapping with a spine run starts it in set-up, so a box's first strobes
+    never meet an interpreter starting up."""
+    scorer.warm()
+    scorer.wait_ready_for_test()
+    assert scorer.pid is not None
 
 
 def test_a_scorer_that_cannot_start_is_down_at_once(monkeypatch) -> None:  # noqa: ANN001

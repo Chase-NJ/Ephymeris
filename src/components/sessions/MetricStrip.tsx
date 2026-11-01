@@ -84,14 +84,16 @@ function MetricRow({
   interval: [number, number] | null;
 }) {
   const history = useMetricHistory(box, metric.id);
-  return (
-    <div className="flex items-center gap-3">
-      {/* Titled as well as truncated: the label is a full sentence
-          ("P(right well | orange → right)") and the strip is narrow, so the
-          hover is where the tail of it lives. */}
-      <span className="min-w-0 flex-1 truncate text-[11px] text-static" title={label}>
-        {label}
-      </span>
+  /* Titled as well as truncated: the label is a full sentence
+     ("P(right well | orange → right)") and the strip is narrow, so the
+     hover is where the tail of it lives. */
+  const title = (
+    <span className="min-w-0 flex-1 truncate text-[11px] text-static" title={label}>
+      {label}
+    </span>
+  );
+  const figures = (
+    <>
       <Sparkline history={history} />
       <span className="w-[52px] text-right font-mono text-[12px] tabular-nums text-starlight">
         {metric.value === null ? "—" : metric.value.toFixed(2)}
@@ -99,14 +101,30 @@ function MetricRow({
       <span className="w-[42px] text-right font-mono text-[10px] tabular-nums text-static">
         n={metric.n}
       </span>
-      {interval && (
+    </>
+  );
+  if (!interval) {
+    return (
+      <div className="flex items-center gap-3">
+        {title}
+        {figures}
+      </div>
+    );
+  }
+  // With an interval the row has no room left for its label, so the label
+  // takes a line of its own above the figures.
+  return (
+    <div className="flex flex-col gap-0.5">
+      {title}
+      <div className="flex items-center justify-end gap-3">
+        {figures}
         <span
           className="w-[64px] text-right font-mono text-[10px] tabular-nums text-static"
           title="95% Wilson interval"
         >
           {interval[0].toFixed(2)}–{interval[1].toFixed(2)}
         </span>
-      )}
+      </div>
     </div>
   );
 }

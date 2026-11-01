@@ -177,11 +177,13 @@ export function PanelFrame({
       )}
 
       {/* Charts left, the sidecar's own readouts right — every live number in
-          one glance, no scrolling. */}
-      <div className="mt-3 grid grid-cols-[minmax(0,1fr)_300px] items-start gap-4 border-t border-halo pt-3">
-        <div className="min-w-0">{charts}</div>
+          one glance, no scrolling. A wrap, not a grid: on a pane too narrow for
+          both side by side (an 800 px window) the readouts go under the charts
+          rather than squeezing them to a word a line. */}
+      <div className="mt-3 flex flex-wrap items-start gap-4 border-t border-halo pt-3">
+        <div className="min-w-[260px] flex-1">{charts}</div>
 
-        <div className="flex flex-col gap-3">
+        <div className="flex w-[300px] max-w-full flex-col gap-3">
           {/* The sidecar-computed metrics (`ANALYTICS.md#trials-hits-misses-and-exclusions`) —
               the same strip the collapsed tile shows, so focusing a star never
               costs the readout it was showing. */}

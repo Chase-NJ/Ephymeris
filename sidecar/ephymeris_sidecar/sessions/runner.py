@@ -199,6 +199,9 @@ class SessionRunner:
         self._configs = {c.box: c for c in box_configs}
         self._ended = set()
         self._forget_replays()
+        if any(c.profile is not None and c.profile.spine is not None for c in box_configs):
+            # Started now, in set-up, so its start-up never meets a strobe.
+            self._scorer.warm()
         self._duration_s = duration_s
 
     def clear(self) -> None:

@@ -66,9 +66,10 @@ OUTPUT_BYTES = 5
 #: array), never over it.
 RUNNER_RAM_BYTES = 384
 #: The most RAM a task's data (`task_ram_bytes`) may take, out of a Mega's 8192 B.
-#: With the runner's own, globals stay at most 4480 B (55%), leaving the stack
-#: and the serial buffers at least 3712 B (`TASKS.md#spine-diagnostics`).
-TASK_RAM_MAX = 4096
+#: With the runner's own, globals stay at most 5384 B (66%), leaving the stack
+#: and the serial buffers at least 2808 B (`TASKS.md#spine-diagnostics`). An
+#: 18-row 2AFC fits.
+TASK_RAM_MAX = 5000
 
 
 def task_ram_bytes(low: lowering.Lowered) -> int:

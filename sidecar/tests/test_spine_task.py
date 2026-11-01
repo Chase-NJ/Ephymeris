@@ -9,6 +9,7 @@ carries tells replay, and what the diagnostics catch before a flash.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -314,18 +315,21 @@ def test_two_windows_are_one_problem_not_a_map_problem_per_row():
     assert not [f for f in found if f[0] == "SPN109"]
 
 
-def test_a_table_over_the_ram_budget_is_refused_by_name():
-    """The table sits in the board's RAM. A 15-row 2AFC's states, edge rows and
-    parameters take 4153 B; 14 rows take 3889 B."""
-    raw = fixture.two_afc()
-    raw["rows"] = [dict(raw["rows"][i % 2], id=f"row_{i}", name=f"Row {i}") for i in range(15)]
+def two_afc_rows(n_rows: int) -> dict:
+    raw = fixture.two_afc(id=f"spine_2afc_{n_rows}", name=f"Spine 2AFC {n_rows}")
+    raw["rows"] = [dict(raw["rows"][i % 2], id=f"row_{i}", name=f"Row {i}") for i in range(n_rows)]
     raw["blocks"][0]["rows"] = [r["id"] for r in raw["rows"]]
-    definition = TaskDefinition.from_json(raw)
+    return raw
+
+
+def test_a_table_over_the_ram_budget_is_refused_by_name():
+    """The table sits in the board's RAM. An 18-row 2AFC's states, edge rows and
+    parameters take 4945 B, within the budget; 19 rows take 5209 B."""
+    definition = TaskDefinition.from_json(two_afc_rows(19))
     problems = [d for d in validate(definition) if d.code == "SPN105"]
     assert [d.location for d in problems] == ["spine"] and "RAM" in problems[0].message
     assert "#error" in generate.task_spine_h(definition)
-    raw["rows"], raw["blocks"][0]["rows"] = raw["rows"][:14], raw["blocks"][0]["rows"][:14]
-    assert validate(TaskDefinition.from_json(raw)) == []
+    assert validate(TaskDefinition.from_json(two_afc_rows(18))) == []
 
 
 def every_entry_pays(n_rows: int) -> dict:
@@ -344,7 +348,7 @@ def every_entry_pays(n_rows: int) -> dict:
 
 
 def test_the_ram_budget_counts_parameters_and_channels_too():
-    """13 rows: their states and edge rows fit 4096 B, their 71 parameters do not."""
+    """13 rows: their states and edge rows fit the budget, their 71 parameters do not."""
     definition = TaskDefinition.from_json(every_entry_pays(13))
     low = lowering.lower([p.to_json() for p in definition.spine.phases],
                          inputs=["port", "left", "right"], outputs=["cue", "sample", "reward_l", "reward_r"],
@@ -365,16 +369,24 @@ def _avr_globals(folder: Path) -> int:
     return int(re.search(r"Global variables use (\d+) bytes", built.stdout).group(1))
 
 
-@pytest.mark.skipif(arduino is None, reason="no arduino-cli")
+@pytest.mark.skipif(arduino is None and os.environ.get("REQUIRE_ARDUINO_CLI") != "1", reason="no arduino-cli")
 def test_the_ram_budget_is_what_an_avr_build_adds_for_the_task(tmp_path):
     """Compiled for a Mega, each task's globals are at most the runner's own plus
     the bytes `task_ram_bytes` counts, and within a few bytes of it, so the
     per-row sizes are pinned and the budget bounds the real build. The largest
-    task under the budget leaves the board the free RAM TASKS.md promises."""
+    task under the budget leaves the board the free RAM TASKS.md promises.
+
+    CI sets REQUIRE_ARDUINO_CLI=1 in the firmware job, where this must run."""
+    assert arduino is not None, "REQUIRE_ARDUINO_CLI=1, and arduino-cli is not on PATH"
     store = TaskStore(tmp_path, library_root=FIRMWARE)
-    largest = max(n for n in range(1, 16) if not any(
-        d.code == "SPN105" for d in validate(TaskDefinition.from_json(every_entry_pays(n)))))
-    cases = [fixture.tracer(), fixture.go_no_go(),
+
+    def refused(raw: dict) -> bool:
+        return any(d.code == "SPN105" for d in validate(TaskDefinition.from_json(raw)))
+
+    largest = max(n for n in range(1, 16) if not refused(every_entry_pays(n)))
+    assert refused(every_entry_pays(largest + 1)), "one row past the edge is refused"
+    assert not refused(two_afc_rows(18)) and refused(two_afc_rows(19))
+    cases = [fixture.tracer(), fixture.go_no_go(), two_afc_rows(18),
              dict(every_entry_pays(largest), id="spine_edge", name="Spine Edge")]
     for raw in cases:
         definition = TaskDefinition.from_json(raw)
@@ -384,7 +396,7 @@ def test_the_ram_budget_is_what_an_avr_build_adds_for_the_task(tmp_path):
         counted = spine_module.RUNNER_RAM_BYTES + spine_module.task_ram_bytes(low)
         assert 0 <= counted - globals_ <= 16, (raw["id"], globals_, counted)
     assert globals_ <= spine_module.RUNNER_RAM_BYTES + spine_module.TASK_RAM_MAX
-    assert 8192 - (spine_module.RUNNER_RAM_BYTES + spine_module.TASK_RAM_MAX) == 3712
+    assert 8192 - (spine_module.RUNNER_RAM_BYTES + spine_module.TASK_RAM_MAX) == 2808
 
 
 def test_a_tables_bytes_are_its_rows_at_the_c_structs_sizes():

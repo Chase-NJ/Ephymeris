@@ -3,8 +3,9 @@
 # the Python replay (sidecar/ephymeris_sidecar/analytics/stream/replay.py) run
 # the same tables and input logs, a third of the tables lowered by the generator
 # itself (sidecar/ephymeris_sidecar/taskdef/lowering.py), and the test fails on
-# the first tick where their actions differ. It then proves it can fail, by changing the
-# Python tie rule and expecting a difference. See differential.py.
+# the first tick where their actions differ, or the first pulse-train edge where
+# they do. It then proves it can fail, by changing the Python tie rule and a
+# train's rise and expecting a difference. See differential.py.
 #
 # Needs python3 (3.12 or later) and nothing installed: replay.py is loaded by path.
 #

@@ -7,7 +7,8 @@
   what is under test — so this shim records them:
 
     * digitalWrite/digitalRead go through an addressable pin table, so a test
-      can assert "F2 is open" or drive an IR beam LOW;
+      can assert "F2 is open" or drive an IR beam LOW, and analogWrite and
+      tone/noTone record each pin's duty and pitch;
     * Serial.read() drains a queued input string, so a test can feed whole
       command lines through the sketch's real CommandReader;
     * Serial.print/println append to a capture buffer, so STATUS lines and the
@@ -52,9 +53,26 @@ inline void pinMode(int pin, int mode)
 {
   if (pin >= 0 && pin < BB_MAX_PIN) bb_pinMode[pin] = mode;
 }
+// analogWrite()'s duty and tone()'s Hz, per pin: 0 when the pin is not driven
+// so. A digitalWrite() ends a PWM, as on an AVR; noTone() ends a tone.
+static int bb_pwm[BB_MAX_PIN];
+static unsigned bb_tone[BB_MAX_PIN];
+
 inline void digitalWrite(int pin, int value)
 {
-  if (pin >= 0 && pin < BB_MAX_PIN) bb_pinValue[pin] = value;
+  if (pin >= 0 && pin < BB_MAX_PIN) { bb_pinValue[pin] = value; bb_pwm[pin] = 0; }
+}
+inline void analogWrite(int pin, int duty)
+{
+  if (pin >= 0 && pin < BB_MAX_PIN) { bb_pwm[pin] = duty; bb_pinValue[pin] = duty > 0 ? 1 : 0; }
+}
+inline void tone(unsigned pin, unsigned hz)
+{
+  if (pin < (unsigned)BB_MAX_PIN) bb_tone[pin] = hz;
+}
+inline void noTone(unsigned pin)
+{
+  if (pin < (unsigned)BB_MAX_PIN) { bb_tone[pin] = 0; bb_pinValue[pin] = 0; }
 }
 inline int digitalRead(int pin)
 {

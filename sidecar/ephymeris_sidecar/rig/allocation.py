@@ -94,7 +94,7 @@ def plan(document: Any, vocab: registry.Vocabulary) -> tuple[Any, list[Allocatio
         kind = str(entry.get("kind", ""))
         role = str(entry.get("role") or defaults.get("role", ""))
         edges = entry.get("edges") if isinstance(entry.get("edges"), dict) else {}
-        missing = [e for e in registry.EDGES.get(channel_type, ()) if not edges.get(e)]
+        missing = [e for e in registry.edges_of(channel_type, entry.get("mode")) if not edges.get(e)]
         if not missing:
             continue
         edges = dict(edges)

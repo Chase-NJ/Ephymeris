@@ -29,9 +29,13 @@ from typing import Iterable, Sequence
 #: which ran it. 2 is the tracer's format; 3 adds the pick state, and 4 the
 #: counter and last-trial states. Each is otherwise the one before, so an older
 #: table runs under the same rules here, and only what its version lacks is
-#: refused in it (`check_interp`).
-INTERP_VERSIONS = frozenset({2, 3, 4})
-INTERP_VERSION = 4
+#: refused in it (`check_interp`). 5 changes no table and no rule here: it adds
+#: driven outputs, whose pulse trains are `train_pulses` and whose strobes
+#: `stream/spine.py` predicts.
+INTERP_VERSIONS = frozenset({2, 3, 4, 5})
+INTERP_VERSION = 5
+#: The first version whose outputs can be driven (PWM, tone, a pulse train).
+DRIVES_SINCE = 5
 
 NONE = 0xFF
 PERMILLE = 1000
@@ -471,6 +475,41 @@ def step(core: Core, edges: Edges, now: int) -> tuple[Core, Actions]:
     if target != NONE:
         core = _enter(core, target, now, a)
     return core, a.done()
+
+
+# --- pulse trains -------------------------------------------------------------
+
+
+def _rise(j: int, hz: int) -> int:
+    """Pulse j of a second rises this many ms into it (BoxInterp.h, PULSE TRAINS)."""
+    return j * 1000 // hz
+
+
+def train_pulses(hz: int, width: int, length: int) -> list[tuple[int, int]]:
+    """Every pulse of a train that ran `length` ticks, as (rise, fall) offsets
+    from its first tick; a pulse still HIGH at `length` falls there.
+
+    Worked out pulse by pulse, never tick by tick, so the differential test
+    holds two different computations of one train to each other: the C side
+    steps `interp_train_high()` on every tick. A pulse is HIGH from its rise to
+    `width` ms later or the next rise, whichever is first, and two that touch
+    are one.
+    """
+    if hz <= 0 or width <= 0 or length <= 0:
+        return []
+    out: list[tuple[int, int]] = []
+    for base in range(0, length, 1000):
+        for j in range(hz):
+            rise = base + _rise(j, hz)
+            if rise >= length:
+                return out
+            nxt = base + _rise(j + 1, hz)  # _rise(hz, hz) is 1000: the next second's first
+            fall = min(rise + width, nxt, length)
+            if out and out[-1][1] == rise:
+                out[-1] = (out[-1][0], fall)
+            else:
+                out.append((rise, fall))
+    return out
 
 
 # --- a whole session ----------------------------------------------------------

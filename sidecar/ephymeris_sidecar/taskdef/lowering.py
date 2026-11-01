@@ -48,6 +48,19 @@ PARAMETER SLOTS, in order (`ParamSlot`):
             RP<r>_<k> the probability of map entry k, numbered from 1 in branch
                       order (the window's responses, then the timeout), for each
                       entry with a line
+            then, per DRIVEN output slot s (numbered from 1 among the output
+            slots), the row's values for it:
+            PD<r>_<s>  a PWM duty, 0-255
+            TF<r>_<s>  a tone's frequency in Hz
+            TH<r>_<s>, TW<r>_<s>, TL<r>_<s>
+                       a pulse train's rate in Hz, pulse width and length in ms,
+                       in three consecutive slots
+
+DRIVEN OUTPUTS (`TASKS.md#driven-outputs`). An output slot the definition
+drives as `pwm`, `tone` or `train` gets one bit PER ROW rather than per
+channel, since each row drives it at its own values: `Lowered.drives` names
+each such bit's kind and its first parameter slot, which the hardware layer
+reads when the core drives the bit HIGH. To the core it is a bit like any other.
 """
 
 from __future__ import annotations
@@ -59,7 +72,7 @@ from typing import Any, Sequence
 #: which the spine runner announces as `INTERP=<n>`. A run's snapshot records
 #: it beside the table, and replay refuses one it does not know. 1 is the trial
 #: runner's, in the same numbering space (`analytics/stream/replay.py`).
-INTERP_VERSION = 4
+INTERP_VERSION = 5
 
 #: BoxInterp.h's constants (`INTERP_NONE`, `INTERP_RISE`, ...), mirrored.
 NONE = 0xFF
@@ -104,6 +117,16 @@ TIMEOUT = "timeout"
 
 TRIALS_KEY = "NT"
 
+#: Inputs and outputs are each bits of a uint32_t (BoxInterp.h).
+CHANNELS = 32
+
+#: Each drive kind's parameters, in slot order: (role, wire key prefix).
+DRIVE_PARAMS: dict[str, tuple[tuple[str, str], ...]] = {
+    "pwm": (("pwm_duty", "PD"),),
+    "tone": (("tone_hz", "TF"),),
+    "train": (("train_hz", "TH"), ("train_width", "TW"), ("train_ms", "TL")),
+}
+
 #: The bytes one `InterpStateRow` and one `InterpEdgeRow` take on the board
 #: (AVR packs them: two uint32_t and ten uint8_t; three uint8_t). The table sits
 #: in RAM, so its size is checked at save (`TASKS.md#spine-diagnostics`).
@@ -126,9 +149,11 @@ class ParamSlot:
     """What one parameter slot is, so the profile can declare a field for it.
 
     `role` is `trials`, `timer`, `hold`, `count`, `count_max`, `reward_ms` or
-    `reward_permille`. `phase` is the phase a timer, hold or count belongs to; `row` the row index a
-    reward belongs to; `entry` the map key (a slot, or `timeout`) of a window
-    entry's probability, None for an Outcome with no window before it.
+    `reward_permille`, or a driven output's value (`DRIVE_PARAMS`). `phase` is the
+    phase a timer, hold or count belongs to; `row` the row index a reward or a
+    drive value belongs to; `entry` the map key (a slot, or `timeout`) of a
+    window entry's probability, None for an Outcome with no window before it;
+    `slot` the driven output slot a drive value is for.
     """
 
     key: str
@@ -136,6 +161,7 @@ class ParamSlot:
     phase: int | None = None
     row: int | None = None
     entry: str | None = None
+    slot: str | None = None
 
 
 @dataclass(frozen=True)
@@ -149,7 +175,9 @@ class Lowered:
     each bit is. `phases[s]` and `rows[s]` are the phase index and the row index
     state s belongs to: no phase for the pick state, and no row for it or for an
     end, which every row shares. `counter` is BoxInterp.h's `InterpCounter` as
-    (count_min, count_max, ratios), None for a spine with no Counter.
+    (count_min, count_max, ratios), None for a spine with no Counter. `drives` is
+    (output bit, kind, first parameter slot) for every driven output bit, in bit
+    order.
     """
 
     states: tuple[tuple[int, ...], ...]
@@ -160,6 +188,7 @@ class Lowered:
     rows: tuple[int | None, ...]
     inputs: tuple[tuple[str, str], ...]
     outputs: tuple[tuple[str, str], ...]
+    drives: tuple[tuple[int, str, int], ...] = ()
     counter: tuple[int, int, tuple[int, ...]] | None = None
 
 
@@ -188,27 +217,33 @@ def reward_permille_key(row_index: int, entry: int | None = None) -> str:
     return f"RP{row_index + 1}" if entry is None else f"RP{row_index + 1}_{entry}"
 
 
+def drive_keys(row_index: int, slot_number: int, kind: str) -> tuple[str, ...]:
+    """The wire keys of a row's values for driven output slot number `slot_number` (from 1)."""
+    return tuple(f"{prefix}{row_index + 1}_{slot_number}" for _, prefix in DRIVE_PARAMS[kind])
+
+
 def channel_bits(
-    slots: Sequence[str], rows: Sequence[dict[str, Any]]
+    slots: Sequence[str], rows: Sequence[dict[str, Any]], per_row: Any = ()
 ) -> tuple[tuple[tuple[str, str], ...], tuple[dict[str, int], ...]]:
     """Bit i is the i-th distinct channel bound to one of `slots`, by slot and then by row.
 
     Returns each bit's (slot, channel) and, per row, each slot's bit. A slot a
     row leaves unbound gets a bit of its own, with channel "", so a half-built
-    task still lowers.
+    task still lowers. A slot in `per_row` (a driven output) gets a bit of its
+    own in every row, whatever it binds.
     """
     bit_of: dict[Any, int] = {}
     entries: list[tuple[str, str]] = []
-    per_row: list[dict[str, int]] = [{} for _ in rows]
+    bits: list[dict[str, int]] = [{} for _ in rows]
     for slot in slots:
         for r, row in enumerate(rows):
             channel = (row.get("bind") or {}).get(slot) or ""
-            key: Any = channel or (slot, r)
+            key: Any = (slot, r) if slot in per_row or not channel else channel
             if key not in bit_of:
                 bit_of[key] = len(entries)
                 entries.append((slot, channel))
-            per_row[r][slot] = bit_of[key]
-    return tuple(entries), tuple(per_row)
+            bits[r][slot] = bit_of[key]
+    return tuple(entries), tuple(bits)
 
 
 def _entries(phase: dict[str, Any]) -> list[str]:
@@ -227,14 +262,20 @@ def lower(
     inputs: Sequence[str],
     outputs: Sequence[str],
     rows: Sequence[dict[str, Any]] | None = None,
+    drives: dict[str, str] | None = None,
 ) -> Lowered:
     """The state table for `phases` over `rows`.
 
     `inputs` and `outputs` are the slot ids of each direction, in slot order.
     Each row is `{bind: {slot: channel}, map: {key: entry}}` in the definition's
     JSON form. Without `rows`, one row binds each slot to a channel of its own
-    name.
+    name. `drives` maps each driven output slot to its kind (`DRIVE_PARAMS`).
     """
+    drives = dict(drives or {})
+    for slot, kind in drives.items():
+        if slot not in outputs or kind not in DRIVE_PARAMS:
+            raise LoweringError(f"{slot!r} driven as {kind!r}: a driven slot is an output slot, "
+                                f"driven as one of {tuple(DRIVE_PARAMS)}")
     if rows is None:
         rows = [{"bind": {s: s for s in (*inputs, *outputs)}}]
     if not rows:
@@ -269,7 +310,11 @@ def lower(
     decided = next((i for i, kind in enumerate(kinds) if kind == "outcome"), len(kinds))
 
     in_bits, row_in = channel_bits(inputs, rows)
-    out_bits, row_out = channel_bits(outputs, rows)
+    out_bits, row_out = channel_bits(outputs, rows, per_row=drives)
+    for what, bits in (("input", in_bits), ("output", out_bits)):
+        if len(bits) > CHANNELS:
+            raise LoweringError(f"the rows bind {len(bits)} {what} bits, and a table speaks of at most "
+                                f"{CHANNELS}: a driven slot takes a bit in every row")
 
     def input_bit(r: int, i: int, slot: Any) -> int:
         if slot not in row_in[r]:
@@ -328,7 +373,17 @@ def lower(
             slots.append(ParamSlot(reward_permille_key(r), "reward_permille", row=r))
         for k, key in lines:
             slots.append(ParamSlot(reward_permille_key(r, k), "reward_permille", row=r, entry=key))
+        for number, out_slot in enumerate(outputs, 1):
+            if out_slot in drives:
+                kind = drives[out_slot]
+                slots += [ParamSlot(key, role, row=r, slot=out_slot)
+                          for key, (role, _) in zip(drive_keys(r, number, kind), DRIVE_PARAMS[kind])]
     slot = {s.key: n for n, s in enumerate(slots)}
+    number_of = {s: n for n, s in enumerate(outputs, 1)}
+    drive_bits = tuple(sorted(
+        (row_out[r][s], kind, slot[drive_keys(r, number_of[s], kind)[0]])
+        for r in range(len(rows)) for s, kind in drives.items()
+    ))
 
     states: list[list[Any]] = []
     edges: list[list[Any]] = []
@@ -506,5 +561,6 @@ def lower(
         rows=tuple(row_of),
         inputs=in_bits,
         outputs=out_bits,
+        drives=drive_bits,
         counter=counter,
     )

@@ -353,7 +353,7 @@ def _uncoded(chans: registry.ChannelMap) -> list[str]:
     out = []
     for c in chans:
         named = {edge for edge, _code in c.edges}
-        out += [f"{c.name}.{edge}" for edge in registry.EDGES.get(c.type, ()) if edge not in named]
+        out += [f"{c.name}.{edge}" for edge in registry.edges_of(c.type, c.mode) if edge not in named]
     return out
 
 

@@ -95,6 +95,11 @@ class StartCommand:
 
     tokens: tuple[str, ...]
     set_lines: tuple[str, ...] = field(default=("SET",))
+    #: Each pulse train of a spine task (`TASKS.md#driven-outputs`): its channel
+    #: and the wire keys of its rate and width. The board answers `CLAMPED
+    #: <width key>` when the pair would hold the line on, so the refusal can say
+    #: which pair it was rather than a range neither value left.
+    trains: tuple[tuple[str, str, str], ...] = ()
 
     @property
     def begin_line(self) -> str:
@@ -120,6 +125,20 @@ class StartCommand:
         """
         return f"START {SEED_WIRE_KEY}={seed}"
 
+    def _train_pair(self, key: str) -> tuple[str, int, int] | None:
+        """(channel, hz, width) when `key` is a train's width and the pair this
+        block sends does not fit (`spine_train_fits` in BoxSpine.h); else None."""
+        sent = dict(token.split("=", 1) for token in self.tokens)
+        for channel, hz_key, width_key in self.trains:
+            if key != width_key:
+                continue
+            try:
+                hz, width = int(sent[hz_key]), int(sent[width_key])
+            except (KeyError, ValueError):
+                return None
+            return (channel, hz, width) if hz >= 1 and width >= 1000 // hz else None
+        return None
+
     def verify(self, reply: ParamsReply | None) -> None:
         """Raise `StartRefused` unless the board's reply clears the start.
 
@@ -134,17 +153,26 @@ class StartCommand:
             )
         if reply.clamped:
             keys = list(reply.clamped)
-            # `*` is the board's name for more keys than it can list.
-            named = "several values" if "*" in keys else ", ".join(keys)
-            raise StartRefused(
-                ErrCode.PARAMS_CLAMPED,
-                "clamped",
-                f"The board could not hold {named} exactly as chosen (outside the range "
-                f"it can run, or not a number of the kind the setting takes), so it "
-                f"would not run the value that was chosen. Change the value and start "
-                f"again.",
-                {"keys": keys},
-            )
+            pairs = [self._train_pair(key) for key in keys]
+            ranged = [key for key, pair in zip(keys, pairs) if pair is None]
+            # A train's width and rate each in range, but the pair would hold the
+            # line on: say both and the rule, never a range neither value left.
+            trains = [
+                f"The train on {channel} has a {width} ms pulse at {hz} Hz; a pulse must be shorter "
+                f"than the {1000 // hz} ms between pulses, so lower the width or the frequency"
+                for channel, hz, width in (p for p in pairs if p is not None)
+            ]
+            message = ". ".join(trains) + ", and start again." if trains else ""
+            if ranged:
+                # `*` is the board's name for more keys than it can list.
+                named = "several values" if "*" in ranged else ", ".join(ranged)
+                message = (". ".join(trains) + ". " if trains else "") + (
+                    f"The board could not hold {named} exactly as chosen (outside the range "
+                    f"it can run, or not a number of the kind the setting takes), so it "
+                    f"would not run the value that was chosen. Change the value and start "
+                    f"again."
+                )
+            raise StartRefused(ErrCode.PARAMS_CLAMPED, "clamped", message, {"keys": keys})
         if reply.count != self.count:
             raise StartRefused(
                 ErrCode.PARAMS_MISMATCH,
@@ -350,4 +378,10 @@ def build_start_command(profile: TaskProfile | None, config: dict[str, Any]) -> 
     """
     tokens = _tokens(profile, config)
     name = profile.task_name if profile is not None else "profile-less sketch"
-    return StartCommand(tuple(tokens), _pack(name, tokens))
+    spine = getattr(profile, "spine", None) or {}
+    trains = tuple(
+        (str(o.get("channel")), o["params"][0], o["params"][1])
+        for o in spine.get("outputs", [])
+        if isinstance(o, dict) and o.get("drive") == "train" and len(o.get("params") or []) == 3
+    )
+    return StartCommand(tuple(tokens), _pack(name, tokens), trains)

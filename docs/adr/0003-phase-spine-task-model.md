@@ -60,7 +60,14 @@ The lab has recorded behavior but no neural data, so new sessions need not repro
   - for a reward line, `serves`: the port it pays at;
   - the code names of its edges: `enter`/`exit`, `on`/`off` or `train_on`/`train_off`.
 - **The pin map is local**: channel name → pin, per machine.
-- **The generator refuses hardware the board cannot run**: two PWM channels on conflicting timers, or a second tone channel.
+- **The generator refuses hardware the board cannot run**:
+  - a PWM channel on a pin no timer drives;
+  - a PWM channel on Timer2's pins (9 and 10) beside a tone channel, since `tone()` takes Timer2;
+  - a second tone channel.
+
+  Two PWM channels may share a timer: each keeps its own duty at the timer's frequency.
+- **A train's width must be shorter than its period**, at save and on the board, or the line would stay on.
+- **A PWM, tone or train channel never sits where the trial runner drives a plain line**, since it would be held on there.
 - **Retired from the schema:** `kind`, `port_slots`, `onset_strobe`, `well`, and every lookup of a pin by channel name.
 - **Codes are allocated when the channel set is edited.** Each is a fresh code named `<CHANNEL>_<EDGE>`, shown in the save preview. Renaming a channel never renames its codes.
 - **One machine edits the channel set at a time**, and the other imports it. A conflicting import is refused whole, as a vocabulary import is today.

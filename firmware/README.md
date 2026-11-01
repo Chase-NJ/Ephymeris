@@ -149,8 +149,8 @@ flowchart LR
 | `BoxPins.h` | The box as built, every pin `#ifndef`-guarded | The generated `TaskPins.h` wins wherever it speaks |
 | `BoxStrobes.h` | Nothing but a guard | Every `BF_*` code comes from the generated `TaskPins.h` ([TASKS.md › Strobe vocabulary](../docs/TASKS.md#strobe-vocabulary)) |
 | `BoxUtility.h` | The box utility: commands, pulses, `STATUS`, the self-test | Knows no box. Reads the generated `UtilityChannels.h` ([TASKS.md › The box utility](../docs/TASKS.md#the-box-utility)) |
-| `BoxInterp.h` | The phase interpreter's pure core: a state table walked one 1 ms tick at a time, and the session RNG | No pin, clock or Arduino header. Its Python port is `analytics/stream/replay.py`, held equal by `run_diff.sh` ([TASKS.md › Compiling and the host tests](../docs/TASKS.md#compiling-and-the-host-tests)) |
-| `BoxSpine.h` | The core's hardware layer: debounced inputs, a step every millisecond, the outputs, the strobes, the `SET` handshake over the table's parameters, and the session end rule | Every spine task runs it. The task arrives as the generated `TaskSpine.h`, so none is written by hand ([TASKS.md › Spine tasks](../docs/TASKS.md#spine-tasks)) |
+| `BoxInterp.h` | The phase interpreter's pure core: a state table walked one 1 ms tick at a time, the session RNG, and a pulse train's shape | No pin, clock or Arduino header. Its Python port is `analytics/stream/replay.py`, held equal by `run_diff.sh` ([TASKS.md › Compiling and the host tests](../docs/TASKS.md#compiling-and-the-host-tests)) |
+| `BoxSpine.h` | The core's hardware layer: debounced inputs, a step every millisecond, the outputs (levels, PWM, tone and pulse trains), the strobes, the `SET` handshake over the table's parameters, and the session end rule | Every spine task runs it. The task arrives as the generated `TaskSpine.h`, so none is written by hand ([TASKS.md › Spine tasks](../docs/TASKS.md#spine-tasks)) |
 
 A sketch includes the generated headers around the library, and the order matters:
 

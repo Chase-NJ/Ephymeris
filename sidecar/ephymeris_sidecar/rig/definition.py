@@ -100,7 +100,7 @@ class WiringSaveBlocked(Exception):
     not allow one yet (`hardware_service.save_blocked`: stored wiring with
     nothing to repair, which only Reset replaces, or pins read from a stored
     file that were not confirmed, RIG108), or the draft breaks a wiring rule
-    (RIG101-RIG107). The message says what to do."""
+    (RIG101-RIG107, RIG109). The message says what to do."""
 
 
 class RigInUse(Exception):

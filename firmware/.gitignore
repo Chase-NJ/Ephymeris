@@ -14,6 +14,7 @@ libraries/**/extras/host_test/test_box
 libraries/**/extras/host_test/test_interp
 libraries/**/extras/host_test/interp_driver
 libraries/**/extras/host_test/test_spine
+libraries/**/extras/host_test/test_spine_drives
 libraries/**/extras/host_test/__pycache__/
 libraries/**/extras/host_test/*.exe
 libraries/**/extras/host_test/*.obj

@@ -17,7 +17,7 @@ import type { RigAllocation, RigDocument, RigImpact, RigProblem, RigStatus } fro
  * both forced by what a wiring document is.
  *
  * VALIDATION IS A ROUND TRIP, not a local check. `hardware.preview` runs the
- * JSON Schema and RIG101–RIG107 against the composed channel map — the same rules
+ * JSON Schema and RIG101–RIG107, RIG109 against the composed channel map — the same rules
  * the compiler runs — so the editor cannot drift from what a save will accept.
  * Debounced at 200 ms, longer than the spec editor's 120 ms because a preview
  * also recompiles every stored task to compute `breaks`.
@@ -32,7 +32,7 @@ export interface RigSession {
   baseline: RigDocument | null;
   dirty: boolean;
   status: RigStatus | null;
-  /** The DRAFT's schema violations and RIG101–RIG107. What is wrong with the
+  /** The DRAFT's schema violations and RIG101–RIG107, RIG109. What is wrong with the
    *  rig itself is `status.notices`, which no edit clears (`rigView.ts`). */
   problems: RigProblem[];
   /** Tasks this change would newly stop compiling. */

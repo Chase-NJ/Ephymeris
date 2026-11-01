@@ -189,13 +189,21 @@ class StageRow:
 
 @dataclass(frozen=True)
 class SpineSlot:
-    """A role in the spine (`port`, `sample`), bound to a channel by each row."""
+    """A role in the spine (`port`, `sample`), bound to a channel by each row.
+
+    Its type and mode are a channel's (`TASKS.md#driven-outputs`): a slot binds
+    only a channel of the same type and mode.
+    """
 
     id: str
-    type: str  # digital_in | digital_out
+    type: str  # digital_in | digital_out | pwm_out | tone_out
+    mode: str | None = None  # a digital_out's "train"; None is a level line
 
     def to_json(self) -> dict[str, Any]:
-        return {"id": self.id, "type": self.type}
+        out = {"id": self.id, "type": self.type}
+        if self.mode is not None:
+            out["mode"] = self.mode
+        return out
 
 
 @dataclass(frozen=True)
@@ -272,6 +280,10 @@ class SpineRow:
 
     `reward_permille` is read only by an Outcome with no Response window before
     it; after a window each map entry carries its own.
+
+    `drive` gives the row's values for each driven output slot
+    (`TASKS.md#driven-outputs`): `{"duty": n}` for a PWM slot, `{"hz": n}` for
+    a tone, `{"hz": n, "widthMs": n, "ms": n}` for a pulse train.
     """
 
     id: str
@@ -280,12 +292,15 @@ class SpineRow:
     reward_ms: int = 100
     reward_permille: int = 1000
     map: dict[str, MapEntry] = field(default_factory=dict)
+    drive: dict[str, dict[str, int]] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, Any]:
         out: dict[str, Any] = {"id": self.id, "name": self.name, "bind": dict(self.bind),
                                "rewardMs": self.reward_ms, "rewardPermille": self.reward_permille}
         if self.map:
             out["map"] = {key: entry.to_json() for key, entry in self.map.items()}
+        if self.drive:
+            out["drive"] = {slot: dict(values) for slot, values in self.drive.items()}
         return out
 
 
@@ -381,9 +396,12 @@ class Spine:
                 reward_ms=_int(r.get("rewardMs", 100), "rewardMs"),
                 reward_permille=_int(r.get("rewardPermille", 1000), "rewardPermille"),
                 map=_contingency_map(r.get("map")),
+                drive=_drive(r.get("drive")),
             ))
         return Spine(
-            slots=tuple(SpineSlot(id=str(s.get("id", "")), type=str(s.get("type", ""))) for s in objects("slots")),
+            slots=tuple(SpineSlot(id=str(s.get("id", "")), type=str(s.get("type", "")),
+                                  mode=_opt_str(s.get("mode")))
+                        for s in objects("slots")),
             phases=phases,
             rows=tuple(rows),
             blocks=tuple(
@@ -574,6 +592,17 @@ def _contingency_map(raw: Any) -> dict[str, MapEntry]:
             hold=hold,
         )
     return out
+
+
+def _drive(raw: Any) -> dict[str, dict[str, int]]:
+    """A row's `drive`, refused only for a value of the wrong JSON type: which
+    keys a slot needs, and their ranges, are SPN111's."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict) or any(not isinstance(v, dict) for v in raw.values()):
+        raise TaskDefinitionError("a row's drive takes each driven slot to an object of values")
+    return {str(slot): {str(k): _int(v, f"drive.{slot}.{k}") for k, v in values.items()}
+            for slot, values in raw.items()}
 
 
 def _req_str(raw: dict, key: str) -> str:

@@ -220,7 +220,8 @@ against a live RHX. Everything else in the Intan suite runs against `tests/fake_
 
 **Firmware: host tests** in `firmware/libraries/BehaviorBox/extras/host_test/`. They compile the
 shared library without `-fpermissive`, which makes them the strictest type check the sketches get.
-`run_diff.sh` is the differential test between the C interpreter core and the Python replay, and
+`run_diff.sh` is the differential test between the C interpreter core and the Python replay, pulse
+trains included, and
 `run_spine.sh` tests the spine runner around that core
 ([Compiling and the host tests](docs/TASKS.md#compiling-and-the-host-tests)).
 
@@ -308,6 +309,10 @@ macOS as run-from-source. Packaged-only path bugs exist (Windows verbatim `\\?\`
   measured how far `free_ram` sits below the compiler's figure ([the RAM budget](docs/TASKS.md#spine-diagnostics)).
   Not yet done: running one with an animal or a catch vessel, so that a response, a hold, an abort or a
   press comes from a real input, and reading that run's trial table in Analytics.
+- **PWM, tone and pulse trains on a real box.** [Driven outputs](docs/TASKS.md#driven-outputs) are
+  proven on the host, every pulse's tick included. Not yet seen on a Mega: an LED at a duty, a
+  speaker at a pitch, and a 20 Hz, 5 ms train's edges measured against their ticks, which needs an
+  instrument (an RHX digital input beside the sync line, or a scope).
 
 ### Known bugs
 

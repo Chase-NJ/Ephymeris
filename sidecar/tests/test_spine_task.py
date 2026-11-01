@@ -149,7 +149,7 @@ def test_a_task_with_a_window_and_rows_round_trips_and_is_clean(make):
 def test_the_go_no_go_snapshot_names_each_bit_and_annotates_each_state():
     definition = TaskDefinition.from_json(fixture.go_no_go())
     spine = generate.build_profile(definition).spine
-    assert spine["interp"] == lowering.INTERP_VERSION == 4
+    assert spine["interp"] == lowering.INTERP_VERSION == 5
     # One bit per channel: `sample` is two odor lines, one per row.
     assert [(o["slot"], o["channel"]) for o in spine["outputs"]] == [
         ("cue", "trial_light"), ("sample", "odor_line_1"), ("sample", "odor_line_2"), ("reward", "fluid_2")]
@@ -190,7 +190,7 @@ def test_the_tracer_s_reward_keys_name_its_row():
 
 def test_a_go_no_go_folder_carries_its_table():
     header = generate.task_spine_h(TaskDefinition.from_json(fixture.go_no_go()))
-    assert "#define SPINE_INTERP 4" in header and "#error" not in header
+    assert "#define SPINE_INTERP 5" in header and "#error" not in header
     assert "#define SPINE_NUM_STATES 15" in header and "#define SPINE_NUM_OUTPUTS 4" in header
 
 
@@ -405,6 +405,28 @@ def test_the_ram_budget_is_what_an_avr_build_adds_for_the_task(tmp_path):
     assert globals_ <= spine_module.RUNNER_RAM_BYTES + spine_module.TASK_RAM_MAX
     assert 8192 - (spine_module.RUNNER_RAM_BYTES + spine_module.TASK_RAM_MAX) == 2795
 
+    # Driven outputs (TASKS.md#driven-outputs), with a tone and without one: the
+    # drives and tone()'s own globals are counted too.
+    fixture.install(*fixture.issued_rig(driven=True))
+    for raw in (fixture.stimulus(), no_tone(fixture.stimulus())):
+        definition = TaskDefinition.from_json(raw)
+        assert store.save(definition) == [], raw["id"]
+        low = spine_module._resolve(definition).lowered
+        globals_ = _avr_globals(store.sketch_dir(definition))
+        counted = spine_module.RUNNER_RAM_BYTES + spine_module.task_ram_bytes(low)
+        assert 0 <= counted - globals_ <= 16, (raw["id"], globals_, counted)
+
+
+def no_tone(raw: dict) -> dict:
+    """`fixture.stimulus()` without its tone slot: PWM and a train only."""
+    raw = dict(raw, id="spine_no_tone", name="Spine No Tone")
+    raw["slots"] = [s for s in raw["slots"] if s["id"] != "tone"]
+    raw["spine"][1]["outputs"] = ["light", "laser"]
+    for row in raw["rows"]:
+        row["bind"].pop("tone")
+        row["drive"].pop("tone")
+    return raw
+
 
 def test_a_tables_bytes_are_its_rows_at_the_c_structs_sizes():
     low = generate.build_profile(TaskDefinition.from_json(fixture.go_no_go())).spine["table"]
@@ -495,7 +517,7 @@ def test_the_snapshot_and_the_folder_carry_the_counter():
     table = generate.build_profile(pr).spine["table"]
     assert table["counter"] == {"min": lowering.NONE, "max": lowering.NONE, "ratios": fixture.RICHARDSON_ROBERTS}
     header = generate.task_spine_h(pr)
-    assert "#define SPINE_INTERP 4" in header and "#error" not in header
+    assert "#define SPINE_INTERP 5" in header and "#error" not in header
     assert "#define SPINE_NUM_RATIOS 10" in header and "1, 2, 4, 6, 9, 12, 15, 20, 25, 32" in header
     fr = generate.build_profile(TaskDefinition.from_json(fixture.fixed_ratio()))
     assert fr.spine["table"]["counter"] == {"min": 1, "max": 1, "ratios": []}

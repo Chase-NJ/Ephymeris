@@ -38,7 +38,7 @@ from ..tasks import profile as task_profile
 from ..taskdef import lowering
 from ..tasks.profile import TaskProfile
 from . import reader, stream
-from .stream import infer
+from .stream.legacy import infer
 from .stream import spine as spine_stream
 from .repository import AnalyticsRepository, CachedRun, CacheKey
 
@@ -825,6 +825,17 @@ def _canary_runs(
     })
     snapshot = task_profile.parse_profile(declared)
     utility = task_profile.parse_profile({**declared, "kind": "utility"})
+    # The legacy adapter's branches (`ANALYTICS.md#how-a-legacy-run-becomes-a-trial-table`):
+    # two conditions on one onset, each keeping its own verdict, and a profile
+    # naming no trial light and no reward, whose tallies stay null.
+    shared_onset = task_profile.parse_profile({**declared, "liveMetrics": [
+        *declared["liveMetrics"][:2],
+        {"id": "p_l_odor1", "label": "P(L | Odor 1)", "triggerCode": code("ODOR_1_ON"),
+         "successCode": code("WATER_POKE_L"), "alternateCode": code("WATER_POKE_R"), "windowSize": 3},
+    ]})
+    unnamed = {"LIGHTS_ON", "ODOR_POKE", "FLUID_L", "FLUID_R"}
+    no_light_no_reward = task_profile.parse_profile({**declared, "strobes": {
+        c: n for c, n in declared["strobes"].items() if n not in unnamed}})
     today = task_profile.parse_profile(
         {k: v for k, v in declared.items() if k != "strobes"}, seed
     )
@@ -860,6 +871,8 @@ def _canary_runs(
             ("inferred", nothing, document(session)),
             ("no-condition", nothing, document([code("WATER_POKE_R")] * 3)),
             ("utility", held(utility, "snapshot"), document(session)),
+            ("legacy-shared-onset", held(shared_onset, "snapshot"), document(session)),
+            ("legacy-no-light-no-reward", held(no_light_no_reward, "snapshot"), document(session)),
             ("short", held(snapshot, "snapshot"), document(session[:12])),
             ("unclean", held(snapshot, "snapshot"), unclean),
             # A spine run over the same onset-shaped stream, with no table:

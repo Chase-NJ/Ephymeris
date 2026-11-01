@@ -40,8 +40,30 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable, Sequence
 
-from ...taskdef.lowering import OUTCOME_CLASSES
+from ...taskdef.lowering import OUTCOME_CLASSES, OUTCOME_CORRECT
 from . import replay as rp
+
+CORRECT = OUTCOME_CLASSES[OUTCOME_CORRECT - 1]
+
+#: The outcome classes a trial is right in, for a spine row's `correct` and so
+#: for P(correct | row) and the pooled figure (`ANALYTICS.md#metrics-from-the-trial-table`).
+#: A withhold is a no-go row's correct answer, so a perfect go/no-go session
+#: scores 1.0. Every other class (false alarm, wrong response, omission, hold
+#: broken, an abort, one added later) is a miss, and a trial with no class is
+#: excluded.
+HITS = frozenset({CORRECT, "withheld"})
+
+#: The classes a trial is excluded in, as a legacy run excludes a trial the
+#: animal left before it was answered: an abort is neither right nor wrong. It
+#: still counts in the class tallies and on the engagement ladder.
+EXCLUDED = frozenset({"abort_before_stimulus", "abort_during_sampling"})
+
+
+def correct_of(outcome: str | None) -> bool | None:
+    """A spine trial's `correct`: in `HITS`, a miss, or None (no class, or `EXCLUDED`)."""
+    if outcome is None or outcome in EXCLUDED:
+        return None
+    return outcome in HITS
 
 
 @dataclass(frozen=True)
@@ -53,6 +75,8 @@ class Trial:
     #: First entry tick of each state the trial entered.
     entries: dict[int, int]
     outcome: int = 0
+    #: The tick it entered the outcome-bearing state its class is read from.
+    outcome_at: int | None = None
     #: (input bit, RISE or FALL), or None.
     response: tuple[int, int] | None = None
     response_at: int | None = None
@@ -251,6 +275,7 @@ def _close(t: _Open, states: Sequence[rp.StateRow], phase, deciding: frozenset[i
         at=t.at,
         entries=entries,
         outcome=outcome,
+        outcome_at=t.path[marked[-1]][1] if marked else None,
         response=response,
         response_at=response_at,
         latency=latency,
@@ -302,10 +327,14 @@ class Naming:
 
 @dataclass(frozen=True)
 class ReplayTrial:
-    """One row of the trial table, named (`ANALYTICS.md#the-trial-table`)."""
+    """One row of the trial table (`ANALYTICS.md#the-trial-table`): a replayed
+    spine run's, named, and a decoded legacy run's alike
+    (`ANALYTICS.md#how-a-legacy-run-becomes-a-trial-table`). Every value is plain
+    (numbers, strings, lists, a string-keyed map, None), so a row serialises as is."""
 
     index: int
-    at_ms: int
+    #: None only on a legacy file with no usable clock.
+    at_ms: int | None
     block: str | None = None
     row: str | None = None
     row_name: str | None = None
@@ -316,12 +345,33 @@ class ReplayTrial:
     response_ms: int | None = None
     latency_ms: int | None = None
     outcome: str | None = None
+    #: When the outcome was settled: the tick its class was read from, or a
+    #: legacy run's outcome strobe.
+    outcome_ms: int | None = None
+    #: Right, wrong, or not scored (None): `outcome` in `HITS` on a spine run,
+    #: the hit or miss of its condition on a legacy one.
+    correct: bool | None = None
     rewarded: bool = False
     reward_line: str | None = None
     reward_ms: int | None = None
-    correction: bool = False
+    #: None when the run cannot say, as a legacy run cannot.
+    correction: bool | None = False
     input_counts: tuple[InputCount, ...] = ()
     complete: bool = True
+    #: The trial opens a presentation on the engagement ladder.
+    presented: bool = True
+    #: A legacy trial's hit (True), miss (False) or exclusion (None) under every
+    #: condition its onset opens, as (condition id, verdict) pairs: one, unless a
+    #: profile declares two conditions on one onset. Empty on a spine run.
+    scores: tuple[tuple[str, bool | None], ...] = ()
+
+    def scored(self, condition: str) -> bool:
+        """The trial was scored under `condition`: its onset opens it."""
+        return any(c == condition for c, _ in self.scores)
+
+    def verdict(self, condition: str) -> bool | None:
+        """Its hit or miss under `condition`, or None (excluded, or not scored under it)."""
+        return next((v for c, v in self.scores if c == condition), None)
 
     def to_json(self) -> dict[str, object]:
         return {
@@ -337,12 +387,16 @@ class ReplayTrial:
             "responseMs": self.response_ms,
             "latencyMs": self.latency_ms,
             "outcome": self.outcome,
+            "outcomeMs": self.outcome_ms,
+            "correct": self.correct,
             "rewarded": self.rewarded,
             "rewardLine": self.reward_line,
             "rewardMs": self.reward_ms,
             "correction": self.correction,
             "inputCounts": [c.to_json() for c in self.input_counts],
             "complete": self.complete,
+            "presented": self.presented,
+            "scores": [{"condition": condition, "correct": verdict} for condition, verdict in self.scores],
         }
 
 
@@ -405,6 +459,8 @@ def name(trial: Trial, naming: Naming) -> ReplayTrial:
         response_ms=trial.response_at,
         latency_ms=trial.latency,
         outcome=class_name(trial.outcome),
+        outcome_ms=trial.outcome_at,
+        correct=correct_of(class_name(trial.outcome)),
         rewarded=trial.rewarded,
         reward_line=", ".join(channel(naming.outputs, j) for j in lines) if lines else None,
         reward_ms=trial.reward_ms,

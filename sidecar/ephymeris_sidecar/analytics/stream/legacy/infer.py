@@ -48,9 +48,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, replace
 
-from ...rig import registry
-from ...rig.registry import Vocabulary
-from ...tasks.profile import LiveMetric, TaskProfile
+from ....rig import registry
+from ....rig.registry import Vocabulary
+from ....tasks.profile import LiveMetric, TaskProfile
 
 #: The shape of a stimulus onset — `ODOR_3_ON`, a hypothetical `TONE_2_ON`.
 #: The same rule the task editor's picker applies, and for the same reason:

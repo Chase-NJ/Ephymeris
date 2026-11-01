@@ -39,7 +39,7 @@ from ephymeris_sidecar.ports.manager import FQBN, PortManager
 from ephymeris_sidecar.protocol import Cmd, ErrCode, Evt
 from ephymeris_sidecar.server import SidecarServer
 from ephymeris_sidecar.settings import SidecarSettings
-from ephymeris_sidecar.analytics.stream import MetricSet
+from ephymeris_sidecar.analytics.stream.legacy import MetricSet
 from ephymeris_sidecar.tasks.profile import load_profile, parse_profile
 from ephymeris_sidecar.tasks.start_command import build_start_command
 from ephymeris_sidecar.utility import UtilityBaseline

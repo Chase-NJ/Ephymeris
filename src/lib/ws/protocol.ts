@@ -1490,12 +1490,26 @@ export interface InputCount {
   count: number;
 }
 
-/** One trial of a spine run, read off its replay (`ANALYTICS.md#the-trial-table`). */
+/** A legacy trial's verdict under one condition its onset opens. */
+export interface ConditionScore {
+  /** The legacy condition's id (its `liveMetrics` id). */
+  condition: string;
+  /** A hit, a miss, or null for excluded. */
+  correct: boolean | null;
+}
+
+/**
+ * One trial of a run: a spine run's read off its replay, a legacy run's off its strobes
+ * (`ANALYTICS.md#the-trial-table`).
+ */
 export interface ReplayTrial {
   /** 0-based, in the run's order. */
   index: number;
-  /** The trial's start, in ms from the session's first tick. */
-  atMs: number;
+  /**
+   * The trial's start: ms from the session's first tick, or from a legacy run's earliest strobe.
+   * Null only on a legacy file with no usable clock.
+   */
+  atMs: number | null;
   /** The block's id, when the table can say. */
   block: string | null;
   /** The row's id, when the table can say. */
@@ -1507,31 +1521,56 @@ export interface ReplayTrial {
    * it never reached. Empty when the snapshot cannot map states to phases.
    */
   phaseEntries: Array<number | null>;
-  /** The input channel whose edge was the response. */
+  /**
+   * The input channel whose edge was the response; on a legacy run, the strobe that decided its
+   * condition's verdict.
+   */
   response: string | null;
   responseEdge: "rise" | "fall" | null;
   responseMs: number | null;
-  /** Response ms minus the ms its phase was entered. */
+  /** Response ms minus the ms its phase was entered (a legacy run: minus `atMs`). */
   latencyMs: number | null;
-  /** Its outcome class; null when it reached none. */
+  /**
+   * Its outcome class; null when it reached none, or when a legacy no-go trial's strobes cannot
+   * say (`TrialTable.gaps`).
+   */
   outcome: string | null;
+  /** When the outcome was settled. */
+  outcomeMs: number | null;
+  /** Right, wrong, or null for a trial P(correct) excludes (no class, or an abort). */
+  correct: boolean | null;
   rewarded: boolean;
-  /** The output channel that paid. */
+  /** The output channel that paid (a legacy run: its reward strobe). */
   rewardLine: string | null;
   /** How long the line was open. */
   rewardMs: number | null;
-  /** A correction trial; always false until blocks have a correction rule. */
-  correction: boolean;
+  /**
+   * A correction trial; false until blocks have a correction rule, null on a legacy run, which
+   * cannot say.
+   */
+  correction: boolean | null;
   /** Non-zero counts only. */
   inputCounts: InputCount[];
-  /** False only for a crashed run's cut-off last trial. */
+  /** False only for a crashed spine run's cut-off last trial. */
   complete: boolean;
+  /** The trial opens a presentation on the engagement ladder. */
+  presented: boolean;
+  /** A legacy trial's verdict under every condition its onset opens. Empty on a spine run. */
+  scores: ConditionScore[];
 }
 
-/** A spine run's trial table (`ANALYTICS.md#the-trial-table`). */
+/** A run's trial table (`ANALYTICS.md#the-trial-table`). */
 export interface TrialTable {
-  /** Each phase's kind, in spine order, for labels only. */
+  /** Read off a replay, or by the legacy decoder. */
+  kind: "replay" | "legacy";
+  /** Each phase's kind, in spine order, for labels only. Empty for a legacy run. */
   phases: string[];
+  /**
+   * The columns this table cannot fill, so empty means unknown rather than none: `phase-entries`,
+   * `input-counts`, `no-go-outcomes`, `outcomes`, `presentations`
+   * (`ANALYTICS.md#how-a-legacy-run-becomes-a-trial-table`).
+   */
+  gaps: string[];
   trials: ReplayTrial[];
 }
 
@@ -1556,8 +1595,8 @@ export interface RunSeries {
    */
   trials: TrialRecord[];
   /**
-   * A spine run's trial table, computed from its replay on each request and never cached
-   * (`DATA.md#caching`). Null for a legacy run, a diverged one and one replay cannot run.
+   * The run's trial table, computed on each request and never cached (`DATA.md#caching`). Null
+   * for a diverged spine run, one replay cannot run, and a legacy run nothing decodes.
    */
   trialTable: TrialTable | null;
 }

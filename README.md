@@ -200,6 +200,9 @@ The guards that matter most:
   profile. Extend it before touching either side.
 - `test_analytics_derive.py`: the metric definitions, the guide's worked example, and the payload's field names.
 - `test_analytics_stream_is_pure.py`: `analytics/stream/` imports no file, database or clock.
+- `test_legacy_pin.py`: the legacy adapter reports exactly what the strobe scorer before it did, on a pinned
+  synthetic corpus; `test_legacy_corpus.py` does the same per sketch on a real archive, when `EPHYMERIS_CORPUS`
+  names one. Never regenerate their fixtures from the code under test.
 - `test_analytics_scoring.py`: the cache version moves with every input a cached row depends on; its canary is pinned as a literal.
 - `test_taskdef.py`: the default strobe vocabulary against the names the firmware emits, in both directions; `test_strobes.py`: vocabulary edits, the archive scan, and the v13 hash re-key.
 - `test_debug_flash.py`: a Debug Mode flash survives the utility baseline, and Debug scoring matches a session's.

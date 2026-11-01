@@ -17,12 +17,16 @@ const trial = (over: Partial<ReplayTrial>): ReplayTrial => ({
   responseMs: null,
   latencyMs: null,
   outcome: null,
+  outcomeMs: null,
+  correct: null,
   rewarded: false,
   rewardLine: null,
   rewardMs: null,
   correction: false,
   inputCounts: [],
   complete: true,
+  presented: true,
+  scores: [],
   ...over,
 });
 
@@ -43,7 +47,9 @@ describe("a spine run's trial table", () => {
 
   it("shows each trial as the sidecar reported it", () => {
     const table: TrialTable = {
+      kind: "replay",
       phases: ["wait", "present", "iti"],
+      gaps: [],
       trials: [
         trial({ index: 0, atMs: 61_000, phaseEntries: [61_000, 61_200, null], outcome: "correct",
                 rewarded: true, rewardLine: "fluid_2", rewardMs: 100, response: "left_well", latencyMs: 350 }),

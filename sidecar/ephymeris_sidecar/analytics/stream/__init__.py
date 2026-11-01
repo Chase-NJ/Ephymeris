@@ -6,17 +6,20 @@ over a recorded stream, and it is what lets a reader check the science without
 reading anything outside this folder. `tests/test_analytics_stream_is_pure.py`
 keeps it that way.
 
+Every run is read into its **trial table**, and every number is read off the
+table: a spine run's by replay, a legacy run's by the legacy decoder.
+
 | Module | Answers |
 |---|---|
-| `trials` | Is this trial a hit, a miss, or excluded? (also the live runner's scorer) |
+| `legacy/` | A legacy run's trial table, read from its strobe names; the live runner's scorer (`MetricSet`); inference |
+| `replay`, `spine` | A spine run replayed from its own file, and checked against what it recorded |
+| `trial_table` | One row per trial, for both kinds of run |
+| `table_metrics` | P(correct \\| row) and P(hit) per condition, the pooled figure, a spine run's class tallies |
 | `outcomes` | Was it rewarded, a hold failure, the wrong well, unanswered, or aborted? |
 | `engagement` | How many trials were offered, poked, and given odor? |
-| `summary` | One run's whole result (`summarize`) |
+| `summary` | One run's whole result (`summarize`), and its trial table for the wire |
 | `curves` | The run trial by trial: learning curves and the strategy walk |
-| `infer` | Which conditions ran, read from the strobes when no profile declares them |
 | `false_starts` | Which restarted runs to set aside |
-| `replay`, `spine` | A spine run replayed from its own file, and checked against what it recorded |
-| `trial_table`, `table_metrics` | A spine run's trial table, and the numbers that are functions of it |
 | `stats`, `document`, `metric_summary` | The Wilson interval; reading `ts_data` out of a file's document; the metric shape |
 
 Cached summaries are versioned by `scoring.current_version`, which moves by
@@ -26,7 +29,7 @@ payload's shape (`DATA.md#caching`). There is nothing to bump in this folder.
 
 from __future__ import annotations
 
-from . import false_starts, infer
+from . import false_starts, legacy
 from .curves import (
     MetricSeries,
     StrategyAxes,
@@ -52,17 +55,9 @@ from .summary import (
     OVERALL_ID,
     MetricSummary,
     RunSummary,
-    answer_side_of,
-    live_equivalent,
     summarize,
+    trial_table_of,
     with_threshold,
-)
-from .trials import (
-    MetricAccumulator,
-    MetricSet,
-    MetricValue,
-    boundaries_for,
-    compute_series,
 )
 
 __all__ = [
@@ -71,31 +66,25 @@ __all__ = [
     "OVERALL_ID",
     "Z_95",
     "ConditionOutcomes",
-    "MetricAccumulator",
     "MetricSeries",
-    "MetricSet",
     "MetricSummary",
-    "MetricValue",
     "RunSummary",
     "StrategyAxes",
     "StrategyPoint",
     "TrialEngagement",
     "TrialOutcomes",
     "TrialRecord",
-    "answer_side_of",
-    "boundaries_for",
     "codes_of",
-    "compute_series",
     "conditions_of",
     "engagement_of",
     "false_starts",
-    "infer",
-    "live_equivalent",
+    "legacy",
     "outcomes_of",
     "series",
     "strategy_axes",
     "strategy_trail",
     "summarize",
+    "trial_table_of",
     "trials_of",
     "wilson_interval",
     "with_threshold",

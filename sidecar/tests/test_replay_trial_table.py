@@ -168,6 +168,7 @@ def test_counts_and_phase_entries_group_states_by_the_phase_map() -> None:
 def test_metrics_are_functions_of_the_table() -> None:
     def trial(i: int, row: str | None, outcome: str | None, rewarded: bool, complete: bool = True):
         return trial_table.ReplayTrial(index=i, at_ms=i * 1000, row=row, outcome=outcome,
+                                       correct=trial_table.correct_of(outcome),
                                        rewarded=rewarded, complete=complete)
 
     table = [trial(0, "go", "correct", True), trial(1, "go", "omission", False),

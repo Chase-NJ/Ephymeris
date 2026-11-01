@@ -91,6 +91,8 @@ export const CMD = {
   TASKS_PREVIEW: "tasks.preview",
   TASKS_SAVE: "tasks.save",
   TASKS_DELETE: "tasks.delete",
+  TASKS_EXPORT: "tasks.export",
+  TASKS_IMPORT: "tasks.import",
 
   // Backup
   BACKUP_SYNC_NOW: "backup.syncNow",
@@ -203,6 +205,9 @@ export const ERR = {
   STROBE_VOCABULARY_UNREADABLE: "STROBE_VOCABULARY_UNREADABLE",
   STROBE_SESSION_RUNNING: "STROBE_SESSION_RUNNING",
   TASK_NOT_FOUND: "TASK_NOT_FOUND",
+  TASK_TRANSFER_INVALID: "TASK_TRANSFER_INVALID",
+  TASK_IMPORT_CONFLICT: "TASK_IMPORT_CONFLICT",
+  TASK_IMPORT_REPLACES: "TASK_IMPORT_REPLACES",
   TASK_INVALID: "TASK_INVALID",
   INTAN_UNAVAILABLE: "INTAN_UNAVAILABLE",
   INTAN_NOT_READY: "INTAN_NOT_READY",
@@ -734,9 +739,9 @@ export interface ConfigField {
   type: ConfigFieldType;
   default: unknown;
   /**
-   * Section heading the form files this field under; absent = ungrouped. Part of `profile_hash`,
-   * so re-filing a field splits a task's recorded runs from its future ones
-   * (`TASKS.md#profile-and-params-hashes`).
+   * Section heading the form files this field under; absent = ungrouped. Part of `profile_hash`
+   * (except on a spine task), so re-filing a field splits a task's recorded runs from its future
+   * ones (`TASKS.md#profile-and-params-hashes`).
    */
   group?: string;
   /** Suffix shown after the input, e.g. "ms". */
@@ -1908,11 +1913,81 @@ export interface TaskDiagnostic {
   code: string;
 }
 
-/** A row in the profile list, and everything a task card states before the definition is opened. */
+/**
+ * One way another machine's task disagrees with this machine
+ * (`TASKS.md#moving-a-task-between-machines`). Any one refuses the whole import.
+ */
+export interface TaskImportConflict {
+  /**
+   * `not_here` (a channel the task names and this rig lacks), `differs` (a channel the task names
+   * whose kind, type, role, input settings, the port it serves, well, port slot, onset code or
+   * edge codes differ here), `order` (two channels the task names declared in the other order:
+   * declaration order is the odor index, `TASKS.md#order-is-meaning`), `code` (a code the task
+   * strobes that the file numbers otherwise than this vocabulary, that is not live here, or that
+   * the file does not number), `bundled_name` (a sketch that ships with Ephymeris has the task's
+   * name) or `name_taken` (another saved task has it, case-folded).
+   */
+  kind: string;
+  /** The channel it is about, when it is about one. */
+  channel: string | null;
+  /** The difference, in words, naming both sides. */
+  message: string;
+}
+
+/** What importing another machine's task would do here (`TASKS.md#moving-a-task-between-machines`). */
+export interface TaskImportPlan {
+  /**
+   * Every disagreement, not the first. Non-empty means the import is refused whole and nothing is
+   * written.
+   */
+  conflicts: TaskImportConflict[];
+  /** The imported task's id: its file here is `<taskId>.json`. */
+  taskId: string;
+  /** The imported task's name. */
+  name: string;
+  /** A task with this id is saved here; applying replaces it, and needs `confirm`. */
+  replaces: boolean;
+  /**
+   * The name of the saved task it replaces, which may differ from the file's; null when it
+   * replaces none or its file will not read.
+   */
+  replacesName: string | null;
+  /** The file stored under this id will not read. It is still replaced only with `confirm`. */
+  replacesUnreadable: boolean;
+  /** The task saved here under this id already is the file's definition: applying writes nothing. */
+  identical: boolean;
+  /**
+   * This rig's whole channel set hashes, by the file's rule, to the file's `channel_set_hash`.
+   * Informative: only the channels the task names must agree.
+   */
+  sameChannelSet: boolean;
+  /** This rig's `channelSetHash`, by the rule `fileHashVersion` names. */
+  hereHash: string;
+  /** The channel-set hash the file states. */
+  fileHash: string;
+  /** The rule that made `fileHash` (`TASKS.md#registry-rules`). */
+  fileHashVersion: number;
+  /**
+   * The definition judged on this rig, as `tasks.get` reports them. A task with diagnostics still
+   * imports, as it still saves.
+   */
+  diagnostics: TaskDiagnostic[];
+}
+
+/**
+ * A row in the profile list, and everything a task card states before the definition is opened. A
+ * stored task that will not read is listed too, with `unreadable` set.
+ */
 export interface TaskEntry {
   id: string;
   /** Also the generated sketch's folder name. */
   name: string;
+  /**
+   * Why the stored file will not read as a definition (not JSON, or a category or name that is
+   * not a safe folder name, `TASKS.md#what-a-definition-holds`), or null. Such an entry has no
+   * folder: `path` is empty and the counts are 0.
+   */
+  unreadable: string | null;
   category: string;
   /** The generated sketch folder — what a flash takes. */
   path: string;
@@ -2432,6 +2507,8 @@ export interface CommandArgsMap {
   "tasks.preview": { definition: unknown };
   "tasks.save": { definition: unknown };
   "tasks.delete": { taskId: string };
+  "tasks.export": { taskId: string };
+  "tasks.import": { document: unknown; apply: boolean; confirm?: boolean };
   "backup.syncNow": Record<string, never>;
   "sessions.list": { cohortId: string; includeAborted?: boolean };
   "analytics.summary": { cohortId: string; sessionIds?: string[]; animalIds?: string[]; minCountedTrials?: number };
@@ -2524,6 +2601,8 @@ export interface CommandResultMap {
   "tasks.preview": TaskPreview;
   "tasks.save": TaskSaved;
   "tasks.delete": { deleted: boolean };
+  "tasks.export": { document: unknown; filename: string };
+  "tasks.import": { plan: TaskImportPlan; applied: boolean };
   "backup.syncNow": SyncResult;
   "sessions.list": { sessions: SessionListItem[] };
   "analytics.summary": AnalyticsSummary;

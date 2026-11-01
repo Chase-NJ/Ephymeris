@@ -664,8 +664,8 @@ SHAPES = (
                 STR,
                 optional=True,
                 doc="Section heading the form files this field under; absent = "
-                "ungrouped. Part of `profile_hash`, so re-filing a field splits "
-                "a task's recorded runs from its future ones "
+                "ungrouped. Part of `profile_hash` (except on a spine task), so "
+                "re-filing a field splits a task's recorded runs from its future ones "
                 "(`TASKS.md#profile-and-params-hashes`).",
             ),
             f("unit", STR, optional=True, doc='Suffix shown after the input, e.g. "ms".'),
@@ -2062,10 +2062,97 @@ SHAPES = (
         ),
     ),
     Shape(
+        "TaskImportConflict",
+        obj(
+            f(
+                "kind",
+                STR,
+                doc="`not_here` (a channel the task names and this rig lacks), `differs` "
+                "(a channel the task names whose kind, type, role, input settings, "
+                "the port it serves, well, port slot, onset code or edge codes "
+                "differ here), `order` (two "
+                "channels the task names declared in the other order: declaration "
+                "order is the odor index, `TASKS.md#order-is-meaning`), `code` (a code "
+                "the task strobes that the file numbers otherwise than this "
+                "vocabulary, that is not live here, or that the file does not number), "
+                "`bundled_name` (a sketch that ships with Ephymeris has the task's "
+                "name) or `name_taken` (another saved task has it, case-folded).",
+            ),
+            f("channel", nullable(STR), doc="The channel it is about, when it is about one."),
+            f("message", STR, doc="The difference, in words, naming both sides."),
+        ),
+        doc="One way another machine's task disagrees with this machine "
+        "(`TASKS.md#moving-a-task-between-machines`). Any one refuses the whole "
+        "import.",
+    ),
+    Shape(
+        "TaskImportPlan",
+        obj(
+            f(
+                "conflicts",
+                ListOf(Ref("TaskImportConflict")),
+                doc="Every disagreement, not the first. Non-empty means the import is "
+                "refused whole and nothing is written.",
+            ),
+            f("taskId", STR, doc="The imported task's id: its file here is `<taskId>.json`."),
+            f("name", STR, doc="The imported task's name."),
+            f(
+                "replaces",
+                BOOL,
+                doc="A task with this id is saved here; applying replaces it, and "
+                "needs `confirm`.",
+            ),
+            f(
+                "replacesName",
+                nullable(STR),
+                doc="The name of the saved task it replaces, which may differ from "
+                "the file's; null when it replaces none or its file will not read.",
+            ),
+            f(
+                "replacesUnreadable",
+                BOOL,
+                doc="The file stored under this id will not read. It is still "
+                "replaced only with `confirm`.",
+            ),
+            f(
+                "identical",
+                BOOL,
+                doc="The task saved here under this id already is the file's "
+                "definition: applying writes nothing.",
+            ),
+            f(
+                "sameChannelSet",
+                BOOL,
+                doc="This rig's whole channel set hashes, by the file's rule, to the "
+                "file's `channel_set_hash`. Informative: only the channels the task "
+                "names must agree.",
+            ),
+            f("hereHash", STR, doc="This rig's `channelSetHash`, by the rule `fileHashVersion` names."),
+            f("fileHash", STR, doc="The channel-set hash the file states."),
+            f("fileHashVersion", INT, doc="The rule that made `fileHash` (`TASKS.md#registry-rules`)."),
+            f(
+                "diagnostics",
+                ListOf(Ref("TaskDiagnostic")),
+                doc="The definition judged on this rig, as `tasks.get` reports them. A "
+                "task with diagnostics still imports, as it still saves.",
+            ),
+        ),
+        doc="What importing another machine's task would do here "
+        "(`TASKS.md#moving-a-task-between-machines`).",
+    ),
+    Shape(
         "TaskEntry",
         obj(
             f("id", STR),
             f("name", STR, doc="Also the generated sketch's folder name."),
+            f(
+                "unreadable",
+                nullable(STR),
+                doc="Why the stored file will not read as a definition (not JSON, "
+                "or a category or name that is not a safe folder name, "
+                "`TASKS.md#what-a-definition-holds`), or null. Such an entry has "
+                "no folder: `path` is empty and the counts are 0.",
+            ),
             f("category", STR),
             f("path", STR, doc="The generated sketch folder — what a flash takes."),
             f("label", STR),
@@ -2091,7 +2178,8 @@ SHAPES = (
             ),
         ),
         doc="A row in the profile list, and everything a task card states "
-        "before the definition is opened.",
+        "before the definition is opened. A stored task that will not read is "
+        "listed too, with `unreadable` set.",
     ),
     Shape(
         "TaskSaved",
@@ -3517,6 +3605,58 @@ COMMANDS = (
         "everything that reads a generated folder waits for it "
         "(`TASKS.md#the-rig-definition`).",
     ),
+    Command(
+        "tasks.export",
+        args=obj(f("taskId", STR)),
+        result=obj(
+            f(
+                "document",
+                ANY,
+                doc="`{task_export_version, channel_set_hash, channel_set_hash_version, "
+                "channels, codes, definition}`: the stored definition verbatim, what "
+                "each channel it names is on this rig (no pin), and this "
+                "vocabulary's number for each code it strobes.",
+            ),
+            f("filename", STR, doc="`task-<taskId>-<YYYY-MM-DD>.json`, the save dialog's default."),
+        ),
+        doc="One task as it travels to the other lab machine "
+        "(`TASKS.md#moving-a-task-between-machines`). `TASK_NOT_FOUND` for an "
+        "unknown or unreadable task; `TASK_TRANSFER_INVALID` while it names a "
+        "channel this rig lacks or strobes a code this vocabulary does not hold "
+        "live; `RIG_WIRING_UNLOADED` while the stored wiring did not load or is "
+        "held.",
+    ),
+    Command(
+        "tasks.import",
+        args=obj(
+            f("document", ANY, doc="Another machine's `tasks.export` document."),
+            f("apply", BOOL, doc="False ⇒ plan only, write nothing."),
+            f(
+                "confirm",
+                BOOL,
+                optional=True,
+                doc="Needed to apply a plan that `replaces` a saved task.",
+            ),
+        ),
+        result=obj(
+            f("plan", Ref("TaskImportPlan")),
+            f(
+                "applied",
+                BOOL,
+                doc="Something was written. False for a plan, and for an identical import.",
+            ),
+        ),
+        doc="Save another machine's task here, its definition verbatim, and "
+        "generate its sketch against this rig's pins. It never writes the "
+        "channel set or the vocabulary. `TASK_IMPORT_CONFLICT` applying a plan "
+        "with conflicts (`detail.conflicts`); `TASK_TRANSFER_INVALID` for a "
+        "file that is not an export; `TASK_IMPORT_REPLACES` replacing a saved "
+        "task without `confirm`; `RIG_WIRING_UNLOADED` while the stored wiring "
+        "did not load or is held; `RIG_IN_USE` while a session is set up or a "
+        "box is running. Nothing is written on any of them. A rig definition "
+        "write, as `tasks.save` is (`TASKS.md#the-rig-definition`), "
+        "broadcasting `tasks.updated`.",
+    ),
     # ------------------------------------------------------------------ backup
     Command(
         "backup.syncNow",
@@ -4228,7 +4368,7 @@ ERRORS = (
     ),
     ErrorCode(
         "RIG_IN_USE",
-        "`hardware.save`, `hardware.reset`, `tasks.save` or `tasks.delete` while "
+        "`hardware.save`, `hardware.reset`, `tasks.save`, `tasks.import` or `tasks.delete` while "
         "a session is set up or a box is running. Each regenerates sketch "
         "folders a box was or will be flashed from, under a session whose "
         "profiles were read from the old ones (`TASKS.md#the-rig-definition`). "
@@ -4246,8 +4386,8 @@ ERRORS = (
     ),
     ErrorCode(
         "RIG_WIRING_UNLOADED",
-        "`port.startSession`, `sessions.startAll`, `sessions.flash`, `flash.enqueue` "
-        "or `utility.identify` while the wiring in force is the shipped one because "
+        "`port.startSession`, `sessions.startAll`, `sessions.flash`, `flash.enqueue`, "
+        "`utility.identify`, `tasks.export` or `tasks.import` while the wiring in force is the shipped one because "
         "the rig's stored wiring was not put in force when it was installed: it "
         "did not load (unreadable, unparseable, out of shape, a channel without a "
         "pin, a wiring rule broken, or an older layout that disagrees with itself), "
@@ -4324,9 +4464,29 @@ ERRORS = (
         "No task profile with that id on this rig.",
     ),
     ErrorCode(
+        "TASK_TRANSFER_INVALID",
+        "`tasks.import` with a file that is not an exported task (another "
+        "version, no definition, a definition that will not read, or a channel "
+        "the definition names that the file does not describe), or `tasks.export` of a "
+        "task naming a channel this rig lacks or a code this vocabulary does "
+        "not hold live. Nothing was written.",
+    ),
+    ErrorCode(
+        "TASK_IMPORT_CONFLICT",
+        "`tasks.import` applied with a plan that has conflicts. Nothing was "
+        "written; `detail.conflicts` lists every one (`TaskImportConflict`).",
+    ),
+    ErrorCode(
+        "TASK_IMPORT_REPLACES",
+        "`tasks.import` applied without `confirm` while a task with the same id "
+        "is saved here. Nothing was written; retry with `confirm: true` to "
+        "replace it.",
+    ),
+    ErrorCode(
         "TASK_INVALID",
         "The definition is not a definition — wrong shape, too large, an "
-        "unusable id or name, or a name that collides with a bundled sketch "
+        "unusable id, name or category (each becomes a folder, so each must be "
+        "one plain folder name), or a name that collides with a bundled sketch "
         "or another saved task. "
         "NOT the same as a task that will not run: a well-formed definition "
         "describing an impossible task is a successful reply carrying located "

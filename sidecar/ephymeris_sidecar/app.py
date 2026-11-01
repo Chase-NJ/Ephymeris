@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -41,7 +41,8 @@ from .strobes.editor import VocabularyEditor
 from .strobes.usage import ArchiveScanner
 from .taskdef import bundled as bundled_sketches
 from .taskdef import store as taskdef_store
-from .taskdef.model import TaskDefinition
+from .taskdef import transfer as task_transfer
+from .taskdef.model import TaskDefinition, folder_key
 from .taskdef.validate import validate as validate_task
 from .tasks import profile as task_profile
 from .tasks.start_command import build_start_command
@@ -220,6 +221,8 @@ class Application:
         self.server.register(Cmd.TASKS_PREVIEW, self._tasks_preview)
         self.server.register(Cmd.TASKS_SAVE, self._tasks_save)
         self.server.register(Cmd.TASKS_DELETE, self._tasks_delete)
+        self.server.register(Cmd.TASKS_EXPORT, self._tasks_export)
+        self.server.register(Cmd.TASKS_IMPORT, self._tasks_import)
         self.server.register(Cmd.STROBES_GET, self._strobes_get)
         self.server.register(Cmd.STROBES_USAGE, self._strobes_usage)
         self.server.register(Cmd.STROBES_ADD, self._strobes_add)
@@ -1042,12 +1045,14 @@ class Application:
             # Two saved tasks sharing a name share a sketch folder: saving one
             # overwrites the other's firmware and deleting either removes both.
             # Duplicating a task makes this the easy mistake, so it is refused
-            # too. Case-folded because the lab machines' filesystem is
-            # case-insensitive.
+            # too. Compared as Windows compares folder names (`folder_key`),
+            # since the lab machines' filesystem is case-insensitive and drops
+            # a trailing dot or space. A stored task that no longer reads still
+            # holds its folder, so it is counted too.
             twin = next(
                 (e for e in await asyncio.to_thread(self.task_store.list_entries)
                  if e["id"] != definition.id
-                 and str(e["name"]).casefold() == definition.name.casefold()),
+                 and folder_key(str(e["name"])) == folder_key(definition.name)),
                 None,
             )
             if twin is not None:
@@ -1083,6 +1088,75 @@ class Application:
                 await self.sketches.rescan()
                 await self._broadcast_tasks()
         return {"deleted": deleted}
+
+    # -- moving a task between machines (TASKS.md#moving-a-task-between-machines)
+    #
+    # The rules are `taskdef/transfer.py`'s and pure; what is here is the
+    # order of the one write. Both refuse while the stored wiring is not in
+    # force: the channel set and the vocabulary a task would be judged against
+    # are then the shipped ones, not this rig's.
+
+    async def _tasks_export(self, args: Args) -> dict[str, Any]:
+        task_id = _str_arg(args, "taskId")
+
+        def export() -> dict[str, Any]:
+            problem = self.rig_definition.wiring_problem()
+            if problem:
+                raise rig_definition.WiringNotLoaded(problem)
+            document = self.task_store.document(task_id)
+            # Unreadable as a definition is unreadable: a stored file this
+            # build cannot parse is not a task it can describe.
+            if not isinstance(document, dict) or self.task_store.get(task_id) is None:
+                raise CommandError(
+                    ErrCode.TASK_NOT_FOUND,
+                    f"No readable task profile called {task_id!r} on this rig.",
+                    {"taskId": task_id},
+                )
+            return task_transfer.export_document(
+                document, rig_registry.channels(), rig_registry.vocabulary()
+            )
+
+        exported = await asyncio.to_thread(export)
+        stamp = datetime.now(UTC).strftime("%Y-%m-%d")
+        return {"document": exported, "filename": f"task-{task_id}-{stamp}.json"}
+
+    async def _tasks_import(self, args: Args) -> dict[str, Any]:
+        document = args["document"]
+        if not args["apply"]:
+            plan = await asyncio.to_thread(self._plan_task_import, document)
+            return {"plan": plan.to_json(), "applied": False}
+        async with self.rig_definition.writing(rig_definition.TASKS_IN_USE):
+            # Planned again inside the write: a task saved, or a wiring
+            # changed, since the dialog's plan is judged here.
+            plan = await asyncio.to_thread(self._plan_task_import, document)
+            if plan.conflicts:
+                raise task_transfer.TaskImportConflict(plan.conflicts)
+            if plan.identical:
+                return {"plan": plan.to_json(), "applied": False}
+            if plan.replaces and not args.get("confirm"):
+                raise task_transfer.TaskImportReplaces(
+                    f"{plan.replaces_name or plan.task_id!r} is saved here under this task's "
+                    f"id, {plan.task_id!r}"
+                    + (", and its file will not read" if plan.replaces_unreadable else "")
+                    + ". Importing replaces it; confirm to go ahead."
+                )
+            # Verbatim: fields this build does not know are kept.
+            await asyncio.to_thread(self.task_store.save_document, plan.definition)
+            await self.sketches.rescan()
+            await self._broadcast_tasks()
+        return {"plan": plan.to_json(), "applied": True}
+
+    def _plan_task_import(self, document: Any) -> task_transfer.ImportPlan:
+        problem = self.rig_definition.wiring_problem()
+        if problem:
+            raise rig_definition.WiringNotLoaded(problem)
+        return task_transfer.plan_import(
+            document,
+            channels=rig_registry.channels(),
+            vocabulary=rig_registry.vocabulary(),
+            tasks=self.task_store,
+            bundled_named=self.sketches.bundled_named,
+        )
 
     def _definition_arg(self, args: Args) -> TaskDefinition:
         """`TASK_INVALID` is for a document that is not a definition.

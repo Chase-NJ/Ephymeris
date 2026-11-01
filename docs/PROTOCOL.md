@@ -966,6 +966,44 @@ Remove the definition and its generated sketch folder. Idempotent: deleting what
 |---|---|---|
 | `deleted` | boolean |  |
 
+<a id="cmd-tasks.export"></a>
+#### `tasks.export`
+
+One task as it travels to the other lab machine (`TASKS.md#moving-a-task-between-machines`). `TASK_NOT_FOUND` for an unknown or unreadable task; `TASK_TRANSFER_INVALID` while it names a channel this rig lacks or strobes a code this vocabulary does not hold live; `RIG_WIRING_UNLOADED` while the stored wiring did not load or is held.
+
+**Args**
+
+| Field | Type | Notes |
+|---|---|---|
+| `taskId` | string |  |
+
+**Result**
+
+| Field | Type | Notes |
+|---|---|---|
+| `document` | unknown | `{task_export_version, channel_set_hash, channel_set_hash_version, channels, codes, definition}`: the stored definition verbatim, what each channel it names is on this rig (no pin), and this vocabulary's number for each code it strobes. |
+| `filename` | string | `task-<taskId>-<YYYY-MM-DD>.json`, the save dialog's default. |
+
+<a id="cmd-tasks.import"></a>
+#### `tasks.import`
+
+Save another machine's task here, its definition verbatim, and generate its sketch against this rig's pins. It never writes the channel set or the vocabulary. `TASK_IMPORT_CONFLICT` applying a plan with conflicts (`detail.conflicts`); `TASK_TRANSFER_INVALID` for a file that is not an export; `TASK_IMPORT_REPLACES` replacing a saved task without `confirm`; `RIG_WIRING_UNLOADED` while the stored wiring did not load or is held; `RIG_IN_USE` while a session is set up or a box is running. Nothing is written on any of them. A rig definition write, as `tasks.save` is (`TASKS.md#the-rig-definition`), broadcasting `tasks.updated`.
+
+**Args**
+
+| Field | Type | Notes |
+|---|---|---|
+| `document` | unknown | Another machine's `tasks.export` document. |
+| `apply` | boolean | False ⇒ plan only, write nothing. |
+| `confirm` *(optional)* | boolean | Needed to apply a plan that `replaces` a saved task. |
+
+**Result**
+
+| Field | Type | Notes |
+|---|---|---|
+| `plan` | [TaskImportPlan](#shape-taskimportplan) |  |
+| `applied` | boolean | Something was written. False for a plan, and for an identical import. |
+
 ### Backup
 
 <a id="cmd-backup.syncnow"></a>
@@ -1589,9 +1627,9 @@ One live view's payload, only while that scope is open (`RECORDING.md#live-windo
 | `BACKUP_UNAVAILABLE` | `backup.syncNow` with no `backupDirectory` set, or with a sync already running. An ordinary mirroring failure is never a command error; it appears on `backup.status`. |
 | `UTILITY_UNAVAILABLE` | A `utility.*` command when the box utility can't be used at all — the install's sketch library has none, or its profile is unreadable or not a utility profile; for `utility.identify`, also a profile with no `identify` pair. A box-level problem never raises this: it is that box's `state` in the snapshot, because 'box 4 has no board' is a fact about the rig, not a failure of the command. |
 | `RIG_INVALID` | The wiring document is not a wiring document — wrong shape, or too large. NOT a wiring MISTAKE: a document that is well-formed and describes an impossible box is a successful `hardware.preview` reply carrying located problems. |
-| `RIG_IN_USE` | `hardware.save`, `hardware.reset`, `tasks.save` or `tasks.delete` while a session is set up or a box is running. Each regenerates sketch folders a box was or will be flashed from, under a session whose profiles were read from the old ones (`TASKS.md#the-rig-definition`). Also an archive write the rig refuses (`DATA.md#the-cohort-archive`): `cohorts.setDataFolder` moving the contents while a session is set up or a box is running, and `analytics.rescan` or `sessions.recover` while a box is running. |
+| `RIG_IN_USE` | `hardware.save`, `hardware.reset`, `tasks.save`, `tasks.import` or `tasks.delete` while a session is set up or a box is running. Each regenerates sketch folders a box was or will be flashed from, under a session whose profiles were read from the old ones (`TASKS.md#the-rig-definition`). Also an archive write the rig refuses (`DATA.md#the-cohort-archive`): `cohorts.setDataFolder` moving the contents while a session is set up or a box is running, and `analytics.rescan` or `sessions.recover` while a box is running. |
 | `RIG_WOULD_BREAK_TASKS` | `hardware.save` without `confirm` on a change that would stop a saved task profile generating. `detail.breaks` lists them. Retry with `confirm: true` to proceed — the app does not veto a rewiring, it refuses to let one happen unnoticed. |
-| `RIG_WIRING_UNLOADED` | `port.startSession`, `sessions.startAll`, `sessions.flash`, `flash.enqueue` or `utility.identify` while the wiring in force is the shipped one because the rig's stored wiring was not put in force when it was installed: it did not load (unreadable, unparseable, out of shape, a channel without a pin, a wiring rule broken, or an older layout that disagrees with itself), or it is held because the record cannot vouch for it (copied in, changed by hand, or saved here when a save after it did not finish). A box started, flashed or identified would drive pins the operator never declared. `hardware.get` names the problem. Saving the wiring (its pins confirmed) or resetting it clears it; a file fixed by hand meanwhile does not, and a restart does only onto the wiring last saved here (`TASKS.md#the-channel-set-and-the-pin-map`). |
+| `RIG_WIRING_UNLOADED` | `port.startSession`, `sessions.startAll`, `sessions.flash`, `flash.enqueue`, `utility.identify`, `tasks.export` or `tasks.import` while the wiring in force is the shipped one because the rig's stored wiring was not put in force when it was installed: it did not load (unreadable, unparseable, out of shape, a channel without a pin, a wiring rule broken, or an older layout that disagrees with itself), or it is held because the record cannot vouch for it (copied in, changed by hand, or saved here when a save after it did not finish). A box started, flashed or identified would drive pins the operator never declared. `hardware.get` names the problem. Saving the wiring (its pins confirmed) or resetting it clears it; a file fixed by hand meanwhile does not, and a restart does only onto the wiring last saved here (`TASKS.md#the-channel-set-and-the-pin-map`). |
 | `RIG_SAVE_BLOCKED` | `hardware.save` that the rig's state does not allow yet: stored wiring that did not load and has nothing to repair (unreadable, unparseable, not a JSON object, or one half of a two-file pair alone), which only `hardware.reset` replaces; a draft read from a stored file not in force, sent without `confirmedPins`; or a draft with a wiring-rule problem (RIG101–RIG107), which the editor holds Save on too. Nothing was written and no code was issued (`TASKS.md#the-channel-set-and-the-pin-map`). |
 | `CHANNEL_SET_INVALID` | `hardware.importChannelSet` with a file that is not an exported channel set (another version, no vocabulary, a channel set out of shape), or `hardware.exportChannelSet` while an edge has no code yet. Nothing was written. |
 | `CHANNEL_SET_IMPORT_CONFLICT` | `hardware.importChannelSet` applied with a plan that has conflicts. Nothing was written; `detail.conflicts` lists every one (`ChannelSetConflict`). |
@@ -1603,7 +1641,10 @@ One live view's payload, only while that scope is open (`RECORDING.md#live-windo
 | `STROBE_VOCABULARY_UNREADABLE` | This machine's vocabulary document will not read. Every edit is refused until it is repaired: one issued against the shipped default could reissue a code this machine added. |
 | `STROBE_SESSION_RUNNING` | A vocabulary edit while a session is set up or a box is running. Every edit regenerates the sketches a box was or will be flashed from. |
 | `TASK_NOT_FOUND` | No task profile with that id on this rig. |
-| `TASK_INVALID` | The definition is not a definition — wrong shape, too large, an unusable id or name, or a name that collides with a bundled sketch or another saved task. NOT the same as a task that will not run: a well-formed definition describing an impossible task is a successful reply carrying located diagnostics, exactly as a wiring document is. |
+| `TASK_TRANSFER_INVALID` | `tasks.import` with a file that is not an exported task (another version, no definition, a definition that will not read, or a channel the definition names that the file does not describe), or `tasks.export` of a task naming a channel this rig lacks or a code this vocabulary does not hold live. Nothing was written. |
+| `TASK_IMPORT_CONFLICT` | `tasks.import` applied with a plan that has conflicts. Nothing was written; `detail.conflicts` lists every one (`TaskImportConflict`). |
+| `TASK_IMPORT_REPLACES` | `tasks.import` applied without `confirm` while a task with the same id is saved here. Nothing was written; retry with `confirm: true` to replace it. |
+| `TASK_INVALID` | The definition is not a definition — wrong shape, too large, an unusable id, name or category (each becomes a folder, so each must be one plain folder name), or a name that collides with a bundled sketch or another saved task. NOT the same as a task that will not run: a well-formed definition describing an impossible task is a successful reply carrying located diagnostics, exactly as a wiring document is. |
 | `INTAN_UNAVAILABLE` | RHX is not reachable: not running, its Remote TCP Control command server not opened, or the socket died. The message says what to click. |
 | `INTAN_NOT_READY` | RHX is reachable but this cannot be done now — RHX is already recording, no recording is configured for this group as its mapping was last confirmed, a box has no digital input, the rig's wiring has no sync channel, or a scope asked for a channel the box does not own. The message is the operator's next step. |
 | `INTAN_COMMAND_FAILED` | RHX refused a command, or **accepted it and stored something else** (a read-back mismatch — the save-location-with-a-space case). `detail.command` carries what was sent. |
@@ -1943,7 +1984,7 @@ One operator-tunable parameter. Everything past `default` is optional presentati
 | `label` | string |  |
 | `type` | [ConfigFieldType](#shape-configfieldtype) |  |
 | `default` | unknown |  |
-| `group` *(optional)* | string | Section heading the form files this field under; absent = ungrouped. Part of `profile_hash`, so re-filing a field splits a task's recorded runs from its future ones (`TASKS.md#profile-and-params-hashes`). |
+| `group` *(optional)* | string | Section heading the form files this field under; absent = ungrouped. Part of `profile_hash` (except on a spine task), so re-filing a field splits a task's recorded runs from its future ones (`TASKS.md#profile-and-params-hashes`). |
 | `unit` *(optional)* | string | Suffix shown after the input, e.g. "ms". |
 | `min` *(optional)* | number | Inclusive bound the form clamps to. |
 | `max` *(optional)* | number | Inclusive bound the form clamps to. |
@@ -3074,12 +3115,13 @@ This machine's strobe vocabulary (`TASKS.md#strobe-vocabulary`) — the one sour
 <a id="shape-taskentry"></a>
 #### TaskEntry
 
-A row in the profile list, and everything a task card states before the definition is opened.
+A row in the profile list, and everything a task card states before the definition is opened. A stored task that will not read is listed too, with `unreadable` set.
 
 | Field | Type | Notes |
 |---|---|---|
 | `id` | string |  |
 | `name` | string | Also the generated sketch's folder name. |
+| `unreadable` | string \| null | Why the stored file will not read as a definition (not JSON, or a category or name that is not a safe folder name, `TASKS.md#what-a-definition-holds`), or null. Such an entry has no folder: `path` is empty and the counts are 0. |
 | `category` | string |  |
 | `path` | string | The generated sketch folder — what a flash takes. |
 | `label` | string |  |
@@ -3088,6 +3130,37 @@ A row in the profile list, and everything a task card states before the definiti
 | `trials` | number | Rows in the trial table — how many conditions it presents. |
 | `stages` | number | Rows in the shaping ramp. 1 means no ramp. |
 | `selectionMode` | "antibias" \| "pool" \| "weighted" | How the next trial is drawn: a side against recent bias then a type uniformly; a block-shuffled weighted pool; or the side draw with a weighted pick within it. |
+
+<a id="shape-taskimportconflict"></a>
+#### TaskImportConflict
+
+One way another machine's task disagrees with this machine (`TASKS.md#moving-a-task-between-machines`). Any one refuses the whole import.
+
+| Field | Type | Notes |
+|---|---|---|
+| `kind` | string | `not_here` (a channel the task names and this rig lacks), `differs` (a channel the task names whose kind, type, role, input settings, the port it serves, well, port slot, onset code or edge codes differ here), `order` (two channels the task names declared in the other order: declaration order is the odor index, `TASKS.md#order-is-meaning`), `code` (a code the task strobes that the file numbers otherwise than this vocabulary, that is not live here, or that the file does not number), `bundled_name` (a sketch that ships with Ephymeris has the task's name) or `name_taken` (another saved task has it, case-folded). |
+| `channel` | string \| null | The channel it is about, when it is about one. |
+| `message` | string | The difference, in words, naming both sides. |
+
+<a id="shape-taskimportplan"></a>
+#### TaskImportPlan
+
+What importing another machine's task would do here (`TASKS.md#moving-a-task-between-machines`).
+
+| Field | Type | Notes |
+|---|---|---|
+| `conflicts` | [TaskImportConflict](#shape-taskimportconflict)[] | Every disagreement, not the first. Non-empty means the import is refused whole and nothing is written. |
+| `taskId` | string | The imported task's id: its file here is `<taskId>.json`. |
+| `name` | string | The imported task's name. |
+| `replaces` | boolean | A task with this id is saved here; applying replaces it, and needs `confirm`. |
+| `replacesName` | string \| null | The name of the saved task it replaces, which may differ from the file's; null when it replaces none or its file will not read. |
+| `replacesUnreadable` | boolean | The file stored under this id will not read. It is still replaced only with `confirm`. |
+| `identical` | boolean | The task saved here under this id already is the file's definition: applying writes nothing. |
+| `sameChannelSet` | boolean | This rig's whole channel set hashes, by the file's rule, to the file's `channel_set_hash`. Informative: only the channels the task names must agree. |
+| `hereHash` | string | This rig's `channelSetHash`, by the rule `fileHashVersion` names. |
+| `fileHash` | string | The channel-set hash the file states. |
+| `fileHashVersion` | number | The rule that made `fileHash` (`TASKS.md#registry-rules`). |
+| `diagnostics` | [TaskDiagnostic](#shape-taskdiagnostic)[] | The definition judged on this rig, as `tasks.get` reports them. A task with diagnostics still imports, as it still saves. |
 
 <a id="shape-taskpreview"></a>
 #### TaskPreview

@@ -35,6 +35,7 @@ Everything between "a box runs firmware that emits strobes" and "the app draws i
   - [Rebuilt bundled sketches](#rebuilt-bundled-sketches)
   - [The box utility](#the-box-utility)
   - [Order is meaning](#order-is-meaning)
+  - [Moving a task between machines](#moving-a-task-between-machines)
 - [Spine tasks](#spine-tasks)
   - [What a spine task holds](#what-a-spine-task-holds)
   - [Lowering](#lowering)
@@ -64,6 +65,7 @@ Everything between "a box runs firmware that emits strobes" and "the app draws i
   - [The length cap](#the-length-cap)
   - [SEED](#seed)
 - [Profile and params hashes](#profile-and-params-hashes)
+  - [A spine task's hash covers behaviour only](#a-spine-tasks-hash-covers-behaviour-only)
 - [Derived state machine](#derived-state-machine)
   - [Why derived](#why-derived)
   - [The model](#the-model)
@@ -428,6 +430,21 @@ Four answers, nothing derivable (`taskdef/model.py`):
 
 Plus `id`, `name` (becomes the sketch folder and must be a legal folder name), `category`, `legacyNames` and `notes`.
 
+**`category` is free text and `name` follows the shape above, but each must be one folder name that is safe on Windows and macOS** (`folder_name_problem` in `taskdef/model.py`). Each save deletes and rewrites `<category>/<name>/`, so the rule refuses:
+
+- a path: `.` or `..`, a separator (`/` or `\`), a drive or UNC prefix;
+- a character Windows forbids (`<>:"|?*`), or a control character;
+- a trailing dot or space, which Windows drops, so `Tracer.` and `Tracer` would be one folder;
+- a name Windows reserves for a device (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`), in any case, with or without an extension.
+
+A definition breaking the rule is not a definition (`TASK_INVALID`, or `TASK_TRANSFER_INVALID` on import), and nothing is written.
+
+- **A stored task that no longer reads is listed, never dropped.** `tasks.list` lists it with `unreadable` saying why, and its name still holds its folder.
+- **Two names clash as Windows compares them** (`folder_key`: case-folded, trailing dots and spaces dropped), on save and on import.
+- **`TaskStore` refuses any generated folder outside `<data_dir>/tasks/`** before it deletes or writes. It judges by the path's normalised components, not by resolving it, so a symlinked category folder keeps working.
+- **An id that is not an id names no file.**
+- **Listing and regeneration skip one bad task** and report it, so the rest go on.
+
 A definition stores **channel names and strobe code names, never pins or numbers.** That indirection makes "odor line 3 means go-left on this rig" an edit to one document rather than to firmware, and lets a rewiring be costed before it is written.
 
 > [!CAUTION]
@@ -515,7 +532,7 @@ The [rig definition](../GLOSSARY.md#rig-definition) is the rig wiring plus the s
 
 **The in-force values are cached, and a cache never keeps a value composed before a clear.** `set_rig_source` / `set_vocabulary_source` drop the cache and bump a generation; a reader that began composing from the old document returns its value without storing it.
 
-**A write runs end to end, alone.** Every command that rewrites a generated folder is a rig definition write: `hardware.save` and `hardware.reset`, every vocabulary edit, `tasks.save` and `tasks.delete`. Each takes `RigDefinition.writing()` and holds it through judge → store → install → rebuild → rescan → announce, so no second write, reset or task save interleaves with a rebuild.
+**A write runs end to end, alone.** Every command that rewrites a generated folder is a rig definition write: `hardware.save` and `hardware.reset`, every vocabulary edit, `tasks.save`, `tasks.import` and `tasks.delete`. Each takes `RigDefinition.writing()` and holds it through judge → store → install → rebuild → rescan → announce, so no second write, reset or task save interleaves with a rebuild.
 
 **Everything that uses a generated folder holds `RigDefinition.reading()`** for as long as it uses it, including any belief it records about what a board now carries: a flash from the discovery lookup through the record `PortManager.flash` writes and `utility.note_flashed`, a utility restore through that same record, `port.sendStart`, confirm mapping from the first profile read until the rig is held, `tasks.getProfile`, `strobes.usage`, and every rescan outside a write. So a write waits for flashes already in progress (at most one per box, though restores on different boxes run side by side), and a flash, a `START` or a mapping waits for a write. A waiting write goes before readers that arrive after it, so a stream of restores cannot starve a save. Commands that may wait carry long client timeouts (`client.ts`). Reads of the registries alone — `tasks.list`, `tasks.get`, the previews — take nothing. **Analytics is the one reader that takes nothing**: a cold index runs for minutes and would stall every save; it decodes from each run's own profile snapshot first.
 
@@ -566,6 +583,51 @@ Two orderings carry meaning and both are emitted from a single pass so they cann
 
 - **Odor index.** `Odors[i]` is odor line i+1, and the pins are not monotonic past line 6. Use `ChannelMap.declared_of_kind()`, never `of_kind()` (which sorts by pin) — the wrong one swaps lines, drives the wrong valve and announces it with the wrong onset code while every trial looks correct.
 - **Trial-table slot.** Slot i is `kTrials[i]`, is `poolWeights[i]` (wire `PW<i+1>`), and is `rewardTimes[i]` (wire `RW<i+1>`). Reordering the table re-weights a pool task and re-pays every condition, which is why the trial table has no drag handle.
+
+### Moving a task between machines
+
+A task exported on one lab machine imports on the other, where it compiles against that machine's pins and strobes the same codes ([ADR 0003](adr/0003-phase-spine-task-model.md)). The operator exports a task from its row on the Task landing page and imports it with **Import task** there (`tasks.export`, `tasks.import`; rules in `taskdef/transfer.py`).
+
+**The export** is one file:
+
+```json
+{"task_export_version": 1,
+ "channel_set_hash": "3f0c…",
+ "channel_set_hash_version": 2,
+ "channels": {"odor_port": {"kind": "engagement", "type": "digital_in", "role": "port", …}, …},
+ "codes": {"END_SESSION": 246, "ODOR_PORT_ENTER": 117, …},
+ "definition": {…}}
+```
+
+- **`definition`** is the stored `<id>.json`, verbatim. It is never re-serialised through `TaskDefinition`, which drops fields this build does not know, so a newer build's fields reach the other machine whole. An older build stores them and generates without them: update both machines before moving a task, as for a channel set.
+- **`channels`** holds the channels the task names, in this machine's declaration order. These are a trial row's odor, response and reward channels, and every channel a spine row binds (`named_channels`). Each entry holds what the channel is: the fields `ChannelSet.content_hash` covers, with edge and onset code names. It holds no pin, label or rationale.
+- **`codes`** gives this vocabulary's number for each code the task strobes (`codes_used`): each named channel's edge codes and declared onset, a trial row's onset code and its response port's [slot codes](#port-slots), and a spine's structural codes.
+- **`channel_set_hash`** identifies the whole channel set the task was written against. The plan says whether the importing rig has the same one (`sameChannelSet`), but the hash is never a reason to refuse.
+- **Export is refused** in three cases:
+  - the task names a channel this rig lacks, or strobes a code this vocabulary does not hold live (`TASK_TRANSFER_INVALID`). The file could not state that channel or number;
+  - the stored wiring is not in force (`RIG_WIRING_UNLOADED`);
+  - the task is unknown, or its stored file will not read as a definition (`TASK_NOT_FOUND`).
+
+**The import judges only the channels and codes the task names.** A difference elsewhere in the channel set changes nothing this task compiles or strobes. An import never touches the channel set or the vocabulary. It never adds, edits or reorders a channel, and never adds or renumbers a code: the vocabulary is [append only](#append-only) and lab-wide, and only [the channel-set import](#moving-the-channel-set-between-machines) brings codes over. **Any conflict refuses the whole import, and the plan lists every one** (`TaskImportConflict.kind`):
+
+| Kind | When |
+|---|---|
+| `not_here` | A channel the task names and this rig lacks. It has no pin here |
+| `differs` | A channel the task names whose entry differs: kind, type, role, active level, debounce, the port it serves, well, port slot, onset code or an edge code. The message names each field and both values |
+| `order` | Two channels the task names, declared in the other order, counted among those both sides have as the channel-set import counts them. Declaration order is the [odor index](#order-is-meaning) |
+| `code` | A code the task strobes that the file numbers otherwise than this vocabulary, that is not live here, or that the file does not number. The message names both numbers |
+| `bundled_name` | A sketch that ships with Ephymeris has the task's name |
+| `name_taken` | Another saved task has the name, case-folded. Two tasks with one name share a sketch folder |
+
+**Besides conflicts:**
+
+- **A task saved here under the same id is replaced** (`replaces`, and `replacesName` names it, since the other machine may have renamed it). A stored file under that id that will not read counts too (`replacesUnreadable`): it is still somebody's work. Applying needs `confirm`; without it the import is `TASK_IMPORT_REPLACES`.
+- **An import identical to the stored document writes nothing** (`identical`).
+- **The plan carries the definition's diagnostics on this rig.** As with any save, a task with diagnostics still imports.
+- **A file that is not an export is `TASK_TRANSFER_INVALID`.** That covers another version, no definition, a definition that will not read, or a channel the definition names that the file does not describe.
+- **An import is refused** while the stored wiring did not load or is held, and while a session is set up or a box is running.
+
+**A clean import is one [rig definition write](#the-rig-definition)**, as `tasks.save` is. It plans again inside the write, writes `<id>.json` verbatim (`TaskStore.save_document`), regenerates the task's folder against this rig's pins, rescans and broadcasts `tasks.updated`.
 
 ## Spine tasks
 
@@ -676,7 +738,7 @@ The profile's `spine` key is everything replay needs that the run's own header d
 
 It rides in the `# task_profile:` header line of every run's `.tsv` ([DATA.md](DATA.md#the-tsv-log)), beside the parameter values, the seed and `# interp: 3`, so a crashed run's `.tsv` alone replays. Code numbers come from the snapshot's own `strobes` map, which is the vocabulary when the run started. `analytics/stream/spine.py` reads a run's document back into the table, parameters, seed and input edges, and predicts every strobe the board must have sent ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#the-folder-at-a-glance)).
 
-`profile_hash` hashes the snapshot with the rest of the profile, names and all. Covering behaviour only, and leaving out every string meant for a person, is still to come (ADR 0003, *Hashes and data*).
+`profile_hash` hashes the snapshot for its behaviour only: row names and the profile's other words for a person are left out of the hash, never out of the snapshot ([A spine task's hash covers behaviour only](#a-spine-tasks-hash-covers-behaviour-only)).
 
 ### Spine diagnostics
 
@@ -1121,7 +1183,7 @@ Both are SHA-256 over canonical JSON (`sort_keys`, compact separators), truncate
 
 | | `profile_hash` | `params_hash` |
 |---|---|---|
-| Input | the serialized profile — `taskName`, `kind`, the full `config` array **including presentation keys** (`group`, `label`, `unit`, `help`, ranges), `liveMetrics` (as codes), `controls`, `legacyNames`, and `telemetry`/`identify`/`spine` when present — **not** `strobes` | one run's merged parameter values, keyed by `metadataKey` |
+| Input | the serialized profile — `taskName`, `kind`, the full `config` array **including presentation keys** (`group`, `label`, `unit`, `help`, ranges), `liveMetrics` (as codes), `controls`, `legacyNames`, and `telemetry`/`identify` when present — **not** `strobes`. A [spine task](#spine-tasks)'s profile is hashed for its behaviour only ([below](#a-spine-tasks-hash-covers-behaviour-only)) | one run's merged parameter values, keyed by `metadataKey` |
 | `None` input | n/a | returns `None` — a run with no recorded parameters is not a run recorded with none |
 | Stored on | `task_profiles.hash` (content-addressed) | `session_animal_runs.params_hash`, beside `config_json` |
 
@@ -1130,10 +1192,22 @@ Both are SHA-256 over canonical JSON (`sort_keys`, compact separators), truncate
 
 What this rests on:
 
-- **Anything in `to_json` moves `profile_hash`**, and a moved hash permanently splits a task's runs in Analytics (old hashes cannot be recomputed). This is why the diagram is derived rather than declared, why the parameter dial's tab fold is the app's rather than the profile's ([Parameter dial](#parameter-dial)), and why `group` must not be re-filed in `fields.py` casually. Editing a saved task — renaming a condition, which renames its metric label — is a new declaration and correctly a new hash. So is a generator change that alters what every regenerated `task.json` contains; earlier runs then group separately and still decode by their own snapshot.
+- **Anything in `to_json` moves `profile_hash`** (on a spine task, anything not on [the unhashed list](#a-spine-tasks-hash-covers-behaviour-only)), and a moved hash permanently splits a task's runs in Analytics (old hashes cannot be recomputed). This is why the diagram is derived rather than declared, why the parameter dial's tab fold is the app's rather than the profile's ([Parameter dial](#parameter-dial)), and why `group` must not be re-filed in `fields.py` casually. Editing a saved trial-table task — renaming a condition, which renames its metric label — is a new declaration and correctly a new hash. So is a generator change that alters what every regenerated `task.json` contains; earlier runs then group separately and still decode by their own snapshot.
 - **`strobes` is left out** because a loaded profile's map is the machine's whole vocabulary: hashing it would split every task's history the first time anyone added a code, and codes are never renumbered, so the map says nothing about comparability. Stored hashes were re-keyed once when this changed (`cohorts/db.py` `_to_v13`, [DATA.md](DATA.md#changing-the-schema)).
 - **`to_json` must round-trip through `parse_profile` byte-for-byte.** A finalized session file embeds its profile ([DATA.md](DATA.md#per-animal-files)); if the round trip drifts, a copied run lands under a different hash than its origin.
 - **`intan_*` fields are core, not config** (`CORE_METADATA_KEYS`), so they stay out of `params_hash`: two runs of one tuning are comparable whether or not one was recorded.
+
+### A spine task's hash covers behaviour only
+
+A profile with a `spine` key is hashed through `tasks/behaviour.py` ([ADR 0003](adr/0003-phase-spine-task-model.md#hashes-and-data)): what the board runs and how replay scores it, and none of the words a person reads. So renaming a row or rewording help text keeps one history, and changing a phase, a block, a binding or a contingency moves the hash. Every other profile hashes exactly as the table above says.
+
+- **The list is of what is left out.** `behaviour.UNHASHED` names each string meant for a person by path (`*` is any list element; a dict step is always a key): `legacyNames`, `config[*].label`, `.help`, `.group` and `.unit`, `liveMetrics[*].label`, and `spine.rows[*].name`. A config label is on it because the generator writes the row's name into the reward fields' labels. Everything else is hashed, `taskName` included, and so is any field added to a row, phase or block later. **A new field meant for a person is hashed until its path is added**, deliberately: `tests/test_behaviour_hash.py` pins the list and changes every leaf of a generated profile in turn.
+- **Rows are keyed by their stable `id`**, hashed as `{id: row}`, so reordering `spine.rows` moves nothing; a block's `rows` list keeps its order. Anything the lowering derives from row order (a wire key, a config entry, the table) is hashed where it appears, so a reorder that changes what the board runs still moves the hash. When an id is missing or repeated, the rows are hashed as a list, so none is dropped.
+- **The snapshot keeps the names.** Only the hash leaves them out: `to_json` and `parse_profile` still round-trip every byte, so a run's own file says what its rows were called. A spine run decodes by its file's snapshot when the file embeds one ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#which-profile-decodes-a-run)).
+
+  > [!CAUTION]
+  > **Without a snapshot in its file, a spine run decodes by its `task_profiles` row, and that row may carry another declaration's words.** `task_profiles` is content-addressed, so its row for a hash holds the first declaration seen with it: the same behaviour, but possibly another task's or an earlier edit's row and metric names. Read a row's name from the run's own file, never from that row.
+- **No migration re-keys a spine run's stored hash.** A spine run whose file embeds its snapshot is scored by it, so a change to this projection moves the [canary](DATA.md#caching), and the cache version moving recomputes its scored hash. Only `session_animal_runs.profile_hash` keeps the digest it was recorded with, and that digest's `task_profiles` row still resolves.
 
 ## Derived state machine
 

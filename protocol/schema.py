@@ -1733,6 +1733,39 @@ SHAPES = (
         ),
     ),
     Shape(
+        "RederivedRun",
+        obj(
+            f("jsonPath", STR),
+            f(
+                "status",
+                lit("rewritten", "failed"),
+                doc="`rewritten`: its derived block differed from what this build derives, so the "
+                "`.json` and `.mat` were rewritten with it. A run whose block is current is "
+                "counted, never listed.",
+            ),
+            f("reason", nullable(STR), doc="Why it failed, when it did."),
+        ),
+        doc="One spine run Re-derive rewrote or could not (`DATA.md#re-derive`).",
+    ),
+    Shape(
+        "RederiveResult",
+        obj(
+            f(
+                "scanned",
+                INT,
+                doc="Spine runs found: `.json` files whose own file says a state table ran them. "
+                "Legacy runs are never derived, so never counted.",
+            ),
+            f("rewritten", INT),
+            f("current", INT, doc="Runs whose stored block already equals what this build derives: left untouched."),
+            f("failed", INT),
+            f("entries", ListOf(Ref("RederivedRun")), doc="The rewritten and failed runs."),
+            f("cohortId", STR),
+            f("dataFolder", STR),
+            f("folderMissing", BOOL, doc="Same distinction as RescanResult's: 'nothing there' vs 'nowhere to look'."),
+        ),
+    ),
+    Shape(
         "TidySession",
         obj(
             f("sessionId", STR),
@@ -3946,6 +3979,21 @@ COMMANDS = (
         "reply timeout.",
     ),
     Command(
+        "sessions.rederive",
+        args=obj(f("cohortId", STR)),
+        result=Ref("RederiveResult"),
+        doc="Re-derive (`DATA.md#re-derive`): replay every spine run under the "
+        "cohort's data folder and, where the derived trial table its `.json` "
+        "carries differs from what this build derives (a `REPLAY_VERSION` "
+        "change, a missing block, a hand edit), rewrite the `.json` and `.mat` "
+        "with the new one. Every other key is written back as it was read; "
+        "the `.tsv` is never opened. Legacy runs are skipped. The app never "
+        "reads the derived table, so no number in Analytics changes. "
+        "`RIG_IN_USE` while any box is running; `ARCHIVE_BUSY` while another "
+        "archive write runs. Queues what it wrote for backup. Long-running; "
+        "the client raises its reply timeout.",
+    ),
+    Command(
         "sessions.tidy",
         args=obj(
             f("cohortId", STR),
@@ -4512,8 +4560,8 @@ ERRORS = (
         "profiles were read from the old ones (`TASKS.md#the-rig-definition`). "
         "Also an archive write the rig refuses (`DATA.md#the-cohort-archive`): "
         "`cohorts.setDataFolder` moving the contents while a session is set up "
-        "or a box is running, and `analytics.rescan` or `sessions.recover` "
-        "while a box is running.",
+        "or a box is running, and `analytics.rescan`, `sessions.recover` or "
+        "`sessions.rederive` while a box is running.",
     ),
     ErrorCode(
         "RIG_WOULD_BREAK_TASKS",
@@ -4652,9 +4700,10 @@ ERRORS = (
     ),
     ErrorCode(
         "ARCHIVE_BUSY",
-        "A scan, tidy, recover, data-folder move or move of animals already "
-        "holds the archive (`analytics.rescan`, `sessions.tidy`, "
-        "`sessions.recover`, `cohorts.setDataFolder`, `cohorts.moveAnimals`). "
+        "A scan, tidy, recover, re-derive, data-folder move or move of animals "
+        "already holds the archive (`analytics.rescan`, `sessions.tidy`, "
+        "`sessions.recover`, `sessions.rederive`, `cohorts.setDataFolder`, "
+        "`cohorts.moveAnimals`). "
         "Nothing was done; try again when it finishes.",
     ),
     ErrorCode(

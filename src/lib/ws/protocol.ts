@@ -105,6 +105,7 @@ export const CMD = {
   ANALYTICS_RESCAN: "analytics.rescan",
   ANALYTICS_RECENT_SESSIONS: "analytics.recentSessions",
   SESSIONS_RECOVER: "sessions.recover",
+  SESSIONS_REDERIVE: "sessions.rederive",
   SESSIONS_TIDY: "sessions.tidy",
 
   // Intan recording
@@ -1674,6 +1675,36 @@ export interface RecoverResult {
   folderMissing: boolean;
 }
 
+/** One spine run Re-derive rewrote or could not (`DATA.md#re-derive`). */
+export interface RederivedRun {
+  jsonPath: string;
+  /**
+   * `rewritten`: its derived block differed from what this build derives, so the `.json` and
+   * `.mat` were rewritten with it. A run whose block is current is counted, never listed.
+   */
+  status: "rewritten" | "failed";
+  /** Why it failed, when it did. */
+  reason: string | null;
+}
+
+export interface RederiveResult {
+  /**
+   * Spine runs found: `.json` files whose own file says a state table ran them. Legacy runs are
+   * never derived, so never counted.
+   */
+  scanned: number;
+  rewritten: number;
+  /** Runs whose stored block already equals what this build derives: left untouched. */
+  current: number;
+  failed: number;
+  /** The rewritten and failed runs. */
+  entries: RederivedRun[];
+  cohortId: string;
+  dataFolder: string;
+  /** Same distinction as RescanResult's: 'nothing there' vs 'nowhere to look'. */
+  folderMissing: boolean;
+}
+
 /** One session record as the tidy preview names it (`DATA.md#reading-the-archive`). */
 export interface TidySession {
   sessionId: string;
@@ -2659,6 +2690,7 @@ export interface CommandArgsMap {
   "analytics.rescan": { cohortId: string; adoptOrphans?: boolean };
   "analytics.recentSessions": { limit?: number };
   "sessions.recover": { cohortId: string };
+  "sessions.rederive": { cohortId: string };
   "sessions.tidy": { cohortId: string; apply?: boolean };
   "intan.status": Record<string, never>;
   "intan.connect": Record<string, never>;
@@ -2753,6 +2785,7 @@ export interface CommandResultMap {
   "analytics.rescan": RescanResult;
   "analytics.recentSessions": { sessions: DiskSession[] };
   "sessions.recover": RecoverResult;
+  "sessions.rederive": RederiveResult;
   "sessions.tidy": TidyPlan;
   "intan.status": IntanStatus;
   "intan.connect": IntanStatus;

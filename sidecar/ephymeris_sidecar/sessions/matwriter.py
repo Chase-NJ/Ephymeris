@@ -28,6 +28,9 @@ import logging
 import warnings
 from typing import Any
 
+from ..tasks.profile import DERIVED_KEY
+from . import derived
+
 log = logging.getLogger(__name__)
 
 
@@ -52,8 +55,14 @@ def to_matlab(data: dict[str, Any]) -> dict[str, Any]:
         elif isinstance(value, (list, tuple)):
             # The only array in the schema is ts_data: [[code, ts], …] → N×2.
             out[name] = np.asarray(value, dtype=np.float64).reshape(-1, 2)
+        elif isinstance(value, dict) and name == DERIVED_KEY:
+            # A spine run's trial table (`DATA.md#the-derived-trial-table`): a
+            # struct whose `trials` is an N×1 struct array, since this one is
+            # read as a table.
+            out[name] = derived.to_matlab(value)
+            continue
         elif isinstance(value, dict):
-            # The task profile snapshot (`DATA.md#the-embedded-task-profile`): a
+            # Any other dict is the task profile snapshot (`DATA.md#the-embedded-task-profile`): a
             # deep, ragged tree nobody reads as a struct, so JSON text that
             # `jsondecode(...)` gives straight back. ASCII (json's default
             # `ensure_ascii`), so no label in it can trip the BMP check below.

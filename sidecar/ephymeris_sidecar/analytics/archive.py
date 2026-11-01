@@ -47,6 +47,10 @@ RECOVER_WHILE_WRITING = (
     "A box is running: its live .tsv would look like an orphan. "
     "Recover once every box has finished."
 )
+REDERIVE_WHILE_WRITING = (
+    "A box is running: a finishing run writes its own .json. "
+    "Re-derive once every box has finished."
+)
 RESCAN_WHILE_WRITING = (
     "A box is running: a run that finishes during the walk would be found "
     "twice. Rescan once every box has finished."
@@ -407,6 +411,38 @@ class CohortArchive:
             result = await asyncio.to_thread(recovery.recover_cohort, cohort.data_folder)
             write.changed(files=await asyncio.to_thread(_recovered_files, result["entries"]))
         return {**result, "cohortId": cohort_id}
+
+
+    async def rederive(self, cohort_id: str) -> dict[str, Any]:
+        """Rewrite the derived trial table of a cohort's spine runs where this
+        build derives a different one (`DATA.md#re-derive`), as the
+        `RederiveResult` wire shape.
+
+        Refused while a box runs, as `recover` is: a finishing run writes
+        its own `.json`. What it rewrote is queued for backup.
+        """
+        from ..sessions import derived  # sessions imports analytics.reader
+
+        async with self.write(refuse_while="writing", because=REDERIVE_WHILE_WRITING) as write:
+            cohort = await asyncio.to_thread(self._cohorts.get, cohort_id)
+            result = await asyncio.to_thread(derived.rederive_cohort, cohort.data_folder)
+            write.changed(files=await asyncio.to_thread(_rederived_files, result["entries"]))
+        return {**result, "cohortId": cohort_id}
+
+
+def _rederived_files(entries: list[dict[str, Any]]) -> list[Path]:
+    """The files a Re-derive wrote: each rewritten `.json`, and its `.mat`
+    when that best-effort write landed."""
+    files: list[Path] = []
+    for entry in entries:
+        if entry["status"] != "rewritten":
+            continue
+        json_path = Path(entry["jsonPath"])
+        files.append(json_path)
+        mat = reader.sibling_mat(reader.sibling_tsv(json_path))
+        if mat.is_file():
+            files.append(mat)
+    return files
 
 
 def _recovered_files(entries: list[dict[str, Any]]) -> list[Path]:

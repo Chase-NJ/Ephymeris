@@ -19,7 +19,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-log = logging.getLogger(__name__)
+from ..tasks.profile import DERIVED_KEY
+
+log =logging.getLogger(__name__)
 
 #: Sibling format folders, so a missing `.json` can be checked against the
 #: write-ahead log that may still hold the data (`DATA.md#layout`).
@@ -240,6 +242,10 @@ def parse_run(path: str | Path, stat: StatResult) -> ReadResult:
             status="unreadable", detail=f"{target.name} is not a JSON object"
         )
 
+    # A spine run's derived trial table (`DATA.md#the-derived-trial-table`) is for
+    # the lab's own scripts. Analytics never reads it: every number is a replay,
+    # so the copy is dropped here, at the one door a file comes in by.
+    raw.pop(DERIVED_KEY, None)
     return ReadResult(
         status="ok",
         document=raw,

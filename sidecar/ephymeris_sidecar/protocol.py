@@ -117,6 +117,7 @@ class Cmd:
     ANALYTICS_RESCAN: Final = "analytics.rescan"
     ANALYTICS_RECENT_SESSIONS: Final = "analytics.recentSessions"
     SESSIONS_RECOVER: Final = "sessions.recover"
+    SESSIONS_REDERIVE: Final = "sessions.rederive"
     SESSIONS_TIDY: Final = "sessions.tidy"
 
     # Intan recording
@@ -339,6 +340,8 @@ SHAPES: Final[dict[str, Any]] = {
     "AnalyticsProgress": ('obj', (('cohortId', 'str', False), ('phase', ('lit', ('reading', 'walking')), False), ('done', 'int', False), ('total', 'int', False))),
     "RecoveredTsv": ('obj', (('tsvPath', 'str', False), ('jsonPath', ('union', ('str', 'null')), False), ('status', ('lit', ('recovered', 'failed')), False), ('nEvents', 'int', False), ('stopReason', ('union', ('str', 'null')), False), ('reason', ('union', ('str', 'null')), False))),
     "RecoverResult": ('obj', (('scanned', 'int', False), ('recovered', 'int', False), ('failed', 'int', False), ('entries', ('list', ('ref', 'RecoveredTsv')), False), ('cohortId', 'str', False), ('dataFolder', 'str', False), ('folderMissing', 'bool', False))),
+    "RederivedRun": ('obj', (('jsonPath', 'str', False), ('status', ('lit', ('rewritten', 'failed')), False), ('reason', ('union', ('str', 'null')), False))),
+    "RederiveResult": ('obj', (('scanned', 'int', False), ('rewritten', 'int', False), ('current', 'int', False), ('failed', 'int', False), ('entries', ('list', ('ref', 'RederivedRun')), False), ('cohortId', 'str', False), ('dataFolder', 'str', False), ('folderMissing', 'bool', False))),
     "TidySession": ('obj', (('sessionId', 'str', False), ('label', 'str', False), ('date', 'str', False), ('status', ('ref', 'SessionStatus'), False), ('startedAt', 'str', False), ('runCount', 'int', False), ('groupIds', ('list', 'str'), False))),
     "TidyMerge": ('obj', (('keep', ('ref', 'TidySession'), False), ('absorb', ('list', ('ref', 'TidySession')), False))),
     "TidyEmpty": ('obj', (('session', ('ref', 'TidySession'), False), ('removesFolder', 'bool', False))),
@@ -475,6 +478,7 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "analytics.rescan": ('obj', (('cohortId', 'str', False), ('adoptOrphans', 'bool', True))),
     "analytics.recentSessions": ('obj', (('limit', 'int', True),)),
     "sessions.recover": ('obj', (('cohortId', 'str', False),)),
+    "sessions.rederive": ('obj', (('cohortId', 'str', False),)),
     "sessions.tidy": ('obj', (('cohortId', 'str', False), ('apply', 'bool', True))),
     "intan.status": ('obj', ()),
     "intan.connect": ('obj', ()),
@@ -568,6 +572,7 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "analytics.rescan": ('ref', 'RescanResult'),
     "analytics.recentSessions": ('obj', (('sessions', ('list', ('ref', 'DiskSession')), False),)),
     "sessions.recover": ('ref', 'RecoverResult'),
+    "sessions.rederive": ('ref', 'RederiveResult'),
     "sessions.tidy": ('ref', 'TidyPlan'),
     "intan.status": ('ref', 'IntanStatus'),
     "intan.connect": ('ref', 'IntanStatus'),

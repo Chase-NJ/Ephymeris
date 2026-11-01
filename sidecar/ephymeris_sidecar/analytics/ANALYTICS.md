@@ -6,8 +6,10 @@ report.
 
 ## Start here
 
-1. **Nothing on disk is a trial.** A run's file holds only raw strobes: `[code, timestamp]` pairs, in the
-   order the box sent them. Every trial, accuracy and count is derived from them each time they are read.
+1. **The app never reads a stored trial.** A run's file holds raw strobes: `[code, timestamp]` pairs, in the
+   order the box sent them. Every trial, accuracy and count is derived from them each time they are read. A
+   spine run's file also carries its [derived trial table](../../../docs/DATA.md#the-derived-trial-table) for
+   the lab's own scripts; `reader.py` drops it, and Analytics replays.
 2. **A task profile says what the strobes mean.** It lists the conditions (for example odor 1, answered at
    the right well), and the strobe names that mark a trial's start, its answer and its outcome. A
    [spine task](../../../docs/TASKS.md#spine-tasks)'s profile carries its state table instead, and its
@@ -421,7 +423,11 @@ One row per trial (`stream/trial_table.py`, `ReplayTrial` on the wire). Columns,
 | `complete` | The next trial started, or the session ended at a trial start. Only a crashed run's last trial is incomplete |
 
 The table rides on `analytics.series` (`RunSeries.trialTable`), computed from the file on each request and
-never cached, like every per-trial series ([DATA.md](../../../docs/DATA.md#caching)).
+never cached, like every per-trial series ([DATA.md](../../../docs/DATA.md#caching)). Finalization and
+recovery write the same table into the run's `.json` and `.mat` under snake_case names, stamped with
+`spine.REPLAY_VERSION` ([DATA.md](../../../docs/DATA.md#the-derived-trial-table)). That copy is for scripts
+outside the app: Analytics never reads it. **Bump `REPLAY_VERSION` with any change to what a run's table
+holds**; `test_derived_trials.py` pins it.
 
 ### Metrics from the trial table
 

@@ -40,11 +40,13 @@ Read with [TASKS.md](TASKS.md) (the profile that decodes a run) and [ARCHITECTUR
   - [The tsv log](#the-tsv-log)
   - [The mat mirror](#the-mat-mirror)
   - [The embedded task profile](#the-embedded-task-profile)
+  - [The derived trial table](#the-derived-trial-table)
 - [Crash safety](#crash-safety)
   - [Written live](#written-live)
   - [Built once at the end](#built-once-at-the-end)
   - [What is guaranteed](#what-is-guaranteed)
 - [Crash recovery](#crash-recovery)
+- [Re-derive](#re-derive)
 - [SQLite database](#sqlite-database)
   - [Tables](#tables)
   - [Indexes](#indexes)
@@ -444,7 +446,8 @@ Each session folder that has a log gets a `notes.md` beside its format folders: 
   "channel_set_hash": "3f0c9a17b2d4e588",
   "channel_set_hash_version": 2,
   "n_events": 2392,
-  "ts_data": [[221, 0], [222, 1000], [223, 5001], /* … */ [246, 3523555]]
+  "ts_data": [[221, 0], [222, 1000], [223, 5001], /* … */ [246, 3523555]],
+  "derived": { /* a spine run's trial table, last; never on a legacy run */ }
 }
 ```
 
@@ -455,7 +458,7 @@ Each session folder that has a log gets a `notes.md` beside its format folders: 
 | `session_id` | `<prefix>_<sessionNumber>` |
 | `sketch` | The sketch chosen at mapping |
 | task fields | The run's merged parameter values, one top-level key per declared `metadataKey`. Absent for a profile-less sketch |
-| `task_profile` | The profile snapshot ([below](#the-embedded-task-profile)). **The only nested value.** Absent for a profile-less sketch |
+| `task_profile` | The profile snapshot ([below](#the-embedded-task-profile)). One of the two nested values. Absent for a profile-less sketch |
 | `stop_reason` | Set by the sidecar at run end. Open set: `BF_END_SESSION received` (clean), `board disconnected`, `sidecar error: <cause>`, `recovered after crash`, … |
 | `trial_seed` | What the **board** reported on its `SEED` line; absent if it never sent one |
 | `host_seed` | What the **app** put on the `START` line. Differs from `trial_seed` only if the firmware ignored it |
@@ -466,6 +469,7 @@ Each session folder that has a log gets a `notes.md` beside its format folders: 
 | `intan_*` | Present only inside a recording ([RECORDING.md](RECORDING.md#what-is-written)) |
 | `n_events` | `len(ts_data)` |
 | `ts_data` | `[code, timestamp_ms]` pairs exactly as the board sent them — ms since **that animal's own** session start, never re-based to wall clock |
+| `derived` | A [spine run](TASKS.md#spine-tasks)'s trial table, replayed from everything above ([below](#the-derived-trial-table)). The other nested value, and always last. Absent on a legacy or profile-less run |
 
 > [!CAUTION]
 > **Task fields are merged flat at the top level**, not under a `config` key. A profile whose `metadataKey` matched a core field would silently overwrite it, so `parse_profile` rejects any `metadataKey` in `tasks/profile.py`'s `CORE_METADATA_KEYS`. The set includes `task_profile` (the writer sets the snapshot after the task fields) and the `intan_*` fields; add any new core field to it.
@@ -498,7 +502,7 @@ A [spine task](TASKS.md#spine-tasks)'s header reads `# interp: 3`, or `2`, a tab
 
 ### The mat mirror
 
-Same field names, written from the same in-memory dict as the JSON — one source serialized twice. `ts_data` becomes an `N×2` double array; `task_profile` becomes a **char array holding JSON** (`jsondecode(task_profile)` in MATLAB), since a profile is a deep ragged tree nobody reads as a struct.
+Same field names, written from the same in-memory dict as the JSON — one source serialized twice. `ts_data` becomes an `N×2` double array; `task_profile` becomes a **char array holding JSON** (`jsondecode(task_profile)` in MATLAB), since a profile is a deep ragged tree nobody reads as a struct. `derived` is the exception: a struct, because it is read as a table ([below](#the-derived-trial-table)).
 
 Every number is a `double` and every bool a `logical`; an empty `ts_data` is still `0×2`. `sessions/matwriter.py` writes it with `scipy.io.savemat` (uncompressed Level 5) and owns the conversion from Python values, because `savemat` unaided would keep an int as `int64` and an empty list as `0×0`. `tests/test_matwriter.py` pins each class and shape through `scipy.io.loadmat`.
 
@@ -508,7 +512,7 @@ scipy is imported on first use, never at module scope, so a broken install costs
 > **Importing numpy while another thread is blocked reading stdin deadlocks the frozen sidecar.** Loading numpy's OpenBLAS extension with the parent-watch thread sitting in `sys.stdin.buffer.read` hangs inside the DLL load, before the handshake line is printed, so the app waits for a backend forever. It happens only under the shell's launch (stdin is a pipe held open for the app's life); a sidecar run by hand, with stdin at EOF or `--no-parent-watch`, never shows it. Keep the preload ahead of the watch, and never move the first import of scipy or numpy onto a thread or later into startup.
 
 > [!CAUTION]
-> **A `.mat` is refused rather than written wrong.** `savemat` sizes a char array in code points where MATLAB counts UTF-16 code units, so a character outside the BMP (an emoji) would yield a string whose dimensions disagree with its data; it also drops a variable whose name starts with `_` with only a warning. Both raise instead, the `.mat` is skipped and logged, and the `.tsv` and `.json` carry the run. `task_profile` is ASCII-escaped JSON, so labels in it never trip this; a top-level string such as an animal name can.
+> **A `.mat` is refused rather than written wrong.** `savemat` sizes a char array in code points where MATLAB counts UTF-16 code units, so a character outside the BMP (an emoji) would yield a string whose dimensions disagree with its data; it also drops a variable whose name starts with `_` with only a warning. Both raise instead, the `.mat` is skipped and logged, and the `.tsv` and `.json` carry the run. `task_profile` is ASCII-escaped JSON, so labels in it never trip this; a top-level string such as an animal name can, and so can a row or channel name in `derived`.
 
 ### The embedded task profile
 
@@ -521,6 +525,37 @@ scipy is imported on first use, never at module scope, so a broken install costs
 - **Its `strobes` map is the record, not a copy.** A loaded profile's map is the machine's whole [strobe vocabulary](TASKS.md#strobe-vocabulary) at the moment the run started; the snapshot keeps it verbatim, so an edit to the vocabulary afterwards never changes how this file decodes. `profile_hash` does not cover the map ([TASKS.md](TASKS.md#profile-and-params-hashes)), so two files whose maps differ only because a code was added between them still share a group.
 
 A profile-less sketch writes no snapshot: an empty one would claim a declaration that never existed.
+
+### The derived trial table
+
+A [spine run](TASKS.md#spine-tasks)'s `.json` and `.mat` carry its [trial table](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#the-trial-table) as a convenience for the lab's own scripts: what replay reads off the run, written once so a script need not replay it. `sessions/derived.py` builds it from `spine.replayed`, in the same replay Analytics runs.
+
+```jsonc
+"derived": {
+  "status": "ok",           // ok | diverged | unreplayable
+  "detail": null,           // why, when not ok
+  "interp": 3,              // the INTERP it was replayed under (the header's, when unreplayable)
+  "replay_version": 1,      // spine.REPLAY_VERSION
+  "phases": ["wait", "present", "delay", "outcome", "iti"],
+  "trials": [{"index": 0, "at_ms": 0, "block": "b1", "row": "r1", "row_name": "Odor 1", "level": null,
+              "phase_entries": [0, 200, 1200, 1700, 1701], "outcome": "correct", "rewarded": true, /* … */
+              "input_counts": [{"phase": 0, "channel": "odor_port", "count": 1}], "complete": true}]
+}
+```
+
+- **The columns are `ReplayTrial`'s fields**, under their snake_case names in both files. They are written by walking the dataclass, so a column added to the trial table is written with no change here. `test_derived_trials.py` checks that every one is a valid MATLAB identifier and has a `.mat` class.
+- **`phases`** names the phases that `phase_entries` and `input_counts.phase` index, counting from 0.
+- **A diverged or unreplayable run** gets the block with its `status`, `detail` and no trials. It must not be analysed, and the marker says so, where a missing block would read as a legacy run. **A legacy or profile-less run** gets no `derived` key.
+- **`replay_version`** is `analytics/stream/spine.py`'s `REPLAY_VERSION`. It moves whenever a run's trial table would. `test_the_replay_version_pins_the_trial_table` pins a fingerprint of fixed runs' tables, so a change that misses the bump fails there. It is not `SCORE_VERSION`: the [cache](#caching) never holds a trial table.
+- **Written at clean finalization** ([built once at the end](#built-once-at-the-end)) and by [crash recovery](#crash-recovery), where a crashed run's table runs through its last strobe and its last trial is `complete: false`. **Rewritten only by [Re-derive](#re-derive).**
+
+**In the `.mat`**, `derived` is a scalar struct. `derived.trials` is an **N×1 struct array**, one element per trial, so `T = struct2table(S.derived.trials)` gives one row per trial and `S.derived.trials(5).outcome` reads one. Each element's `input_counts` is a K×1 struct array, and `phases` is a 1×P cell of char. Each field's class comes from its type: a number is a `double`, a bool a `logical`, a string `char`, and a list of numbers a 1×K `double` row. An empty `trials` is a 0×1 struct that keeps its fields.
+
+> [!CAUTION]
+> **A null number is `NaN` in the `.mat`, never `[]`, and a null string is `''`.** `[S.derived.trials.latency_ms]` concatenates one value per element, so an empty field would be dropped silently and every later trial's latency would line up with the wrong trial. Keep nulls as `NaN` in any column added to the trial table.
+
+> [!IMPORTANT]
+> **The app never reads the derived table.** Analytics always replays the run (`analytics/reader.py` drops the key at the one door a file comes in by), so a stale or hand-edited copy cannot change a number. A test writes a wrong table into a run and checks that `analytics.summary` and `analytics.series` do not move.
 
 ## Crash safety
 
@@ -554,7 +589,7 @@ Every parsed strobe is appended to the `.tsv` **the instant it arrives**, with `
 
 ### Built once at the end
 
-`.json` and `.mat` are not append-friendly and don't need to be; they are built once in `AnimalWriter.finalize`. Finalization is **idempotent** (the first `stop_reason` wins, so a board-drop racing an operator stop cannot rewrite history), and the two structured writes are **best-effort**: an `OSError` is logged, not raised. The `.tsv` is already closed and durable by then, so failing to produce a convenience format must never look like failing to save data.
+`.json` and `.mat` are not append-friendly and don't need to be; they are built once in `AnimalWriter.finalize`. A spine run's [derived trial table](#the-derived-trial-table) is replayed there, in the same worker thread and before either write, so the files carry it from their first byte. Replay jumps from one edge or timer to the next: an 800-trial run takes about 30 ms. A derivation that fails is logged, and the files are written without the block. Finalization is **idempotent** (the first `stop_reason` wins, so a board-drop racing an operator stop cannot rewrite history), and the two structured writes are **best-effort**: an `OSError` is logged, not raised. The `.tsv` is already closed and durable by then, so failing to produce a convenience format must never look like failing to save data.
 
 Each is written **whole or not at all** (`write_atomic`): into a `.part` beside it named for the writing process and thread, fsync'd, then renamed over the real name, as a [verified transfer](#verified-transfer) copies. Two writers of one file each land whole, and the last rename wins. A power cut while finalizing leaves at most a `.part`, which no walk reads, so the run is a `.tsv` with no `.json` that [Recover](#crash-recovery) rebuilds, never a torn document under the name every reader opens. Recovery writes the same way.
 
@@ -571,6 +606,7 @@ Each is written **whole or not at all** (`write_atomic`): into a `.part` beside 
 - **It shares the archive walker** (`analytics/reader.py`'s `walk_orphaned_tsvs`, over `_walk_format_dirs`), so every legacy layout [adoption](#orphan-adoption) reads, recovery reads too, and it backfills in the same layout (a `recovery_tsv/` orphan gets `behavior_json/` and `behavior_mat/`).
 - **A footer wins.** A `.tsv` with a footer finalized cleanly and only its best-effort `.json` write failed (the disk-full case); it keeps its recorded `stop_reason`. Only a footer-less log gets `stop_reason: "recovered after crash"` (`RECOVERED_STOP_REASON`).
 - **`n_events` is recomputed** from the lines actually parsed, never copied from a footer.
+- **A spine run gets its [derived trial table](#the-derived-trial-table)**, replayed through its last strobe.
 - **Header values are coerced** to numbers and bools except the always-string fields (`_STRING_FIELDS`: names, port, `intan_*` text). `task_profile` is decoded as JSON; a line torn by the crash is **dropped**, not kept as text — half a snapshot every reader must defend against is worse than none.
 - Strobe lines must match the live parser's strict `^\d{1,3}\t\d+$`, and **a last line without its newline is dropped unread**, so a torn final line costs only itself. `AnimalWriter` ends every line with a newline before its fsync, so a complete line always has one; a strobe cut mid-timestamp (`127\t2` of `127\t200`) or a header line cut mid-value would otherwise read as real. A pre-Ephymeris log's unterminated last line is still read: that software may not have ended it.
 - **The lab's pre-Ephymeris logs are a second dialect**, recognised by their first line, `event_code\tevent_ms\tevent_name` (`LEGACY_HEADER`). After it come `# key\tvalue` comments (the run's parameters, read in flat and coerced as above), strobe lines with a third column naming the code (`code\tms\tBF_NAME` — the name is dropped; the [strobe vocabulary](TASKS.md#strobe-vocabulary) decodes the number) and CRLF line endings. The third column is admitted **only** in such a file; this app's own logs keep the strict rule.
@@ -578,6 +614,14 @@ Each is written **whole or not at all** (`write_atomic`): into a `.part` beside 
 - **Rejected while any box is running:** a live run's `.tsv` legitimately has no `.json` yet. It is an [archive write](#the-cohort-archive), so it also waits for no other, and the files it writes are queued for backup.
 
 The Recover button chains an `analytics.rescan`, so recovered files are adopted in the same click. It is a `sessions.*` command because it **writes** session files; analytics never writes the archive.
+
+## Re-derive
+
+**Re-derive** (`sessions.rederive`, in the Analytics header) replays every spine run under a cohort's data folder. Where the [derived trial table](#the-derived-trial-table) in its `.json` differs from what this build derives, it rewrites that table. This covers a `REPLAY_VERSION` change, a block that is missing, or a hand edit. A run whose block is already current is left untouched: it is not written, its mtime is unchanged, its cached summary stays warm, and nothing is queued for backup.
+
+- **Only the table changes.** The `.json` is rewritten with every other key as it was read, and the `.mat` is rebuilt from that one document. Both are written with `write_atomic`. The `.tsv` is never opened, and legacy runs are skipped.
+- **Archive rules:** it is an [archive write](#the-cohort-archive), so it runs under the archive lock, is refused while a box runs (a finishing run writes its own `.json`), and queues what it wrote for backup.
+- **No number in Analytics changes**, since the app never reads the table. A rewritten file's new mtime makes its next summary read it once.
 
 ## SQLite database
 
@@ -851,7 +895,7 @@ So a **walk exists, but only on an explicit user action** — `analytics.rescan`
 
 The view reads the database only, so `sessions.list` and the log never wait on a file or on the lock.
 
-**Every write goes through the archive** (`CohortArchive.write`): a rescan, a tidy, a [recover](#crash-recovery), a [data-folder relocate](#data-folder) and a [move of animals](#moving-animals-between-cohorts). Each holds the archive lock end to end and is refused (`ArchiveBusy`) while anything else holds it. A summary waits for the lock, then reads its records and indexes them under it. Records read before the wait could be ones that a relocate, a move or a tidy had just rewritten.
+**Every write goes through the archive** (`CohortArchive.write`): a rescan, a tidy, a [recover](#crash-recovery), a [re-derive](#re-derive), a [data-folder relocate](#data-folder) and a [move of animals](#moving-animals-between-cohorts). Each holds the archive lock end to end and is refused (`ArchiveBusy`) while anything else holds it. A summary waits for the lock, then reads its records and indexes them under it. Records read before the wait could be ones that a relocate, a move or a tidy had just rewritten.
 
 **The rig is asked once the lock is held**, never before, so a session set up or a box started while a caller decided cannot slip past:
 
@@ -862,6 +906,7 @@ The view reads the database only, so `sessions.list` and the log never wait on a
 | Tidy | Leaves the held session alone | Leaves the held session alone |
 | Rescan | Runs | Refused, `RIG_IN_USE`: a run finishing during the walk would be adopted as well as recorded |
 | Recover | Runs | Refused, `RIG_IN_USE`: a live run's `.tsv` has no `.json` yet |
+| Re-derive | Runs | Refused, `RIG_IN_USE`: a finishing run writes its own `.json` |
 
 A box counts as running until its run is recorded: its `.json` written and its run record committed (`SessionLifecycle.writing`).
 
@@ -1092,8 +1137,9 @@ Fonts are inlined as data URLs at build time (`report/fonts.ts`): a font the ras
 
 ### Recover and Tidy
 
-The Analytics header carries the three reconciliation actions, each explicit and never a side effect of opening a view:
+The Analytics header carries the four reconciliation actions, each explicit and never a side effect of opening a view:
 
 - **Rescan** — `analytics.rescan`: [adopt](#orphan-adoption) and [prune](#pruning).
 - **Recover** — `sessions.recover`, then a rescan: [crash recovery](#crash-recovery).
+- **Re-derive** — `sessions.rederive`: [rewrite spine runs' derived trial tables](#re-derive).
 - **Tidy records** — `sessions.tidy` with a preview: [tidy records](#tidy-records).

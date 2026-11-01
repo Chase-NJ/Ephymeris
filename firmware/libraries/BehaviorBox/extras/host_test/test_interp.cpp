@@ -35,7 +35,7 @@ static const InterpStateRow TRIAL_STATES[] = {
   {BIT(FLUID),            0,                            P_10,  P_10,  3,   NO,    NO, NO,  0,    0,    0, 1},
   {0,                     0,                            P_100, P_100, 0,   NO,    NO, NO,  0,    0,    0, 0},
 };
-static const InterpTable TRIAL = {TRIAL_STATES, TRIAL_EDGES};
+static const InterpTable TRIAL = {TRIAL_STATES, TRIAL_EDGES, NULL};
 
 int main() {
 
@@ -151,7 +151,7 @@ int main() {
       {BIT(FLUID), 0, NO,   NO,   NO, NO,       NO, NO, 0, 0, 0, 0},
       {0,          0, NO,   NO,   NO, NO,       NO, NO, 0, 0, 0, 0},
     };
-    static const InterpTable T = {S, TRIAL_EDGES};
+    static const InterpTable T = {S, TRIAL_EDGES, NULL};
     InterpCore c; interp_begin(&c, &T, PARAMS, 1, 0);
     InterpActions a = interp_step(&c, NOTHING, 10);
     assert(a.entered[0] == 1 && a.entered[1] == 2);
@@ -162,7 +162,7 @@ int main() {
       {0, 0, NO, NO, NO, NO,      NO, NO, 0, 0, 0, 0},
       {0, 0, NO, NO, NO, NO,      NO, NO, 0, 0, 0, 0},
     };
-    static const InterpTable T = {S, TRIAL_EDGES};
+    static const InterpTable T = {S, TRIAL_EDGES, NULL};
     InterpCore c; InterpActions a = interp_begin(&c, &T, PARAMS, 1, 0);
     assert(a.entered[0] == 0 && a.entered[1] == 2); }
 
@@ -171,7 +171,7 @@ int main() {
       {0, 0, P_10, P_12, 1,  NO, NO, NO, 0, 0, 0, 0},
       {0, 0, NO,   NO,   NO, NO, NO, NO, 0, 0, 0, 0},
     };
-    static const InterpTable T = {S, TRIAL_EDGES};
+    static const InterpTable T = {S, TRIAL_EDGES, NULL};
     int seen[3] = {0, 0, 0};
     for (uint32_t seed = 1; seed <= 100; ++seed) {
       InterpCore c; interp_begin(&c, &T, PARAMS, seed, 0);
@@ -187,7 +187,7 @@ int main() {
       {0, 0, P_0, P_0, 1, NO, NO, NO, 0, 0, 0, 0},
       {0, 0, P_0, P_0, 0, NO, NO, NO, 0, 0, 0, 0},
     };
-    static const InterpTable T = {S, TRIAL_EDGES};
+    static const InterpTable T = {S, TRIAL_EDGES, NULL};
     InterpCore c; interp_begin(&c, &T, PARAMS, 1, 0);
     assert(interp_step(&c, NOTHING, 1).entered[0] == 1);
     assert(interp_step(&c, NOTHING, 2).entered[0] == 0); }
@@ -207,7 +207,7 @@ int main() {
       {BIT(LIGHT), 0, P_100, P_100, 0,  NO, NO, NO, 0, 0, 0, 0},
       {BIT(ODOR),  0, P_100, P_100, 0,  NO, NO, NO, 0, 0, 0, 0},
     };
-    static const InterpTable T = {S, E};
+    static const InterpTable T = {S, E, NULL};
     InterpCore c; InterpActions a = interp_begin(&c, &T, PARAMS, 1, 0);
     assert(a.entered[0] == 0 && a.entered[1] == 2 && c.state == 2);
     assert(a.flags == (INTERP_ACT_SESSION_START | INTERP_ACT_TRIAL_START) && a.on == BIT(ODOR));
@@ -218,6 +218,99 @@ int main() {
     uint8_t want = (uint8_t)(interp_draw(&ctx, 2) + 1);
     a = interp_step(&c, NOTHING, 100);
     assert(a.entered[0] == 0 && a.entered[1] == want && a.flags == INTERP_ACT_TRIAL_START && c.rng == ctx); }
+
+  // --- a counter state (INTERP 4): it exits on the N-th rise of its input ---
+  //   0 Counter  light on, watch LEFT; the N-th LEFT rise -> 1; times out after 100 -> 2
+  //   1 Reward   fluid for 10 -> 0
+  //   2 End      after 10 -> 0, the session's last trial
+  // N is the table's counter: params[P_COUNT] (FR), drawn from
+  // [params[P_COUNT], params[P_COUNT_MAX]] (VR), or the next ratio (PR).
+  { enum { P_COUNT = 6, P_COUNT_MAX = 7 };
+    static const uint32_t CP[] = {100, 0, 10, 12, 1000, 0, 3, 9};
+    static const InterpEdgeRow E[] = {{LEFT, INTERP_RISE, 1}};
+    static const InterpStateRow S[] = {
+      {BIT(LIGHT), BIT(LEFT), P_100, P_100, 2,  NO, NO, NO, 0, 1, INTERP_STARTS_TRIAL | INTERP_COUNT, 0},
+      {BIT(FLUID), 0,         P_10,  P_10,  0,  NO, NO, NO, 0, 0, 0, 1},
+      {0,          0,         P_10,  P_10,  0,  NO, NO, NO, 0, 0, INTERP_LAST_TRIAL, 4},
+    };
+    static const InterpCounter FR = {NULL, 0, P_COUNT, P_COUNT};
+    static const InterpTable T_FR = {S, E, &FR};
+
+    // FR-3: the first two rises are counted and move nothing; the third exits.
+    { InterpCore c; interp_begin(&c, &T_FR, CP, 1, 0);
+      InterpActions a = interp_step(&c, edges(BIT(LEFT), 0), 5);
+      assert(a.rose == BIT(LEFT) && a.entered[0] == NO && a.on == 0);
+      assert(interp_step(&c, edges(BIT(LEFT), 0), 6).entered[0] == NO);
+      a = interp_step(&c, edges(BIT(LEFT), 0), 7);
+      assert(a.entered[0] == 1 && a.on == BIT(FLUID) && a.off == BIT(LIGHT));
+      // Entered again, the count starts over.
+      assert(interp_step(&c, NOTHING, 17).entered[0] == 0);
+      assert(interp_step(&c, edges(BIT(LEFT), 0), 18).entered[0] == NO); }
+
+    // A counted rise below N does not hold the timer off; the N-th beats it.
+    { InterpCore c; interp_begin(&c, &T_FR, CP, 1, 0);
+      interp_step(&c, edges(BIT(LEFT), 0), 1);
+      InterpActions a = interp_step(&c, edges(BIT(LEFT), 0), 100);
+      assert(a.rose == BIT(LEFT) && a.entered[0] == 2); }
+    { InterpCore c; interp_begin(&c, &T_FR, CP, 1, 0);
+      interp_step(&c, edges(BIT(LEFT), 0), 1);
+      interp_step(&c, edges(BIT(LEFT), 0), 2);
+      assert(interp_step(&c, edges(BIT(LEFT), 0), 100).entered[0] == 1); }
+
+    // Counting draws nothing.
+    { InterpCore c; interp_begin(&c, &T_FR, CP, 1, 0);
+      uint32_t before = c.rng;
+      interp_step(&c, edges(BIT(LEFT), 0), 1);
+      interp_step(&c, edges(BIT(LEFT), 0), 2);
+      interp_step(&c, edges(BIT(LEFT), 0), 3);
+      assert(c.rng == before); }
+
+    // Entering a last-trial state reports it; the session layer ends at the next trial start.
+    { InterpCore c; interp_begin(&c, &T_FR, CP, 1, 0);
+      InterpActions a = interp_step(&c, NOTHING, 100);
+      assert(a.entered[0] == 2 && a.flags == INTERP_ACT_LAST_TRIAL);
+      a = interp_step(&c, NOTHING, 110);
+      assert(a.entered[0] == 0 && a.flags == INTERP_ACT_TRIAL_START); }
+
+    // VR: N drawn uniformly from [3, 9] at each entry, before the state's own
+    // timer, from the session RNG, so the same seed draws the same N.
+    { static const InterpCounter VR = {NULL, 0, P_COUNT, P_COUNT_MAX};
+      static const InterpTable T_VR = {S, E, &VR};
+      int seen[10] = {0};
+      // Seeds past 2^31 / 16807: below that, a first draw is a multiple of 7.
+      for (uint32_t seed = 1000003; seed <= 1000003 + 200 * 104729UL; seed += 104729UL) {
+        InterpCore c; interp_begin(&c, &T_VR, CP, seed, 0);
+        uint32_t ctx = seed;
+        uint32_t want = 3 + interp_draw(&ctx, 7);
+        assert(c.rng == ctx);                            // one draw at entry: N's
+        uint32_t presses = 0;
+        InterpActions a;
+        do a = interp_step(&c, edges(BIT(LEFT), 0), ++presses); while (a.entered[0] == NO);
+        assert(a.entered[0] == 1 && presses == want);
+        seen[presses]++;
+      }
+      for (int n = 3; n <= 9; ++n) assert(seen[n] > 0); }
+
+    // PR: N is the k-th ratio at the k-th completion, and the last repeats.
+    { static const uint16_t RATIOS[] = {1, 2, 4};
+      static const InterpCounter PR = {RATIOS, 3, NO, NO};
+      static const InterpTable T_PR = {S, E, &PR};
+      InterpCore c; interp_begin(&c, &T_PR, CP, 1, 0);
+      static const uint32_t want[] = {1, 2, 4, 4, 4};
+      uint32_t t = 0;
+      for (int k = 0; k < 5; ++k) {
+        uint32_t presses = 0;
+        InterpActions a;
+        do { ++presses; a = interp_step(&c, edges(BIT(LEFT), 0), ++t); } while (a.entered[0] == NO);
+        assert(a.entered[0] == 1 && presses == want[k]);
+        t += 10;
+        assert(interp_step(&c, NOTHING, t).entered[0] == 0);
+      }
+      // A limit that runs out is no completion: the step stays.
+      InterpCore d; interp_begin(&d, &T_PR, CP, 1, 0);
+      assert(interp_step(&d, NOTHING, 100).entered[0] == 2);
+      assert(interp_step(&d, NOTHING, 110).entered[0] == 0);
+      assert(interp_step(&d, edges(BIT(LEFT), 0), 111).entered[0] == 1); } }
 
   std::printf("test_interp: all passed\n");
   return 0;

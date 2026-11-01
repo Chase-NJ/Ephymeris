@@ -76,7 +76,7 @@ ITI, WAIT, SAMPLE, REWARD, P_ALWAYS, CLASS_TIMEOUT = range(6)
 PARAMS = (1000, 5000, 500, 40, 1000, 200)
 
 #: Wait -> Present -> Outcome -> ITI, lowered as BoxInterp.h's
-#: "Lowering the first phases" describes. RIGHT is correct, LEFT wrong.
+#: "Lowering the phases" describes. RIGHT is correct, LEFT wrong.
 TRIAL = Table(
     states=(
         # 0 Wait for the port, light on
@@ -171,6 +171,89 @@ def test_a_pick_state_draws_every_time_it_is_entered() -> None:
     assert {a.entered[1] for _, a in run} == {ROW_1, ROW_2}
 
 
+# --- a counter state and a last-trial state (INTERP 4) ------------------------
+#
+# The same table test_interp.cpp walks:
+#   0 Counter  light on, watch LEFT; the N-th LEFT rise -> 1; after 100 -> 2
+#   1 Reward   fluid for 10 -> 0
+#   2 End      after 10 -> 0, the session's last trial (class 4, omission)
+
+C_LEFT = 1 << 1
+P_COUNT, P_COUNT_MAX = 6, 7
+COUNT_PARAMS = (100, 0, 10, 12, 1000, 0, 3, 9)
+
+
+def counter_table(counter: rp.Counter | None) -> Table:
+    return Table(
+        states=(
+            StateRow(outputs=LIGHT, watch=C_LEFT, timer_min=0, timer_max=0, on_timeout=2, edge_first=0,
+                     edge_count=1, flags=STARTS_TRIAL | rp.COUNT),
+            StateRow(outputs=FLUID, timer_min=2, timer_max=2, on_timeout=0, outcome=1),
+            StateRow(timer_min=2, timer_max=2, on_timeout=0, flags=rp.LAST_TRIAL, outcome=4),
+        ),
+        edges=(EdgeRow(1, RISE, 1),),
+        counter=counter,
+    )
+
+
+FR_3 = counter_table(rp.Counter(count_min=P_COUNT, count_max=P_COUNT))
+
+
+def presses(*ticks: int) -> list[tuple[int, Edges]]:
+    return [(t, Edges(rose=C_LEFT)) for t in ticks]
+
+
+def test_a_counter_exits_on_the_nth_rise_and_counts_the_ones_before() -> None:
+    run = dict(rp.replay(FR_3, COUNT_PARAMS, seed=1, events=presses(5, 6, 7, 18), ticks=20))
+    assert run[5] == Actions(rose=C_LEFT) and run[6] == Actions(rose=C_LEFT)
+    assert run[7] == Actions(rose=C_LEFT, on=FLUID, off=LIGHT, entered=(1, NONE))
+    assert run[17].entered == (0, NONE)          # the reward's 10 ms, then a new trial
+    assert run[18] == Actions(rose=C_LEFT)       # counting from zero again
+
+
+def test_a_counted_rise_below_n_does_not_hold_the_timer_off_and_the_nth_beats_it() -> None:
+    run = dict(rp.replay(FR_3, COUNT_PARAMS, seed=1, events=presses(1, 100), ticks=100))
+    assert run[100].entered == (2, NONE) and run[100].flags == rp.ACT_LAST_TRIAL
+    run = dict(rp.replay(FR_3, COUNT_PARAMS, seed=1, events=presses(1, 2, 100), ticks=100))
+    assert run[100].entered == (1, NONE)
+
+
+def test_a_drawn_count_is_drawn_at_entry_from_the_session_rng() -> None:
+    vr = counter_table(rp.Counter(count_min=P_COUNT, count_max=P_COUNT_MAX))
+    seen = set()
+    for seed in range(1000003, 1000003 + 200 * 104729, 104729):
+        want = 3 + rp.draw(seed, 7)[0]
+        run = rp.replay(vr, COUNT_PARAMS, seed=seed, events=presses(*range(1, 10)), ticks=9)
+        done = [t for t, a in run if a.entered[0] == 1]
+        assert done == [want]
+        seen.add(want)
+    assert seen == set(range(3, 10))
+
+
+def test_a_progressive_count_reads_the_next_ratio_and_repeats_the_last() -> None:
+    pr = counter_table(rp.Counter(ratios=(1, 2, 4)))
+    t, events, completions = 0, [], []
+    for n in (1, 2, 4, 4, 4):
+        events += presses(*range(t + 1, t + n + 1))
+        t += n
+        completions.append(t)
+        t += 10
+    run = rp.replay(pr, COUNT_PARAMS, seed=1, events=events, ticks=t)
+    assert [now for now, a in run if a.entered[0] == 1] == completions
+    # A limit that runs out is no completion: the step stays.
+    run = dict(rp.replay(pr, COUNT_PARAMS, seed=1, events=presses(111), ticks=111))
+    assert run[100].entered[0] == 2 and run[111].entered[0] == 1
+
+
+def test_a_counter_or_a_last_trial_state_is_refused_before_version_4() -> None:
+    with pytest.raises(ValueError, match="counter"):
+        rp.replay(FR_3, COUNT_PARAMS, seed=1, events=[], ticks=10, interp=3)
+    last = Table(states=(StateRow(timer_min=0, timer_max=0, on_timeout=0, flags=rp.LAST_TRIAL),))
+    with pytest.raises(ValueError, match="last-trial"):
+        rp.replay(last, (5,), seed=1, events=[], ticks=10, interp=3)
+    rp.replay(TRIAL, PARAMS, seed=1, events=[], ticks=10, interp=4)  # a plain table runs under any
+
+
 def test_a_version_2_table_with_a_pick_state_is_refused() -> None:
     """INTERP 2 has no pick state: its core would rest in one forever."""
     with pytest.raises(ValueError, match="pick"):
@@ -191,9 +274,10 @@ def test_the_trial_runner_s_interpreter_is_never_replayed_as_a_table() -> None:
     recorded GRGL run names, and the state-table interpreter is 2. So a run's
     header alone tells a spine run from a legacy one, and replay never walks a
     legacy run's strobes as if a table had produced them. 2 is the tracer's
-    table format, kept so its runs still replay; 3 adds the pick state."""
-    assert rp.INTERP_VERSIONS == {2, 3}
-    assert rp.INTERP_VERSION == 3
+    table format, kept so its runs still replay; 3 adds the pick state, and 4
+    the counter and last-trial states."""
+    assert rp.INTERP_VERSIONS == {2, 3, 4}
+    assert rp.INTERP_VERSION == 4
     with pytest.raises(ValueError, match="INTERP 1"):
         rp.replay(TRIAL, PARAMS, seed=1, events=[], ticks=10, interp=1)
 
@@ -254,6 +338,22 @@ def _one(state: StateRow, *more: StateRow, edges: tuple[EdgeRow, ...] = ()) -> T
         (lambda: _one(StateRow(chance=0, on_hit=1, on_miss=1), StateRow(edge_count=1, flags=rp.PICK),
                       StateRow(), edges=(EdgeRow(0, 0, 2),)), "pick state"),
         (lambda: _one(StateRow(chance=0, on_hit=0, on_miss=0, flags=rp.PICK)), "chance"),
+        # A counter state: one edge row, a RISE, and the table has a counter.
+        (lambda: _one(StateRow(watch=PORT, edge_count=1, flags=rp.COUNT), edges=(EdgeRow(0, RISE, 0),)),
+         "no counter"),
+        (lambda: Table(states=(StateRow(watch=PORT, edge_count=1, flags=rp.COUNT),),
+                       edges=(EdgeRow(0, FALL, 0),), counter=rp.Counter(count_min=0, count_max=0)), "RISE"),
+        (lambda: Table(states=(StateRow(watch=PORT, flags=rp.COUNT),), counter=rp.Counter(count_min=0, count_max=0)),
+         "one edge row"),
+        (lambda: Table(states=(StateRow(chance=0, on_hit=0, on_miss=0, flags=rp.COUNT),),
+                       counter=rp.Counter(count_min=0, count_max=0)), "counter state"),
+        (lambda: Table(states=(StateRow(),), counter=rp.Counter(count_min=0)), "count_max"),
+        (lambda: Table(states=(StateRow(),), counter=rp.Counter()), "ratio"),
+        (lambda: Table(states=(StateRow(),), counter=rp.Counter(ratios=(1, 0))), "ratio"),
+        # A last-trial state rests: it neither branches nor starts a trial.
+        (lambda: _one(StateRow(timer_min=0, timer_max=0, on_timeout=0, flags=rp.LAST_TRIAL | STARTS_TRIAL)),
+         "last-trial"),
+        (lambda: _one(StateRow(chance=0, on_hit=1, on_miss=1, flags=rp.LAST_TRIAL), StateRow()), "last-trial"),
     ],
 )
 def test_a_table_the_core_cannot_run_is_refused(build, why: str) -> None:

@@ -29,7 +29,8 @@ from typing import Any
 from . import replay as rp
 
 #: The session end rule BoxSpine.h follows: ends at the start of trial NT+1,
-#: or the first trial start after STOP. NT is parameter slot 0.
+#: or the first trial start after STOP or after a last-trial state. NT is
+#: parameter slot 0.
 TRIALS_SLOT = 0
 
 
@@ -124,9 +125,12 @@ def _decode(document: dict[str, Any]) -> SpineRecord:
     if not isinstance(table_doc, dict):
         raise SpineDecodeError("the snapshot carries no state table: the task could not be lowered")
     try:
+        counter = table_doc.get("counter")
         table = rp.Table(
             states=[rp.StateRow(*row) for row in table_doc["states"]],
             edges=[rp.EdgeRow(*row) for row in table_doc["edges"]],
+            counter=(rp.Counter(int(counter["min"]), int(counter["max"]), tuple(int(n) for n in counter["ratios"]))
+                     if counter is not None else None),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise SpineDecodeError(f"the snapshot's state table is not one: {exc}") from exc
@@ -215,15 +219,16 @@ def _predict(record: SpineRecord) -> list[tuple[int, int]]:
     except ValueError as exc:  # strobes out of order, an edge after the end, a bad parameter
         raise SpineDecodeError(f"the recorded strobes cannot be replayed: {exc}") from exc
     out: list[tuple[int, int]] = []
-    trials, outputs = 0, 0
+    trials, outputs, last = 0, 0, False
     max_trials = record.params[TRIALS_SLOT]
 
     def bits(mask: int) -> list[int]:
         return [i for i in range(32) if mask >> i & 1]
 
     for now, a in actions:
+        last = last or bool(a.flags & rp.ACT_LAST_TRIAL)
         starts = bool(a.flags & rp.ACT_TRIAL_START)
-        ends = starts and now > 0 and (trials >= max_trials or now == record.end_tick)
+        ends = starts and now > 0 and (trials >= max_trials or last or now == record.end_tick)
         if a.flags & rp.ACT_SESSION_START:
             out.append((record.session_start, now))
         out += [(record.rise[i], now) for i in bits(a.rose)]

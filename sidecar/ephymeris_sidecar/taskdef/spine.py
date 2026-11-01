@@ -51,6 +51,10 @@ SLOT_TYPES = ("digital_in", "digital_out")
 _MS_MAX = 3_600_000
 _TRIALS_MAX = 10_000
 _REWARD_MS_MAX = 5_000
+#: The most presses a Counter's N may ask for, fixed, drawn or in a sequence.
+COUNT_MAX = 10_000
+#: The most ratios a progressive sequence holds: the core counts them in a uint8_t.
+RATIOS_MAX = lowering.NONE - 1
 #: What each part of a task takes of a Mega's RAM in BoxSpine.h, as AVR lays it
 #: out. A parameter is its `SpineParam` (a 2 B key pointer and three uint32_t)
 #: and its uint32_t in `params[]`, plus its key string, which AVR keeps in RAM.
@@ -62,22 +66,28 @@ INPUT_BYTES = 14
 OUTPUT_BYTES = 5
 #: The globals of a spine sketch apart from its task's data: the runner,
 #: BehaviorBox.h and the Arduino core, measured by that same test. A build can
-#: come in a few bytes under the sum (the compiler folds a one-element input
-#: array), never over it.
-RUNNER_RAM_BYTES = 384
+#: come in some bytes under the sum (the compiler folds a small constant channel
+#: array away), never over it.
+RUNNER_RAM_BYTES = 397
 #: The most RAM a task's data (`task_ram_bytes`) may take, out of a Mega's 8192 B.
-#: With the runner's own, globals stay at most 5384 B (66%), leaving the stack
-#: and the serial buffers at least 2808 B (`TASKS.md#spine-diagnostics`). An
+#: With the runner's own, globals stay at most 5397 B (66%), leaving the stack
+#: and the serial buffers at least 2795 B (`TASKS.md#spine-diagnostics`). An
 #: 18-row 2AFC fits.
 TASK_RAM_MAX = 5000
 
 
+#: A progressive ratio's bytes: a `uint16_t` each in `SPINE_RATIOS`.
+RATIO_BYTES = 2
+
+
 def task_ram_bytes(low: lowering.Lowered) -> int:
     """The bytes of RAM a task's generated `TaskSpine.h` adds to a Mega build:
-    its states and edge rows, its parameters and its channel bits."""
+    its states and edge rows, its parameters, its channel bits and its ratios."""
+    ratios = len(low.counter[2]) if low.counter is not None else 0
     return (lowering.table_bytes(len(low.states), max(1, len(low.edges)))
             + sum(PARAM_BYTES + len(key) + 1 for key in low.params)
-            + INPUT_BYTES * max(1, len(low.inputs)) + OUTPUT_BYTES * max(1, len(low.outputs)))
+            + INPUT_BYTES * max(1, len(low.inputs)) + OUTPUT_BYTES * max(1, len(low.outputs))
+            + RATIO_BYTES * max(1, ratios))
 
 
 @dataclass
@@ -93,7 +103,7 @@ class _Resolved:
 
 
 def diagnostics(definition: TaskDefinition) -> list[Diagnostic]:
-    """Every problem with a spine task, located (SPN101–SPN110)."""
+    """Every problem with a spine task, located (SPN101–SPN111)."""
     return _resolve(definition).problems
 
 
@@ -122,6 +132,7 @@ def _resolve(definition: TaskDefinition) -> _Resolved:
     outputs = [s for s, t in slot_type.items() if t == "digital_out"]
 
     shape_ok = _shape_problems(spine, slot_type, problem) and len(out.problems) == slots_before
+    _held_problems(spine, problem)
     rows_ok = _row_problems(spine, problem)
     map_ok = _map_problems(spine, slot_type, problem)
     rows = [r.to_json() for r in spine.rows]
@@ -215,6 +226,8 @@ def _shape_problems(spine: Spine, slot_type: dict[str, str], problem) -> bool:  
         if kinds[window + 1 : end].count("outcome") != 1:
             bad("spine", "a Response window is followed by exactly one Outcome, before the ITI: the row's "
                 "map says what it pays")
+    if kinds.count("counter") > 1:
+        bad("spine", "a spine has at most one Counter: the table holds one N")
     if len(spine.rows) > 1 and kinds and kinds[0] == "outcome":
         bad("spine[0]", "with several rows the first phase cannot be an Outcome: a trial starts by drawing "
             "its row, and an Outcome's draw cannot follow that one in the same tick")
@@ -226,11 +239,16 @@ def _shape_problems(spine: Spine, slot_type: dict[str, str], problem) -> bool:  
         for slot in p.outputs:
             if slot_type.get(slot) != "digital_out":
                 bad(f"{at}.outputs", f"{slot!r} is not an output slot")
-        if p.phase == "wait" and slot_type.get(p.on or "") != "digital_in":
-            bad(f"{at}.on", f"a wait moves on at an edge of an input slot; {p.on!r} is not one")
-        if p.phase == "present" and p.abort_on_release is not None \
-                and slot_type.get(p.abort_on_release) != "digital_in":
-            bad(f"{at}.abortOnRelease", f"{p.abort_on_release!r} is not an input slot")
+        if p.phase in ("wait", "hold", "counter") and slot_type.get(p.on or "") != "digital_in":
+            bad(f"{at}.on", f"a {p.phase} watches an input slot; {p.on!r} is not one")
+        if p.phase == "wait" and p.edge not in (None, *lowering.EDGES):
+            bad(f"{at}.edge", f"a wait moves on at an input's {' or '.join(lowering.EDGES)}, not {p.edge!r}")
+        if p.phase in ("present", "delay"):
+            for key, slot in (("abortOnRelease", p.abort_on_release), ("abortOnEnter", p.abort_on_enter)):
+                if slot is not None and slot_type.get(slot) != "digital_in":
+                    bad(f"{at}.{key}", f"an abort is an edge of an input slot; {slot!r} is not one")
+        if p.phase == "counter":
+            _counter_problems(at, p, bad)
         if p.phase == "response":
             if not p.responses or len(set(p.responses)) != len(p.responses) \
                     or any(slot_type.get(s) != "digital_in" for s in p.responses):
@@ -242,12 +260,55 @@ def _shape_problems(spine: Spine, slot_type: dict[str, str], problem) -> bool:  
                         "names no line of its own")
             elif slot_type.get(p.line or "") != "digital_out":
                 bad(f"{at}.line", f"an outcome opens an output slot's line; {p.line!r} is not one")
-        if p.phase in ("present", "delay", "response", "iti") and p.ms is None:
+        if p.phase in ("hold", "present", "delay", "response", "iti") and p.ms is None:
             bad(f"{at}.ms", f"a {p.phase} lasts a set time; give it ms")
         for key, value in (("ms", p.ms), ("timeoutMs", p.timeout_ms), ("holdMs", p.hold_ms)):
             if value is not None and not 0 <= value <= _MS_MAX:
                 bad(f"{at}.{key}", f"a duration is 0 to {_MS_MAX} ms")
     return ok
+
+
+def _counter_problems(at: str, p, bad) -> None:  # noqa: ANN001
+    """A Counter's N and its limit (SPN105)."""
+    if (p.count is None) == (not p.ratios):
+        bad(f"{at}.count", "a counter needs N: a count (fixed, or drawn up to countMax) or a list of ratios, "
+            "not both")
+    elif p.count is not None and not 1 <= p.count <= COUNT_MAX:
+        bad(f"{at}.count", f"a count is 1 to {COUNT_MAX} presses")
+    if p.count_max is not None and (p.count is None or not p.count <= p.count_max <= COUNT_MAX):
+        bad(f"{at}.countMax", f"countMax draws N from count up to it, at most {COUNT_MAX}; it needs a count "
+            "no greater than it")
+    if p.ratios and (len(p.ratios) > RATIOS_MAX or any(not 1 <= n <= COUNT_MAX for n in p.ratios)):
+        bad(f"{at}.ratios", f"a progressive ratio is 1 to {RATIOS_MAX} ratios, each 1 to {COUNT_MAX} presses")
+    if p.ends_session and p.timeout_ms is None:
+        bad(f"{at}.endsSession", "only a time limit can end the session; give the counter timeoutMs")
+
+
+def _held_problems(spine: Spine, problem) -> None:  # noqa: ANN001
+    """A Hold, or an abort on a release, of an input that may not be held when
+    the phase starts (SPN111). The core sees a release only as an edge, so an
+    input that is not held never falls, and a Hold on it completes on its own.
+
+    An input is held after a Wait on its enter edge, and stays held through
+    phases that hold it or abort on its release; any other phase may let it go
+    unseen."""
+    held: set[str] = set()
+    for i, p in enumerate(spine.phases):
+        needs = []
+        if p.phase == "hold" and p.on:
+            needs.append(("on", p.on))
+        if p.phase in ("present", "delay") and p.abort_on_release:
+            needs.append(("abortOnRelease", p.abort_on_release))
+        for key, slot in needs:
+            if slot not in held:
+                problem(f"spine[{i}].{key}", "SPN111", f"{slot!r} may not be held when this {p.phase} starts, so "
+                        "its release may never come. Hold it from a wait on its enter edge, through phases that "
+                        "hold it or abort on its release")
+        if p.phase == "wait":
+            held = {p.on} if p.on and (p.edge or "enter") == "enter" else set()
+        else:
+            # Kept where this phase watches the release, and assumed there once diagnosed.
+            held = {slot for _, slot in needs}
 
 
 def _row_problems(spine: Spine, problem) -> bool:  # noqa: ANN001
@@ -382,10 +443,15 @@ def profile_json(definition: TaskDefinition) -> dict[str, Any]:
         "outputs": [_public(e, ("slot", "channel", "on", "off")) for e in resolved.outputs],
         "params": list(low.params) if low else [],
         # `phases` and `rows`: the phase index and the row index (into `rows`)
-        # each state belongs to, null for the pick state. The trial table reads
+        # each state belongs to: no phase for the pick state, no row for it or
+        # for an end, which the rows share. The trial table reads
         # them; the board never does.
         "table": ({"states": [list(s) for s in low.states], "edges": [list(e) for e in low.edges],
-                   "phases": list(low.phases), "rows": list(low.rows)}
+                   "phases": list(low.phases), "rows": list(low.rows),
+                   # BoxInterp.h's InterpCounter: N's parameter slots, or 255
+                   # and a compiled sequence. Null for a spine with no Counter.
+                   "counter": ({"min": low.counter[0], "max": low.counter[1], "ratios": list(low.counter[2])}
+                               if low.counter is not None else None)}
                   if low else None),
         "structural": dict(STRUCTURAL),
     }
@@ -424,16 +490,34 @@ def _param_fields(spine: Spine, low: lowering.Lowered | None) -> list[dict[str, 
             i = s.phase
             p = spine.phases[i]
             wait = p.phase == "wait"
-            metadata = f"wait_{i}_timeout_ms" if wait else f"{p.phase}_{i}_ms"
-            name = {"wait": "Wait timeout", "response": "Response window"}.get(p.phase, p.phase.capitalize())
-            default = (p.timeout_ms if wait else p.ms) or 0
+            limited = wait or p.phase == "counter"
+            metadata = f"{p.phase}_{i}_timeout_ms" if limited else f"{p.phase}_{i}_ms"
+            name = {"wait": "Wait timeout", "response": "Response window",
+                    "counter": "Counter time limit"}.get(p.phase, p.phase.capitalize())
+            default = (p.timeout_ms if limited else p.ms) or 0
             help_text = {
-                "wait": "How long a wait lasts before it goes to the ITI.",
+                "wait": "How long a wait lasts before the trial ends early.",
+                "hold": "How long the input must stay held; letting go sooner is hold broken.",
                 "response": "How long the window waits for a response before the map's timeout entry.",
+                "counter": "How long the animal has to reach N before the trial is an omission"
+                           + (", which ends the session." if p.ends_session else "."),
                 "outcome": "How long the outcome lasts after the reward, before the next phase.",
             }.get(p.phase, "How long this phase lasts.")
             out.append(_int_field(metadata, s.key, f"{name} (phase {i + 1})", default, "Phases", "ms", 0,
                                   _MS_MAX, help_text))
+        elif s.role in ("count", "count_max"):
+            i = s.phase
+            p = spine.phases[i]
+            drawn = p.count_max is not None
+            if s.role == "count":
+                out.append(_int_field(f"counter_{i}_count", s.key, f"Count{', lowest' if drawn else ''} "
+                                      f"(phase {i + 1})", p.count or 1, "Phases", "presses", 1, COUNT_MAX,
+                                      "How many presses pay: N, or the lowest N a draw can give."
+                                      if drawn else "How many presses pay: N."))
+            else:
+                out.append(_int_field(f"counter_{i}_count_max", s.key, f"Count, highest (phase {i + 1})",
+                                      p.count_max or 1, "Phases", "presses", 1, COUNT_MAX,
+                                      "The highest N a draw can give. N is drawn uniformly at each entry."))
         elif s.role == "hold":
             i = s.phase
             out.append(_int_field(f"response_{i}_hold_ms", s.key, f"Response hold (phase {i + 1})",
@@ -530,6 +614,7 @@ def task_spine_h(definition: TaskDefinition, banner: str) -> str:
     ]
     outputs = [f"{{{e['pin']}, BF_{e['on']}, BF_{e['off']}}}" for e in resolved.outputs]
     params = [f'{{"{f["wireKey"]}", {f["default"]}UL, {f["min"]}UL, {f["max"]}UL}}' for f in fields]
+    counter = low.counter if low.counter is not None else (lowering.NONE, lowering.NONE, ())
     lines += [
         "/*  The table format this was lowered for; BoxSpine.h refuses another. */",
         f"#define SPINE_INTERP {lowering.INTERP_VERSION}",
@@ -556,6 +641,13 @@ def task_spine_h(definition: TaskDefinition, banner: str) -> str:
         "    trial count. A SET value outside [min, max] is CLAMPED. */",
         f"#define SPINE_NUM_PARAMS {len(params)}",
         f"#define SPINE_PARAMS {initialiser(params)}",
+        "",
+        "/*  The table's counter (BoxInterp.h, InterpCounter): the parameter slots of a",
+        "    Counter's N, or 255 for a compiled sequence of ratios. */",
+        f"#define SPINE_COUNT_MIN {counter[0]}",
+        f"#define SPINE_COUNT_MAX {counter[1]}",
+        f"#define SPINE_NUM_RATIOS {len(counter[2])}",
+        f"#define SPINE_RATIOS {{ {', '.join(map(str, counter[2])) or '0'} }}",
         "",
         "#endif // TASK_SPINE_H",
         "",

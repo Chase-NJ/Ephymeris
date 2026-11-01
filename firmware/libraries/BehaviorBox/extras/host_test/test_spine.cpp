@@ -9,8 +9,8 @@
   stepping skipped millis() values, and the session end rule.
 
   Each scenario runs in its own process (the runner's state is the sketch's
-  own, as on a board): run_spine.sh runs `test_spine handshake`, `stream` and
-  `stop`.
+  own, as on a board): run_spine.sh runs `test_spine handshake`, `stream`,
+  `stop` and `last`.
 
   Usage:  sh run_spine.sh
 */
@@ -118,7 +118,7 @@ static void handshake()
   bb_feed("START SEED=7");
   boot();
   std::vector<std::string> l = lines();
-  expect("INTERP, then FREE_RAM, then READY, first", l.size() > 3 && l[0] == "INTERP=3" &&
+  expect("INTERP, then FREE_RAM, then READY, first", l.size() > 3 && l[0] == "INTERP=4" &&
          l[1].compare(0, 9, "FREE_RAM=") == 0 && l[2] == "READY");
   expect("each SET answered with the running count and CRC",
          indexOf("PARAMS 2 1564777853") < indexOf("PARAMS 3 2992546637"));
@@ -182,6 +182,24 @@ static void stop()
   expect("the trial STOP ended is never reported", !second);
 }
 
+static void last()
+{
+  bb_feed("BEGIN");
+  bb_feed("SET NT=10 T1=100 T3=50");
+  bb_feed("START SEED=7");
+  boot();
+  port(true, 10);
+  port(false, 50); // a release during the present: its end is the session's last trial
+  advanceTo(400);
+  std::vector<std::pair<int, unsigned long>> got = strobes();
+  // The end is an ITI of T3 = 50: the session ends where trial 2 would start.
+  expect("a last-trial state ends the session at the next trial start, before NT",
+         !got.empty() && got.back() == std::make_pair(BF_END_SESSION, 100UL));
+  bool second = false;
+  for (auto &s : got) second |= s.first == BF_TRIAL_START && s.second == 100UL;
+  expect("the trial it ended is never reported", !second);
+}
+
 int main(int argc, char **argv)
 {
   std::string which = argc > 1 ? argv[1] : "";
@@ -189,6 +207,7 @@ int main(int argc, char **argv)
   if (which == "handshake") handshake();
   else if (which == "stream") stream();
   else if (which == "stop") stop();
+  else if (which == "last") last();
   else { std::cout << "  [FAIL] unknown scenario\n"; return 2; }
   return failures == 0 ? 0 : 1;
 }

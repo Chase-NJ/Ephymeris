@@ -26,8 +26,9 @@
   records it (docs/TASKS.md#confirming-the-parameters). 1 is BehaviorBox.h's
   trial runner (BOX_INTERP), which every recorded GRGL run names, so this
   interpreter starts at 2: a run's header alone says whether a table ran it.
-  3 adds the pick state and changes nothing else, so replay.py runs a version-2
-  table by the same rules and refuses only a pick state in one.
+  3 adds the pick state, and 4 the counter and last-trial states. Each changes
+  nothing else, so replay.py runs an older table by the same rules and refuses
+  only what its version lacks.
 
 
   THE TICK RULES
@@ -44,7 +45,8 @@
     2. AN EDGE BEATS A TIMER. If any watched edge matches one of the state's edge
        rows, one of them is taken and the timer is not looked at. A watched
        edge with no edge row (a lick being counted) moves nothing, so it does
-       not hold a timer off.
+       not hold a timer off. Nor does a counter state's counted rise below its
+       N (below): only the N-th is an exit.
     3. TWO OR MORE MATCHING EDGES are broken by a draw from the session RNG:
        the k-th match in table order, k = interp_draw(rng, matches). A single
        match draws nothing.
@@ -52,9 +54,9 @@
        now - entered_at >= its duration. A timer is only checked for the state
        current at the start of a tick, so a state lasts at least one tick, even
        with a zero duration.
-    5. ENTERING a state records the tick as its entry time and draws its
-       duration. A chance or pick state branches at once (below); its target is
-       entered in the same tick.
+    5. ENTERING a state records the tick as its entry time, sets a counter
+       state's N, then draws its duration, in that order. A chance or pick state
+       branches at once (below); its target is entered in the same tick.
   A tick that reports no edge and moves nothing changes nothing at all, the RNG
   included, so a replay may jump straight to the next edge or timer.
 
@@ -62,11 +64,12 @@
   uint32_t, over a generator the core carries in its own state.
 
 
-  THE STATE TABLE (INTERP_VERSION 3)
+  THE STATE TABLE (INTERP_VERSION 4)
   ----------------------------------
-  Generated data. A table is an array of InterpStateRow, indexed 0..254, and an
-  array of InterpEdgeRow the states point into. State 0 is where a session
-  starts. INTERP_NONE (255) means "none" in every uint8_t field.
+  Generated data. A table is an array of InterpStateRow, indexed 0..254, an
+  array of InterpEdgeRow the states point into, and the table's one
+  InterpCounter (or NULL). State 0 is where a session starts. INTERP_NONE (255)
+  means "none" in every uint8_t field.
 
   Channels are bits: input i is bit i of a uint32_t, and output j is bit j of
   another, so a table speaks of at most 32 inputs and 32 outputs. Which pin
@@ -108,6 +111,14 @@
                 draws, a single branch included. The generator makes state 0 one
                 when a block has several rows, so a trial's row is the branch it
                 took.
+                INTERP_COUNT: a COUNTER STATE. Its one edge row is a counted
+                rise: on entry the core sets count = 0 and N from the table's
+                counter; each matching rise adds one to count, and only the one
+                that brings it to N is an exit (the others move nothing, like a
+                watched edge with no edge row). The exit adds one to the core's
+                `step`, the counter states completed this session.
+                INTERP_LAST_TRIAL: entering it reports INTERP_ACT_LAST_TRIAL; the
+                session layer ends the session at the next trial start.
     outcome     The outcome class this state records, or 0. The core carries it
                 and never reads it; replay reads it off the states a trial
                 entered.
@@ -118,6 +129,14 @@
     next        The state entered.
   A pick state's branch is an edge row with input 0 and edge 0.
 
+  InterpCounter, the table's one counter, which every counter state reads:
+    count_min,  Parameter slots of N, as timer_min and timer_max: equal slots fix
+    count_max   it (FR); otherwise it is drawn uniformly at entry (VR), as
+                lo + interp_draw(rng, hi - lo + 1), held as a uint16_t. NONE in
+                both: N comes from `ratios`.
+    ratios,     A compiled sequence (PR): N is ratios[min(step, ratio_count - 1)],
+    ratio_count so the k-th completion needs the k-th ratio and the last repeats.
+
   A VALID TABLE, which the core assumes and replay.py's Table refuses to break:
     - every state index, edge row and parameter slot is in range;
     - an edge row's input is watched, and a state has at most one edge row per
@@ -125,19 +144,30 @@
     - a chance state has no outputs, watch, timer or edge rows, and neither of
       its targets is a chance or pick state;
     - a pick state has no outputs, watch, timer or chance, and at least one
-      branch, and no branch is a chance or pick state.
+      branch, and no branch is a chance or pick state;
+    - a counter state is neither a chance nor a pick state, has exactly one edge
+      row, a RISE, and its table has a counter, whose count_min and count_max
+      are both slots, or both NONE with 1 to 254 ratios, each at least 1;
+    - a last-trial state neither branches nor starts a trial, so the session
+      always ends at a later tick than the one that entered it.
     So a tick enters at most two states.
 
 
-  LOWERING THE FIRST PHASES
-  -------------------------
-  How the generator writes each phase of the ADR's palette as states:
+  LOWERING THE PHASES
+  -------------------
+  How the generator writes each phase of the ADR's palette as states. An END is
+  a copy of the ITI state that carries an outcome class: where every exit that
+  ends a trial early goes (docs/TASKS.md#lowering says which class each marks).
 
-    Wait(c, timeout -> X)     watch c; edge (c, RISE) -> next; timer -> X, or none.
-    Present(o for t)          outputs o; timer t -> next. "Or on an edge e" adds
-                              edge (e, RISE) -> next; "abort if the hold on h is
-                              lost" adds edge (h, FALL) -> the abort state.
-    Delay(t)                  timer t -> next; "abort on an edge" adds that edge row.
+    Wait(c, edge, timeout)    watch c; edge (c, RISE or FALL) -> next; timer -> an end.
+    Hold(c for t)             watch c; timer t -> next; edge (c, FALL) -> an end
+                              (hold broken).
+    Present(o for t)          outputs o; timer t -> next. An abort on an input's
+                              release or entry adds edge (h, FALL) or (h, RISE) -> an end.
+    Delay(t)                  timer t -> next; aborts as for Present.
+    Counter(c, N, limit)      INTERP_COUNT; watch c; edge (c, RISE) -> next, taken
+                              at the N-th; timer limit -> an end (omission), a
+                              last-trial state when the limit ends the session.
     Outcome(line r, ms, p)    a chance state (p -> reward, else -> class timeout,
                               outcome = the class); reward: the phase's outputs
                               and r, timer ms -> class timeout; class timeout: the
@@ -157,13 +187,14 @@
   ascending bit order:
     SESSION_START (flags), watched inputs that rose and fell (rose, fell),
     TRIAL_START (flags), outputs driven LOW (off), outputs driven HIGH (on).
+  INTERP_ACT_LAST_TRIAL (flags) is never strobed: it tells the session layer to
+  end the session at the next trial start.
   entered[] lists the states entered this tick in order, NONE-padded. It is
   never strobed (the stream carries no state codes) but replay predicts it,
   and the differential test compares it.
 
-  Tables live in RAM as plain const arrays for now; how much a table may cost
-  is an open question (0003-phase-spine-task-model.md#open-questions, the RAM
-  budget).
+  Tables live in RAM as plain const arrays; the generator holds what a task's
+  table, parameters and channels cost to a budget (docs/TASKS.md#spine-diagnostics).
 */
 
 #ifndef BOX_INTERP_H
@@ -172,7 +203,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define INTERP_VERSION 3
+#define INTERP_VERSION 4
 
 #define INTERP_NONE 0xFF       // "no state / no slot / no timer" in a uint8_t field
 #define INTERP_PERMILLE 1000UL // a chance state draws over [0, 1000)
@@ -182,9 +213,12 @@
 
 #define INTERP_STARTS_TRIAL 0x01       // InterpStateRow.flags
 #define INTERP_PICK 0x02
+#define INTERP_COUNT 0x04
+#define INTERP_LAST_TRIAL 0x08
 
 #define INTERP_ACT_SESSION_START 0x01  // InterpActions.flags
 #define INTERP_ACT_TRIAL_START 0x02
+#define INTERP_ACT_LAST_TRIAL 0x04
 
 typedef struct {
   uint8_t input;
@@ -215,9 +249,18 @@ static_assert(sizeof(InterpStateRow) == 18, "lowering.py's STATE_ROW_BYTES is th
 static_assert(sizeof(InterpEdgeRow) == 3, "lowering.py's EDGE_ROW_BYTES is this row's size");
 #endif
 
+/*  The table's one counter: where a counter state's N comes from. */
+typedef struct {
+  const uint16_t *ratios; // when count_min is NONE: N is ratios[min(step, ratio_count - 1)]
+  uint8_t ratio_count;
+  uint8_t count_min;      // parameter slots of N: equal fixes it, unequal draws it
+  uint8_t count_max;
+} InterpCounter;
+
 typedef struct {
   const InterpStateRow *states;
   const InterpEdgeRow *edges;
+  const InterpCounter *counter; // NULL in a table with no counter state
 } InterpTable;
 
 /*  One tick's debounced input edges, by input bit. */
@@ -244,6 +287,9 @@ typedef struct {
   uint32_t entered_at; // the tick the resting state was entered
   uint32_t duration;   // its timer, drawn at entry
   uint32_t outputs;    // the outputs now HIGH
+  uint16_t count;      // a counter state's rises counted since entry
+  uint16_t target;     // and the N it exits at, set at entry
+  uint8_t step;        // counter states completed this session, saturating at 255
   uint8_t state;       // the resting state
 } InterpCore;
 
@@ -299,6 +345,7 @@ static inline void interp__enter(InterpCore *c, uint8_t target, uint32_t now, In
     s = &c->table->states[target];
     a->entered[hop] = target;
     if (s->flags & INTERP_STARTS_TRIAL) a->flags |= INTERP_ACT_TRIAL_START;
+    if (s->flags & INTERP_LAST_TRIAL) a->flags |= INTERP_ACT_LAST_TRIAL;
     c->state = target;
     c->entered_at = now;
     // A valid table never chains two branching states; hop bounds an invalid one.
@@ -307,6 +354,18 @@ static inline void interp__enter(InterpCore *c, uint8_t target, uint32_t now, In
       target = interp_draw(&c->rng, INTERP_PERMILLE) < c->params[s->chance] ? s->on_hit : s->on_miss;
     else
       target = c->table->edges[s->edge_first + interp_draw(&c->rng, s->edge_count)].next;
+  }
+  if (s->flags & INTERP_COUNT) {
+    // N first, then the duration: the order replay draws them in.
+    const InterpCounter *k = c->table->counter;
+    c->count = 0;
+    if (k->count_min == INTERP_NONE) {
+      c->target = k->ratios[c->step < k->ratio_count ? c->step : k->ratio_count - 1];
+    } else {
+      uint32_t lo = c->params[k->count_min];
+      uint32_t hi = c->params[k->count_max];
+      c->target = (uint16_t)(hi > lo ? lo + interp_draw(&c->rng, hi - lo + 1) : lo);
+    }
   }
   c->duration = 0;
   if (s->timer_min != INTERP_NONE) {
@@ -329,6 +388,8 @@ static inline InterpActions interp_begin(InterpCore *c, const InterpTable *table
   c->params = params;
   c->rng = seed;
   c->outputs = 0;
+  c->count = c->target = 0;
+  c->step = 0;
   InterpActions a = interp__none();
   a.flags = INTERP_ACT_SESSION_START;
   interp__enter(c, 0, now, &a);
@@ -353,6 +414,13 @@ static inline InterpActions interp_step(InterpCore *c, InterpEdges in, uint32_t 
   uint8_t matches = 0;
   for (uint8_t i = 0; i < s->edge_count; ++i)
     if (interp__matches(&rows[i], &a)) ++matches;
+
+  if (matches && (s->flags & INTERP_COUNT)) {
+    // A counter state's one edge row is its counted rise: an exit only at the N-th.
+    ++c->count;
+    if (c->count < c->target) matches = 0;
+    else if (c->step != 0xFF) ++c->step;
+  }
 
   uint8_t target = INTERP_NONE;
   if (matches) {

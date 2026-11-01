@@ -12,17 +12,20 @@ scored with no change here:
 - it is **rewarded** when it took the `on_hit` branch of a chance state that
   bears an outcome. The reward line is the outputs `on_hit` drives and
   `on_miss` does not, and the reward time is the ticks actually spent in it;
-- its **response** is an edge exit out of a **deciding** state: one with two or
-  more exits (edge rows and its timer) from which an outcome-bearing state can
+- its **response**, when the snapshot maps states to phases, is the first edge
+  exit the trial took out of a Response window phase's states (the window and
+  the hold after it), and its latency runs from the trial's first entry into
+  that phase. A trial decided by a timer (an omission, a withhold) and a spine
+  with no window (the tracer) have none. A held response, kept or broken, is
+  the window's edge, timed from the window opening;
+- **without a phase map**, the response is an edge exit out of a **deciding**
+  state: one with two or more exits (edge rows and its timer) from which an outcome-bearing state can
   be reached before the next trial starts, as a response window's every
   response and its timeout can. Of the trial's edge exits out of deciding
   states before its first outcome-bearing state, the last one names a phase P;
   the response is the first edge exit of the trial's visit to P, and its
-  latency runs from that visit's entry. A window and the hold after it are one
-  phase, so a held response, kept or broken, is the window's edge, timed from
-  the window opening. A trial decided by a timer (an omission, a withhold) has
-  none, and neither has a spine with no deciding state (the tracer). Without a
-  phase map every state is its own phase;
+  latency runs from that visit's entry, each state its own phase. A trial
+  decided by a timer has none, and neither has a spine with no deciding state;
 - an input's **count** is its watched rises, attributed to the state held before
   the tick, as the interpreter attributes them.
 
@@ -84,13 +87,16 @@ def trials_of(
     *,
     end: int | None,
     phase_of: Sequence[int | None] | None = None,
+    windows: frozenset[int] | None = None,
 ) -> list[Trial]:
     """Every trial of a replay, in order.
 
     `actions` are `replay.replay`'s, through the session's last tick. `end` is
     the tick the session ended at (its trial start opens no trial), or None for
     a run cut off before it ended, whose last trial is then incomplete.
-    `phase_of[s]` is state s's phase, None for a state in no phase.
+    `phase_of[s]` is state s's phase, None for a state in no phase, and
+    `windows` the Response window phases; given both, a response is read only
+    from a window.
     """
     states = table.states
 
@@ -100,6 +106,8 @@ def trials_of(
         return p if p is not None else -1 - s
 
     deciding = _deciding(table)
+    window_states = (frozenset(s for s, p in enumerate(phase_of) if p in windows)
+                     if phase_of is not None and windows is not None else None)
     out: list[Trial] = []
     current: _Open | None = None
     held: int | None = None  # the state held before this tick
@@ -133,7 +141,7 @@ def trials_of(
         walk(current, entered, range(split), now, edge)
         if split < len(entered):
             if current is not None:
-                out.append(_close(current, states, phase, deciding, complete=True))
+                out.append(_close(current, states, phase, deciding, window_states, complete=True))
                 current = None
             if end is not None and now == end:
                 return out
@@ -141,7 +149,7 @@ def trials_of(
             walk(current, entered, range(split, len(entered)), now, edge)
         held = entered[-1]
     if current is not None:
-        out.append(_close(current, states, phase, deciding, complete=False))
+        out.append(_close(current, states, phase, deciding, window_states, complete=False))
     return out
 
 
@@ -206,8 +214,8 @@ def _taken(table: rp.Table, held: int, a: rp.Actions, target: int) -> rp.EdgeRow
     return None
 
 
-def _close(t: _Open, states: Sequence[rp.StateRow], phase, deciding: frozenset[int], *,  # noqa: ANN001
-           complete: bool) -> Trial:
+def _close(t: _Open, states: Sequence[rp.StateRow], phase, deciding: frozenset[int],  # noqa: ANN001
+           window_states: frozenset[int] | None, *, complete: bool) -> Trial:
     entries: dict[int, int] = {}
     for s, tick, _, _ in t.path:
         entries.setdefault(s, tick)
@@ -215,7 +223,14 @@ def _close(t: _Open, states: Sequence[rp.StateRow], phase, deciding: frozenset[i
     outcome = states[t.path[marked[-1]][0]].outcome if marked else 0
 
     response = response_at = latency = None
-    if marked:
+    if window_states is not None:
+        opened = next((tick for s, tick, _, _ in t.path if s in window_states), None)
+        for _, tick, left, edge in t.path:
+            if edge is not None and left in window_states:
+                response, response_at = (edge.input, edge.edge), tick
+                latency = tick - opened if opened is not None else None
+                break
+    elif marked:
         decided = [k for k in range(marked[0] + 1)
                    if t.path[k][3] is not None and t.path[k][2] in deciding]
         if decided:
@@ -278,6 +293,8 @@ class Naming:
     phase_of: tuple[int | None, ...] | None = None
     phases: int = 0
     row_of: tuple[str | None, ...] | None = None
+    #: The Response window phases, when `phase_of` is known.
+    windows: frozenset[int] | None = None
     row: str | None = None
     rows: dict[str, tuple[str, float | None]] = field(default_factory=dict)
     block: str | None = None

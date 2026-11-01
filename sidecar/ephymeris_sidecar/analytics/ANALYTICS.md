@@ -398,8 +398,9 @@ trial runner's `1`. Never by a task name, and never by inference, which its edge
 A legacy run (`interp` absent or `1`) is scored exactly as the rest of this file describes.
 
 > [!CAUTION]
-> **Read a trial off the table's own fields, never a phase kind or a code name.** A phase or an outcome
-> class added later must score with no change here, and `test_replay_trial_table.py` feeds a table with an
+> **Read a trial off the table's own fields, never a phase kind or a code name.** The one exception is
+> finding the Response window a response is read from. A phase or an outcome class added later must score
+> with no change here, and `test_replay_trial_table.py` feeds a table with an
 > outcome number no task has used to prove it. A scorer that matched `"outcome"` phases or `FLUID_*` codes
 > would silently miss the first new one.
 
@@ -413,7 +414,7 @@ One row per trial (`stream/trial_table.py`, `ReplayTrial` on the wire). Columns,
 | `block`, `row`, `rowName`, `level` | The snapshot's `table.rows` (each state's row index) when it carries one; otherwise the task's only row and block, when it has exactly one; otherwise null |
 | `phaseEntries` | The first tick the trial entered a state of each phase, by the snapshot's `table.phases` (each state's phase index, null for a state in no phase such as a pick). A snapshot without it is lowered again from its own definition, and that map is used only if it gives back exactly the recorded table; otherwise the column is empty |
 | `outcome` | The outcome class of the **last** outcome-bearing state (`outcome` ≠ 0) the trial entered, named by `taskdef/lowering.py`'s `OUTCOME_CLASSES`, or `outcome_<n>` for a number this build has no name for. Null when it entered none, as an abort to the ITI does |
-| `response`, `responseEdge`, `responseMs`, `latencyMs` | An edge exit out of a **deciding** state: one with two or more exits (edge rows and its timer) that can reach an outcome-bearing state before the next trial starts, as a response window's every response and its timeout can. Of the trial's edge exits out of deciding states before its first outcome-bearing state, the last names a phase P; the response is the first edge exit of the trial's visit to P, and its latency runs from that visit's entry. A window and the hold after it are one phase, so a held response, kept or broken, is the window's edge timed from the window opening, whatever phases lie between it and the Outcome. Null for a trial a timer decided (an omission, a withhold) and in a spine with no deciding state (the tracer). Without a phase map each state is its own phase |
+| `response`, `responseEdge`, `responseMs`, `latencyMs` | When the snapshot maps states to phases (`table.phases`, or the re-lowered map): the first edge exit the trial took out of a **Response window** phase's states, the window and the hold after it, with its latency from the trial's first entry into that phase. So a held response, kept or broken, is the window's edge timed from the window opening, whatever phases lie between it and the Outcome. Null for a trial a timer decided (an omission, a withhold), and in a spine with no window (the tracer). This is the one column that reads a phase kind, and only to find the window. **Without a phase map**, the fallback is structural: an edge exit out of a *deciding* state, one with two or more exits (edge rows and timer) that can reach an outcome-bearing state before the next trial starts. The last such exit before the trial's first outcome-bearing state is taken, then traced back to the first edge exit of its state's visit |
 | `rewarded`, `rewardLine`, `rewardMs` | The trial took the `on_hit` branch of a chance state that bears an outcome. The line is the outputs `on_hit` drives and `on_miss` does not; the time is the ticks actually spent in `on_hit` |
 | `correction` | Always false: no block has a correction rule yet |
 | `inputCounts` | Each watched input's rises per phase, attributed to the state held before the tick, as the interpreter attributes them. Non-zero counts only |
@@ -432,8 +433,13 @@ interval](#uncertainty):
 | `replay.classes` | For each outcome class, n and n / trials. With `replay.unclassified` (trials that reached no outcome-bearing state) they partition the trials |
 | `replay.rows` | The same per row: P(outcome \| row) |
 | `replay.rewarded` | Trials whose reward line opened / trials |
-| `metrics` | One per row, **P(correct \| row)**: hits are its `correct` trials, counted its classified ones, and its unclassified ones excluded, as an unanswered trial is on a legacy run ([trials](#trials-hits-misses-and-exclusions)) |
+| `metrics` | One per row, **P(correct \| row)**: hits are its trials whose class is in `table_metrics.HITS`, `correct` or `withheld`; counted are its classified ones; its unclassified ones are excluded, as an unanswered trial is on a legacy run ([trials](#trials-hits-misses-and-exclusions)) |
 | `overall` | P(correct) pooled over every row, by summing counts ([pooled accuracy](#pooled-accuracy)) |
+
+> [!CAUTION]
+> **A withhold is a hit.** It is a no-go row's correct answer, so counting only `correct` would score a
+> perfect go/no-go session at the go rows' share. `false_alarm`, `wrong_response`, `omission`,
+> `hold_broken`, the aborts and any class added later are misses until `HITS` says otherwise.
 
 Because `metrics` and `overall` keep the legacy shape, a spine run appears in the session table, the cards
 and the cohort trends like any run. P(correct | row) and `replay.classes` answer different questions: the

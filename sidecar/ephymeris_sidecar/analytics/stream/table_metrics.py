@@ -10,9 +10,10 @@ of its outcome. Each proportion carries its 95% Wilson interval
   `unclassified`, so classes plus unclassified partition the trials.
 - **Rewarded:** trials paid / trials.
 - **P(correct | row):** as a `MetricSummary`, so a spine run fills every panel
-  a legacy run does. Counted trials are the classified ones, hits the
-  `correct` ones, and the unclassified are excluded, as an unanswered trial is
-  on a legacy run (`ANALYTICS.md#trials-hits-misses-and-exclusions`).
+  a legacy run does. Counted trials are the classified ones, hits those whose
+  class is in `HITS` (a correct response, or a correct withhold on a no-go
+  row), and the unclassified are excluded, as an unanswered trial is on a
+  legacy run (`ANALYTICS.md#trials-hits-misses-and-exclusions`).
 
 **Pure**, like the rest of `stream/`.
 """
@@ -28,6 +29,13 @@ from .metric_summary import OVERALL_ID, MetricSummary
 from .trial_table import ReplayTrial, class_rank
 
 CORRECT = OUTCOME_CLASSES[OUTCOME_CORRECT - 1]
+
+#: The outcome classes a trial is right in, for P(correct | row) and the pooled
+#: figure (`ANALYTICS.md#metrics-from-the-trial-table`). A withhold is a no-go
+#: row's correct answer, so a perfect go/no-go session scores 1.0. Every other
+#: class (false alarm, wrong response, omission, hold broken, an abort, one
+#: added later) is a miss, and a trial with no class is excluded.
+HITS = frozenset({CORRECT, "withheld"})
 
 
 @dataclass(frozen=True)
@@ -139,7 +147,7 @@ def score(
 
 
 def _correct(row: RowTally, *, metric_id: str, label: str, min_counted: int) -> MetricSummary:
-    hits = next((c.n for c in row.classes if c.outcome_class == CORRECT), 0)
+    hits = sum(c.n for c in row.classes if c.outcome_class in HITS)
     counted = row.trials - row.unclassified
     interval = wilson_interval(hits, counted) if counted else None
     return MetricSummary(

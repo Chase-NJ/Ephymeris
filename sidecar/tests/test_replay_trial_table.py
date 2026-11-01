@@ -10,6 +10,8 @@ yet scores with no change here.
 
 from __future__ import annotations
 
+import pytest
+
 from ephymeris_sidecar.analytics.stream import replay as rp
 from ephymeris_sidecar.analytics.stream import table_metrics, trial_table
 from ephymeris_sidecar.taskdef import lowering
@@ -182,9 +184,10 @@ def test_metrics_are_functions_of_the_table() -> None:
 
     metrics = table_metrics.correct_metrics(score)
     assert [(m.label, m.hits, m.counted, m.triggered, m.excluded) for m in metrics] == [
-        ("P(correct | Go)", 1, 2, 3, 1), ("P(correct | No-go)", 0, 2, 2, 0)]
+        ("P(correct | Go)", 1, 2, 3, 1), ("P(correct | No-go)", 1, 2, 2, 0)], \
+        "a withhold is the no-go row's hit, a false alarm its miss"
     overall = table_metrics.overall_correct(score)
-    assert (overall.hits, overall.counted) == (1, 4)
+    assert (overall.hits, overall.counted) == (2, 4)
 
 
 def test_the_hops_before_the_trial_start_on_one_tick_belong_to_the_trial_that_ends() -> None:
@@ -254,7 +257,7 @@ def window_table(*, delay: bool = False, marked_chance: bool = True) -> tuple[rp
 WINDOW_PARAMS = (0, 100, 2000, 200, 1000, 50, 10, 500)
 
 
-def window_trials(**shape):  # noqa: ANN003
+def window_trials(windows=None, **shape):  # noqa: ANN001, ANN003
     """Trial 1 licks 250 ms into the window (opened at 100) and holds; trial 2
     licks, then lets go during the hold; trial 3 never licks."""
     table, phases = window_table(**shape)
@@ -263,11 +266,12 @@ def window_trials(**shape):  # noqa: ANN003
     events = [(350, rp.Edges(rose=1)), (700, rp.Edges(fell=1)),
               (start2 + 300, rp.Edges(rose=1)), (start2 + 350, rp.Edges(fell=1))]
     actions = rp.replay(table, WINDOW_PARAMS, 7, events, start2 + 4000)
-    return trial_table.trials_of(table, actions, end=None, phase_of=phases), 100
+    return trial_table.trials_of(table, actions, end=None, phase_of=phases, windows=windows), 100
 
 
 def test_a_held_response_is_the_windows_lick_in_the_lowerings_real_shape() -> None:
-    for shape in ({}, {"delay": True}, {"marked_chance": False}):
+    for shape in ({}, {"delay": True}, {"marked_chance": False}, {"windows": frozenset({1})},
+                  {"windows": frozenset({1}), "delay": True}):
         out, window_at = window_trials(**shape)
         held, broken, unanswered = out[0], out[1], out[2]
         assert held.outcome == lowering.OUTCOME_CORRECT, shape
@@ -276,3 +280,114 @@ def test_a_held_response_is_the_windows_lick_in_the_lowerings_real_shape() -> No
         assert broken.response == (0, rp.RISE) and broken.response_at == broken.at + 300, shape
         assert broken.latency == 200, "from the window opening, 100 ms into the trial"
         assert unanswered.outcome == OMISSION and unanswered.response is None, shape
+
+
+def test_a_wait_that_can_abort_gives_an_omission_no_response_when_phases_name_the_window() -> None:
+    """A Wait whose go edge leads on and whose abort edge goes to a class is a
+    deciding state, but it is not the window: with `table.phases`, only an
+    edge that left the Response window is a response."""
+    abort = lowering.OUTCOME_CLASSES.index("abort_before_stimulus") + 1
+    table = rp.Table(
+        states=[
+            rp.StateRow(watch=0b01, edge_first=0, edge_count=2, flags=rp.STARTS_TRIAL),   # 0 wait
+            rp.StateRow(watch=0b10, timer_min=1, timer_max=1, on_timeout=3, edge_first=2, edge_count=1),  # 1 window
+            rp.StateRow(timer_min=2, timer_max=2, on_timeout=5, outcome=lowering.OUTCOME_CORRECT),
+            rp.StateRow(timer_min=2, timer_max=2, on_timeout=5, outcome=OMISSION),
+            rp.StateRow(timer_min=2, timer_max=2, on_timeout=5, outcome=abort),
+            rp.StateRow(timer_min=2, timer_max=2, on_timeout=0),                                  # 5 ITI
+        ],
+        edges=[rp.EdgeRow(0, rp.RISE, 1), rp.EdgeRow(0, rp.FALL, 4), rp.EdgeRow(1, rp.RISE, 2)],
+    )
+    phases, windows = (0, 1, 2, 2, 2, 3), frozenset({1})
+    params = (0, 1000, 100)
+    # Trial 1: pokes at 200 and never licks; trial 2: pokes, licks 300 ms in.
+    events = [(200, rp.Edges(rose=1)), (1500, rp.Edges(rose=1)), (1800, rp.Edges(rose=0b10))]
+    actions = rp.replay(table, params, 7, events, 2500)
+    omitted, answered = trial_table.trials_of(table, actions, end=None, phase_of=phases, windows=windows)[:2]
+    assert omitted.outcome == OMISSION and omitted.response is None
+    assert answered.response == (1, rp.RISE) and answered.latency == 300
+    # Without `table.phases` the structural rule stands, and names the poke.
+    structural = trial_table.trials_of(table, actions, end=None)[0]
+    assert structural.response == (0, rp.RISE)
+
+
+#: #101's generated go/no-go table (PR #150, `test_spine_lowering.py`), with its
+#: pick state written as a 50% chance state so this interpreter version runs it.
+_PICK_PARAMS = (10, 500, 3000, 0, 1000, 100, 1000, 500)
+
+
+def go_no_go_table(*, pick_as_chance: bool = True) -> rp.Table:
+    n, correct = N, lowering.OUTCOME_CORRECT
+    false_alarm = lowering.OUTCOME_CLASSES.index("false_alarm") + 1
+    withheld = lowering.OUTCOME_CLASSES.index("withheld") + 1
+    first = (rp.StateRow(chance=7, on_hit=1, on_miss=9, flags=rp.STARTS_TRIAL) if pick_as_chance
+             else rp.StateRow(*(0, 0, n, n, n, n, n, n, 0, 2, rp.STARTS_TRIAL | 0x02, 0)))
+    rows = [
+        (0b0001, 0b01, n, n, n, n, n, n, 2, 1, 0, 0),
+        (0b0011, 0, 1, 1, 3, n, n, n, 0, 0, 0, 0),
+        (0b0001, 0b10, 2, 2, 7, n, n, n, 3, 1, 0, 0),
+        (0, 0, n, n, n, 6, 5, 6, 0, 0, 0, correct),
+        (0b1000, 0, 5, 5, 6, n, n, n, 0, 0, 0, 0),
+        (0, 0, 3, 3, 8, n, n, n, 0, 0, 0, 0),
+        (0, 0, 3, 3, 8, n, n, n, 0, 0, 0, OMISSION),
+        (0, 0, 4, 4, 0, n, n, n, 0, 0, 0, 0),
+        (0b0001, 0b01, n, n, n, n, n, n, 4, 1, 0, 0),
+        (0b0101, 0, 1, 1, 11, n, n, n, 0, 0, 0, 0),
+        (0b0001, 0b10, 2, 2, 13, n, n, n, 5, 1, 0, 0),
+        (0, 0, 3, 3, 14, n, n, n, 0, 0, 0, false_alarm),
+        (0, 0, 3, 3, 14, n, n, n, 0, 0, 0, withheld),
+        (0, 0, 4, 4, 0, n, n, n, 0, 0, 0, 0),
+    ]
+    edges = [(0, 0, 1), (0, 0, 9), (0, rp.RISE, 2), (1, rp.RISE, 4), (0, rp.RISE, 10), (1, rp.RISE, 12)]
+    if pick_as_chance:
+        edges = edges[2:]
+        rows = [(*r[:8], r[8] - 2 if r[9] else 0, *r[9:]) for r in rows]
+    return rp.Table(states=[first, *(rp.StateRow(*r) for r in rows)], edges=[rp.EdgeRow(*e) for e in edges])
+
+
+GO_NO_GO_PHASES = (None, 0, 1, 2, 3, 3, 3, 3, 4, 0, 1, 2, 3, 3, 4)
+GO_NO_GO_ROWS = (None, "go", "go", "go", "go", "go", "go", "go", "go", "nogo", "nogo", "nogo", "nogo", "nogo", "nogo")
+
+
+def animal_licking_only_on_go(table: rp.Table, params, ticks: int, interp: int = rp.INTERP_VERSION):
+    """Pokes whenever a Wait watches the port, licks only in the go window (state 3)."""
+    core, first = rp.begin(table, params, 7, 0, interp)
+    actions, port, lick = [(0, first)], False, False
+    for now in range(1, ticks + 1):
+        rose = fell = 0
+        state = core.state
+        if state in (1, 9) and not port:
+            rose |= 1
+        elif state not in (1, 9) and port:
+            fell |= 1
+        if state == 3 and not lick:
+            rose |= 2
+        elif state != 3 and lick:
+            fell |= 2
+        port ^= bool((rose | fell) & 1)
+        lick ^= bool((rose | fell) & 2)
+        core, a = rp.step(core, rp.Edges(rose, fell), now)
+        if not a.idle:
+            actions.append((now, a))
+    return actions
+
+
+@pytest.mark.parametrize("pick", [
+    False,
+    pytest.param(True, marks=pytest.mark.skipif(
+        3 not in rp.INTERP_VERSIONS, reason="the pick state is INTERP 3, #150's; runs once replay has it")),
+], ids=["chance", "pick"])
+def test_a_perfect_go_no_go_session_scores_one_with_withheld_as_a_hit(pick: bool) -> None:
+    table = go_no_go_table(pick_as_chance=not pick)
+    actions = animal_licking_only_on_go(table, _PICK_PARAMS, 40000, interp=3 if pick else rp.INTERP_VERSION)
+    trials = trial_table.trials_of(table, actions, end=None, phase_of=GO_NO_GO_PHASES, windows=frozenset({2}))
+    naming = trial_table.Naming(inputs=("port", "resp"), outputs=("cue", "o1", "o2", "reward"),
+                                phase_of=GO_NO_GO_PHASES, phases=5, row_of=GO_NO_GO_ROWS,
+                                rows={"go": ("Go", None), "nogo": ("No-go", None)})
+    named = [trial_table.name(t, naming) for t in trials if t.complete][:10]
+    assert len(named) == 10 and {t.row for t in named} == {"go", "nogo"}
+    assert {t.outcome for t in named} == {"correct", "withheld"}
+    score = table_metrics.score(named, rows=(("go", "Go"), ("nogo", "No-go")))
+    assert [m.p_session for m in table_metrics.correct_metrics(score)] == [1.0, 1.0]
+    assert table_metrics.overall_correct(score).p_session == 1.0
+    assert table_metrics.HITS == frozenset({"correct", "withheld"})

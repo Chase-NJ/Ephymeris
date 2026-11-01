@@ -75,6 +75,9 @@ class SpineRecord:
     rows: tuple[tuple[str, str], ...] = ()
 
 
+#: The phase kind a response is read from (`ANALYTICS.md#the-trial-table`).
+WINDOW_PHASE = "response"
+
 #: The `INTERP` of BehaviorBox.h's trial runner, which every legacy (GRGL) run
 #: names, and which no table describes (`replay.INTERP_VERSIONS`).
 TRIAL_RUNNER_INTERP = 1
@@ -309,6 +312,11 @@ def _naming(
         outputs=tuple(str(o.get("channel") or o.get("slot")) for o in outputs),
         phase_of=phase_of,
         phases=len(phases) if phase_of is not None else 0,
+        # Which phases are Response windows: the only kind a response is read
+        # from when states map to phases (`ANALYTICS.md#the-trial-table`).
+        windows=(frozenset(i for i, p in enumerate(phases)
+                           if isinstance(p, dict) and p.get("phase") == WINDOW_PHASE)
+                 if phase_of is not None else None),
         row_of=row_of,
         row=rows[0][0] if row_of is None and len(rows) == 1 else None,
         rows=info,
@@ -399,7 +407,8 @@ def replayed(document: dict[str, Any]) -> Replayed:
     if expected != recorded:
         return Replayed(record.interp, _divergence(record, expected, recorded), (),
                         record.phase_labels, record.rows)
-    trials = tt.trials_of(record.table, actions, end=end, phase_of=record.naming.phase_of)
+    trials = tt.trials_of(record.table, actions, end=end, phase_of=record.naming.phase_of,
+                          windows=record.naming.windows)
     return Replayed(record.interp, None, tuple(tt.name(t, record.naming) for t in trials),
                     record.phase_labels, record.rows)
 

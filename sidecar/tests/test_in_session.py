@@ -398,6 +398,20 @@ def test_a_board_drop_mid_session_goes_to_error(fake_serial) -> None:
     assert "disconnected" in transition[3]
 
 
+def test_a_stalled_session_thread_is_waited_for_not_raced(monkeypatch) -> None:
+    """A loaded machine can stall the session thread for seconds before it
+    opens the port. The tests wait for what the thread does, however long it
+    takes, so a stall makes them slower, never red."""
+    monkeypatch.setattr(ScriptedSerial, "OPEN_DELAY_S", 3.5)
+    handler, _ = make_handler()
+    handler.claim_session("/dev/fake", 115200, CMD, SEED, lambda s, i: None, lambda c, t: None)
+    port = port_opened()
+    port.feed("READY\n")
+    assert wait_for(lambda: b"START" in bytes(port.written))
+    port.fail_next_read()
+    assert wait_for(lambda: handler.state is PortState.ERROR)
+
+
 def test_error_clears_through_the_existing_ack(fake_serial) -> None:
     """`ARCHITECTURE.md#board-drop` — no new recovery logic; the ordinary port.error.ack path clears it."""
     handler, _ = make_handler()

@@ -237,9 +237,24 @@ after three trials"* and *"never happened"*.
 
 **A rate is not a probability.** A [phase-window rate](#phase-window-rates) is a mean of each trial's rate,
 so it carries a **95% Student-t interval over trials** (`stats.mean_interval`, its quantile from
-`stats.t_quantile_975`), and the same `lowConfidence` flag on its `n`. The trial is the unit because licks
-come in bursts and their rate moves from trial to trial far more than a Poisson count does: a Poisson
-(Garwood) interval on pooled counts would be falsely narrow. With one trial there is a mean and no interval.
+`stats.t_quantile_975`). The trial is the unit because licks come in bursts and their rate moves from trial
+to trial far more than a Poisson count does: a Poisson (Garwood) interval on pooled counts would be falsely
+narrow. With one trial there is a mean and no interval.
+
+> [!CAUTION]
+> **Below 30 trials a rate's interval is narrower than it says.** Bursty licking is skewed, and the t
+> interval assumes it is not. Simulated (`test_phase_rates.py`'s `coverage`, seeded): licks in bouts of a
+> geometric number (mean 5), bouts a Poisson stream whose rate each trial scales by a Gamma(1) draw, 2 licks/s
+> at baseline and 6 in the CS over 2 s windows, 6000 rows at each size:
+>
+> | Trials | 5 | 10 | 15 | 20 | 25 | 30 | 35 | 40 |
+> |---|---|---|---|---|---|---|---|---|
+> | the rate's interval covers the truth | 78.4% | 84.7% | 87.7% | 88.9% | 89.7% | 90.4% | 91.7% | 90.8% |
+> | the paired difference's interval covers it | 91.0% | 92.0% | 93.2% | 92.4% | 93.9% | 93.6% | 94.0% | 94.0% |
+>
+> So a rate, or its difference, on fewer than `rates.RATE_MIN_TRIALS` (30) trials is `lowConfidence`
+> whatever `minCountedTrials` says (`rates.low_confidence`): the number is reported, flagged, never trusted
+> as its interval implies. The test pins 30 as the first size whose rate coverage reaches 90%.
 
 ### Rewarded and response accuracy
 
@@ -484,10 +499,13 @@ The tracer's Outcome records `correct` before it draws the reward, so a trial ca
 ### Phase-window rates
 
 A **window** is a phase that counts an input it never acts on: a phase's `watch` ([TASKS.md](../../../docs/TASKS.md#pavlovian-conditioning)).
-`rates.windows_of` reads them off the table's own fields: (phase, channel) where some state of the phase
-watches the channel's bit and no state of the phase has an edge row on it. So a Pavlovian task's baseline,
-CS, trace and US phases watching the lick sensor are windows, and a Wait's port, a Response window's wells,
-an abort's input and a Counter's lever are not: a 2AFC run has no rates. No phase kind is read.
+`rates.windows_of` reads them off the table's own fields, **per row**: (row, phase, channel) where some
+state of that row's phase watches the channel's bit and none of them has an edge row on it. So a Pavlovian
+task's baseline, CS, trace and US phases watching the lick sensor are windows, and a Wait's port, a Response
+window's wells, an abort's input and a Counter's lever are not: a 2AFC run has no rates. No phase kind is
+read. Rows bind their own channels, so a row is scored only on its own windows: with CS− on a second lick
+sensor, CS+ has no rate on it, and a phase one row acts on stays a window of the rows that do not. A table
+that cannot say which row a state is (no `table.rows`, several rows) has none.
 
 For each row of the task, and each window (`rates.window_rates`, over the trial table):
 
@@ -495,9 +513,9 @@ For each row of the task, and each window (`rates.window_rates`, over the trial 
 |---|---|
 | a trial's rate | its `inputCounts` for the window × 1000 / the window's span, events per second. The span runs from the phase's `phaseEntries` tick to the next phase entered, or to the next trial's `atMs` for its last phase: exactly the ticks its rises are attributed to |
 | `rate` | the mean of the row's trial rates, with its [t interval](#uncertainty), clamped at 0 |
-| `reference` | the channel's first window in the spine, a Pavlovian task's baseline; null on that window |
+| `reference` | the row's first window on the channel in the spine, a Pavlovian task's baseline; null on that window |
 | `versus` | each trial's rate minus its own reference rate, paired within the trial, then the mean and its t interval: a Pavlovian task's **anticipatory** licking in the CS and the trace |
-| `lowConfidence` | `rate.n` < `minCountedTrials`, judged on every request like a metric's |
+| `lowConfidence` | the smaller of `rate.n` and `versus.n` is below `minCountedTrials` or `rates.RATE_MIN_TRIALS` ([why](#uncertainty)), judged on every request like a metric's |
 
 **The trials** are those P(correct) counts: complete, with an outcome class that is not an abort
 (`EXCLUDED`). A trial's window counts only when it was entered and its span is known and above zero: the

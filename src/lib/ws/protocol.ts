@@ -1285,7 +1285,7 @@ export interface RateEstimate {
   high: number | null;
 }
 
-/** One row's rate in one phase-window (`ANALYTICS.md#phase-window-rates`). */
+/** One row's rate in one of its own phase-windows (`ANALYTICS.md#phase-window-rates`). */
 export interface WindowRate {
   /** The row's stable id. */
   rowId: string;
@@ -1299,14 +1299,20 @@ export interface WindowRate {
   channel: string;
   /** Its rises per second in the phase, clamped at 0. */
   rate: RateEstimate;
-  /** The channel's first counted phase, which `versus` is against; null on that phase itself. */
+  /**
+   * This row's first phase counting the channel, which `versus` is against; null on that phase
+   * itself.
+   */
   reference: number | null;
   /**
    * This phase's rate minus the reference's, paired within each trial: in a Pavlovian task's CS
    * and trace, its anticipatory licking. Null on the reference.
    */
   versus: RateEstimate | null;
-  /** `rate.n` < `minCountedTrials`, re-judged on every request. */
+  /**
+   * The smaller of `rate.n` and `versus.n` is below `minCountedTrials` or `rates.RATE_MIN_TRIALS`
+   * (`ANALYTICS.md#uncertainty`), re-judged on every request.
+   */
   lowConfidence: boolean;
 }
 

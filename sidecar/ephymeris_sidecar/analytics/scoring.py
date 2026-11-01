@@ -894,6 +894,9 @@ def _canary_runs(
             ("spine-diverged", nothing, _spine_canary(diverge=True)),
             # A trace-conditioning run with licks: its phase-window rates.
             ("spine-trace", nothing, _trace_canary()),
+            # The same with CS- on a lick sensor of its own: each row is scored
+            # only on the channel it counts.
+            ("spine-trace-split", nothing, _trace_canary(split=True)),
             # A spine snapshot carrying every word `tasks/behaviour.py` leaves out:
             # its scored digest is `profile_hash`'s behaviour projection, so
             # leaving any one word in, or a row unkeyed, moves this.
@@ -971,12 +974,13 @@ def _spine_canary(*, diverge: bool = False) -> dict[str, Any]:
     return _predicted(doc, code["REWARD_ON"] if diverge else None)
 
 
-def _trace_canary() -> dict[str, Any]:
+def _trace_canary(*, split: bool = False) -> dict[str, Any]:
     """A trace-conditioning run for the canary (`TASKS.md#pavlovian-conditioning`),
     self-contained as `_spine_canary` is: a baseline, a CS and a trace that
     count licks, a US paid to the CS+ row only, drawn from a bag. Its licks
     give every row a rate in every window, and a difference against the
-    baseline (`ANALYTICS.md#phase-window-rates`)."""
+    baseline (`ANALYTICS.md#phase-window-rates`). `split` puts the CS- row's
+    licks on a second sensor, `lick_b`."""
     phases = [
         {"phase": "delay", "ms": 1000, "watch": ["lick"]},
         {"phase": "present", "outputs": ["cs"], "ms": 1000, "watch": ["lick"]},
@@ -985,11 +989,13 @@ def _trace_canary() -> dict[str, Any]:
         {"phase": "iti", "ms": 700},
     ]
     rows = [{"id": "plus", "name": "CS+", "bind": {"lick": "lick", "cs": "cs_a", "us": "us"}},
-            {"id": "minus", "name": "CS-", "bind": {"lick": "lick", "cs": "cs_b", "us": "us"}}]
+            {"id": "minus", "name": "CS-", "bind": {"lick": "lick_b" if split else "lick", "cs": "cs_b",
+                                                     "us": "us"}}]
     blocks = [{"id": "b1", "rows": ["plus", "minus"], "select": "bag", "weights": [2, 2], "trials": 6}]
     low = lowering.lower(phases, ["lick"], ["cs", "us"], rows=rows, blocks=blocks)
     names = ["START_SESSION", "BLOCK_START", "TRIAL_START", "END_SESSION", "LICK_ENTER", "LICK_EXIT",
              "CS_A_ON", "CS_A_OFF", "CS_B_ON", "CS_B_OFF", "US_ON", "US_OFF"]
+    names += ["LICK_B_ENTER", "LICK_B_EXIT"] if split else []
     code = {name: i + 1 for i, name in enumerate(names)}
     values = {"T0": 1000, "T1": 1000, "T2": 500, "T3": 300, "T4": 700, "RW1": 100, "RP1": 1000,
               "RW2": 100, "RP2": 0, "BN1": 6, "W1_1": 2, "W1_2": 2}
@@ -997,6 +1003,8 @@ def _trace_canary() -> dict[str, Any]:
                "default": values[key]} for key in low.params]
     outputs = [{"slot": slot, "channel": channel, "on": f"{channel.upper()}_ON", "off": f"{channel.upper()}_OFF"}
                for slot, channel in low.outputs]
+    inputs = [{"slot": slot, "channel": channel, "rise": f"{channel.upper()}_ENTER",
+               "fall": f"{channel.upper()}_EXIT"} for slot, channel in low.inputs]
     snapshot = {
         "taskName": "Score canary trace",
         "kind": "behavior",
@@ -1008,7 +1016,7 @@ def _trace_canary() -> dict[str, Any]:
             "spine": phases,
             "rows": rows,
             "blocks": blocks,
-            "inputs": [{"slot": "lick", "channel": "lick", "rise": "LICK_ENTER", "fall": "LICK_EXIT"}],
+            "inputs": inputs,
             "outputs": outputs,
             "params": list(low.params),
             "table": {"states": [list(s) for s in low.states], "edges": [list(e) for e in low.edges],
@@ -1027,7 +1035,8 @@ def _trace_canary() -> dict[str, Any]:
         "interp": spine_stream.rp.INTERP_VERSION, "trial_seed": 116,
         **{f["metadataKey"]: values[f["wireKey"]] for f in config},
         task_profile.SNAPSHOT_KEY: snapshot,
-        "ts_data": [e for t in licks for e in ([code["LICK_ENTER"], t], [code["LICK_EXIT"], t + 20])]
+        "ts_data": [e for t in licks for i in inputs
+                    for e in ([code[i["rise"]], t], [code[i["fall"]], t + 20])]
         + [[code["END_SESSION"], 30000]],
     }
     return _predicted(doc, None)

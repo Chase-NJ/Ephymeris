@@ -16,7 +16,7 @@ from typing import Any
 
 from ...tasks.profile import TaskProfile
 from .document import _duration_ms, codes_of
-from . import legacy, table_metrics
+from . import legacy, rates, table_metrics
 from .spine import Divergence, SpineDecodeError, is_spine_run, replayed
 from .spine import trial_table as spine_table
 from .engagement import TrialEngagement, tally_engagement
@@ -169,7 +169,8 @@ def with_threshold(payload: dict[str, Any], min_counted: int) -> dict[str, Any]:
 
     `lowConfidence` is the only part of a summary the threshold touches, and it
     is `counted < min_counted` for each metric and the pooled figure, and
-    `n < min_counted` for each phase-window rate. The
+    `rates.low_confidence` for each phase-window rate, which never trusts one
+    on fewer than `rates.RATE_MIN_TRIALS` trials. The
     threshold is a per-request argument (`analytics.summary`'s
     `minCountedTrials`) while the payload is cached, so the flag is re-judged on
     every row served rather than kept from whichever request computed it
@@ -184,7 +185,9 @@ def with_threshold(payload: dict[str, Any], min_counted: int) -> dict[str, Any]:
         rate = window.get("rate") if isinstance(window, dict) else None
         if not isinstance(rate, dict) or not isinstance(rate.get("n"), int):
             return window
-        return {**window, "lowConfidence": rate["n"] < min_counted}
+        versus = window.get("versus")
+        versus_n = versus.get("n") if isinstance(versus, dict) and isinstance(versus.get("n"), int) else None
+        return {**window, "lowConfidence": rates.low_confidence(rate["n"], versus_n, min_counted)}
 
     out = dict(payload)
     if isinstance(out.get("metrics"), list):

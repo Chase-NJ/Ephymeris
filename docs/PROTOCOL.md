@@ -3589,7 +3589,7 @@ The whole baseline picture — one snapshot, shared by the command and the event
 <a id="shape-windowrate"></a>
 #### WindowRate
 
-One row's rate in one phase-window (`ANALYTICS.md#phase-window-rates`).
+One row's rate in one of its own phase-windows (`ANALYTICS.md#phase-window-rates`).
 
 | Field | Type | Notes |
 |---|---|---|
@@ -3599,6 +3599,6 @@ One row's rate in one phase-window (`ANALYTICS.md#phase-window-rates`).
 | `label` | string | The phase's kind, for a person: nothing is scored by it. |
 | `channel` | string | The input channel counted. |
 | `rate` | [RateEstimate](#shape-rateestimate) | Its rises per second in the phase, clamped at 0. |
-| `reference` | number \| null | The channel's first counted phase, which `versus` is against; null on that phase itself. |
+| `reference` | number \| null | This row's first phase counting the channel, which `versus` is against; null on that phase itself. |
 | `versus` | [RateEstimate](#shape-rateestimate) \| null | This phase's rate minus the reference's, paired within each trial: in a Pavlovian task's CS and trace, its anticipatory licking. Null on the reference. |
-| `lowConfidence` | boolean | `rate.n` < `minCountedTrials`, re-judged on every request. |
+| `lowConfidence` | boolean | The smaller of `rate.n` and `versus.n` is below `minCountedTrials` or `rates.RATE_MIN_TRIALS` (`ANALYTICS.md#uncertainty`), re-judged on every request. |

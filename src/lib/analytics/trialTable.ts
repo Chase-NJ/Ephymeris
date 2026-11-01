@@ -102,7 +102,7 @@ export interface RateRowView {
   window: string;
   channel: string;
   rate: string;
-  /** The paired difference against the reference phase, or "baseline" on it. */
+  /** The paired difference against the reference phase, named by its phase, or "reference" on it. */
   versus: string;
   n: number;
   lowConfidence: boolean;
@@ -118,9 +118,15 @@ function estimateText(e: RateEstimate, signed: boolean): string {
 /**
  * Each row's phase-window rates (`ANALYTICS.md#phase-window-rates`), worded:
  * the rate with its interval, and its difference against the channel's
- * reference phase with its own. Every number is the sidecar's.
+ * reference phase with its own, the reference named by its phase's number
+ * and kind (it is a baseline only when the task makes it one). Every number
+ * is the sidecar's.
  */
 export function rateRows(rates: WindowRate[]): RateRowView[] {
+  const phaseName = (w: WindowRate, phase: number) => {
+    const ref = rates.find((r) => r.rowId === w.rowId && r.channel === w.channel && r.phase === phase);
+    return ref ? `${phase + 1} ${ref.label}` : `phase ${phase + 1}`;
+  };
   return rates.map((w) => ({
     key: `${w.rowId}:${w.phase}:${w.channel}`,
     row: w.name,
@@ -129,10 +135,10 @@ export function rateRows(rates: WindowRate[]): RateRowView[] {
     rate: estimateText(w.rate, false),
     versus:
       w.reference === null || w.versus === null
-        ? "baseline"
+        ? "reference"
         : w.versus.mean === null
           ? "—"
-          : `${estimateText(w.versus, true)} vs ${w.reference + 1}`,
+          : `${estimateText(w.versus, true)} vs ${phaseName(w, w.reference)}`,
     n: w.rate.n,
     lowConfidence: w.lowConfidence,
   }));

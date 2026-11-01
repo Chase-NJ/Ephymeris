@@ -140,8 +140,8 @@ function TrialsView({ run, series }: { run: RunSummary; series: RunSeries | null
                 <th className="pr-2 font-normal" title="the phase, numbered from 1, and its kind">phase</th>
                 <th className="pr-2 font-normal">input</th>
                 <th className="pr-2 font-normal" title="mean per-trial rate, 95% t interval over trials">rate</th>
-                <th className="pr-2 font-normal" title="paired within each trial against the input's first counted phase">
-                  vs baseline
+                <th className="pr-2 font-normal" title="paired within each trial against the row's first phase counting the same input, named in each cell">
+                  difference
                 </th>
                 <th className="pr-2 font-normal">n</th>
               </tr>

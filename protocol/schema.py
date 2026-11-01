@@ -1283,14 +1283,15 @@ SHAPES = (
             f("label", STR, doc="The phase's kind, for a person: nothing is scored by it."),
             f("channel", STR, doc="The input channel counted."),
             f("rate", Ref("RateEstimate"), doc="Its rises per second in the phase, clamped at 0."),
-            f("reference", nullable(INT), doc="The channel's first counted phase, which `versus` is "
-              "against; null on that phase itself."),
+            f("reference", nullable(INT), doc="This row's first phase counting the channel, which `versus` "
+              "is against; null on that phase itself."),
             f("versus", nullable(Ref("RateEstimate")), doc="This phase's rate minus the reference's, "
               "paired within each trial: in a Pavlovian task's CS and trace, its anticipatory licking. Null on the "
               "reference."),
-            f("lowConfidence", BOOL, doc="`rate.n` < `minCountedTrials`, re-judged on every request."),
+            f("lowConfidence", BOOL, doc="The smaller of `rate.n` and `versus.n` is below `minCountedTrials` "
+              "or `rates.RATE_MIN_TRIALS` (`ANALYTICS.md#uncertainty`), re-judged on every request."),
         ),
-        doc="One row's rate in one phase-window (`ANALYTICS.md#phase-window-rates`).",
+        doc="One row's rate in one of its own phase-windows (`ANALYTICS.md#phase-window-rates`).",
     ),
     Shape(
         "ReplayDivergence",

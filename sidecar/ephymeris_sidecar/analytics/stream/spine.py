@@ -533,8 +533,12 @@ def replayed(document: dict[str, Any]) -> Replayed:
     trials = tt.trials_of(record.table, actions, end=end, phase_of=record.naming.phase_of,
                           windows=record.naming.windows)
     starts = {now: a for now, a in actions if a.flags & rp.ACT_TRIAL_START}
-    phase_of = record.naming.phase_of
-    windows = rt.windows_of(record.table, phase_of, record.naming.inputs) if phase_of is not None else ()
+    naming = record.naming
+    # Whose each state is: the snapshot's row map, or the task's only row.
+    row_of = naming.row_of if naming.row_of is not None else (
+        (naming.row,) * len(record.table.states) if naming.row is not None else None)
+    windows = (rt.windows_of(record.table, naming.phase_of, naming.inputs, row_of)
+               if naming.phase_of is not None else ())
     return Replayed(record.interp, None, tuple(_in_block(record, starts, t) for t in trials),
                     record.phase_labels, record.rows, windows)
 

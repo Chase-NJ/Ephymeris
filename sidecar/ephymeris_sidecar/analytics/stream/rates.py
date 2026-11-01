@@ -20,10 +20,29 @@ from .stats import _round, mean_interval
 from .trial_table import EXCLUDED, ReplayTrial
 
 
+#: The fewest trials a rate is trusted on, whatever `minCountedTrials` says.
+#: Licks come in bursts, so below this a 95% t interval over trials covers
+#: the true rate well under 95% of the time: a simulated bursty licker
+#: (`test_phase_rates.py`'s `coverage`) is covered 78% of the time at 5
+#: trials, 85% at 10, 89% at 20 and 90% from 30 on. The table is in
+#: `ANALYTICS.md#uncertainty`. A rate on fewer is reported, flagged low confidence.
+RATE_MIN_TRIALS = 30
+
+
+def low_confidence(n: int, versus_n: int | None, min_counted: int) -> bool:
+    """A rate, or its difference against the reference, rests on fewer trials
+    than both `min_counted` and `RATE_MIN_TRIALS` ask for."""
+    least = n if versus_n is None else min(n, versus_n)
+    return least < max(min_counted, RATE_MIN_TRIALS)
+
+
 @dataclass(frozen=True, order=True)
 class Window:
-    """A phase that counts an input channel and never acts on it."""
+    """A phase in which one row counts an input channel and never acts on it.
+    A window is a row's: rows bind their own channels, so one row's window is
+    never another's."""
 
+    row: str
     phase: int
     channel: str
 
@@ -66,22 +85,32 @@ class WindowRate:
                 "lowConfidence": self.low_confidence}
 
 
-def windows_of(table: rp.Table, phase_of: Sequence[int | None], inputs: Sequence[str]) -> tuple[Window, ...]:
-    """The windows of a table: each (phase, channel) whose bit some state of
-    the phase watches and no state of the phase has an edge row on.
-    `phase_of[s]` is state s's phase, `inputs[i]` input bit i's channel."""
-    watched: dict[int, int] = {}
-    acted: dict[int, int] = {}
-    for s, row in enumerate(table.states):
+def windows_of(
+    table: rp.Table,
+    phase_of: Sequence[int | None],
+    inputs: Sequence[str],
+    row_of: Sequence[str | None] | None,
+) -> tuple[Window, ...]:
+    """The windows of a table: each (row, phase, channel) whose bit some state
+    of the row's phase watches and none of them has an edge row on.
+    `phase_of[s]` is state s's phase, `row_of[s]` its row id, `inputs[i]` input
+    bit i's channel. A state of no row (the pick, the shared ends) is no row's
+    window. Without `row_of` a table cannot say whose a count is, so it has none."""
+    if row_of is None:
+        return ()
+    watched: dict[tuple[str, int], int] = {}
+    acted: dict[tuple[str, int], int] = {}
+    for s, state in enumerate(table.states):
         p = phase_of[s] if s < len(phase_of) else None
-        if p is None:
+        r = row_of[s] if s < len(row_of) else None
+        if p is None or r is None:
             continue
-        watched[p] = watched.get(p, 0) | row.watch
-        for e in table.edges[row.edge_first : row.edge_first + row.edge_count]:
-            acted[p] = acted.get(p, 0) | 1 << e.input
-    out = {Window(p, inputs[bit] if bit < len(inputs) else f"bit {bit}")
-           for p, mask in watched.items() for bit in range(32)
-           if (mask & ~acted.get(p, 0)) >> bit & 1}
+        watched[(r, p)] = watched.get((r, p), 0) | state.watch
+        for e in table.edges[state.edge_first : state.edge_first + state.edge_count]:
+            acted[(r, p)] = acted.get((r, p), 0) | 1 << e.input
+    out = {Window(r, p, inputs[bit] if bit < len(inputs) else f"bit {bit}")
+           for (r, p), mask in watched.items() for bit in range(32)
+           if (mask & ~acted.get((r, p), 0)) >> bit & 1}
     return tuple(sorted(out))
 
 
@@ -96,6 +125,8 @@ def _rates(table: Sequence[ReplayTrial], windows: Sequence[Window]) -> list[dict
         counts = {(c.phase, c.channel): c.count for c in t.input_counts}
         mine: dict[Window, float] = {}
         for w in windows:
+            if w.row != t.row:
+                continue
             entries = t.phase_entries
             if w.phase >= len(entries) or entries[w.phase] is None:
                 continue
@@ -126,19 +157,20 @@ def window_rates(
     labels: Sequence[str] = (),
     min_counted: int = 10,
 ) -> tuple[WindowRate, ...]:
-    """Every row's rate in every window, row by row in the task's order, then
-    by phase. `rows` are the task's (id, name); `labels` the phases' kinds."""
+    """Each row's rate in each of its own windows, row by row in the task's
+    order, then by phase. `rows` are the task's (id, name); `labels` the
+    phases' kinds. A row is scored only on the windows `windows` gives it."""
     windows = sorted(set(windows))
-    reference: dict[str, int] = {}
+    reference: dict[tuple[str, str], int] = {}
     for w in windows:
-        reference.setdefault(w.channel, w.phase)
+        reference.setdefault((w.row, w.channel), w.phase)
     per_trial = _rates(table, windows)
     out = []
     for row_id, row_name in rows:
         own = [r for t, r in zip(table, per_trial) if t.row == row_id]
-        for w in windows:
+        for w in (w for w in windows if w.row == row_id):
             rate = _estimate([r[w] for r in own if w in r], floor=0.0)
-            ref = Window(reference[w.channel], w.channel)
+            ref = Window(row_id, reference[(row_id, w.channel)], w.channel)
             versus = None
             if ref != w:
                 versus = _estimate([r[w] - r[ref] for r in own if w in r and ref in r])
@@ -146,6 +178,7 @@ def window_rates(
                 row_id=row_id, name=row_name, phase=w.phase,
                 label=labels[w.phase] if w.phase < len(labels) else f"phase {w.phase}",
                 channel=w.channel, rate=rate, reference=ref.phase if ref != w else None,
-                versus=versus, low_confidence=rate.n < min_counted,
+                versus=versus,
+                low_confidence=low_confidence(rate.n, versus.n if versus else None, min_counted),
             ))
     return tuple(out)

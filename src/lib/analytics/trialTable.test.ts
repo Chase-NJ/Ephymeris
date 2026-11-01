@@ -89,9 +89,24 @@ describe("a spine run's phase-window rates", () => {
                reference: 0, versus: estimate(0, null, null, null), lowConfidence: true }),
     ]);
     expect(baseline).toMatchObject({ row: "CS+", window: "1 delay", channel: "lick_spout",
-                                     rate: "2.0/s [1.5, 2.5]", versus: "baseline", n: 30 });
-    expect(cs).toMatchObject({ window: "2 present", rate: "12.0/s [10.5, 13.6]", versus: "+10.0/s [8.3, 11.8] vs 1" });
+                                     rate: "2.0/s [1.5, 2.5]", versus: "reference", n: 30 });
+    expect(cs).toMatchObject({ window: "2 present", rate: "12.0/s [10.5, 13.6]",
+                               versus: "+10.0/s [8.3, 11.8] vs 1 delay" });
     expect(empty).toMatchObject({ row: "CS−", rate: "—", versus: "—", n: 0, lowConfidence: true });
+  });
+
+  it("names the reference by its own phase, whatever kind it is", () => {
+    // No baseline Delay: the CS is the first phase that counts licks, so the trace is against it.
+    const [, trace] = rateRows([
+      window({ phase: 0, label: "present" }),
+      window({ phase: 1, label: "delay", reference: 0, versus: estimate(30, 1, 0.5, 1.5) }),
+    ]);
+    expect(trace?.versus).toBe("+1.0/s [0.5, 1.5] vs 1 present");
+    const [, other] = rateRows([
+      window({ rowId: "cs_minus", phase: 0, label: "present" }),
+      window({ phase: 2, label: "delay", reference: 1, versus: estimate(30, 1, null, null) }),
+    ]);
+    expect(other?.versus).toBe("+1.0/s vs phase 2");
   });
 
   it("gives a single trial's rate no interval", () => {

@@ -172,7 +172,7 @@ name outputs by their Rig channel name, case-insensitively:
 | Command | Does |
 |---|---|
 | `TOGGLE <ch>` · `ON <ch>` · `OFF <ch>` | Latch, open, close one output, e.g. `TOGGLE fluid_2` |
-| `PULSE <ch>` | Open it for the pulse width, then close it |
+| `PULSE <ch>` | Open it for exactly the pulse width, then close it, however long its `STATUS` line takes to print |
 | `DUTY <ch> <n>` · `HZ <ch> <n>` | A PWM line's duty; a tone's pitch or a train's rate. Limits and defaults: [TASKS.md › The box utility](../docs/TASKS.md#the-box-utility) |
 | `SET PULSE=<ms>` | Pulse width, 10–5000 ms |
 | `ALLOFF` | Close everything. Always safe, always available |

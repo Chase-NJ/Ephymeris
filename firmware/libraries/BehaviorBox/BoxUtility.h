@@ -27,7 +27,7 @@
 
   COMMANDS (one line each, case-insensitive, unknown lines ignored)
     TOGGLE <ch>        latch an output on/off
-    PULSE  <ch>        turn it on for the pulse width, then off
+    PULSE  <ch>        turn it on for exactly the pulse width, then off
     ON <ch> | OFF <ch> explicit set, for scripted use
     DUTY <ch> <n>      a PWM line's duty
     HZ <ch> <n>        a tone line's pitch, or a train's rate
@@ -233,20 +233,55 @@ void stepTrains()
                                      BOX_UTIL_TRAIN_WIDTH_MS) ? HIGH : LOW);
 }
 
-/* ---- serial output that never holds a train HIGH ----------------------------
+/* ---- a timed output ----------------------------------------------------------
+ * PULSE, and each line the self-test fires or blinks, is on for an exact time:
+ * PULSE is how a reward valve is timed for calibration. It is timed from the
+ * moment it turns on, by micros(), and turned off by stepTimed() wherever that
+ * runs -- in the middle of printing STATUS too -- never after the print. One at
+ * a time: the utility times nothing else while it waits for one. */
+
+int timedOutput = -1;           // the output on for a time, or -1
+unsigned long timedFrom = 0;    // micros() it turned on
+unsigned long timedUs = 0;      // for how long
+
+void startTimed(int i, unsigned long ms)
+{
+  setOutput(i, true);
+  timedOutput = i;
+  timedFrom = micros();
+  timedUs = ms * 1000UL;
+}
+
+void endTimed()
+{
+  if (timedOutput >= 0)
+    setOutput(timedOutput, false);
+  timedOutput = -1;
+}
+
+/* Every train's pin, and the timed output off once its time is up. */
+void stepTimed()
+{
+  stepTrains();
+  if (timedOutput >= 0 && micros() - timedFrom >= timedUs)
+    endTimed();
+}
+
+/* ---- serial output that never holds an output on ----------------------------
  * HardwareSerial's TX buffer is 64 bytes, drained at about 11.5 bytes a
  * millisecond, and a print into a full buffer BLOCKS. A STATUS line on a big rig
  * is many buffers long, so a print while a pulse is HIGH would hold a laser on
- * for many periods. Every byte the utility sends therefore goes through say():
- * it writes only what fits, and steps the trains while it waits for room, so a
- * pulse falls within a millisecond of its width whatever is being printed. */
+ * for many periods, and a print during a PULSE would lengthen it by as much.
+ * Every byte the utility sends therefore goes through say(): it writes only
+ * what fits, and steps the trains and the timed output while it waits for
+ * room, so each ends within a millisecond of its time whatever is printed. */
 
 void say(const char *text)
 {
   size_t left = strlen(text);
   while (left > 0)
   {
-    stepTrains();
+    stepTimed();
     int room = Serial.availableForWrite();
     if (room <= 0)
       continue;
@@ -262,7 +297,7 @@ void sayLine(const char *text)
 {
   say(text);
   while (Serial.availableForWrite() < 2)
-    stepTrains();
+    stepTimed();
   Serial.println();
 }
 
@@ -272,7 +307,7 @@ void pause(unsigned long ms)
   unsigned long start = millis();
   while (millis() - start < ms)
   {
-    stepTrains();
+    stepTimed();
     delay(1);
   }
 }
@@ -286,6 +321,7 @@ void setGroup(uint8_t group, bool open)
 
 void allOff()
 {
+  timedOutput = -1;
   for (int i = 0; i < NUM_OUTPUTS; i++)
     setOutput(i, false);
 }
@@ -332,6 +368,30 @@ void reportStatus()
  * Every wait inside the self-test goes through here, so STOP is honoured
  * within one polling interval however deep the test is. */
 bool stopRequested() { return commands.poll() && strcasecmp(commands.line(), "STOP") == 0; }
+
+/* Wait out the timed output, the trains kept pulsing, ending it within a
+   millisecond of its time. With `stoppable`, a STOP ends it at once and this
+   returns false. */
+bool waitTimed(bool stoppable)
+{
+  while (timedOutput >= 0)
+  {
+    if (stoppable && stopRequested())
+    {
+      endTimed();
+      return false;
+    }
+    stepTimed();
+    if (timedOutput < 0)
+      break;
+    unsigned long left = timedUs - (micros() - timedFrom);
+    if (left >= 1000UL)
+      delay(1);
+    else
+      delayMicroseconds((unsigned int)left);
+  }
+  return true;
+}
 
 bool waitOrStop(unsigned long ms)
 {
@@ -394,12 +454,11 @@ bool cycle(uint8_t group, const char *phase, unsigned long onMs)
       continue;
     testStep++;
     noteChannel("  ", i);
-    setOutput(i, true);
     if (group == BOX_UTIL_STIMULUS)
       setGroup(BOX_UTIL_ROUTING, true);
+    startTimed(i, onMs);
     reportStatus();
-    bool ok = waitOrStop(onMs);
-    setOutput(i, false);
+    bool ok = waitTimed(true);
     if (group == BOX_UTIL_STIMULUS)
       setGroup(BOX_UTIL_ROUTING, false);
     reportStatus();
@@ -452,15 +511,18 @@ bool blinkGroup(uint8_t group, const char *phase, const char *prefix)
     if (outputs[i].group != group)
       continue;
     noteChannel(prefix, i);
-    for (int b = 0; b < 6; b++)
+    for (int b = 0; b < 3; b++) // on 400 ms, off 400 ms, three times
     {
       testStep++;
-      setOutput(i, b % 2 == 0);
+      startTimed(i, 400);
+      reportStatus();
+      if (!waitTimed(true))
+        return false;
+      testStep++;
       reportStatus();
       if (!waitOrStop(400))
         return false;
     }
-    setOutput(i, false);
   }
   return true;
 }
@@ -566,12 +628,13 @@ void runSelfTest()
 
 /* ---- commands ------------------------------------------------------------- */
 
+/* On for exactly the pulse width, the STATUS print included: PULSE times a
+   reward valve for calibration. Short by construction; not interruptible. */
 void pulse(int i)
 {
-  setOutput(i, true);
+  startTimed(i, pulseMs);
   reportStatus();
-  pause(pulseMs); // short by construction; PULSE is not interruptible
-  setOutput(i, false);
+  waitTimed(false);
   reportStatus();
 }
 

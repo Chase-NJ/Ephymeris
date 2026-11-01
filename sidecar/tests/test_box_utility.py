@@ -514,6 +514,53 @@ def test_a_train_pulse_is_never_held_high_while_status_is_printed(tmp_path):
 
 @no_host_compiler
 @on_windows
+def test_a_timed_output_ends_on_time_while_status_is_printed(tmp_path):
+    """`PULSE` is how a reward valve is timed for calibration, and the self-test
+    times every stimulus, reward and cue it drives. Each is turned on, then
+    STATUS is printed: on the largest rig a line a buffer drains for about
+    190 ms. Under the shim's real timing, each must still end within 1 ms of
+    its own length, never that length after the print."""
+    install(largest_rig())
+    ran = run_on_host(tmp_path, r"""
+  static unsigned long since[BB_MAX_PIN];
+  static std::vector<std::pair<int, unsigned long>> spans; // (pin, us on)
+  struct Watch {
+    static void pin(int p, int v, unsigned long us) {
+      if (v && !since[p]) since[p] = us + 1;          // +1: 0 means off
+      else if (!v && since[p]) { spans.push_back(std::make_pair(p, us + 1 - since[p])); since[p] = 0; }
+    }
+  };
+  auto within = [](int pin, unsigned long want, int n) {
+    int seen = 0; unsigned long worst = 0;
+    for (auto &s : spans) if (s.first == pin) {
+      seen++;
+      unsigned long off = s.second > want ? s.second - want : want - s.second;
+      if (off > worst) worst = off;
+    }
+    std::printf("pin %d: %d spans, worst %lu us off %lu us\n", pin, seen, worst, want);
+    return seen == n && worst <= 1000;
+  };
+  for (int i = 0; i < BB_MAX_PIN; i++) bb_pinValue[i] = HIGH;
+  ::setup();
+  bb_realTiming(115200);
+  bb_onPinWrite = Watch::pin;
+  send("SET PULSE=200");
+  send("TOGGLE cue_line_00_xxxxxxxxxxxxxxxxxxxxxx");  // STATUS still draining
+  send("PULSE fluid_0");
+  check("PULSE holds a reward line on for its width to the millisecond", within(42, 200000, 1));
+  spans.clear();
+  send("ALLOFF");
+  send("SELFTEST");
+  check("each stimulus line fires for 500 ms", within(22, 500000, 1) && within(33, 500000, 1));
+  check("each reward line opens for 500 ms", within(42, 500000, 1) && within(48, 500000, 1));
+  check("each cue blinks 400 ms at a time", within(36, 400000, 3));
+""")
+    print(ran.stdout)  # the numbers, with `pytest -s`
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+
+
+@no_host_compiler
+@on_windows
 def test_the_self_test_reaches_every_new_channel(tmp_path):
     install(every_type_rig())
     ran = run_on_host(tmp_path, r"""

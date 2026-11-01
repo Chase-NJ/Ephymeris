@@ -2,7 +2,7 @@
 
 `fixtures/legacy_corpus.json` was captured on 2b851fd, the scorer before the
 legacy adapter, from the archive on the development Mac
-(`~/Documents/Hart-Lab/DATA/Behavior`: 732 runs, 16 sketch names). Per sketch
+(`~/Documents/Hart-Lab/DATA/Behavior`: 732 runs, 13 sketch names). Per sketch
 it holds the run count, a digest over every run's summary, series, trail and
 tape, and summed counts. No run file and no per-run number is committed.
 

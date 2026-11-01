@@ -179,6 +179,17 @@ def synthetic_cases(vocabulary: Vocabulary) -> list[dict[str, Any]]:
         metric("l_on_1", "ODOR_1_ON", "WATER_POKE_L", "WATER_POKE_R", window=4),
         metric("l_on_3", "ODOR_3_ON", "WATER_POKE_L", "WATER_POKE_R"),
     ])
+    # Two conditions on one onset settled by different strobes: the trail
+    # moves once per strobe, not once per trial.
+    shared_apart = profile([
+        metric("r_on_1", "ODOR_1_ON", "WATER_POKE_R", "WATER_POKE_L", window=3),
+        metric("l_on_1", "ODOR_1_ON", "WATER_POKE_L", "FLUID_R", window=3),
+        metric("l_on_3", "ODOR_3_ON", "WATER_POKE_L", "WATER_POKE_R", window=3),
+    ])
+    light_only = profile(odors(2)["liveMetrics"], names={
+        c: n for c, n in strobes.items() if n != "ODOR_POKE"})
+    poke_only = profile(odors(2)["liveMetrics"], names={
+        c: n for c, n in strobes.items() if n != "LIGHTS_ON"})
     keep = {"LIGHTS_ON", "LIGHTS_OFF", "ODOR_POKE"}
     no_reward = profile(odors(2)["liveMetrics"], names={
         c: n for c, n in strobes.items() if not n.startswith(("FLUID", "ODOR_UNPOKE"))})
@@ -230,6 +241,9 @@ def synthetic_cases(vocabulary: Vocabulary) -> list[dict[str, Any]]:
     case("shared-onset", shared, document(session))
     case("no-reward-vocabulary", no_reward, document(session))
     case("no-trial-light", no_light, document(session))
+    case("shared-onset-different-strobes", shared_apart, document(session))
+    case("trial-light-only", light_only, document(session))
+    case("odor-poke-only", poke_only, document(session))
     case("clock-none", no_go, document(session, "none"))
     case("clock-disordered", no_go, document(session, "disordered"))
     case("empty", no_go, document([]))

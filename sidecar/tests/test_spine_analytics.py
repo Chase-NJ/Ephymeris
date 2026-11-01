@@ -137,8 +137,9 @@ async def test_a_recorded_spine_run_shows_its_trial_table_and_metrics(rig: Rig) 
 
     tallies = run["replay"]
     assert tallies["interp"] == replay.INTERP_VERSION and tallies["trials"] == 3
-    assert tallies["unclassified"] == 1
-    assert [(c["outcomeClass"], c["n"], c["of"]) for c in tallies["classes"]] == [("correct", 2, 3)]
+    assert tallies["unclassified"] == 0
+    assert [(c["outcomeClass"], c["n"], c["of"]) for c in tallies["classes"]] == [
+        ("correct", 2, 3), ("abort_during_sampling", 1, 3)]
     assert tallies["rewarded"]["n"] == 2 and tallies["rewarded"]["of"] == 3
     assert [r["rowId"] for r in tallies["rows"]] == ["r1"]
     assert run["divergence"] is None
@@ -152,7 +153,7 @@ async def test_a_recorded_spine_run_shows_its_trial_table_and_metrics(rig: Rig) 
     assert first["outcome"] == "correct" and first["rewarded"] and first["rewardLine"] == "fluid_2"
     assert first["rewardMs"] == 100 and first["phaseEntries"][:2] == [0, 200]
     assert first["inputCounts"] == [{"phase": 0, "channel": "odor_port", "count": 1}]
-    assert aborted["outcome"] is None and not aborted["rewarded"]
+    assert aborted["outcome"] == "abort_during_sampling" and not aborted["rewarded"]
     assert len(table["trials"]) == 3 and all(t["complete"] for t in table["trials"])
 
 
@@ -230,7 +231,7 @@ def test_a_pick_state_in_no_phase_keeps_the_phase_map(monkeypatch) -> None:
     still read, never dropped for the null."""
     document = recorded_document()
     spine = document[task_profile.SNAPSHOT_KEY]["spine"]
-    phases = [0, 1, 2, 3, 3, 3, 4]
+    phases = list(spine["table"]["phases"])
     phases[0] = None  # as a pick state would be, standing in for state 0
     spine["table"]["phases"] = phases
     first = spine_stream.replayed(document).trials[0]

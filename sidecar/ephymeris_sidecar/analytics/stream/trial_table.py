@@ -49,8 +49,8 @@ CORRECT = OUTCOME_CLASSES[OUTCOME_CORRECT - 1]
 #: for P(correct | row) and the pooled figure (`ANALYTICS.md#metrics-from-the-trial-table`).
 #: A withhold is a no-go row's correct answer, so a perfect go/no-go session
 #: scores 1.0. Every other class (false alarm, wrong response, omission, hold
-#: broken, an abort, one added later) is a miss, and a trial with no class is
-#: excluded.
+#: broken, one added later) is a miss, except the aborts in `EXCLUDED`; those
+#: and a trial with no class are excluded.
 HITS = frozenset({CORRECT, "withheld"})
 
 #: The classes a trial is excluded in, as a legacy run excludes a trial the
@@ -330,7 +330,8 @@ class ReplayTrial:
     """One row of the trial table (`ANALYTICS.md#the-trial-table`): a replayed
     spine run's, named, and a decoded legacy run's alike
     (`ANALYTICS.md#how-a-legacy-run-becomes-a-trial-table`). Every value is plain
-    (numbers, strings, lists, a string-keyed map, None), so a row serialises as is."""
+    (numbers, strings, booleans, None, and lists of them or of flat objects), so a
+    row serialises as is."""
 
     index: int
     #: None only on a legacy file with no usable clock.

@@ -423,7 +423,7 @@ One row per trial (`stream/trial_table.py`, `ReplayTrial` on the wire). Columns,
 | `index`, `atMs` | Each tick a state flagged `STARTS_TRIAL` is entered. A tick that finishes one trial and starts the next (a chance state missing straight back to the start) is split there: the hops before the flagged state are the old trial's. The trial start the session ends on (trial NT+1, or the first after `STOP`) is not a trial |
 | `block`, `row`, `rowName`, `level` | The snapshot's `table.rows` (each state's row index) when it carries one; otherwise the task's only row and block, when it has exactly one; otherwise null |
 | `phaseEntries` | The first tick the trial entered a state of each phase, by the snapshot's `table.phases` (each state's phase index, null for a state in no phase such as a pick). A snapshot without it is lowered again from its own definition, and that map is used only if it gives back exactly the recorded table; otherwise the column is empty |
-| `outcome` | The outcome class of the **last** outcome-bearing state (`outcome` ≠ 0) the trial entered, named by `taskdef/lowering.py`'s `OUTCOME_CLASSES`, or `outcome_<n>` for a number this build has no name for. Null when it entered none, as an abort to the ITI does |
+| `outcome` | The outcome class of the **last** outcome-bearing state (`outcome` ≠ 0) the trial entered, named by `taskdef/lowering.py`'s `OUTCOME_CLASSES`, or `outcome_<n>` for a number this build has no name for. Null when it entered none, as an abort in a table lowered before INTERP 4 does; from INTERP 4 every early exit marks its class at its end ([TASKS.md](../../../docs/TASKS.md#lowering)) |
 | `response`, `responseEdge`, `responseMs`, `latencyMs` | When the snapshot maps states to phases (`table.phases`, or the re-lowered map): the first edge exit the trial took out of a **Response window** phase's states, the window and the hold after it, with its latency from the trial's first entry into that phase. So a held response, kept or broken, is the window's edge timed from the window opening, whatever phases lie between it and the Outcome. Null for a trial a timer decided (an omission, a withhold), and in a spine with no window (the tracer). This is the one column that reads a phase kind, and only to find the window. **Without a phase map**, the fallback is structural: an edge exit out of a *deciding* state, one with two or more exits (edge rows and timer) that can reach an outcome-bearing state before the next trial starts. The last such exit before the trial's first outcome-bearing state is taken, then traced back to the first edge exit of its state's visit |
 | `rewarded`, `rewardLine`, `rewardMs` | The trial took the `on_hit` branch of a chance state that bears an outcome. The line is the outputs `on_hit` drives and `on_miss` does not; the time is the ticks actually spent in `on_hit` |
 | `outcomeMs` | The tick the trial entered the outcome-bearing state its class is read from |
@@ -455,7 +455,9 @@ interval](#uncertainty):
 > [!CAUTION]
 > **A withhold is a hit.** It is a no-go row's correct answer, so counting only `correct` would score a
 > perfect go/no-go session at the go rows' share. `false_alarm`, `wrong_response`, `omission`,
-> `hold_broken` and any class added later are misses until `HITS` or `EXCLUDED` says otherwise.
+> `hold_broken` and any class added later are misses until `HITS` says otherwise. The two abort
+> classes are excluded instead (`EXCLUDED`): the animal quit before it was asked, as an aborted
+> legacy trial is excluded.
 
 Because `metrics` and `overall` keep the legacy shape, a spine run appears in the session table, the cards
 and the cohort trends like any run. P(correct | row) and `replay.classes` answer different questions: the
@@ -486,7 +488,7 @@ it reads those names through the run's profile into the same rows a replayed spi
 legacy figure is then read off the rows. Each comes out exactly as the strobe scorer reported it before the
 table existed. `tests/test_legacy_pin.py` pins that on a synthetic corpus covering every branch, and
 `tests/test_legacy_corpus.py` per sketch on a real archive when `EPHYMERIS_CORPUS` names one (the
-development Mac's: 732 runs, 16 sketch names). Nothing outside `stream/legacy/` matches a strobe name.
+development Mac's: 732 runs, 13 sketch names). Nothing outside `stream/legacy/` matches a strobe name.
 
 A row is one of two things, in stream order:
 
@@ -525,7 +527,7 @@ The figures, from the rows:
 | `overall` | [Pooled](#pooled-accuracy) as ever, null when no condition counted a trial |
 | `outcomes`, `conditions`, the tape | The onset rows' `outcome`, mapped back to the five buckets; a condition's are the rows scored under it |
 | `engagement` | The `presented` rows: poked when an onset opened it or it is `abort_before_stimulus`, delivered when an onset opened it |
-| `series`, `trail` | Each condition's counted verdicts in row order. The trail takes one point per row: a profile with two conditions on one onset answered by different strobes gets one point for the trial, not one per strobe |
+| `series`, `trail` | Each condition's counted verdicts in row order. The trail steps by strobe, in the order the verdicts came (`LegacyTable.settled`): two conditions on one onset settled by different strobes are two steps, as live |
 
 A spine run's curves read its table the same way: one `series` per row, P(correct | row), running over
 the session in either mode because a spine row has no authored window, and no `trail`, because a row has
@@ -664,7 +666,7 @@ A run's `status` (with a `detail` that says what to do):
 | `ok` | Scored | |
 | `no-metrics` | Read fine, but no profile declares anything to score. Still listed with duration, events and stop reason | Why no profile resolved, for example the sketch name matched nothing |
 | `diverged` | A [spine run](#how-a-spine-run-is-scored) whose recorded outputs are not what replay predicts. Flagged, never scored. Still listed with duration, events and stop reason | Which strobe first differs, and what replay predicted there |
-| `unreplayable` | A spine run replay cannot start: an unknown `INTERP`, no table in its snapshot, or a malformed one. Never replayed and never inferred. Still listed with duration, events and stop reason | Why, for example "the header says INTERP 4, not a version this replay knows" |
+| `unreplayable` | A spine run replay cannot start: an unknown `INTERP`, no table in its snapshot, or a malformed one. Never replayed and never inferred. Still listed with duration, events and stop reason | Why, for example "the header says INTERP 99, not a version this replay knows" |
 | `missing` | No file was recorded, or it is not on disk | "the .tsv is on disk but the .json was never written — the data is recoverable" ([crash recovery](../../../docs/DATA.md#crash-recovery)) |
 | `unreadable` | The file is there but is not a JSON object, or the path can't be read | The parser's message |
 

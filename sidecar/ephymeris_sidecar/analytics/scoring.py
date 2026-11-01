@@ -833,6 +833,12 @@ def _canary_runs(
         {"id": "p_l_odor1", "label": "P(L | Odor 1)", "triggerCode": code("ODOR_1_ON"),
          "successCode": code("WATER_POKE_L"), "alternateCode": code("WATER_POKE_R"), "windowSize": 3},
     ]})
+    # The same onset's second condition settled by a later strobe than its first.
+    shared_apart = task_profile.parse_profile({**declared, "liveMetrics": [
+        *declared["liveMetrics"][:2],
+        {"id": "p_l_odor1", "label": "P(L | Odor 1)", "triggerCode": code("ODOR_1_ON"),
+         "successCode": code("WATER_POKE_L"), "alternateCode": code("FLUID_R"), "windowSize": 3},
+    ]})
     unnamed = {"LIGHTS_ON", "ODOR_POKE", "FLUID_L", "FLUID_R"}
     no_light_no_reward = task_profile.parse_profile({**declared, "strobes": {
         c: n for c, n in declared["strobes"].items() if n not in unnamed}})
@@ -872,6 +878,7 @@ def _canary_runs(
             ("no-condition", nothing, document([code("WATER_POKE_R")] * 3)),
             ("utility", held(utility, "snapshot"), document(session)),
             ("legacy-shared-onset", held(shared_onset, "snapshot"), document(session)),
+            ("legacy-shared-onset-apart", held(shared_apart, "snapshot"), document(session)),
             ("legacy-no-light-no-reward", held(no_light_no_reward, "snapshot"), document(session)),
             ("short", held(snapshot, "snapshot"), document(session[:12])),
             ("unclean", held(snapshot, "snapshot"), unclean),

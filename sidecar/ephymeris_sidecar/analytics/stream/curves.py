@@ -9,6 +9,7 @@ displayed, since its verdicts are the live accumulator's.
 from __future__ import annotations
 
 from collections import deque
+from itertools import groupby
 from dataclasses import dataclass
 from typing import Any, Iterable
 
@@ -227,10 +228,9 @@ def strategy_trail(
     Why it cannot be assembled on the frontend from `series`: those are indexed
     by each metric's **own** counted trials, and the conditions interleave, so
     index *k* of one is not the same moment as index *k* of the other. Pairing
-    them needs the trials in the order they ran, which the trial table's rows
-    are: one point after each row that counted a trial on either side. (A
-    profile declaring two conditions on one onset whose answers are different
-    strobes gets one point for the trial, not one per strobe.)
+    them needs the verdicts in the order the strobes gave them, which the
+    legacy table keeps (`LegacyTable.settled`): one point after each strobe
+    that counted a trial on either side, as the live accumulators would.
 
     Sampled at each condition's own authored `windowSize`: the point is "what
     strategy is this animal running *right now*", which is the rolling figure,
@@ -279,11 +279,11 @@ def strategy_trail(
 
     out: list[StrategyPoint] = []
     counted = 0
-    for trial in table.trials:
+    for _, step in groupby(table.settled, key=lambda s: s[0]):
         moved = False
-        for condition, verdict in trial.scores:
-            if verdict is not None and condition in windows:
-                windows[condition].append(verdict)
+        for _, row, condition in step:
+            if condition in windows:
+                windows[condition].append(bool(table.trials[row].verdict(condition)))
                 counted += 1
                 moved = True
         if not moved:

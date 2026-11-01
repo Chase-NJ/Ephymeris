@@ -83,6 +83,10 @@ class LegacyTable:
     engagement: bool
     #: Strobes in the file, for the cumulative curve's window.
     events: int
+    #: Every verdict in the order the strobes gave them: (strobe index, row
+    #: index, condition id). Two conditions on one onset can be settled by
+    #: different strobes, so the strategy walk steps by these, not by row.
+    settled: tuple[tuple[int, int, str], ...] = ()
 
     @property
     def gaps(self) -> tuple[str, ...]:
@@ -157,6 +161,7 @@ def _table(pairs: list[tuple[int, int | None]], profile: TaskProfile | None) -> 
     # also a boundary settles the old trial before it opens the next).
     scores: list[dict[str, bool | None]] = [{c.id: None for c in by_trigger[codes[o]]} for o in opens]
     decided: list[int | None] = [None] * len(opens)
+    settled: list[tuple[int, int, str]] = []
     accumulators = [(m.id, MetricAccumulator(m, boundaries)) for m in profile.live_metrics]
     current = -1
     for i, code in enumerate(codes):
@@ -165,6 +170,7 @@ def _table(pairs: list[tuple[int, int | None]], profile: TaskProfile | None) -> 
             acc.offer(code)
             if acc.counted_total != counted and current >= 0 and mid in scores[current]:
                 scores[current][mid] = acc.hits_total != hits
+                settled.append((i, current, mid))
                 if mid == by_trigger[codes[opens[current]]][0].id:
                     decided[current] = i
         if code in boundaries:
@@ -219,7 +225,9 @@ def _table(pairs: list[tuple[int, int | None]], profile: TaskProfile | None) -> 
         )))
     rows.sort(key=lambda r: (r[0], r[1]))
     trials = tuple(_indexed(t, i) for i, (_, _, t) in enumerate(rows))
-    return LegacyTable(trials, conditions, can_tally, can_engage, len(codes))
+    row_of = {at: i for i, (at, kind, _) in enumerate(rows) if kind == 0}
+    return LegacyTable(trials, conditions, can_tally, can_engage, len(codes),
+                       tuple((i, row_of[opens[k]], mid) for i, k, mid in settled))
 
 
 def _indexed(trial: ReplayTrial, index: int) -> ReplayTrial:

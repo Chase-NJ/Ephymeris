@@ -44,13 +44,13 @@ export function baselineColor(state: BaselineState): string {
  * authority, so this never assumes the last option sent took effect.
  */
 export type SettingReading =
-  | { kind: "none" } // no box has reported it yet
-  | { kind: "mixed" } // boxes disagree
+  | { kind: "none" } // a box has not reported it (an older utility never will)
+  | { kind: "mixed" } // every box reports it, and they disagree
   | { kind: "value"; value: string; label: string };
 
 export function readSetting(setting: ControlSetting, values: ReadonlyArray<string | undefined>): SettingReading {
-  const reported = [...new Set(values.filter((v): v is string => v !== undefined))];
-  if (reported.length === 0) return { kind: "none" };
+  if (values.length === 0 || values.some((v) => v === undefined)) return { kind: "none" };
+  const reported = [...new Set(values as ReadonlyArray<string>)];
   if (reported.length > 1) return { kind: "mixed" };
   const value = reported[0]!;
   const option = setting.options.find((o) => o.value === value);

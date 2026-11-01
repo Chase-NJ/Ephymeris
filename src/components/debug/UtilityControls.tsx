@@ -426,26 +426,14 @@ export function SelectControl({
 }
 
 /**
- * Which channel family a grid row belongs to, from its telemetry key.
- *
- * The utility sketch's keys are `f1..f4`, `o1..o12`, `vac`, `light`; the
- * families are the rig's channel kinds (`KIND_COLOR`), so a fluid line here
- * wears the same colour it wears on the board map. Read from the key rather
- * than from a declared kind because a `ControlChannel` declares none — and
- * adding one would change `profile_hash` for every utility profile.
- */
-/**
- * What a row drives. A generated profile says so outright (`kind`, from the
- * Rig page — `TASKS.md#the-box-utility`); the key-shape guess is for a
- * hand-written profile that predates it.
+ * The colour family a grid row belongs to: the rig channel kind its profile
+ * declares (`kind`, which a generated profile always sets —
+ * `TASKS.md#the-box-utility`), so a fluid line here wears the colour it wears
+ * on the board map. A row that declares none is drawn neutral: guessing a
+ * family from a channel's name would be a hand-listed channel.
  */
 export function familyOf(ch: ControlChannel): keyof typeof KIND_COLOR | undefined {
   if (ch.kind && ch.kind in KIND_COLOR) return ch.kind as keyof typeof KIND_COLOR;
-  const key = ch.state?.toLowerCase() ?? "";
-  if (/^f\d+$/.test(key)) return "reward";
-  if (/^o\d+$/.test(key)) return "emitter";
-  if (key === "vac") return "vacuum";
-  if (key === "light") return "cue";
   return undefined;
 }
 

@@ -74,9 +74,10 @@ INPUT_BYTES = 14
 OUTPUT_BYTES = 5
 #: A driven output bit adds its `SpineDrive` (3 B), its train's start tick (4 B)
 #: and its pin's level (1 B), and a task with any adds the `SpineDriveRun` that
-#: tracks them (9 B). A task with no driven output compiles none of it.
+#: tracks them (9 B) and the ms the train pins were last stepped to (4 B). A
+#: task with no driven output compiles none of it.
 DRIVE_BYTES = 8
-DRIVE_RUN_BYTES = 9
+DRIVE_RUN_BYTES = 13
 #: What linking the AVR core's `tone()` adds, only when a task has a tone
 #: output (`SPINE_HAS_TONE`). Measured by the same test.
 TONE_RAM_BYTES = 32

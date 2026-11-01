@@ -303,6 +303,38 @@ def test_identify_and_the_beam_mirror_never_take_a_driven_cue():
     assert "identify" not in utility.utility_profile(TEMPLATE), "a rig whose only cues are driven has none"
 
 
+def door_first_rig() -> dict:
+    """A valid rig whose first output is a level line of role `port` (a door),
+    shown with the cues but no cue: identify must not light it."""
+    from ephymeris_sidecar.hardware import service
+
+    doc = default_document()
+    door = {"kind": "cue", "type": "digital_out", "role": "port", "label": "Door"}
+    doc["channels"] = {"door": door, **doc["channels"]}
+    doc["pins"]["door"] = {"index": 37}
+    assert service.problems_for(doc) == [], "a rig the Rig page would save"
+    return doc
+
+
+def test_identify_and_the_mirror_take_the_first_cue_by_role():
+    install(door_first_rig())
+    profile = utility.utility_profile(TEMPLATE)
+    assert grid_rows(profile)["door"][0] == "aux", "the door is shown with the cues"
+    assert profile["identify"] == {"on": "ON trial_light", "off": "OFF trial_light"}
+    header = utility.utility_channels_h("BOX_Utility")
+    rows = [line for line in header.split("#define BOX_UTILITY_OUTPUTS")[1].split("}\n")[0].splitlines()
+            if line.strip().startswith("{\"")]
+    light = next(i for i, row in enumerate(rows) if row.strip().startswith('{"trial_light"'))
+    assert f"#define BOX_UTILITY_LEVEL_CUE {light}" in header, "the mirror's row, by the same rule"
+
+
+def test_a_rig_with_no_level_cue_has_no_mirror():
+    doc = every_type_rig()
+    doc["channels"] = {k: v for k, v in doc["channels"].items() if k not in ("trial_light", "buzzer")}
+    install(doc)
+    assert "#define BOX_UTILITY_LEVEL_CUE -1" in utility.utility_channels_h("BOX_Utility")
+
+
 def _host_compiler() -> str | None:
     return shutil.which("clang++") or shutil.which("g++")
 
@@ -412,6 +444,74 @@ def test_each_new_channel_responds_on_the_host(tmp_path):
     assert ran.returncode == 0, ran.stdout + ran.stderr
 
 
+def largest_rig() -> dict:
+    """The shipped box with a train on pin 11 and a level cue with a 32-character
+    name on every other free pin: the longest STATUS line a valid rig can have,
+    which no 64-byte TX buffer holds."""
+    from ephymeris_sidecar.hardware import service
+
+    doc = default_document()
+    doc["channels"]["laser"] = {"kind": "cue", "type": "digital_out", "mode": "train",
+                                "role": "stimulus", "label": "Laser"}
+    doc["pins"]["laser"] = {"index": 11}
+    used = {p["index"] for p in doc["pins"].values()}
+    span = doc["pin_range"]
+    for i, pin in enumerate(p for p in range(span["min"], span["max"] + 1) if p not in used):
+        name = f"cue_line_{i:02d}_".ljust(32, "x")
+        doc["channels"][name] = {"kind": "cue", "type": "digital_out", "role": "cue", "label": name}
+        doc["pins"][name] = {"index": pin}
+    assert service.problems_for(doc) == [], "a rig the Rig page would save"
+    return doc
+
+
+@no_host_compiler
+@on_windows
+def test_a_train_pulse_is_never_held_high_while_status_is_printed(tmp_path):
+    """Serial at 115200 baud drains about 11.5 bytes a millisecond, into a
+    64-byte buffer a print blocks on when it is full. A STATUS line on the
+    largest rig is far longer, so a print that blocks while a pulse is HIGH
+    would hold a laser on for many periods. Under the shim's real timing, every
+    pulse of a 100 Hz, 5 ms train must fall within 1 ms of its width while
+    commands, rate changes and heartbeats print STATUS throughout."""
+    install(largest_rig())
+    header = utility.utility_channels_h("BOX_Utility")
+    status_bytes = int(re.search(r"BOX_UTILITY_STATUS_BYTES (\d+)", header)[1])
+    assert status_bytes > 1500, "the case this test is for: a line many buffers long"
+    ran = run_on_host(tmp_path, r"""
+  static unsigned long roseAt = 0, longest = 0;
+  static bool high = false;
+  static int pulses = 0;
+  struct Watch {
+    static void pin(int p, int v, unsigned long us) {
+      if (p != 11) return;
+      if (v && !high) { high = true; roseAt = us; pulses++; }
+      else if (!v && high) { high = false; if (us - roseAt > longest) longest = us - roseAt; }
+    }
+  };
+  for (int i = 0; i < BB_MAX_PIN; i++) bb_pinValue[i] = HIGH;
+  ::setup();
+  bb_realTiming(115200);
+  bb_onPinWrite = Watch::pin;
+  send("HZ laser 100");
+  send("ON laser");
+  unsigned long start = millis(), lastToggle = start, lastRate = start;
+  while (millis() - start < 3000) {
+    if (millis() - lastToggle >= 37) { send("TOGGLE cue_line_00_xxxxxxxxxxxxxxxxxxxxxx"); lastToggle = millis(); }
+    else if (millis() - lastRate >= 101) { send("HZ laser 100"); lastRate = millis(); }
+    else ::loop();
+  }
+  send("OFF laser");
+  std::printf("pulses %d, longest HIGH %lu us, writes blocked %lu us\n", pulses, longest, bb_txBlockedUs);
+  // 3 s of 115200 baud carries about 34.5 kB: most of it was STATUS.
+  check("the serial line was kept busy", bb_output().size() > 20000);
+  check("the train ran throughout", pulses >= 250);
+  check("no pulse is HIGH more than 1 ms past its 5 ms width", longest <= 6000);
+  check("and no write ever blocked", bb_txBlockedUs == 0);
+""")
+    print(ran.stdout)  # the numbers, with `pytest -s`
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+
+
 @no_host_compiler
 @on_windows
 def test_the_self_test_reaches_every_new_channel(tmp_path):
@@ -496,10 +596,9 @@ def test_the_template_and_the_generator_hand_list_no_channel():
 
 @pytest.mark.parametrize("path", DEBUG_MODE_SOURCES, ids=lambda p: p.name)
 def test_debug_mode_hand_lists_no_channel(path):
-    """The panel renders what the profile declares. A kind is a colour family
-    and may be named (`vacuum` is one); a channel is not."""
-    names = _shipped_names() - set(registry.KIND_DEFAULTS)
-    assert _named(_code_without_comments(path.read_text(encoding="utf-8")), names) == []
+    """The panel renders what the profile declares, and colours a row by the
+    kind the profile names, so it names no channel, and no kind either."""
+    assert _named(_code_without_comments(path.read_text(encoding="utf-8")), _shipped_names()) == []
 
 
 def test_the_hand_listing_check_can_fail():
@@ -510,4 +609,5 @@ def test_the_hand_listing_check_can_fail():
     assert _named(_code_without_comments('/* trial_light */ const char *k = "x";'), names) == []
     assert _named(json.dumps({"command": "TOGGLE odor_line_3"}), names) == ["odor_line_3"]
     assert _named("house.duty odor_line_10", names) == ["odor_line_10"], "no prefix match"
+    assert _named(_code_without_comments('if (key === "vac") return "vacuum";'), names) == ["vacuum"]
     assert _named("\n".join(_python_strings(Path(__file__))), {"odor_port"}) == ["odor_port"]

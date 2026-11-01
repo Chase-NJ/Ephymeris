@@ -28,9 +28,16 @@ describe("readSetting", () => {
     expect(readSetting(DUTY, [])).toEqual({ kind: "none" });
   });
 
-  it("across boxes, agrees only when every reporting box does", () => {
-    expect(readSetting(DUTY, ["128", undefined, "128"])).toEqual({ kind: "value", value: "128", label: "50%" });
+  it("across boxes, shows a value only when every box reports it", () => {
+    expect(readSetting(DUTY, ["128", "128"])).toEqual({ kind: "value", value: "128", label: "50%" });
     expect(readSetting(DUTY, ["128", "255"])).toEqual({ kind: "mixed" });
+  });
+
+  it("claims nothing while any box has not reported, as one box does", () => {
+    // A box still on an older utility never reports the key, and runs its own
+    // default: the select must not read as if it had taken the others' value.
+    expect(readSetting(DUTY, ["128", undefined, "128"])).toEqual({ kind: "none" });
+    expect(readSetting(DUTY, ["128", undefined, "255"])).toEqual({ kind: "none" });
   });
 });
 

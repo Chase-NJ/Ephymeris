@@ -179,7 +179,7 @@ function BroadcastGrid({
                 <SettingSelect
                   setting={ch.setting}
                   channel={`${ch.label} on every box`}
-                  // Shows a value only when every box reporting it agrees.
+                  // A value only when every box reports the same one.
                   values={boxes.map((b) => valueOn(b, ch.setting!.state))}
                   disabled={disabled}
                   onSend={onSend}

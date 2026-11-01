@@ -11,7 +11,9 @@
 #ifndef UTILITY_FIXTURE_H
 #define UTILITY_FIXTURE_H
 
-#define BOX_UTILITY_NUM_OUTPUTS 10
+/* The door is a level line shown with the cues, but no cue by role: the
+   generator points BOX_UTILITY_LEVEL_CUE past it, at the trial light. */
+#define BOX_UTILITY_NUM_OUTPUTS 11
 #define BOX_UTILITY_OUTPUTS { \
   {"odor_line_1", "Odor 1", 22, BOX_UTIL_STIMULUS, BOX_UTIL_LEVEL}, \
   {"odor_line_2", "Odor 2", 24, BOX_UTIL_STIMULUS, BOX_UTIL_LEVEL}, \
@@ -20,9 +22,11 @@
   {"fluid_1", "Right reward", 44, BOX_UTIL_REWARD, BOX_UTIL_LEVEL}, \
   {"laser", "Laser", 11, BOX_UTIL_CUE, BOX_UTIL_TRAIN}, \
   {"tone", "Tone", 12, BOX_UTIL_CUE, BOX_UTIL_TONE}, \
+  {"door", "Door", 37, BOX_UTIL_CUE, BOX_UTIL_LEVEL}, \
   {"trial_light", "Trial light", 36, BOX_UTIL_CUE, BOX_UTIL_LEVEL}, \
   {"house", "House light", 45, BOX_UTIL_CUE, BOX_UTIL_PWM}, \
   {"vacuum", "Vacuum", 40, BOX_UTIL_ROUTING, BOX_UTIL_LEVEL} }
+#define BOX_UTILITY_LEVEL_CUE 8
 #define BOX_UTILITY_HAS_TONE 1
 #define BOX_UTILITY_NUM_INPUTS 4
 #define BOX_UTILITY_INPUTS { \

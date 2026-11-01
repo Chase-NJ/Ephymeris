@@ -124,7 +124,7 @@ struct BoxUtilInput
   uint8_t activeHigh; // 0: active LOW (a broken IR beam), pulled up
 };
 
-#if !defined(BOX_UTILITY_OUTPUTS) || !defined(BOX_UTILITY_INPUTS)
+#if !defined(BOX_UTILITY_OUTPUTS) || !defined(BOX_UTILITY_INPUTS) || !defined(BOX_UTILITY_LEVEL_CUE)
 #error "No utility channel table: Ephymeris generates UtilityChannels.h from the Rig page. Build the folder the app generated (docs/TASKS.md#the-box-utility)."
 #endif
 
@@ -179,15 +179,10 @@ int countOf(uint8_t group)
   return n;
 }
 
-/* The first cue that is a plain level line: the one the self-test lights to
-   mirror a sensor. Never a tone or a train. */
-int firstLevelCue()
-{
-  for (int i = 0; i < NUM_OUTPUTS; i++)
-    if (outputs[i].group == BOX_UTIL_CUE && outputs[i].drive == BOX_UTIL_LEVEL)
-      return i;
-  return -1;
-}
+/* The row the self-test lights while any input is active, or -1: the first
+   cue-role level line, the one identify lights, as the generator picks it by
+   role (the table carries no role). Never a tone or a train. */
+const int LEVEL_CUE = BOX_UTILITY_LEVEL_CUE;
 
 uint16_t defaultSetting(uint8_t drive)
 {
@@ -204,6 +199,10 @@ unsigned long trainSince[NUM_OUTPUTS]; // when each open train started
 
 void setOutput(int i, bool open)
 {
+  // A train already running keeps running: restarting it mid-pulse would
+  // hold that pulse HIGH for a second width.
+  if (open && isOpen[i] && outputs[i].drive == BOX_UTIL_TRAIN)
+    return;
   isOpen[i] = open;
 #if BOX_UTILITY_HAS_TONE
   if (outputs[i].drive == BOX_UTIL_TONE)
@@ -232,6 +231,39 @@ void stepTrains()
       digitalWrite(outputs[i].pin,
                    interp_train_high((uint32_t)(millis() - trainSince[i]), setting[i],
                                      BOX_UTIL_TRAIN_WIDTH_MS) ? HIGH : LOW);
+}
+
+/* ---- serial output that never holds a train HIGH ----------------------------
+ * HardwareSerial's TX buffer is 64 bytes, drained at about 11.5 bytes a
+ * millisecond, and a print into a full buffer BLOCKS. A STATUS line on a big rig
+ * is many buffers long, so a print while a pulse is HIGH would hold a laser on
+ * for many periods. Every byte the utility sends therefore goes through say():
+ * it writes only what fits, and steps the trains while it waits for room, so a
+ * pulse falls within a millisecond of its width whatever is being printed. */
+
+void say(const char *text)
+{
+  size_t left = strlen(text);
+  while (left > 0)
+  {
+    stepTrains();
+    int room = Serial.availableForWrite();
+    if (room <= 0)
+      continue;
+    size_t n = left < (size_t)room ? left : (size_t)room;
+    Serial.write(text, n);
+    text += n;
+    left -= n;
+  }
+}
+
+/* say(), then the line ending, which println writes ("\r\n" on an AVR). */
+void sayLine(const char *text)
+{
+  say(text);
+  while (Serial.availableForWrite() < 2)
+    stepTrains();
+  Serial.println();
 }
 
 /* delay(), with the trains kept pulsing. */
@@ -291,7 +323,8 @@ void reportStatus()
   if (n < (int)sizeof(buf))
     snprintf(buf + n, sizeof(buf) - n, " pulse=%d test=%s step=%d/%d pass=%d/%d",
              pulseMs, testPhase, testStep, testSteps, testPassed, testChecks);
-  emitStatus(buf);
+  say("STATUS "); // emitStatus()'s shape, through say()
+  sayLine(buf);
   lastStatus = millis();
 }
 
@@ -317,15 +350,15 @@ bool waitOrStop(unsigned long ms)
  * Prose to the console; phase/step/passes on the STATUS strip. Every output is
  * in one group, so every one is driven, each as its drive at its setting. */
 
-void note(const char *text) { Serial.println(text); }
+void note(const char *text) { sayLine(text); }
 
 void noteChannel(const char *prefix, int i)
 {
-  Serial.print(prefix);
-  Serial.print(outputs[i].label);
-  Serial.print(" (");
-  Serial.print(outputs[i].name);
-  Serial.println(")");
+  say(prefix);
+  say(outputs[i].label);
+  say(" (");
+  say(outputs[i].name);
+  sayLine(")");
 }
 
 void beginPhase(const char *name, int steps)
@@ -341,8 +374,8 @@ void record(const char *what, bool ok)
   testChecks++;
   if (ok)
     testPassed++;
-  Serial.print(ok ? "  [pass] " : "  [FAIL] ");
-  Serial.println(what);
+  say(ok ? "  [pass] " : "  [FAIL] ");
+  sayLine(what);
   reportStatus();
 }
 
@@ -380,13 +413,13 @@ bool testStimuli()
 {
   if (countOf(BOX_UTIL_STIMULUS) == 0)
     return true;
-  Serial.print("Stimulus lines: each fires for 500 ms");
+  say("Stimulus lines: each fires for 500 ms");
   const char *joiner = " with ";
   for (int i = 0; i < NUM_OUTPUTS; i++)
     if (outputs[i].group == BOX_UTIL_ROUTING)
     {
-      Serial.print(joiner);
-      Serial.print(outputs[i].label);
+      say(joiner);
+      say(outputs[i].label);
       joiner = ", ";
     }
   note(countOf(BOX_UTIL_ROUTING) > 0 ? " on." : ".");
@@ -468,14 +501,14 @@ bool testSensors()
   if (!rest)
     note("  (a sensor reading active at rest usually means a swapped or dead sensor)");
 
-  int light = firstLevelCue();
+  int light = LEVEL_CUE;
   for (int i = 0; i < NUM_INPUTS; i++)
   {
     testStep = 2 + i;
     reportStatus();
-    Serial.print("Sensors: block or press the ");
-    Serial.print(inputs[i].label);
-    Serial.println(" within 15 s.");
+    say("Sensors: block or press the ");
+    say(inputs[i].label);
+    sayLine(" within 15 s.");
     unsigned long start = millis();
     bool activated = false;
     while (millis() - start < 15000)
@@ -571,8 +604,10 @@ bool takes(uint8_t drive, bool dutyVerb, long n)
 }
 
 /* DUTY <ch> <n> (dutyVerb) or HZ <ch> <n>: set a driven output's one setting,
-   within its drive's limits, and re-drive it at once if it is on. A train
-   restarts at its new rate, so no pulse runs longer than its width. */
+   within its drive's limits, and re-drive it at once if it is on. A running
+   train ends its pulse now and goes on at its new rate, as if it had started
+   one width ago: LOW at once, its next pulse at the new rate's next rise. So
+   no pulse runs longer than its width. */
 void setSetting(const char *args, bool dutyVerb)
 {
   const char *space = strrchr(args, ' ');
@@ -583,7 +618,12 @@ void setSetting(const char *args, bool dutyVerb)
   if (i < 0 || n < 0 || !takes(outputs[i].drive, dutyVerb, n))
     return;
   setting[i] = (uint16_t)n;
-  if (isOpen[i])
+  if (isOpen[i] && outputs[i].drive == BOX_UTIL_TRAIN)
+  {
+    trainSince[i] = millis() - BOX_UTIL_TRAIN_WIDTH_MS;
+    digitalWrite(outputs[i].pin, LOW);
+  }
+  else if (isOpen[i])
     setOutput(i, true);
   reportStatus();
 }
@@ -674,7 +714,7 @@ void setup()
      serial settle -- opening the port is what reset us, so the host is
      already listening and would otherwise catch half a line. */
   delay(50);
-  Serial.println("READY");
+  sayLine("READY");
   note("BOX Utility. SELFTEST for the full check, or drive channels directly.");
   reportStatus();
 }

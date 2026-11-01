@@ -146,11 +146,11 @@ def row_setting(channel: registry.Channel) -> dict[str, Any] | None:
 
 
 def is_level_cue(channel: registry.Channel) -> bool:
-    """A plain level line in the cue group: what identify lights, and what the
-    self-test mirrors an active input on (`BoxUtility.h`'s `firstLevelCue`,
-    the same rule). Never a tone or a train: identify runs while animals are
-    placed."""
-    return group_of(channel) == CUE and channel.drive is None
+    """A `cue`-role plain level line: the first one is what identify lights, and
+    what the self-test mirrors an active input on (`BOX_UTILITY_LEVEL_CUE`).
+    By role, not group: a door shown with the cues is no cue. Never a tone or a
+    train: identify runs while animals are placed."""
+    return channel.role == "cue" and channel.drive is None
 
 
 def utility_channels_h(sketch_name: str) -> str:
@@ -196,6 +196,9 @@ def utility_channels_h(sketch_name: str) -> str:
         "#define BOX_UTILITY_INPUTS { \\",
         *(row + (", \\" if i < len(in_rows) - 1 else " \\") for i, row in enumerate(in_rows)),
         "}",
+        "/*  The row the self-test lights while any input is active: the first",
+        "    cue-role level line, the one identify lights, or -1 for none. */",
+        f"#define BOX_UTILITY_LEVEL_CUE {next((i for i, c in enumerate(outs) if is_level_cue(c)), -1)}",
         "/*  tone() is linked only for a rig with a tone output. */",
         f"#define BOX_UTILITY_HAS_TONE {1 if any(c.drive == 'tone' for c in outs) else 0}",
         f"#define BOX_UTILITY_STATUS_BYTES {status_bytes}",

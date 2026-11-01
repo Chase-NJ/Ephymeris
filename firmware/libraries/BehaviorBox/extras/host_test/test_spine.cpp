@@ -292,6 +292,41 @@ static void trainHeld()
   if (!offAt110 || offs != 1) dump(got);
   expect("its pin is LOW after", bb_pinValue[11] == LOW);
 }
+
+/* On a board a strobe takes time: its sync pulse and gap (about 0.7 ms), and,
+   once 64 bytes are queued, a print that blocks until the wire drains. The tick
+   a train starts in strobes four other events too. Under the shim's real
+   timing, every pulse of a 100 Hz, 1 ms train must still fall within 1 ms of
+   its width, however long that tick's strobes take. */
+static unsigned long trainRose = 0, trainLongest = 0;
+static bool trainIsHigh = false;
+static int trainPulses = 0;
+
+static void watchTrain(int pin, int value, unsigned long us)
+{
+  if (pin != 11) return;
+  if (value && !trainIsHigh) { trainIsHigh = true; trainRose = us; trainPulses++; }
+  else if (!value && trainIsHigh) {
+    trainIsHigh = false;
+    if (us - trainRose > trainLongest) trainLongest = us - trainRose;
+  }
+}
+
+static void trainTiming()
+{
+  bb_feed("SET NT=1 T1=100 T3=50 RW=30 RP=1000 TH=100 TW=1 TL=0");
+  bb_feed("START SEED=7");
+  boot();
+  bb_realTiming(115200);
+  bb_onPinWrite = watchTrain;
+  port(true, 10);
+  advanceTo(300);
+  std::cout << "  pulses " << trainPulses << ", longest HIGH " << trainLongest << " us, writes blocked "
+            << bb_txBlockedUs << " us\n";
+  expect("the train pulsed through its phase", trainPulses >= 9);
+  expect("no pulse is HIGH more than 1 ms past its 1 ms width", trainLongest <= 2000);
+  expect("and its strobes are the same", bb_output().find("052\t10") != std::string::npos);
+}
 #endif
 
 int main(int argc, char **argv)
@@ -302,6 +337,7 @@ int main(int argc, char **argv)
   if (which == "drives") drives();
   else if (which == "train_held") trainHeld();
   else if (which == "train_refused") trainRefused();
+  else if (which == "train_timing") trainTiming();
 #else
   if (which == "handshake") handshake();
   else if (which == "stream") stream();

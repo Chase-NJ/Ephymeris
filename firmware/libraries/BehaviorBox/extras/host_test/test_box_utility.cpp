@@ -193,7 +193,7 @@ int main()
   sendCommand("DUTY house");
   sendCommand("DUTY house 6x");
   sendCommand("DUTY house -1");
-  expect("a duty out of range or malformed is refused", bb_pwm[HOUSE] == 64 && setting[8] == 64);
+  expect("a duty out of range or malformed is refused", bb_pwm[HOUSE] == 64 && setting[outputNamed("house")] == 64);
   sendCommand("OFF house");
   expect("OFF ends the PWM LOW", digitalRead(HOUSE) == LOW && bb_pwm[HOUSE] == 0);
   sendCommand("TOGGLE house");
@@ -215,7 +215,7 @@ int main()
   sendCommand("HZ laser 101");
   sendCommand("HZ laser 0");
   sendCommand("DUTY laser 10");
-  expect("a train refuses a rate outside 1..100 Hz, and DUTY", setting[5] == 20);
+  expect("a train refuses a rate outside 1..100 Hz, and DUTY", setting[outputNamed("laser")] == 20);
   sendCommand("HZ laser 100");
   sendCommand("ON laser");
   int rises = 0;
@@ -230,21 +230,28 @@ int main()
   }
   expect("a 100 Hz train rises every 10 ms, its 5 ms pulse shorter than the period",
          rises >= 9 && rises <= 10);
-  while (digitalRead(LASER) == HIGH) ::loop();
+  while (digitalRead(LASER) == LOW) ::loop(); // mid-pulse
   sendCommand("HZ laser 5");
-  expect("a new rate restarts the train with a fresh pulse", digitalRead(LASER) == HIGH);
+  expect("a new rate ends the pulse in progress at once", digitalRead(LASER) == LOW);
+  from = millis();
+  while (digitalRead(LASER) == LOW && millis() - from < 400) ::loop();
+  unsigned long gap = millis() - from;
+  expect("and pulses on at the new rate's next rise, 200 ms less one width",
+         gap >= 195 - POLL_MS && gap <= 195 + POLL_MS);
   from = millis();
   while (digitalRead(LASER) == HIGH && millis() - from < 50) ::loop();
-  expect("whose width is still 5 ms, give or take a poll", millis() - from <= 5 + POLL_MS + 1);
+  expect("each pulse still 5 ms wide, give or take a poll", millis() - from <= 5 + POLL_MS);
+  sendCommand("ON laser");
+  expect("ON while a train runs does not restart it", digitalRead(LASER) == LOW);
   sendCommand("HZ laser 100");
   sendCommand("OFF laser");
   sendCommand("HZ trial_light 10");
   sendCommand("DUTY fluid_0 10");
   sendCommand("HZ nothing 10");
   expect("a level line has no setting, and an unknown name changes nothing",
-         setting[7] == 0 && setting[3] == 0 && allClosed());
+         setting[outputNamed("trial_light")] == 0 && setting[outputNamed("fluid_0")] == 0 && allClosed());
   sendCommand("ALLOFF");
-  expect("ALLOFF keeps every setting", setting[8] == 64 && setting[6] == 65535 && setting[5] == 100);
+  expect("ALLOFF keeps every setting", setting[outputNamed("house")] == 64 && setting[outputNamed("tone")] == 65535 && setting[outputNamed("laser")] == 100);
 
   // --- the self-test: the operator wasn't there ---------------------------------
   bb_resetCapture();
@@ -269,7 +276,7 @@ int main()
   expect("it leaves the box safe", allClosed() && bb_tone[TONE] == 0 && bb_pwm[HOUSE] == 0);
   expect("and idle", statusHas("mode=idle") && statusHas("test=done"));
 
-  // --- the self-test: the mirror lights a level cue, never a train or tone --------------
+  // --- the self-test: the mirror lights the table's level cue, and nothing else ----------
   bb_resetCapture();
   bb_pinValue[ODOR_PORT] = LOW; // held through the other prompts
   sendCommand("SELFTEST");
@@ -277,9 +284,10 @@ int main()
     const std::string &out = bb_output();
     size_t sensors = out.find("Sensors: block or press the left well");
     std::string after = sensors == std::string::npos ? "" : out.substr(sensors);
-    expect("an active input lights the first level cue", after.find(" trial_light=1 ") != std::string::npos);
-    expect("and never a train or a tone declared before it",
-           after.find(" laser=1 ") == std::string::npos && after.find(" tone=1 ") == std::string::npos);
+    expect("an active input lights BOX_UTILITY_LEVEL_CUE's row", after.find(" trial_light=1 ") != std::string::npos);
+    expect("and never a train, a tone or the door declared before it",
+           after.find(" laser=1 ") == std::string::npos && after.find(" tone=1 ") == std::string::npos &&
+               after.find(" door=1 ") == std::string::npos);
   }
   bb_pinValue[ODOR_PORT] = HIGH;
 

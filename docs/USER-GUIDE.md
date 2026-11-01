@@ -746,7 +746,7 @@ as data.** Press Esc or click **← Constellation** to go back.
   it and names any box that refused.
 - **Controls.** With the consoles open on boxes resting on the utility sketch, every button, the pulse
   width, **Prime**, and the switch, pulse and menu for each line reach all of them at once. A menu reads
-  *mixed* when the boxes are set differently. Each line shows one
+  *mixed* when the boxes are set differently, and a dash while any box has not answered. Each line shows one
   small light per box, so you can see which boxes have it open; its switch turns the line on for every
   box, or off once it is on everywhere. The table below lists each box's beams and test status.
 - **Sketch.** **Flash…** puts one program on every targeted box, one box at a time, and opens each

@@ -4,13 +4,12 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import Any
 
 from ...tasks.profile import TaskProfile
 from .stats import _round, wilson_interval
-from .trials import boundaries_for
+from .legacy import decode
 
 
 @dataclass(frozen=True)
@@ -86,77 +85,25 @@ class TrialEngagement:
         }
 
 
-#: The trial light going on: the top of a presentation, before the animal has
-#: had any chance to act (`ANALYTICS.md#engagement-ladder`). Exact, so `LIGHTS_OFF`
-#: — the same word, the
-#: opposite edge — can never open a presentation window.
-_PRESENTED = re.compile(r"^LIGHTS_ON$", re.IGNORECASE)
-#: The animal poked the odor port. Exact for the same reason `_SAMPLED` is:
-#: `ODOR_POKE_*` variants, were any ever declared, would be different events.
-_ENGAGED = re.compile(r"^ODOR_POKE$", re.IGNORECASE)
+def tally_engagement(table: decode.LegacyTable) -> TrialEngagement | None:
+    """The ladder, read off a legacy table's presentations
+    (`ANALYTICS.md#engagement-ladder`): every row that opens one, poked when an
+    onset opened it or the animal let go before odor, delivered when an onset did.
 
-
-def engagement_of(
-    codes: list[int], profile: TaskProfile | None
-) -> TrialEngagement | None:
-    """Walk the presentations and count how far each one got
-    (`ANALYTICS.md#engagement-ladder`).
-
-    One pass, one open window at a time, and each stage latched rather than
-    counted per occurrence — a presentation contributes at most one to each
-    rung whatever the animal did inside it. That is what keeps the ladder
-    monotone: a repeated `ODOR_POKE` inside one window (the firmware doesn't
-    emit one, but a hand-edited file can hold anything) can't push `poked` past
-    `presented`.
-
-    `None` when the profile declares neither the light nor the poke. Both are
-    needed together: the light alone gives a denominator with no numerator, and
-    "the box offered 300 trials and we can't say whether any were engaged" is
-    worse than saying nothing — it reads as zero engagement.
+    `None` when the profile declares neither the light nor the poke: "the box
+    offered 300 trials and we can't say whether any were engaged" is worse
+    than saying nothing, because it reads as zero engagement.
     """
-    if profile is None:
+    if not table.engagement:
         return None
-    boundaries = boundaries_for(profile)
-    if not boundaries:
-        return None
-    lights = frozenset(
-        code for code, name in profile.strobes.items() if _PRESENTED.match(name.strip())
+    shown = [t for t in table.trials if t.presented]
+    return TrialEngagement(
+        presented=len(shown),
+        poked=sum(1 for t in shown if t.row is not None or t.outcome == decode.POKED_NO_ODOR),
+        odor_delivered=sum(1 for t in shown if t.row is not None),
     )
-    pokes = frozenset(
-        code for code, name in profile.strobes.items() if _ENGAGED.match(name.strip())
-    )
-    if not lights or not pokes:
-        return None
 
-    presented = poked = delivered = 0
-    open_window = False
-    saw_poke = saw_odor = False
 
-    def close() -> None:
-        nonlocal poked, delivered
-        poked += 1 if saw_poke else 0
-        delivered += 1 if saw_odor else 0
-
-    for code in codes:
-        if code in lights:
-            if open_window:
-                close()
-            presented += 1
-            open_window, saw_poke, saw_odor = True, False, False
-            continue
-        if not open_window:
-            # Strobes before the first trial light — `START_SESSION` and
-            # friends — belong to no presentation and are not one.
-            continue
-        if code in pokes:
-            saw_poke = True
-        elif code in boundaries:
-            # Odor delivery implies the poke that earned it, even if the poke
-            # strobe went missing: the firmware cannot reach its odor-on code
-            # without one, so inferring it here keeps the ladder monotone on a
-            # stream that dropped a line.
-            saw_poke = saw_odor = True
-
-    if open_window:
-        close()
-    return TrialEngagement(presented=presented, poked=poked, odor_delivered=delivered)
+def engagement_of(codes: list[int], profile: TaskProfile | None) -> TrialEngagement | None:
+    """The engagement ladder of bare codes."""
+    return tally_engagement(decode.table_of_codes(codes, profile))

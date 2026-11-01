@@ -1566,10 +1566,23 @@ SHAPES = (
         doc="Watched rises of one input channel during one phase of a trial.",
     ),
     Shape(
+        "ConditionScore",
+        obj(
+            f("condition", STR, doc="The legacy condition's id (its `liveMetrics` id)."),
+            f("correct", nullable(BOOL), doc="A hit, a miss, or null for excluded."),
+        ),
+        doc="A legacy trial's verdict under one condition its onset opens.",
+    ),
+    Shape(
         "ReplayTrial",
         obj(
             f("index", INT, doc="0-based, in the run's order."),
-            f("atMs", INT, doc="The trial's start, in ms from the session's first tick."),
+            f(
+                "atMs",
+                nullable(INT),
+                doc="The trial's start: ms from the session's first tick, or from a legacy "
+                "run's earliest strobe. Null only on a legacy file with no usable clock.",
+            ),
             f("block", nullable(STR), doc="The block's id, when the table can say."),
             f("row", nullable(STR), doc="The row's id, when the table can say."),
             f("rowName", nullable(STR)),
@@ -1581,28 +1594,48 @@ SHAPES = (
                 "`TrialTable.phases`; null for a phase it never reached. Empty when the "
                 "snapshot cannot map states to phases.",
             ),
-            f("response", nullable(STR), doc="The input channel whose edge was the response."),
+            f("response", nullable(STR), doc="The input channel whose edge was the response; "
+              "on a legacy run, the strobe that decided its condition's verdict."),
             f("responseEdge", nullable(lit("rise", "fall"))),
             f("responseMs", nullable(INT)),
-            f("latencyMs", nullable(INT), doc="Response ms minus the ms its phase was entered."),
-            f("outcome", nullable(STR), doc="Its outcome class; null when it reached none."),
+            f("latencyMs", nullable(INT), doc="Response ms minus the ms its phase was entered "
+              "(a legacy run: minus `atMs`)."),
+            f("outcome", nullable(STR), doc="Its outcome class; null when it reached none, or when "
+              "a legacy no-go trial's strobes cannot say (`TrialTable.gaps`)."),
+            f("outcomeMs", nullable(INT), doc="When the outcome was settled."),
+            f("correct", nullable(BOOL), doc="Right, wrong, or null for a trial P(correct) "
+              "excludes (no class, or an abort)."),
             f("rewarded", BOOL),
-            f("rewardLine", nullable(STR), doc="The output channel that paid."),
+            f("rewardLine", nullable(STR), doc="The output channel that paid (a legacy run: its "
+              "reward strobe)."),
             f("rewardMs", nullable(INT), doc="How long the line was open."),
-            f("correction", BOOL, doc="A correction trial; always false until blocks have a "
-              "correction rule."),
+            f("correction", nullable(BOOL), doc="A correction trial; false until blocks have a "
+              "correction rule, null on a legacy run, which cannot say."),
             f("inputCounts", ListOf(Ref("InputCount")), doc="Non-zero counts only."),
-            f("complete", BOOL, doc="False only for a crashed run's cut-off last trial."),
+            f("complete", BOOL, doc="False only for a crashed spine run's cut-off last trial."),
+            f("presented", BOOL, doc="The trial opens a presentation on the engagement ladder."),
+            f("scores", ListOf(Ref("ConditionScore")), doc="A legacy trial's verdict under every "
+              "condition its onset opens. Empty on a spine run."),
         ),
-        doc="One trial of a spine run, read off its replay (`ANALYTICS.md#the-trial-table`).",
+        doc="One trial of a run: a spine run's read off its replay, a legacy run's off its "
+        "strobes (`ANALYTICS.md#the-trial-table`).",
     ),
     Shape(
         "TrialTable",
         obj(
-            f("phases", ListOf(STR), doc="Each phase's kind, in spine order, for labels only."),
+            f("kind", lit("replay", "legacy"), doc="Read off a replay, or by the legacy decoder."),
+            f("phases", ListOf(STR), doc="Each phase's kind, in spine order, for labels only. "
+              "Empty for a legacy run."),
+            f(
+                "gaps",
+                ListOf(STR),
+                doc="The columns this table cannot fill, so empty means unknown rather than "
+                "none: `phase-entries`, `input-counts`, `no-go-outcomes`, `outcomes`, "
+                "`presentations` (`ANALYTICS.md#how-a-legacy-run-becomes-a-trial-table`).",
+            ),
             f("trials", ListOf(Ref("ReplayTrial"))),
         ),
-        doc="A spine run's trial table (`ANALYTICS.md#the-trial-table`).",
+        doc="A run's trial table (`ANALYTICS.md#the-trial-table`).",
     ),
     Shape(
         "RunSeries",
@@ -1634,9 +1667,9 @@ SHAPES = (
             f(
                 "trialTable",
                 nullable(Ref("TrialTable")),
-                doc="A spine run's trial table, computed from its replay on each request and "
-                "never cached (`DATA.md#caching`). Null for a legacy run, a diverged one and "
-                "one replay cannot run.",
+                doc="The run's trial table, computed on each request and never cached "
+                "(`DATA.md#caching`). Null for a diverged spine run, one replay cannot run, and "
+                "a legacy run nothing decodes.",
             ),
         ),
     ),

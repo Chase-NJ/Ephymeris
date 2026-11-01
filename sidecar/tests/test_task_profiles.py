@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from ephymeris_sidecar.rig.registry import Vocabulary, default_vocabulary_document
-from ephymeris_sidecar.analytics.stream import MetricSet, compute_series
+from ephymeris_sidecar.analytics.stream.legacy import MetricSet, compute_series
 from ephymeris_sidecar.tasks.profile import (
     TaskProfileError,
     build_legacy_name_index,

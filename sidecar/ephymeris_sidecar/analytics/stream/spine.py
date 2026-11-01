@@ -90,7 +90,7 @@ class SpineRecord:
 #: fingerprint of fixed runs' tables; when it fails, bump this and update the
 #: pin. Not `scoring.SCORE_VERSION`: the cache never holds a trial table, so a
 #: table change need not make every machine re-read its archive.
-REPLAY_VERSION = 1
+REPLAY_VERSION = 2
 
 #: The phase kind a response is read from (`ANALYTICS.md#the-trial-table`).
 WINDOW_PHASE = "response"
@@ -546,4 +546,5 @@ def trial_table(document: dict[str, Any]) -> dict[str, Any] | None:
         return None
     if result.divergence is not None:
         return None
-    return {"phases": list(result.phases), "trials": [t.to_json() for t in result.trials]}
+    return {"kind": "replay", "phases": list(result.phases), "gaps": [],
+            "trials": [t.to_json() for t in result.trials]}

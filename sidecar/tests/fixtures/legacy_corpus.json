@@ -1,0 +1,275 @@
+{
+ "": {
+  "digest": "4b1ece0404b229d74981c4d95d12056278403ac5c06f8a8bfe500cb720c12691",
+  "runs": 3,
+  "totals": {
+   "engagement.odorDelivered": 6,
+   "engagement.poked": 6,
+   "engagement.presented": 33,
+   "metrics.counted": 4,
+   "metrics.excluded": 2,
+   "metrics.hits": 4,
+   "metrics.triggered": 6,
+   "outcomes.aborted": 2,
+   "outcomes.administered": 4,
+   "outcomes.holdFailed": 1,
+   "outcomes.noResponse": 0,
+   "outcomes.rewarded": 3,
+   "outcomes.trials": 6,
+   "outcomes.wrongWell": 0,
+   "runs-ok": 3
+  }
+ },
+ "GRGL 2-Odor": {
+  "digest": "d0c17ef98cefe5ee93152c7c3d367388a08d0bf16938b6b564b784618015f80b",
+  "runs": 14,
+  "totals": {
+   "engagement.odorDelivered": 2500,
+   "engagement.poked": 2706,
+   "engagement.presented": 4069,
+   "metrics.counted": 2040,
+   "metrics.excluded": 460,
+   "metrics.hits": 1634,
+   "metrics.triggered": 2500,
+   "outcomes.aborted": 458,
+   "outcomes.administered": 2042,
+   "outcomes.holdFailed": 175,
+   "outcomes.noResponse": 2,
+   "outcomes.rewarded": 1459,
+   "outcomes.trials": 2500,
+   "outcomes.wrongWell": 406,
+   "runs-ok": 14
+  }
+ },
+ "GRGL 2-Odor EZ": {
+  "digest": "93acbb9078220a03d2fdfc8ab7ed14bbf76b6678861419500f47ecf8cda18c1a",
+  "runs": 57,
+  "totals": {
+   "engagement.odorDelivered": 9709,
+   "engagement.poked": 10568,
+   "engagement.presented": 14974,
+   "metrics.counted": 7862,
+   "metrics.excluded": 1847,
+   "metrics.hits": 4684,
+   "metrics.triggered": 9709,
+   "outcomes.aborted": 1840,
+   "outcomes.administered": 7869,
+   "outcomes.holdFailed": 538,
+   "outcomes.noResponse": 7,
+   "outcomes.rewarded": 4146,
+   "outcomes.trials": 9709,
+   "outcomes.wrongWell": 3178,
+   "runs-ok": 57
+  }
+ },
+ "GRGL 4-Odor": {
+  "digest": "9fae09d5bc8858e88c3586834cc3d16f284254ed56cb990cc4a25693d92c2760",
+  "runs": 40,
+  "totals": {
+   "engagement.odorDelivered": 8145,
+   "engagement.poked": 8697,
+   "engagement.presented": 11709,
+   "metrics.counted": 7016,
+   "metrics.excluded": 1129,
+   "metrics.hits": 5714,
+   "metrics.triggered": 8145,
+   "outcomes.aborted": 1127,
+   "outcomes.administered": 7018,
+   "outcomes.holdFailed": 603,
+   "outcomes.noResponse": 2,
+   "outcomes.rewarded": 5111,
+   "outcomes.trials": 8145,
+   "outcomes.wrongWell": 1302,
+   "runs-ok": 40
+  }
+ },
+ "GRGL 4-Odor EZ": {
+  "digest": "4af3d91aa80db7ce58457eb499cc8436e0ab5506a53a0ca6be3d1daa1fda9314",
+  "runs": 52,
+  "totals": {
+   "engagement.odorDelivered": 10908,
+   "engagement.poked": 11705,
+   "engagement.presented": 15404,
+   "metrics.counted": 9194,
+   "metrics.excluded": 1714,
+   "metrics.hits": 6798,
+   "metrics.triggered": 10908,
+   "outcomes.aborted": 1710,
+   "outcomes.administered": 9198,
+   "outcomes.holdFailed": 921,
+   "outcomes.noResponse": 4,
+   "outcomes.rewarded": 5877,
+   "outcomes.trials": 10908,
+   "outcomes.wrongWell": 2396,
+   "runs-ok": 52
+  }
+ },
+ "GRGL 6-Odor": {
+  "digest": "99862baa1d052ebb82aea70ae422431f05e995342b7bec95f3ac6eab6535ef72",
+  "runs": 73,
+  "totals": {
+   "engagement.odorDelivered": 12263,
+   "engagement.poked": 13668,
+   "engagement.presented": 20195,
+   "metrics.counted": 10432,
+   "metrics.excluded": 1831,
+   "metrics.hits": 8497,
+   "metrics.triggered": 12263,
+   "outcomes.aborted": 1822,
+   "outcomes.administered": 10441,
+   "outcomes.holdFailed": 951,
+   "outcomes.noResponse": 9,
+   "outcomes.rewarded": 7546,
+   "outcomes.trials": 12263,
+   "outcomes.wrongWell": 1935,
+   "runs-ok": 73
+  }
+ },
+ "GRGL 6-Odor EZ": {
+  "digest": "bf631db8da9607d35f6458afbae56ac396d393671222a3a0782746e2fdb4c298",
+  "runs": 73,
+  "totals": {
+   "engagement.odorDelivered": 13183,
+   "engagement.poked": 14114,
+   "engagement.presented": 20402,
+   "metrics.counted": 11445,
+   "metrics.excluded": 1738,
+   "metrics.hits": 8368,
+   "metrics.triggered": 13183,
+   "outcomes.aborted": 1727,
+   "outcomes.administered": 11456,
+   "outcomes.holdFailed": 917,
+   "outcomes.noResponse": 11,
+   "outcomes.rewarded": 7451,
+   "outcomes.trials": 13183,
+   "outcomes.wrongWell": 3077,
+   "runs-ok": 73
+  }
+ },
+ "GRGL 8-Odor EZ": {
+  "digest": "a2c7e4c41b0e78b29d8f50aba5fa0699f86fe176dd44420e54d864c98e6591d4",
+  "runs": 52,
+  "totals": {
+   "engagement.odorDelivered": 7972,
+   "engagement.poked": 8591,
+   "engagement.presented": 12305,
+   "metrics.counted": 7032,
+   "metrics.excluded": 940,
+   "metrics.hits": 4774,
+   "metrics.triggered": 7972,
+   "outcomes.aborted": 936,
+   "outcomes.administered": 7036,
+   "outcomes.holdFailed": 406,
+   "outcomes.noResponse": 4,
+   "outcomes.rewarded": 4368,
+   "outcomes.trials": 7972,
+   "outcomes.wrongWell": 2258,
+   "runs-ok": 52
+  }
+ },
+ "GRGL 8-Odor remy3": {
+  "digest": "42282b91e4efb3548f0c08944aa701636d0309952e8a0c37888e5c9878587ccc",
+  "runs": 2,
+  "totals": {
+   "engagement.odorDelivered": 345,
+   "engagement.poked": 380,
+   "engagement.presented": 491,
+   "metrics.counted": 335,
+   "metrics.excluded": 10,
+   "metrics.hits": 218,
+   "metrics.triggered": 345,
+   "outcomes.aborted": 10,
+   "outcomes.administered": 335,
+   "outcomes.holdFailed": 69,
+   "outcomes.noResponse": 0,
+   "outcomes.rewarded": 149,
+   "outcomes.trials": 345,
+   "outcomes.wrongWell": 117,
+   "runs-ok": 2
+  }
+ },
+ "GRGL_2-Odor": {
+  "digest": "fc83c2e58da69bb456e1a2d2722d8cc4e490bf9dc3f85eb4243f4d0b72c74666",
+  "runs": 225,
+  "totals": {
+   "engagement.odorDelivered": 33430,
+   "engagement.poked": 37042,
+   "engagement.presented": 75042,
+   "metrics.counted": 24120,
+   "metrics.excluded": 9310,
+   "metrics.hits": 15685,
+   "metrics.triggered": 33430,
+   "outcomes.aborted": 9235,
+   "outcomes.administered": 24195,
+   "outcomes.holdFailed": 6472,
+   "outcomes.noResponse": 75,
+   "outcomes.rewarded": 9213,
+   "outcomes.trials": 33430,
+   "outcomes.wrongWell": 8435,
+   "runs-ok": 225
+  }
+ },
+ "GRGL_2-Odor_EZ": {
+  "digest": "056947dca05a39c4d8ee60808be16eadb0ba8699a939cf85ab190be172fce40c",
+  "runs": 67,
+  "totals": {
+   "engagement.odorDelivered": 8988,
+   "engagement.poked": 9766,
+   "engagement.presented": 16427,
+   "metrics.counted": 6678,
+   "metrics.excluded": 2310,
+   "metrics.hits": 3984,
+   "metrics.triggered": 8988,
+   "outcomes.aborted": 2278,
+   "outcomes.administered": 6710,
+   "outcomes.holdFailed": 1740,
+   "outcomes.noResponse": 32,
+   "outcomes.rewarded": 2244,
+   "outcomes.trials": 8988,
+   "outcomes.wrongWell": 2694,
+   "runs-ok": 67
+  }
+ },
+ "Shape - L": {
+  "digest": "a8f119ed653b5a2808774f4bff621fb81d7035ae1e9f0fd1bf952ce0ea3bdeac",
+  "runs": 36,
+  "totals": {
+   "engagement.odorDelivered": 5426,
+   "engagement.poked": 6269,
+   "engagement.presented": 18723,
+   "metrics.counted": 3510,
+   "metrics.excluded": 1916,
+   "metrics.hits": 3063,
+   "metrics.triggered": 5426,
+   "outcomes.aborted": 1842,
+   "outcomes.administered": 3584,
+   "outcomes.holdFailed": 1648,
+   "outcomes.noResponse": 74,
+   "outcomes.rewarded": 1415,
+   "outcomes.trials": 5426,
+   "outcomes.wrongWell": 447,
+   "runs-ok": 36
+  }
+ },
+ "Shape - R": {
+  "digest": "29a1b6634a523c8461353d472ffccdc4bba69fa76a626a6663e082317e1de741",
+  "runs": 38,
+  "totals": {
+   "engagement.odorDelivered": 2389,
+   "engagement.poked": 2738,
+   "engagement.presented": 17910,
+   "metrics.counted": 1526,
+   "metrics.excluded": 863,
+   "metrics.hits": 1404,
+   "metrics.triggered": 2389,
+   "outcomes.aborted": 796,
+   "outcomes.administered": 1593,
+   "outcomes.holdFailed": 531,
+   "outcomes.noResponse": 67,
+   "outcomes.rewarded": 873,
+   "outcomes.trials": 2389,
+   "outcomes.wrongWell": 122,
+   "runs-ok": 38
+  }
+ }
+}

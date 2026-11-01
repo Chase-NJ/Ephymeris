@@ -31,9 +31,9 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Iterable
 
-from ...rig import registry
-from ...rig.registry import Vocabulary
-from ...tasks.profile import LiveMetric, TaskProfile
+from ....rig import registry
+from ....rig.registry import Vocabulary
+from ....tasks.profile import LiveMetric, TaskProfile
 from . import infer
 
 
@@ -193,3 +193,21 @@ def boundaries_for(profile: TaskProfile | None) -> frozenset[int]:
     if profile is None:
         return frozenset()
     return frozenset(m.trigger_code for m in profile.live_metrics)
+
+
+def live_equivalent(
+    profile: TaskProfile | None, codes: list[int]
+) -> list[tuple[str, float | None, int]]:
+    """Replay `codes` through the *live* accumulators, for test comparison.
+
+    Exists so a test can assert the offline path agrees with what Mission
+    Control displayed, rather than trusting that it does.
+    """
+    if profile is None:
+        return []
+    boundaries = boundaries_for(profile)
+    accumulators = [MetricAccumulator(m, boundaries) for m in profile.live_metrics]
+    for code in codes:
+        for accumulator in accumulators:
+            accumulator.offer(code)
+    return [(a.id, a.value().value, a.value().n) for a in accumulators]

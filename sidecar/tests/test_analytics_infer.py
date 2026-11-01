@@ -11,7 +11,7 @@ with the declared path over identical data.
 from __future__ import annotations
 
 from ephymeris_sidecar.analytics import stream
-from ephymeris_sidecar.analytics.stream import infer
+from ephymeris_sidecar.analytics.stream.legacy import infer
 from ephymeris_sidecar.rig import registry
 from ephymeris_sidecar.rig.registry import Vocabulary
 from ephymeris_sidecar.tasks.profile import TaskProfile, parse_profile
@@ -300,7 +300,7 @@ def test_live_and_offline_score_a_hand_written_no_go_identically() -> None:
     codes = WITHHELD_5 * 3 + FALSE_ALARM_5_R * 2
     profile = a_hand_written_no_go()
 
-    live = stream.MetricSet(profile)
+    live = stream.legacy.MetricSet(profile)
     for code in codes:
         live.offer(code)
     (live_value,) = live.values()

@@ -16,9 +16,12 @@ report.
    trials are read out of a replay of that table ([how](#how-a-spine-run-is-scored)).
 3. **One scorer defines a trial**, and the same code scores a session live in Mission Control and
    afterwards in Analytics, so the two cannot disagree.
-4. **To check the science, read [`stream/`](stream/) and nothing else.** It is pure: a document and a
+4. **Every run is read into one trial table, and every number is read off the table.** A spine run's
+   table comes from its replay; a legacy run's from the legacy decoder, today's strobe scorer frozen
+   ([how](#how-a-legacy-run-becomes-a-trial-table)). So one analysis spans the cutover.
+5. **To check the science, read [`stream/`](stream/) and nothing else.** It is pure: a document and a
    profile in, numbers out, with no files, database or clock. A test keeps it that way.
-5. **Every number travels with its sample size and a 95% interval.** Nothing is suppressed. A run with
+6. **Every number travels with its sample size and a 95% interval.** Nothing is suppressed. A run with
    nothing to score says why, instead of reporting zero.
 
 The [worked example](#a-worked-example) shows all of it on thirty strobes.
@@ -29,17 +32,19 @@ The [worked example](#a-worked-example) shows all of it on thirty strobes.
 
 | File | Answers | In → out |
 |---|---|---|
-| [`stream/trials.py`](stream/trials.py) | Is this trial a hit, a miss, or excluded? (Mission Control scores with it too) | strobes + one condition → rolling P(hit) |
-| [`stream/outcomes.py`](stream/outcomes.py) | Was it rewarded, a hold failure, the wrong well, unanswered or aborted? | strobes + profile → `TrialOutcomes`, per-trial tape |
-| [`stream/engagement.py`](stream/engagement.py) | How many trials were offered, poked, and given odor? | strobes + profile → `TrialEngagement` |
-| [`stream/summary.py`](stream/summary.py) | One run's whole result | document + profile → `RunSummary` |
-| [`stream/curves.py`](stream/curves.py) | The run trial by trial: learning curves, strategy walk | document + profile → series |
-| [`stream/infer.py`](stream/infer.py) | Which conditions ran, when no profile says | strobes → a `TaskProfile` |
+| [`stream/legacy/`](stream/legacy/) | **The legacy decoder**: today's strobe scorer, frozen. The only code that reads meaning out of strobe names | a legacy run's document + profile → its trial table |
+| [`stream/legacy/trials.py`](stream/legacy/trials.py) | Is this trial a hit, a miss, or excluded? (Mission Control scores with it too) | strobes + one condition → rolling P(hit) |
+| [`stream/legacy/strobes.py`](stream/legacy/strobes.py) | Which outcome strobe settles a trial, where a presentation starts, which answer a condition rewards | strobes + profile → classifications |
+| [`stream/legacy/infer.py`](stream/legacy/infer.py) | Which conditions ran, when no profile says | strobes → a `TaskProfile` |
+| [`stream/outcomes.py`](stream/outcomes.py) | Was it rewarded, a hold failure, the wrong well, unanswered or aborted? | a legacy trial table → `TrialOutcomes`, per-trial tape |
+| [`stream/engagement.py`](stream/engagement.py) | How many trials were offered, poked, and given odor? | a legacy trial table → `TrialEngagement` |
+| [`stream/summary.py`](stream/summary.py) | One run's whole result, and its trial table for the wire | document + profile → `RunSummary` |
+| [`stream/curves.py`](stream/curves.py) | The run trial by trial: learning curves, strategy walk | a trial table → series |
 | [`stream/false_starts.py`](stream/false_starts.py) | Which restarted runs to set aside | run facts → verdicts |
 | [`stream/replay.py`](stream/replay.py) | What did the board do at each tick? The Python port of the firmware's interpreter ([ADR 0003](../../../docs/adr/0003-phase-spine-task-model.md)) | state table + params + seed + input edges → actions per tick; a train's rate, width and length → its pulses |
 | [`stream/spine.py`](stream/spine.py) | What must a spine run's board have sent, and did it? Reads the table, parameters, seed and input edges out of the run's own document ([TASKS.md](../../../docs/TASKS.md#the-snapshot)), predicts every strobe from the inputs alone, a train running out included, and compares; and every pulse each train fired ([TASKS.md](../../../docs/TASKS.md#driven-outputs)) | a spine run's document → its divergence, or its trial table; its pulses |
-| [`stream/trial_table.py`](stream/trial_table.py) | What happened in each trial of a spine run? ([the trial table](#the-trial-table)) | state table + replayed actions → one row per trial |
-| [`stream/table_metrics.py`](stream/table_metrics.py) | A spine run's numbers ([metrics](#metrics-from-the-trial-table)) | trial table → outcome tallies, P(correct \| row), rewarded |
+| [`stream/trial_table.py`](stream/trial_table.py) | What happened in each trial? ([the trial table](#the-trial-table)), the row both kinds of run share | state table + replayed actions → one row per trial |
+| [`stream/table_metrics.py`](stream/table_metrics.py) | A run's numbers ([metrics](#metrics-from-the-trial-table)) | trial table → outcome tallies, P(correct \| row), P(hit) per condition, rewarded |
 | [`stream/stats.py`](stream/stats.py), [`stream/document.py`](stream/document.py), [`stream/metric_summary.py`](stream/metric_summary.py) | The Wilson interval; reading `ts_data` out of a file; the one metric shape both scorers build | |
 
 **The plumbing**: files, cache and commands. You need these only to change how runs are found or stored.
@@ -102,15 +107,17 @@ delivered. `test_analytics_derive.py` scores this exact stream and asserts every
 ## How a strobe stream is scored
 
 Everything here is computed from `ts_data`. All of it is derived at read time from the raw codes plus the
-profile that decodes them. Offline scoring **never reimplements the live scorer**: it replays the stream
-through `stream/trials.py`'s `MetricAccumulator`, the same class Mission Control uses. A run's result is a
+profile that decodes them, through the run's [trial table](#how-a-legacy-run-becomes-a-trial-table).
+Offline scoring **never reimplements the live scorer**: the legacy decoder feeds the stream through
+`stream/legacy/trials.py`'s `MetricAccumulator`, the same class Mission Control uses, and each trial's
+row keeps its verdict. A run's result is a
 `RunSummary`, and its `status` is `ok`, `no-metrics`, `missing` or `unreadable`; a spine run is scored by
 [replay](#how-a-spine-run-is-scored) instead, and can also be `diverged` or `unreplayable`.
 
 ### Trials: hits, misses and exclusions
 
 > [!IMPORTANT]
-> This is scientific output, not a UI detail. Implemented in [`stream/trials.py`](stream/trials.py).
+> This is scientific output, not a UI detail. Implemented in [`stream/legacy/trials.py`](stream/legacy/trials.py).
 
 Each condition the profile declares (a `liveMetrics` entry) names a `triggerCode` that opens its trials
 (the odor onset), a `successCode` (the correct answer) and one or more alternate codes (every wrong
@@ -165,8 +172,9 @@ closes an unresolved odor-1 trial.
 | **`pWindow`** | The rolling value at the end of the run, over the authored `windowSize` | Reconciling a run against the last number Mission Control showed |
 | **`pSession`** | `hits / counted` over every trial the same accumulator scored | **Every summary**: strategy plane, cross-session curves, session summary |
 
-Both come from **one replay through one accumulator** (`_summarize_metric`), so they differ *only* in
-averaging window and cannot disagree on how a trial was classified.
+Both are read off **one list of verdicts**, the condition's rows in the trial table
+(`table_metrics.legacy_metrics`), which one accumulator gave. So they differ *only* in averaging window and
+cannot disagree on how a trial was classified.
 
 > [!WARNING]
 > **The two diverge sharply over the first `windowSize` trials. They are not interchangeable.** Two panels
@@ -241,7 +249,7 @@ discrimination readout, but it is not "how often did this animal earn water". So
 | **no response** | administered, none of the above | Sampled, never answered |
 | **aborted** | no `ODOR_UNPOKE` | Odor delivered, left before sampling cleared |
 
-How one trial is classified (`outcomes._classify_trials`). A trial runs from its onset to the next boundary
+How one trial is classified (`legacy.strobes.classify_trials`). A trial runs from its onset to the next boundary
 code, and the first outcome code inside it decides; only a trial with none falls through to the sampling
 check:
 
@@ -282,9 +290,10 @@ Each has its own Wilson interval. Three deliberate choices:
 >   ladder](#engagement-ladder) measures it.
 > - **A no-go trial, withheld or answered, lands in `no response`** in the outcome tally: the correct
 >   answer looks exactly like a non-response from the strobes, a false alarm at a port has no fluid or
->   error evidence, and `stream/outcomes.py` has no withheld or false-alarm bucket. P(withhold) is not
+>   error evidence, and the tally has no withheld or false-alarm bucket. P(withhold) is not
 >   affected, because it is a per-condition metric ([above](#trials-hits-misses-and-exclusions)) that
->   scores a withhold as a hit and a poke at any port as a miss.
+>   scores a withhold as a hit and a poke at any port as a miss. The trial table
+>   [flags such a trial](#legacy-no-go-runs-are-flagged) rather than give it a class.
 
 ### Per-condition tally
 
@@ -340,8 +349,8 @@ The tallies say *how often*; the tape says *when* (streaks, bias episodes, the m
 `analytics.series` returns each run's trials as `TrialRecord {index, triggerCode, outcome, atMs,
 latencyMs}` in stream order.
 
-- **The tape is the same classification the tallies are summed from**: `_classify_trials` yields it and
-  `_tally` consumes it. A test pins that tallying the tape reproduces `outcomes_of`, and grouping it by
+- **The tape is the same classification the tallies are summed from**: both read the trial table's onset
+  rows. A test pins that tallying the tape reproduces `outcomes_of`, and grouping it by
   `triggerCode` reproduces `conditions_of`.
 - `outcome` uses hyphenated wire spellings (`hold-failed`, `no-response`, …).
 - `atMs` is ms from the run's **earliest** timestamp (not first, for `durationMs`'s reason). `latencyMs`
@@ -397,7 +406,8 @@ gives two things (`spine.replayed`, which replays the run once):
 
 A spine run is recognised by its own file: its snapshot's `spine` key, or a header `interp` other than the
 trial runner's `1`. Never by a task name, and never by inference, which its edge code names would only fool.
-A legacy run (`interp` absent or `1`) is scored exactly as the rest of this file describes.
+A legacy run (`interp` absent or `1`) is [read into the same table](#how-a-legacy-run-becomes-a-trial-table)
+by the legacy decoder, and scored exactly as the rest of this file describes.
 
 > [!CAUTION]
 > **Read a trial off the table's own fields, never a phase kind or a code name.** The one exception is
@@ -418,9 +428,15 @@ One row per trial (`stream/trial_table.py`, `ReplayTrial` on the wire). Columns,
 | `outcome` | The outcome class of the **last** outcome-bearing state (`outcome` ≠ 0) the trial entered, named by `taskdef/lowering.py`'s `OUTCOME_CLASSES`, or `outcome_<n>` for a number this build has no name for. Null when it entered none, as an abort in a table lowered before INTERP 4 does; from INTERP 4 every early exit marks its class at its end ([TASKS.md](../../../docs/TASKS.md#lowering)) |
 | `response`, `responseEdge`, `responseMs`, `latencyMs` | When the snapshot maps states to phases (`table.phases`, or the re-lowered map): the first edge exit the trial took out of a **Response window** phase's states, the window and the hold after it, with its latency from the trial's first entry into that phase. So a held response, kept or broken, is the window's edge timed from the window opening, whatever phases lie between it and the Outcome. Null for a trial a timer decided (an omission, a withhold), and in a spine with no window (the tracer). This is the one column that reads a phase kind, and only to find the window. **Without a phase map**, the fallback is structural: an edge exit out of a *deciding* state, one with two or more exits (edge rows and timer) that can reach an outcome-bearing state before the next trial starts. The last such exit before the trial's first outcome-bearing state is taken, then traced back to the first edge exit of its state's visit |
 | `rewarded`, `rewardLine`, `rewardMs` | The trial took the `on_hit` branch of a chance state that bears an outcome. The line is the outputs `on_hit` drives and `on_miss` does not; the time is the ticks actually spent in `on_hit` |
+| `outcomeMs` | The tick the trial entered the outcome-bearing state its class is read from |
+| `correct` | True when `outcome` is in `table_metrics.HITS`, false for any other class, null when it has none or its class is in `table_metrics.EXCLUDED` (an abort) |
 | `correction` | Always false: no block has a correction rule yet |
 | `inputCounts` | Each watched input's rises per phase, attributed to the state held before the tick, as the interpreter attributes them. Non-zero counts only |
 | `complete` | The next trial started, or the session ended at a trial start. Only a crashed run's last trial is incomplete |
+| `presented`, `scores` | Always true, and empty: they carry a [legacy run's](#how-a-legacy-run-becomes-a-trial-table) engagement and verdicts |
+
+The table on the wire (`TrialTable`) also says its `kind` (`replay` here) and its `gaps`: the columns it
+cannot fill, so an empty column reads as unknown rather than none. A spine run's `gaps` is empty.
 
 The table rides on `analytics.series` (`RunSeries.trialTable`), computed from the file on each request and
 never cached, like every per-trial series ([DATA.md](../../../docs/DATA.md#caching)). Finalization and
@@ -439,7 +455,7 @@ interval](#uncertainty):
 | `replay.classes` | For each outcome class, n and n / trials. With `replay.unclassified` (trials that reached no outcome-bearing state) they partition the trials |
 | `replay.rows` | The same per row: P(outcome \| row) |
 | `replay.rewarded` | Trials whose reward line opened / trials |
-| `metrics` | One per row, **P(correct \| row)**: hits are its trials whose class is in `table_metrics.HITS`, `correct` or `withheld`; counted are its classified ones outside `table_metrics.EXCLUDED`; its unclassified and aborted ones (`abort_before_stimulus`, `abort_during_sampling`) are excluded, as an unanswered or aborted trial is on a legacy run. An abort still counts in its class tally ([trials](#trials-hits-misses-and-exclusions)) |
+| `metrics` | One per row, **P(correct \| row)**, read off each trial's `correct`: hits are its trials whose class is in `table_metrics.HITS`, `correct` or `withheld`; counted are its other classified ones; its unclassified ones and its aborts (`table_metrics.EXCLUDED`, `abort_before_stimulus` and `abort_during_sampling`) are excluded, as an unanswered or abandoned trial is on a legacy run ([trials](#trials-hits-misses-and-exclusions)). The aborts still count in `replay.classes` |
 | `overall` | P(correct) pooled over every row, by summing counts ([pooled accuracy](#pooled-accuracy)) |
 
 > [!CAUTION]
@@ -470,6 +486,72 @@ The tracer's Outcome records `correct` before it draws the reward, so a trial ca
 Each read of a run with a run record also writes its verdict to `session_animal_runs.diverged`
 ([DATA.md](../../../docs/DATA.md#run-records)).
 
+## How a legacy run becomes a trial table
+
+A legacy run's file records what the trial runner's strobe names say. The **legacy decoder**
+([`stream/legacy/`](stream/legacy/), `decode.table_of`) is the strobe scorer this file describes, frozen:
+it reads those names through the run's profile into the same rows a replayed spine run has, and every
+legacy figure is then read off the rows. Each comes out exactly as the strobe scorer reported it before the
+table existed. `tests/test_legacy_pin.py` pins that on a synthetic corpus covering every branch, and
+`tests/test_legacy_corpus.py` per sketch on a real archive when `EPHYMERIS_CORPUS` names one (the
+development Mac's: 732 runs, 13 sketch names). Nothing outside `stream/legacy/` matches a strobe name.
+
+A row is one of two things, in stream order:
+
+1. **An odor-onset trial**: one per trigger code, ending at the next [boundary code](#boundary-codes),
+   exactly the trial the rest of this file counts.
+2. **A presentation that never reached odor**: a trial-light window with no onset in it, which only the
+   [engagement ladder](#engagement-ladder) counts. A spine table holds the same thing, a trial started
+   and never poked.
+
+| Column | A legacy run's value |
+|---|---|
+| `index`, `atMs` | Row order; the opening strobe's ms from the run's earliest timestamp (the [tape's](#per-trial-tape) rule). `atMs` is null only on a file with no usable clock |
+| `block`, `level` | Null |
+| `row`, `rowName` | The condition, the first `liveMetrics` entry whose trigger opened the trial: its id and label. Null for an odor-less presentation |
+| `phaseEntries`, `inputCounts` | **Empty, not zero**: the strobes carry no phases and no watched-input edges |
+| `response`, `responseMs`, `latencyMs` | The strobe that decided the condition's verdict (`WATER_POKE_R`, …), its ms, and its ms after the onset. Null for an excluded trial and a withhold; `responseEdge` is null |
+| `outcome` | The [classification](#rewarded-and-response-accuracy) in the classes that mean the same thing: rewarded → `correct`, hold failed → `hold_broken`, wrong well → `wrong_response`, no response → `omission`, aborted → `abort_during_sampling`. An odor-less presentation the animal poked is `abort_before_stimulus` (the ladder's `pokeAborted`); one never poked has none |
+| `outcomeMs` | The outcome strobe's ms. The tape's latency is `outcomeMs − atMs` |
+| `correct` | The condition's hit (true), miss (false) or exclusion (null), from `MetricAccumulator` fed the whole stream, so live ≡ offline still holds |
+| `rewarded`, `rewardLine`, `rewardMs` | The rewarded class; the `FLUID_*` strobe's name; null |
+| `correction` | Null: the strobes cannot say |
+| `complete` | True: a legacy trial ends at the next onset or the end of the file, and every one counts |
+| `presented` | The row opens a presentation on the ladder: the first onset in a trial-light window, and every odor-less presentation |
+| `scores` | `{condition, correct}` for every condition the onset opens: one, unless a profile declares two conditions on one onset, when each keeps its own verdict |
+
+Its `TrialTable` has `kind` `legacy`, no `phases`, and `gaps`: always `phase-entries` and `input-counts`;
+`outcomes` when the profile names no reward vocabulary (every `outcome` is then null, and `outcomes` is
+too); `presentations` when it names no trial light or odor poke (`engagement` is then null); and
+`no-go-outcomes` below.
+
+The figures, from the rows:
+
+| Figure | Read as |
+|---|---|
+| `metrics` | Per condition, its `scores` verdicts: `hits`, `counted`, `triggered` (the rows scored under it), `pWindow` from the last `windowSize` counted ones |
+| `overall` | [Pooled](#pooled-accuracy) as ever, null when no condition counted a trial |
+| `outcomes`, `conditions`, the tape | The onset rows' `outcome`, mapped back to the five buckets; a condition's are the rows scored under it |
+| `engagement` | The `presented` rows: poked when an onset opened it or it is `abort_before_stimulus`, delivered when an onset opened it |
+| `series`, `trail` | Each condition's counted verdicts in row order. The trail steps by strobe, in the order the verdicts came (`LegacyTable.settled`): two conditions on one onset settled by different strobes are two steps, as live |
+
+A spine run's curves read its table the same way: one `series` per row, P(correct | row), running over
+the session in either mode because a spine row has no authored window, and no `trail`, because a row has
+no answer side. The tape stays legacy-only; a spine run's table is its own tape.
+
+> [!CAUTION]
+> **A legacy `correct` is reward-unconditional and a spine one is not.** A legacy hold failure is a hit
+> ([trials](#trials-hits-misses-and-exclusions)); a spine `hold_broken` is a miss. Their `outcome` columns
+> agree (both `hold_broken`), so compare across the cutover by class, or by `correct` knowing it means
+> "answered the right side" before the cutover and "earned the outcome" after it.
+
+### Legacy no-go runs are flagged
+
+A no-go trial, withheld or answered at a port, has no reward or error strobe, so the classification puts
+both in no response. Its row's `outcome` is therefore **null**, never `omission`, and the table's `gaps`
+carries `no-go-outcomes`. Its `correct` keeps the condition's verdict (`WATER_POKE_NONE` a hit, a port poke a
+miss), so P(withhold) is unchanged. An abort (it left the odor port early) is known, and keeps its class.
+
 ## Which profile decodes a run
 
 `profileSource` on each run says which declaration decoded it:
@@ -478,7 +560,7 @@ Each read of a run with a run record also writes its verdict to `session_animal_
 |---|---|---|
 | `snapshot` | The profile the run actually used: this database's snapshot, or **the file's own** | Trusted, unmarked |
 | `sketch-current` | Today's `task.json` for the recorded sketch | Flagged `†`: may have changed since |
-| `inferred` | No declaration resolved; conditions read from the strobes (`stream/infer.py`) | Flagged `≈`: scored from the strobes alone |
+| `inferred` | No declaration resolved; conditions read from the strobes (`stream/legacy/infer.py`) | Flagged `≈`: scored from the strobes alone |
 | `unavailable` | Nothing resolves and the stream shows no recognisable condition (a utility log, an empty file) | Flagged: cannot decode |
 
 The ladder has four rungs:
@@ -674,17 +756,20 @@ from a half-written archive:
 | Function | File | In → out |
 |---|---|---|
 | `summarize(document, profile)` | `stream/summary.py` | a run's document → `RunSummary`: every number in this file |
-| `MetricAccumulator.offer(code)` | `stream/trials.py` | one strobe at a time → hit, miss or excluded |
-| `boundaries_for(profile)` | `stream/trials.py` | profile → the trial-boundary codes ([always use it](#boundary-codes)) |
-| `outcomes_of(codes, profile)` | `stream/outcomes.py` | strobes → `TrialOutcomes` |
+| `trial_table_of(document, profile)` | `stream/summary.py` | a run's document → its trial table, as the wire carries it |
+| `legacy.table_of(document, profile)` | `stream/legacy/decode.py` | a legacy run's document → its trial table |
+| `MetricAccumulator.offer(code)` | `stream/legacy/trials.py` | one strobe at a time → hit, miss or excluded |
+| `boundaries_for(profile)` | `stream/legacy/trials.py` | profile → the trial-boundary codes ([always use it](#boundary-codes)) |
+| `outcomes_of(codes, profile)` | `stream/outcomes.py` | strobes → `TrialOutcomes`, through the trial table |
 | `conditions_of(codes, profile)` | `stream/outcomes.py` | strobes → one `TrialOutcomes` per condition |
 | `trials_of(document, profile)` | `stream/outcomes.py` | a run's document → the per-trial tape |
 | `engagement_of(codes, profile)` | `stream/engagement.py` | strobes → `TrialEngagement` |
+| `table_metrics.legacy_metrics(table)` | `stream/table_metrics.py` | a legacy trial table → P(hit) per condition |
 | `series(document, profile)` | `stream/curves.py` | a run's document → P(hit) after each counted trial |
 | `strategy_trail(document, profile)` | `stream/curves.py` | a run's document → the within-session strategy walk |
 | `wilson_interval(hits, n)` | `stream/stats.py` | counts → 95% interval |
-| `infer_profile(codes)` | `stream/infer.py` | strobes → a profile, when none is declared |
-| `widen_no_go(profile, vocabulary)` | `stream/infer.py` | a profile → the copy scored, with every no-go metric missing at every port |
+| `infer_profile(codes)` | `stream/legacy/infer.py` | strobes → a profile, when none is declared |
+| `widen_no_go(profile, vocabulary)` | `stream/legacy/infer.py` | a profile → the copy scored, with every no-go metric missing at every port |
 | `false_starts.classify(facts)` | `stream/false_starts.py` | runs → which are set aside |
 | `spine.replayed(document)` | `stream/spine.py` | a spine run's document → its divergence, or its trial table |
 | `trial_table.trials_of(table, actions, end=…)` | `stream/trial_table.py` | a replay's actions → one `Trial` per trial |
@@ -704,7 +789,7 @@ document = json.load(open("remy1_….json"))
 profile = embedded_profile(document)
 # Widen as the scorer does, or an old no-go run gets its old, inflated number.
 if profile is not None:
-    profile = stream.infer.widen_no_go(profile, registry.vocabulary())
+    profile = stream.legacy.infer.widen_no_go(profile, registry.vocabulary())
 summary = stream.summarize(document, profile)
 print(summary.to_json())
 ```
@@ -728,3 +813,9 @@ print(summary.to_json())
   - `test_replay_trial_table.py`: every trial-table column read off the table's own fields, including an
     outcome class no task has used, and the metrics as functions of the table.
   - `test_spine_analytics.py`: a spine run scored, diverged and unreplayable through `analytics.summary`.
+  - `test_legacy_trial_table.py`: what a legacy run's rows say, and the curves of both kinds.
+  - `test_legacy_pin.py`, `test_legacy_corpus.py`: the legacy adapter reports what the strobe scorer
+    before it did ([how](#how-a-legacy-run-becomes-a-trial-table)). Their fixtures were captured from the
+    scorer before the adapter (2b851fd); never regenerate them from the code under test.
+- **The legacy decoder is frozen.** A change in `stream/legacy/` moves a number the archive already reported:
+  `test_legacy_pin.py` must pass unchanged.

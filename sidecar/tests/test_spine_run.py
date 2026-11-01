@@ -1,4 +1,4 @@
-"""A saved spine task runs a session end to end, with no box — issues #98 and #101.
+"""A saved spine task runs a session end to end, with no box — issues #98, #101 and #102.
 
 No hardware is needed to prove the path, only to measure it. The saved task's
 GENERATED folder is compiled for the host against the instrumented shim
@@ -10,7 +10,9 @@ from nothing but itself: every strobe the board sent must be predicted.
 
 A 2AFC task and a go/no-go pair run the same way, with an animal that reacts
 to the board's own outputs, and the outcome class of each trial is read off
-the states its replay entered.
+the states its replay entered. So do FR, VR and PR sessions on a pressing
+animal, with each trial's counted presses and the PR breakpoint, and a held
+trial whose broken hold and aborts each replay to their class.
 
 What still needs a real box: an AVR build flashed and run, and the free RAM a
 Mega reports with the table loaded (the host shim reports a fixed number).
@@ -38,6 +40,7 @@ from ephymeris_sidecar.sessions.runner import BoxConfig, SessionRunner
 from ephymeris_sidecar.taskdef import lowering
 from ephymeris_sidecar.taskdef.model import TaskDefinition
 from ephymeris_sidecar.taskdef.store import TaskStore
+from ephymeris_sidecar.taskdef.validate import validate
 from ephymeris_sidecar.tasks import profile as task_profile
 from ephymeris_sidecar.tasks.start_command import build_start_command
 from tests.fixtures import spine as fixture
@@ -215,14 +218,14 @@ async def test_a_saved_spine_task_runs_a_session_and_its_tsv_alone_replays(tmp_p
     folder = save_tracer(tmp_path)
     port = registry.channels().get("odor_port").index
     transcript = run_board(folder, host_lines(folder), animal(port), 16000, tmp_path)
-    assert transcript[:3] == ["INTERP=3", f"FREE_RAM={FREE_RAM}", "READY"]
+    assert transcript[:3] == ["INTERP=4", f"FREE_RAM={FREE_RAM}", "READY"]
     assert not any(line.startswith("CLAMPED") for line in transcript)
 
     tsv = await run_session(tmp_path, folder, transcript, monkeypatch)
     text = tsv.read_text(encoding="utf-8")
     header = text[: text.index("\n", text.index("# task_profile:"))]
     # Everything replay needs is in the header, before the first strobe.
-    assert "# interp: 3\n" in header and f"# free_ram: {FREE_RAM}\n" in header
+    assert "# interp: 4\n" in header and f"# free_ram: {FREE_RAM}\n" in header
     assert f"# trial_seed: {SEED}\n" in header and "# block_trials: 3\n" in header
     assert '"spine":' in header
 
@@ -245,9 +248,9 @@ async def test_a_saved_spine_task_runs_a_session_and_its_tsv_alone_replays(tmp_p
     summary = summarize(document, None)
     assert summary.status == "ok" and summary.divergence is None
     [metric] = summary.metrics
-    assert (metric.hits, metric.counted, metric.triggered) == (2, 2, 3)
+    assert (metric.hits, metric.counted, metric.triggered) == (2, 2, 3), "the abort is excluded"
     table = spine_stream.trial_table(document)
-    assert [t["outcome"] for t in table["trials"]] == ["correct", None, "correct"]
+    assert [t["outcome"] for t in table["trials"]] == ["correct", "abort_during_sampling", "correct"]
     assert [t["phaseEntries"][1] for t in table["trials"]] == [200, 5000, 8500], \
         "the present begins at each poke, on the board's own clock"
     assert summary.replay.rewarded.n == sum(t["rewarded"] for t in table["trials"])
@@ -380,19 +383,27 @@ static void animal(unsigned long t) {{
 
 
 def trials_of(document: dict) -> list[dict]:
-    """Each trial's row id, outcome class and whether it paid, read off the
-    states its replay entered: the row from the snapshot's `table.rows`, the
-    class from the one state with an outcome, the pay from a chance state's hit."""
+    """Each trial's row id, outcome class, whether it paid and how many presses
+    a Counter counted, read off the states its replay entered: the row from the
+    snapshot's `table.rows`, the class from the one state with an outcome, the
+    pay from a chance state's hit, and the presses from the watched rises while
+    a counter state rested (the completing one included), as #99's trial table
+    counts them."""
     record = spine_stream.decode(document)
     snapshot = document["task_profile"]["spine"]
     states, row_of = record.table.states, snapshot["table"]["rows"]
     trials: list[dict] = []
+    held = None
     for now, a in rp.replay(record.table, record.params, record.seed, record.events, record.end_tick,
                             interp=record.interp):
+        if trials and held is not None and states[held].is_count:
+            trials[-1]["presses"] += bin(a.rose).count("1")
+        if a.entered[0] != rp.NONE:
+            held = a.entered[1] if a.entered[1] != rp.NONE else a.entered[0]  # where the core now rests
         if a.flags & rp.ACT_TRIAL_START:
             if now == record.end_tick:
                 break  # the start that ends the session is no trial
-            trials.append({"row": None, "outcome": None, "rewarded": False})
+            trials.append({"row": None, "outcome": None, "rewarded": False, "presses": 0})
         trial = trials[-1]
         for s in (e for e in a.entered if e != rp.NONE):
             if row_of[s] is not None:
@@ -410,9 +421,15 @@ async def run_generated(tmp_path, monkeypatch, raw: dict, overrides: dict, plan,
     """Save `raw`, run its generated board on the answering animal, play it
     through the session path, and check the `.tsv`'s replay predicts every
     strobe. The run's document."""
+    return await run_task(tmp_path, monkeypatch, raw, overrides, ticks, animal=answering_animal(plan))
+
+
+async def run_task(tmp_path, monkeypatch, raw: dict, overrides: dict, ticks: int, events=(),
+                   animal: str = "") -> dict:
+    """`run_generated`, for scripted (ms, pin, level) `events` or any animal."""
     folder = save(tmp_path, raw)
-    transcript = run_board(folder, host_lines(folder, overrides), [], ticks, tmp_path, answering_animal(plan))
-    assert transcript[:3] == ["INTERP=3", f"FREE_RAM={FREE_RAM}", "READY"]
+    transcript = run_board(folder, host_lines(folder, overrides), list(events), ticks, tmp_path, animal)
+    assert transcript[:3] == ["INTERP=4", f"FREE_RAM={FREE_RAM}", "READY"]
     assert not any(line.startswith("CLAMPED") for line in transcript)
     tsv = await run_session(tmp_path, folder, transcript, monkeypatch, overrides)
     document = json.loads(json_of(tsv).read_text(encoding="utf-8"))
@@ -469,6 +486,129 @@ async def test_a_go_no_go_pair_runs_and_replays_to_its_outcome_classes(tmp_path,
     assert not any(t["rewarded"] for t in trials if t["outcome"] != "correct")
 
 
+# --- Hold, aborts and the Counter (#102) ----------------------------------------
+
+
+def presses(pin: int, start: int, stop: int, every: int = 40) -> list[tuple[int, int, int]]:
+    """A rat working a lever (the right well's beam, active LOW): a 10 ms press
+    every `every` ms from `start` until `stop`."""
+    out = []
+    for t in range(start, stop, every):
+        out += [(t, pin, 0), (t + 10, pin, 1)]
+    return out
+
+
+def lever() -> int:
+    return registry.channels().get("right_well").index
+
+
+def scored(document: dict) -> list[tuple[str | None, int, bool]]:
+    """The run's trial table, as #99's `replayed()` reads it from the table's own
+    annotations: each trial's class, the presses it counts in the Counter
+    phase (phase 0) on the lever's channel, and whether it paid."""
+    result = spine_stream.replayed(document)
+    assert result.divergence is None and all(t.complete for t in result.trials)
+    return [(t.outcome, sum(c.count for c in t.input_counts if c.phase == 0 and c.channel == "right_well"),
+             t.rewarded) for t in result.trials]
+
+
+async def test_a_fixed_ratio_session_pays_every_fifth_press(tmp_path, monkeypatch):
+    document = await run_task(tmp_path, monkeypatch, fixture.fixed_ratio(5), {"block_trials": 6}, 8000,
+                              events=presses(lever(), 100, 7000))
+    trials = trials_of(document)
+    assert [(t["outcome"], t["presses"], t["rewarded"]) for t in trials] == [("correct", 5, True)] * 6
+    assert scored(document) == [("correct", 5, True)] * 6, "the trial table counts each ratio's presses"
+
+
+async def test_a_variable_ratio_session_draws_n_for_each_reward(tmp_path, monkeypatch):
+    document = await run_task(tmp_path, monkeypatch, fixture.variable_ratio(1, 9), {"block_trials": 12}, 12000,
+                              events=presses(lever(), 100, 11000))
+    trials = trials_of(document)
+    assert [t["outcome"] for t in trials] == ["correct"] * 12
+    counts = [t["presses"] for t in trials]
+    assert all(1 <= n <= 9 for n in counts) and len(set(counts)) >= 3, counts
+    assert scored(document) == [("correct", n, True) for n in counts]
+
+
+async def test_a_progressive_ratio_session_ends_at_its_breakpoint(tmp_path, monkeypatch):
+    """The rat presses for 6 s and stops. Each reward needed the next ratio; the
+    unfinished one runs out its 2 s limit, an omission, and the session ends
+    after that trial's ITI by itself, long before its 50 trials."""
+    document = await run_task(tmp_path, monkeypatch, fixture.progressive_ratio(2000), {"block_trials": 50}, 14000,
+                              events=presses(lever(), 100, 6000))
+    trials = trials_of(document)
+    *done, last = trials
+    assert done and [t["outcome"] for t in done] == ["correct"] * len(done)
+    assert [t["presses"] for t in done] == fixture.RICHARDSON_ROBERTS[: len(done)]
+    assert last["outcome"] == "omission" and last["presses"] < fixture.RICHARDSON_ROBERTS[len(done)]
+    breakpoint_ = max(t["presses"] for t in trials if t["outcome"] == "correct")
+    assert breakpoint_ == fixture.RICHARDSON_ROBERTS[len(done) - 1] >= 9, "the last ratio completed"
+    vocab = registry.vocabulary()
+    assert vocab.name_of(document["ts_data"][-1][0]) == "END_SESSION"
+    assert len(trials) < 50
+    # The trial table holds the breakpoint's data: each trial's counted presses,
+    # the omission that ended the session complete and last.
+    table = scored(document)
+    assert table == [(t["outcome"], t["presses"], t["rewarded"]) for t in trials]
+    assert max(n for outcome, n, _ in table if outcome == "correct") == breakpoint_
+
+
+@pytest.mark.parametrize(("override", "clamped"), [
+    ({"counter_0_count": 8, "counter_0_count_max": 3}, True),   # inverted: N would be fixed at 8
+    ({"counter_0_count": 12, "counter_0_count_max": 15}, False),  # both past the defaults, in order
+    ({}, False),
+])
+def test_the_board_refuses_a_drawn_count_whose_range_is_inverted(tmp_path, override, clamped):
+    """A per-box override can set countMax below count, which would silently make
+    VR an FR. The board answers CLAMPED for the high end, so the host never
+    sends START (`TASKS.md#confirming-the-parameters`)."""
+    folder = save(tmp_path, fixture.variable_ratio(1, 9))
+    transcript = run_board(folder, host_lines(folder, {"block_trials": 3, **override}), [], 10, tmp_path)
+    assert ("CLAMPED NX0" in transcript) == clamped, transcript
+    assert not any(line.startswith("CLAMPED") and line != "CLAMPED NX0" for line in transcript)
+
+
+async def test_an_abort_after_the_outcome_leaves_a_paid_trial_correct(tmp_path, monkeypatch):
+    """FR-2, then a Delay a press aborts. The pressing rat aborts every Delay,
+    after its reward: the trial was decided at its Outcome, so it stays correct."""
+    raw = fixture.fixed_ratio(2)
+    raw["spine"].insert(2, {"phase": "delay", "ms": 300, "abortOnEnter": "lever"})
+    assert validate(TaskDefinition.from_json(raw)) == []
+    document = await run_task(tmp_path, monkeypatch, raw, {"block_trials": 5}, 6000,
+                              events=presses(lever(), 100, 5500))
+    record = spine_stream.decode(document)
+    phase_of = document["task_profile"]["spine"]["table"]["phases"]
+    aborted = [now for now, a in rp.replay(record.table, record.params, record.seed, record.events,
+                                           record.end_tick, interp=record.interp)
+               if a.rose and a.entered[0] != rp.NONE and phase_of[a.entered[0]] == 3]
+    assert len(aborted) == 5, "a press aborted each delay, straight to the ITI"
+    assert scored(document) == [("correct", 2, True)] * 5
+
+
+async def test_a_broken_hold_and_each_abort_replay_to_their_class(tmp_path, monkeypatch):
+    """The held trial (wait 5 s, hold 300, present 500 holding, delay 400 that a
+    right-well poke aborts, reward, ITI 1000), five times."""
+    channels = registry.channels()
+    port, early = channels.get("odor_port").index, channels.get("right_well").index
+    poke, clear = 0, 1
+    events = [
+        # 1: no poke for 5 s: the wait runs out before any stimulus.
+        (6200, port, poke), (6350, port, clear),        # 2: let go 150 ms into the hold
+        (7500, port, poke), (8000, port, clear),        # 3: let go during the odor
+        (9200, port, poke), (9950, port, clear),        # 4: through the odor, then
+        (10200, early, poke), (10250, early, clear),    #    a poke at the right well in the delay
+        (11200, port, poke), (12100, port, clear),      # 5: through the odor; the delay runs out
+    ]
+    document = await run_task(tmp_path, monkeypatch, fixture.held_trial(), {"block_trials": 5}, 16000,
+                              events=events)
+    classes = ["abort_before_stimulus", "hold_broken", "abort_during_sampling", "abort_during_sampling", "correct"]
+    assert [t["outcome"] for t in trials_of(document)] == classes
+    result = spine_stream.replayed(document)
+    assert result.divergence is None and [t.outcome for t in result.trials] == classes
+    assert [t.rewarded for t in result.trials] == [False] * 4 + [True]
+    assert all(t.row == "r1" for t in result.trials), "an end the rows share still names the trial's row"
+
+
 def test_an_unknown_table_format_is_refused_rather_than_replayed():
     document = {"interp": 99, "task_profile": {"spine": {"interp": 99}}, "ts_data": []}
     with pytest.raises(spine_stream.SpineDecodeError, match="INTERP 99"):
@@ -522,6 +662,22 @@ def test_a_version_2_run_whose_table_holds_a_pick_state_is_refused():
     for version in (document, document["task_profile"]["spine"]):
         version["interp"] = 3
     assert spine_stream.decode(document).interp == 3
+
+
+def test_a_version_3_run_whose_table_holds_a_counter_is_refused():
+    n = rp.NONE
+    counter = [1, 1, n, n, n, n, n, n, 0, 1, rp.STARTS_TRIAL | rp.COUNT, 0]
+    document = {
+        "interp": 3, "trial_seed": 7, "ts_data": [], "block_trials": 1, "count": 5,
+        "task_profile": {"strobes": {}, "config": [], "spine": {
+            "interp": 3, "params": [], "inputs": [], "outputs": [],
+            "table": {"states": [counter], "edges": [[0, rp.RISE, 0]],
+                      "counter": {"min": 0, "max": 0, "ratios": []}},
+            "structural": {},
+        }},
+    }
+    with pytest.raises(spine_stream.SpineDecodeError, match="counter"):
+        spine_stream.decode(document)
 
 
 @pytest.mark.parametrize("header", [1, None])

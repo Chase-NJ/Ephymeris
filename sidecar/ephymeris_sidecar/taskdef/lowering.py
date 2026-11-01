@@ -2,7 +2,7 @@
 
 The generator's half of "a task is a phase spine, lowered to a state table".
 `lower()` writes each phase as states exactly as `TASKS.md#lowering` and
-BoxInterp.h's "Lowering the first phases" describe, and returns the table as
+BoxInterp.h's "Lowering the phases" describe, and returns the table as
 plain tuples in `InterpStateRow` / `InterpEdgeRow` field order, so the same
 rows become the C initialisers in `TaskSpine.h` and the `replay.Table`
 analytics replays.
@@ -27,10 +27,20 @@ bindings, and so its bits, differ. With two or more rows, state 0 is a pick
 state whose branches are the rows' first states, in `rows` order; with one,
 the row's first state is state 0.
 
+ENDS. Every exit that ends a trial early (an abort, a released Hold, a Wait's
+timeout, a Counter's time limit) goes to an END: a copy of the ITI state that
+also carries the exit's outcome class. One end per (class, ITI outputs,
+last-trial flag) serves every row, after all the rows' states. Past the
+Outcome the trial is already marked: an early exit there goes to the row's own
+ITI, or to an unmarked end when a Counter's limit ends the session.
+
 PARAMETER SLOTS, in order (`ParamSlot`):
     0       NT        the block's trial count, read by the session layer (BoxSpine.h)
     1..     T<i>      the timer of phase i, one per timed phase, in phase order;
-            H<i>      a Response window's hold, straight after its T<i>
+            H<i>      a Response window's hold, straight after its T<i>;
+            N<i>      a Counter's N (or the low end of a drawn N), straight after
+                      its T<i>, unless it reads a compiled sequence (`ratios`);
+            NX<i>     the high end of a drawn N
     then, per row r from 1:
             RW<r>     the row's reward ms, when the row can pay
             RP<r>     its reward probability in permille, for an Outcome with no
@@ -49,7 +59,7 @@ from typing import Any, Sequence
 #: which the spine runner announces as `INTERP=<n>`. A run's snapshot records
 #: it beside the table, and replay refuses one it does not know. 1 is the trial
 #: runner's, in the same numbering space (`analytics/stream/replay.py`).
-INTERP_VERSION = 3
+INTERP_VERSION = 4
 
 #: BoxInterp.h's constants (`INTERP_NONE`, `INTERP_RISE`, ...), mirrored.
 NONE = 0xFF
@@ -57,6 +67,8 @@ RISE = 1
 FALL = 2
 STARTS_TRIAL = 0x01
 PICK = 0x02
+COUNT = 0x04
+LAST_TRIAL = 0x08
 
 #: The outcome classes a state can record (0003-phase-spine-task-model.md#phase-palette),
 #: numbered from 1; 0 is "none". The core carries the number and never reads
@@ -74,13 +86,18 @@ OUTCOME_CLASSES = (
 )
 OUTCOME_CORRECT = 1
 OUTCOME_HOLD_BROKEN = OUTCOME_CLASSES.index("hold_broken") + 1
+OUTCOME_OMISSION = OUTCOME_CLASSES.index("omission") + 1
+OUTCOME_ABORT_BEFORE = OUTCOME_CLASSES.index("abort_before_stimulus") + 1
+OUTCOME_ABORT_DURING = OUTCOME_CLASSES.index("abort_during_sampling") + 1
 
 #: Where `flags` sits in a state row (`Lowered.states`).
 _FLAGS = 10
 
-#: The phases lowered so far. Hold and Counter are #102.
-PHASES = ("wait", "present", "delay", "response", "outcome", "iti")
-_TIMED = ("present", "delay", "response", "outcome", "iti")
+#: The phase palette (0003-phase-spine-task-model.md#phase-palette).
+PHASES = ("wait", "hold", "present", "delay", "response", "counter", "outcome", "iti")
+_TIMED = ("hold", "present", "delay", "response", "outcome", "iti")
+#: An input edge, by the name of the channel code it strobes.
+EDGES = {"enter": RISE, "exit": FALL}
 
 #: The contingency map's key for the window running out; no slot may be called it.
 TIMEOUT = "timeout"
@@ -108,8 +125,8 @@ class LoweringError(ValueError):
 class ParamSlot:
     """What one parameter slot is, so the profile can declare a field for it.
 
-    `role` is `trials`, `timer`, `hold`, `reward_ms` or `reward_permille`.
-    `phase` is the phase a timer or hold belongs to; `row` the row index a
+    `role` is `trials`, `timer`, `hold`, `count`, `count_max`, `reward_ms` or
+    `reward_permille`. `phase` is the phase a timer, hold or count belongs to; `row` the row index a
     reward belongs to; `entry` the map key (a slot, or `timeout`) of a window
     entry's probability, None for an Outcome with no window before it.
     """
@@ -130,7 +147,9 @@ class Lowered:
     (input, edge, next); `params[s]` is the wire key of parameter slot s, and
     `slots[s]` what it is. `inputs[i]` and `outputs[j]` are the (slot, channel)
     each bit is. `phases[s]` and `rows[s]` are the phase index and the row index
-    state s belongs to, None for the pick state, which belongs to neither.
+    state s belongs to: no phase for the pick state, and no row for it or for an
+    end, which every row shares. `counter` is BoxInterp.h's `InterpCounter` as
+    (count_min, count_max, ratios), None for a spine with no Counter.
     """
 
     states: tuple[tuple[int, ...], ...]
@@ -141,6 +160,7 @@ class Lowered:
     rows: tuple[int | None, ...]
     inputs: tuple[tuple[str, str], ...]
     outputs: tuple[tuple[str, str], ...]
+    counter: tuple[int, int, tuple[int, ...]] | None = None
 
 
 def timer_key(phase_index: int) -> str:
@@ -149,6 +169,14 @@ def timer_key(phase_index: int) -> str:
 
 def hold_key(phase_index: int) -> str:
     return f"H{phase_index}"
+
+
+def count_key(phase_index: int) -> str:
+    return f"N{phase_index}"
+
+
+def count_max_key(phase_index: int) -> str:
+    return f"NX{phase_index}"
 
 
 def reward_ms_key(row_index: int) -> str:
@@ -228,6 +256,17 @@ def lower(
         raise LoweringError("a Response window is followed by exactly one Outcome")
     if len(rows) > 1 and kinds[0] == "outcome":
         raise LoweringError("with several rows the first phase is not an Outcome: a pick branch never draws again")
+    counters = [i for i, kind in enumerate(kinds) if kind == "counter"]
+    if len(counters) > 1:
+        raise LoweringError("a spine has at most one Counter: the table holds one N")
+    counter_phase = phases[counters[0]] if counters else None
+    if counter_phase is not None and bool(counter_phase.get("ratios")) == (counter_phase.get("count") is not None):
+        raise LoweringError(f"phase {counters[0]}: a Counter takes either a count or ratios")
+    # Where an early exit's class changes: the first Present is the stimulus.
+    stimulus = next((i for i, kind in enumerate(kinds) if kind == "present"), len(kinds))
+    # Where a trial is decided: past its Outcome an early exit marks nothing, so a
+    # trial carries one class, the Outcome's.
+    decided = next((i for i, kind in enumerate(kinds) if kind == "outcome"), len(kinds))
 
     in_bits, row_in = channel_bits(inputs, rows)
     out_bits, row_out = channel_bits(outputs, rows)
@@ -271,8 +310,14 @@ def lower(
     for i, p in enumerate(phases):
         if p["phase"] in _TIMED or (p["phase"] == "wait" and p.get("timeoutMs") is not None):
             slots.append(ParamSlot(timer_key(i), "timer", phase=i))
+        if p["phase"] == "counter" and p.get("timeoutMs") is not None:
+            slots.append(ParamSlot(timer_key(i), "timer", phase=i))
         if p["phase"] == "response" and p.get("holdMs") is not None:
             slots.append(ParamSlot(hold_key(i), "hold", phase=i))
+        if p["phase"] == "counter" and p.get("count") is not None:
+            slots.append(ParamSlot(count_key(i), "count", phase=i))
+            if p.get("countMax") is not None:
+                slots.append(ParamSlot(count_max_key(i), "count_max", phase=i))
     plain_outcome = any(kind == "outcome" and (w is None or i < w) for i, kind in enumerate(kinds))
     for r in range(len(rows)):
         lines = ([(k, key) for k, key in enumerate(_entries(phases[w]), 1) if maps[r][key].get("line")]
@@ -317,6 +362,30 @@ def lower(
         state(i, r, mask | output_mask(r, i, [line]), 0, reward_ms_key(r), at + 2)
         state(i, r, mask, 0, timer_key(i), nxt)
 
+    ends: dict[tuple[int, int, int], _Ref] = {}
+
+    def early(r: int, i: int, cls: int, iti_ref: _Ref, flags: int = 0) -> _Ref:
+        """Where an early exit of row r from phase i goes: an end, its ITI marked
+        with `cls`. Past the Outcome the trial is already marked, so it goes to
+        the row's own ITI, or to an unmarked end when it ends the session."""
+        if i > decided:
+            if not flags:
+                return iti_ref
+            cls = 0
+        key = (cls, output_mask(r, iti, phases[iti].get("outputs")), flags)
+        return ends.setdefault(key, _Ref())
+
+    def aborts(r: int, i: int, p: dict[str, Any], iti_ref: _Ref) -> tuple[int, list[tuple[int, int, Any]]]:
+        """A Present's or a Delay's abort exits, as (watch, edge rows)."""
+        cls = OUTCOME_ABORT_BEFORE if i < stimulus else OUTCOME_ABORT_DURING
+        watch, exits = 0, []
+        for key, edge in (("abortOnRelease", FALL), ("abortOnEnter", RISE)):
+            if p.get(key) is not None:
+                bit = input_bit(r, i, p[key])
+                watch |= 1 << bit
+                exits.append((bit, edge, early(r, i, cls, iti_ref)))
+        return watch, exits
+
     def run(r: int, indices: Sequence[int], end: Any, iti_ref: _Ref,
             branch: tuple[int, str | None, int | None] | None = None) -> None:
         """Phases `indices` in order, the last going on to `end`. `branch` is
@@ -329,17 +398,27 @@ def lower(
             kind, mask = p["phase"], output_mask(r, i, p.get("outputs"))
             if kind == "wait":
                 bit = input_bit(r, i, p.get("on"))
+                edge = EDGES.get(p.get("edge") or "enter")
+                if edge is None:
+                    raise LoweringError(f"phase {i}: a wait's edge is one of {tuple(EDGES)}")
                 timer = timer_key(i) if p.get("timeoutMs") is not None else None
-                state(i, r, mask, 1 << bit, timer, iti_ref, exits=[(bit, RISE, nxt)])
-            elif kind == "present":
-                exits, watch = [], 0
-                if p.get("abortOnRelease") is not None:
-                    bit = input_bit(r, i, p["abortOnRelease"])
-                    watch |= 1 << bit
-                    exits.append((bit, FALL, iti_ref))
+                # Before the stimulus no trial was offered; from it on, the animal was asked.
+                missed = (early(r, i, OUTCOME_ABORT_BEFORE if i < stimulus else OUTCOME_OMISSION, iti_ref)
+                          if timer else NONE)
+                state(i, r, mask, 1 << bit, timer, missed, exits=[(bit, edge, nxt)])
+            elif kind == "hold":
+                bit = input_bit(r, i, p.get("on"))
+                state(i, r, mask, 1 << bit, timer_key(i), nxt,
+                      exits=[(bit, FALL, early(r, i, OUTCOME_HOLD_BROKEN, iti_ref))])
+            elif kind in ("present", "delay"):
+                watch, exits = aborts(r, i, p, iti_ref)
                 state(i, r, mask, watch, timer_key(i), nxt, exits=exits)
-            elif kind == "delay":
-                state(i, r, mask, 0, timer_key(i), nxt)
+            elif kind == "counter":
+                bit = input_bit(r, i, p.get("on"))
+                timer = timer_key(i) if p.get("timeoutMs") is not None else None
+                limit = (early(r, i, OUTCOME_OMISSION, iti_ref, LAST_TRIAL if p.get("endsSession") else 0)
+                         if timer else NONE)
+                state(i, r, mask, 1 << bit, timer, limit, exits=[(bit, RISE, nxt)], flags=COUNT)
             elif kind == "outcome":
                 if branch is None:
                     outcome_states(r, i, mask, nxt, OUTCOME_CORRECT, p.get("line"), reward_permille_key(r))
@@ -398,6 +477,18 @@ def lower(
     else:
         emit_row(0)
         states[0][_FLAGS] |= STARTS_TRIAL
+    for (cls, mask, flags), ref in ends.items():
+        ref.at = len(states)
+        state(iti, None, mask, 0, timer_key(iti), 0, flags=flags, outcome=cls)
+
+    counter = None
+    if counter_phase is not None:
+        c = counters[0]
+        if counter_phase.get("count") is not None:
+            high = count_max_key(c) if counter_phase.get("countMax") is not None else count_key(c)
+            counter = (slot[count_key(c)], slot[high], ())
+        else:
+            counter = (NONE, NONE, tuple(int(n) for n in counter_phase["ratios"]))
 
     if len(states) >= NONE or len(edges) >= NONE:
         raise LoweringError(f"the table has {len(states)} states and {len(edges)} edge rows; "
@@ -415,4 +506,5 @@ def lower(
         rows=tuple(row_of),
         inputs=in_bits,
         outputs=out_bits,
+        counter=counter,
     )

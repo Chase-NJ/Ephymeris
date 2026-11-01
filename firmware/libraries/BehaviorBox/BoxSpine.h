@@ -26,8 +26,9 @@
     INTERP=<INTERP_VERSION>, FREE_RAM=<n>, READY
     BEGIN                 back to the table's defaults; the audit cleared
     SET <KEY>=<v> ...     each answered CLAMPED <KEY> (a value not held exactly as
-                          written: junk, a sign, outside the slot's [min, max]),
-                          then PARAMS <n> <crc32>, the running total
+                          written: junk, a sign, outside the slot's [min, max], or
+                          a drawn N's high end below its low end), then
+                          PARAMS <n> <crc32>, the running total
     START SEED=<n>        the core's RNG seeded with it, echoed as SEED <n>
 
 
@@ -43,7 +44,8 @@
   THE SESSION END RULE, which replay reproduces:
     The session ends at the tick that would start trial NT+1, where NT is
     parameter slot 0 (the block's trial count), or at the first trial start
-    after a STOP line. At that tick the board strobes the tick's watched input
+    after a STOP line or after a LAST-TRIAL state was entered (the core reports
+    INTERP_ACT_LAST_TRIAL: a Counter's time limit that ends the session). At that tick the board strobes the tick's watched input
     edges, then the off code of every output still HIGH, then END_SESSION, and
     nothing else: no TRIAL_START, and the new trial's outputs are not driven.
   So STOP never cuts a trial short, as with the trial runner.
@@ -75,10 +77,13 @@
 #if SPINE_NUM_PARAMS < 1
 #error "a spine task's parameter slot 0 is its block's trial count"
 #endif
+#if !defined(SPINE_RATIOS) || !defined(SPINE_COUNT_MIN)
+#error "TaskSpine.h names no counter (SPINE_COUNT_MIN, SPINE_RATIOS): save the task again."
+#endif
 
 /* The generator holds a task's RAM to a budget at save, counting these rows and
-   arrays at their AVR sizes (taskdef/spine.py's PARAM_BYTES, INPUT_BYTES and
-   OUTPUT_BYTES; docs/TASKS.md#spine-diagnostics). test_spine_task.py holds the
+   arrays at their AVR sizes (taskdef/spine.py's PARAM_BYTES, INPUT_BYTES,
+   OUTPUT_BYTES and RATIO_BYTES, for kRatios below; docs/TASKS.md#spine-diagnostics). test_spine_task.py holds the
    count to a Mega build: change a struct or array here and it fails. */
 
 /* One input bit: its pin, which level is ACTIVE, and the codes of its edges. */
@@ -116,6 +121,7 @@ struct SpineRun
   InterpCore core;
   uint32_t start;  // the session's first tick; strobes are stamped relative to it
   uint32_t trials; // trials started
+  bool last;       // a last-trial state was entered: end at the next trial start
   bool ended;
 };
 
@@ -130,6 +136,7 @@ inline InterpActions spine_begin(SpineRun &r, const InterpTable *table, const ui
                                  uint32_t seed, uint32_t now)
 {
   r.start = now;
+  r.last = false;
   r.ended = false;
   InterpActions a = interp_begin(&r.core, table, params, seed, now);
   r.trials = (a.flags & INTERP_ACT_TRIAL_START) ? 1 : 0;
@@ -144,9 +151,11 @@ inline SpineTick spine_step(SpineRun &r, InterpEdges edges, uint32_t now, uint32
   t.actions = interp_step(&r.core, edges, now);
   t.ends = false;
   t.endOff = 0;
+  if (t.actions.flags & INTERP_ACT_LAST_TRIAL)
+    r.last = true;
   if (t.actions.flags & INTERP_ACT_TRIAL_START)
   {
-    if (stop || r.trials >= maxTrials)
+    if (stop || r.last || r.trials >= maxTrials)
     {
       t.ends = true;
       t.endOff = was;
@@ -166,7 +175,9 @@ static const InterpEdgeRow kEdges[] = SPINE_EDGES;
 static const SpineInput kInputs[] = SPINE_INPUTS;
 static const SpineOutput kOutputs[] = SPINE_OUTPUTS;
 static const SpineParam kParams[] = SPINE_PARAMS;
-static const InterpTable kTable = {kStates, kEdges};
+static const uint16_t kRatios[] = SPINE_RATIOS;
+static const InterpCounter kCounter = {kRatios, SPINE_NUM_RATIOS, SPINE_COUNT_MIN, SPINE_COUNT_MAX};
+static const InterpTable kTable = {kStates, kEdges, &kCounter};
 
 /* The run's parameter block, filled from the table's defaults and the SET lines. */
 static uint32_t params[SPINE_NUM_PARAMS];
@@ -205,6 +216,12 @@ inline void takeTokens(char *line, ParamAudit *audit)
       unsigned long x = parseUlongField(v, exact);
       if (x < kParams[s].min) { x = kParams[s].min; exact = false; }
       if (x > kParams[s].max) { x = kParams[s].max; exact = false; }
+#if SPINE_COUNT_MIN != SPINE_COUNT_MAX
+      // A drawn N's high end below its low end would fix N at the low end: VR
+      // run as FR. The host sends the low end first (slot order), so the pair is
+      // judged when the high end arrives, and held as a range, CLAMPED.
+      if (s == SPINE_COUNT_MAX && x < params[SPINE_COUNT_MIN]) { x = params[SPINE_COUNT_MIN]; exact = false; }
+#endif
       params[s] = (uint32_t)x;
       if (audit)
       {

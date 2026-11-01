@@ -43,7 +43,7 @@ def trials(table: rp.Table, params, events, ticks: int, end: int | None = None, 
     return trial_table.trials_of(table, actions, end=end, phase_of=phase_of)
 
 
-def test_a_held_trial_is_correct_and_paid_and_an_abort_has_no_class() -> None:
+def test_a_held_trial_is_correct_and_paid_and_an_abort_is_marked_at_its_end() -> None:
     table, low = tracer_table()
     # Trial 1 holds through the present; trial 2 lets go during it.
     events = [poke(200), release(1500), poke(5000), release(5300)]
@@ -57,7 +57,8 @@ def test_a_held_trial_is_correct_and_paid_and_an_abort_has_no_class() -> None:
     assert first.response is None, "a timer took it to the outcome: no response"
     assert first.entries[1] == 200 and first.entries[2] == 1200, "the present at the poke, the delay 1000 ms on"
 
-    assert second.outcome == 0 and not second.rewarded
+    # The release during the present goes to the abort's end, which marks it (#102).
+    assert second.outcome == lowering.OUTCOME_ABORT_DURING and not second.rewarded
     assert second.counts == {(0, PORT): 1}, "the poke that left the wait, counted in the wait"
     # Trial 3 starts after trial 2's ITI and is cut off by the end of the replay.
     assert len(out) == 3 and not out[2].complete
@@ -188,6 +189,24 @@ def test_metrics_are_functions_of_the_table() -> None:
         "a withhold is the no-go row's hit, a false alarm its miss"
     overall = table_metrics.overall_correct(score)
     assert (overall.hits, overall.counted) == (2, 4)
+
+
+def test_an_aborted_trial_is_excluded_from_p_correct_but_tallied_in_its_class() -> None:
+    """As a legacy run excludes an aborted trial: the animal quit before it was
+    asked. Hold broken is no abort; it stays a miss."""
+    def trial(i: int, outcome: str):
+        return trial_table.ReplayTrial(index=i, at_ms=i * 1000, row="r1", outcome=outcome)
+
+    outcomes = ["correct", "correct", "abort_during_sampling", "abort_before_stimulus", "hold_broken"]
+    score = table_metrics.score([trial(i, o) for i, o in enumerate(outcomes)], rows=(("r1", "Odor 1"),))
+    assert {c.outcome_class: c.n for c in score.classes} == {
+        "correct": 2, "abort_during_sampling": 1, "abort_before_stimulus": 1, "hold_broken": 1}
+    [metric] = table_metrics.correct_metrics(score)
+    assert (metric.hits, metric.counted, metric.triggered, metric.excluded) == (2, 3, 5, 2)
+    overall = table_metrics.overall_correct(score)
+    assert (overall.hits, overall.counted, overall.excluded) == (2, 3, 2)
+    assert table_metrics.EXCLUDED == {"abort_before_stimulus", "abort_during_sampling"}
+    assert not table_metrics.EXCLUDED & table_metrics.HITS
 
 
 def test_the_hops_before_the_trial_start_on_one_tick_belong_to_the_trial_that_ends() -> None:

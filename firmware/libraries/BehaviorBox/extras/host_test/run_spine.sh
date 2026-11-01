@@ -4,7 +4,7 @@
 # run its scenarios: the SET/PARAMS/CLAMPED handshake and the FREE_RAM
 # announcement; the strobe stream's content, order and tick times, with
 # skipped millis() values stepped; and the session end rule, at the block's
-# trial count and after STOP.
+# trial count, after STOP and after a last-trial state.
 #
 # The sidecar's test_spine_run.py compiles a GENERATED spine task the same way
 # and plays it through the real session path; this is the firmware's own check,
@@ -22,7 +22,7 @@ CXX="${CXX:-clang++}"
 "$CXX" -std=c++11 -Wall -Werror -Wno-unused-function \
   -I"$HERE/box_shim" -I"$HERE" -I"$LIB" \
   -x c++ "$HERE/test_spine.cpp" -o "$HERE/test_spine"
-for scenario in handshake stream stop; do
+for scenario in handshake stream stop last; do
   "$HERE/test_spine" "$scenario"
 done
 echo "test_spine: all passed"

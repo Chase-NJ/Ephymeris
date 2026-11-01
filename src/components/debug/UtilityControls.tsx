@@ -5,8 +5,10 @@ import { useMemo, useState } from "react";
 import { Button, Select } from "@/components/common/controls";
 import { useBoxOutput } from "@/lib/hardware/context";
 import { KIND_COLOR } from "@/lib/hardware/types";
+import { readSetting, settingChoices } from "@/lib/hardware/utility";
 import { springSnappy } from "@/lib/motion";
 import type { Control, ControlChannel, TaskProfile, TelemetrySpec } from "@/lib/sessions/types";
+import type { ControlSetting } from "@/lib/ws/protocol";
 import type { ConsoleLine } from "@/lib/hardware/store";
 import { useSidecar } from "@/lib/ws/context";
 import { CMD } from "@/lib/ws/protocol";
@@ -138,6 +140,7 @@ export function UtilityControls({
           control={c}
           isOpen={isOpen}
           known={(key) => key !== undefined && status?.[key] !== undefined}
+          valueOf={(key) => status?.[key]}
           disabled={!canSend}
           onSend={send}
           wide={wide}
@@ -201,6 +204,7 @@ function ChannelGrid({
   control,
   isOpen,
   known,
+  valueOf,
   disabled,
   onSend,
   wide,
@@ -208,6 +212,8 @@ function ChannelGrid({
   control: Control;
   isOpen: (key: string | undefined) => boolean;
   known: (key: string | undefined) => boolean;
+  /** The latest STATUS value under a key, for a row's setting. */
+  valueOf: (key: string) => string | undefined;
   disabled: boolean;
   onSend: (command: string) => void;
   wide: boolean;
@@ -267,6 +273,15 @@ function ChannelGrid({
               >
                 {ch.label}
               </span>
+              {ch.setting && (
+                <SettingSelect
+                  setting={ch.setting}
+                  channel={ch.label}
+                  values={[valueOf(ch.setting.state)]}
+                  disabled={disabled}
+                  onSend={onSend}
+                />
+              )}
               {ch.pulse && (
                 <button
                   type="button"
@@ -344,6 +359,42 @@ export function ChannelSwitch({
   );
 }
 
+/**
+ * A driven output's one setting — a PWM line's duty, a tone's pitch, a train's
+ * rate — as a compact select in its grid row. Choosing an option sends its
+ * command; what the select shows is what the board reports, never the last
+ * choice made, so a refused or unsent command does not read as in force.
+ * `values` holds one reported value per box (one for a single box).
+ */
+export function SettingSelect({
+  setting,
+  channel,
+  values,
+  disabled,
+  onSend,
+}: {
+  setting: ControlSetting;
+  channel: string;
+  values: ReadonlyArray<string | undefined>;
+  disabled: boolean;
+  onSend: (command: string) => void;
+}) {
+  const { value, options } = settingChoices(setting, readSetting(setting, values));
+  return (
+    <Select
+      label={`${setting.label} of ${channel}`}
+      value={value}
+      disabled={disabled}
+      compact
+      className="max-w-[6.5rem] shrink-0"
+      options={options}
+      onChange={(next) => {
+        if (next) onSend(next);
+      }}
+    />
+  );
+}
+
 /** A `select` control: choosing an option sends that option's command. */
 export function SelectControl({
   control,
@@ -375,26 +426,14 @@ export function SelectControl({
 }
 
 /**
- * Which channel family a grid row belongs to, from its telemetry key.
- *
- * The utility sketch's keys are `f1..f4`, `o1..o12`, `vac`, `light`; the
- * families are the rig's channel kinds (`KIND_COLOR`), so a fluid line here
- * wears the same colour it wears on the board map. Read from the key rather
- * than from a declared kind because a `ControlChannel` declares none — and
- * adding one would change `profile_hash` for every utility profile.
- */
-/**
- * What a row drives. A generated profile says so outright (`kind`, from the
- * Rig page — `TASKS.md#the-box-utility`); the key-shape guess is for a
- * hand-written profile that predates it.
+ * The colour family a grid row belongs to: the rig channel kind its profile
+ * declares (`kind`, which a generated profile always sets —
+ * `TASKS.md#the-box-utility`), so a fluid line here wears the colour it wears
+ * on the board map. A row that declares none is drawn neutral: guessing a
+ * family from a channel's name would be a hand-listed channel.
  */
 export function familyOf(ch: ControlChannel): keyof typeof KIND_COLOR | undefined {
   if (ch.kind && ch.kind in KIND_COLOR) return ch.kind as keyof typeof KIND_COLOR;
-  const key = ch.state?.toLowerCase() ?? "";
-  if (/^f\d+$/.test(key)) return "reward";
-  if (/^o\d+$/.test(key)) return "emitter";
-  if (key === "vac") return "vacuum";
-  if (key === "light") return "cue";
   return undefined;
 }
 

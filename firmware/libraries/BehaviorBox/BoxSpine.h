@@ -76,6 +76,11 @@
 #error "a spine task's parameter slot 0 is its block's trial count"
 #endif
 
+/* The generator holds a task's RAM to a budget at save, counting these rows and
+   arrays at their AVR sizes (taskdef/spine.py's PARAM_BYTES, INPUT_BYTES and
+   OUTPUT_BYTES; docs/TASKS.md#spine-diagnostics). test_spine_task.py holds the
+   count to a Mega build: change a struct or array here and it fails. */
+
 /* One input bit: its pin, which level is ACTIVE, and the codes of its edges. */
 struct SpineInput
 {

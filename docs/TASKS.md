@@ -688,7 +688,7 @@ It rides in the `# task_profile:` header line of every run's `.tsv` ([DATA.md](D
 | `SPN102` | A channel whose type is not the slot's, or the sync line | A sensor driven as a valve; a pulse in a recording |
 | **`SPN103`** | **A channel edge with no live code.** The shipped channel set names none, so the rig's first wiring save issues them ([Edge codes](#edge-codes)) | An edge recorded as a number nothing decodes |
 | `SPN104` | The vocabulary lacks `START_SESSION`, `TRIAL_START` or `END_SESSION`. A machine seeded before `TRIAL_START` existed adds it on Task > Strobes, at the number the shipped vocabulary gives it (`rig/schema/strobe_vocab.default.json`) | A stream with no trials in it |
-| `SPN105` | A spine of the wrong shape: an unknown phase, no ITI or not last, a slot of the wrong direction, a missing duration, a slot called `timeout`, more than one Outcome; a window whose `responses` are not distinct input slots, more than one window, a window not followed by exactly one Outcome, an Outcome after a window that names its own `line`; with several rows, a first phase that is an Outcome; a table over 254 states, or one whose states and edge rows take more than 4096 B of RAM | A table the interpreter cannot walk, or a board with too little RAM left for its stack |
+| `SPN105` | A spine of the wrong shape: an unknown phase, no ITI or not last, a slot of the wrong direction, a missing duration, a slot called `timeout`, more than one Outcome; a window whose `responses` are not distinct input slots, more than one window, a window not followed by exactly one Outcome, an Outcome after a window that names its own `line`; with several rows, a first phase that is an Outcome; a table over 254 states, or a task whose states, edge rows, parameters and channels take more than 4096 B of RAM | A table the interpreter cannot walk, or a board with too little RAM left for its stack |
 | `SPN106` | No row, more than one block, a block that does not draw every row exactly once, a row id that is not lower case or not its own, two rows whose parameters would share a metadata key, a trial count, reward time or probability out of range | What the session cannot run yet, or a parameter the board would clamp |
 | `SPN107` | Two slots on one channel, in one row or across rows | One pin, two roles |
 | `SPN108` | A row with no name | Every readout titled after nothing |
@@ -696,7 +696,12 @@ It rides in the `# task_profile:` header line of every run's `.tsv` ([DATA.md](D
 | `SPN110` | A stored value in `params` that no parameter of the task reads, named by its key | A tuned value silently replaced by the default |
 
 > [!CAUTION]
-> **The table's RAM budget is 4096 B**: 18 B per state and 3 B per edge row, `InterpStateRow` and `InterpEdgeRow` as AVR packs them (`lowering.STATE_ROW_BYTES` and `EDGE_ROW_BYTES`, pinned against `BoxInterp.h` by a test and by a `static_assert` in AVR builds). The rest of a spine sketch's globals is about 550 B plus 18 B per parameter, so within the budget its globals stay under the 75% of a Mega's 8192 B at which `arduino-cli` warns, and the stack and serial buffers keep at least 2 KB. The table compiles at any size up to 254 states, so past the budget a board would run short of stack mid-session with no error at all.
+> **A task's RAM budget is 4096 B**, everything its `TaskSpine.h` puts in RAM (`spine.task_ram_bytes`):
+> - 18 B per state and 3 B per edge row, `InterpStateRow` and `InterpEdgeRow` as AVR packs them (`lowering.STATE_ROW_BYTES` and `EDGE_ROW_BYTES`, pinned against `BoxInterp.h` by a test and by a `static_assert` in AVR builds);
+> - 18 B per parameter plus its wire key's length and terminator, since AVR keeps the key string in RAM;
+> - 14 B per input bit and 5 B per output bit.
+>
+> The rest of a spine sketch's globals is at most 384 B (`spine.RUNNER_RAM_BYTES`). A test compiles generated tasks for the Mega, up to the largest under the budget, and holds each build's globals to within a few bytes under that sum. So a task within the budget compiles to at most 4480 B of globals (55%), and the stack and serial buffers keep at least 3712 B. A task compiles at any size up to 254 states, so past the budget a board would run short of stack mid-session with no error at all.
 
 ## Rig wiring
 

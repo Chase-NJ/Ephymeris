@@ -51,11 +51,32 @@ SLOT_TYPES = ("digital_in", "digital_out")
 _MS_MAX = 3_600_000
 _TRIALS_MAX = 10_000
 _REWARD_MS_MAX = 5_000
-#: The most RAM a table's states and edge rows may take on a Mega (8192 B). The
-#: rest of a spine sketch's globals measured about 550 B, plus 18 B per
-#: parameter; this keeps them under the 75% arduino-cli warns at, so the stack
-#: and the serial buffers keep at least 2 KB (`TASKS.md#spine-diagnostics`).
-TABLE_RAM_MAX = 4096
+#: What each part of a task takes of a Mega's RAM in BoxSpine.h, as AVR lays it
+#: out. A parameter is its `SpineParam` (a 2 B key pointer and three uint32_t)
+#: and its uint32_t in `params[]`, plus its key string, which AVR keeps in RAM.
+#: An input bit is its `SpineInput` (8 B) and its debounce state (`level`, `raw`,
+#: `rawSince`: 6 B); an output bit its `SpineOutput` (5 B). An empty array still
+#: takes one element. `test_spine_task.py` holds these to an AVR build.
+PARAM_BYTES = 18
+INPUT_BYTES = 14
+OUTPUT_BYTES = 5
+#: The globals of a spine sketch apart from its task's data: the runner,
+#: BehaviorBox.h and the Arduino core, measured by that same test. A build can
+#: come in a few bytes under the sum (the compiler folds a one-element input
+#: array), never over it.
+RUNNER_RAM_BYTES = 384
+#: The most RAM a task's data (`task_ram_bytes`) may take, out of a Mega's 8192 B.
+#: With the runner's own, globals stay at most 4480 B (55%), leaving the stack
+#: and the serial buffers at least 3712 B (`TASKS.md#spine-diagnostics`).
+TASK_RAM_MAX = 4096
+
+
+def task_ram_bytes(low: lowering.Lowered) -> int:
+    """The bytes of RAM a task's generated `TaskSpine.h` adds to a Mega build:
+    its states and edge rows, its parameters and its channel bits."""
+    return (lowering.table_bytes(len(low.states), max(1, len(low.edges)))
+            + sum(PARAM_BYTES + len(key) + 1 for key in low.params)
+            + INPUT_BYTES * max(1, len(low.inputs)) + OUTPUT_BYTES * max(1, len(low.outputs)))
 
 
 @dataclass
@@ -334,11 +355,11 @@ def _table_problems(definition: TaskDefinition, out: _Resolved, problem) -> None
         if key not in owner:
             problem(f"params.{key}", "SPN110", f"no parameter of this task is {key!r}, so its stored value "
                     f"{definition.params[key]!r} is not used. Move it to the parameter it belongs to, or remove it")
-    size = lowering.table_bytes(len(low.states), len(low.edges))
-    if size > TABLE_RAM_MAX:
-        problem("spine", "SPN105", f"the state table takes {size} B of the board's RAM, over the {TABLE_RAM_MAX} B "
-                "a Mega can spare for it: fewer rows, phases or map entries")
-        out.blockers.append(f"the state table takes {size} B of RAM, over {TABLE_RAM_MAX} B")
+    size = task_ram_bytes(low)
+    if size > TASK_RAM_MAX:
+        problem("spine", "SPN105", f"the state table, parameters and channels take {size} B of the board's RAM, "
+                f"over the {TASK_RAM_MAX} B a Mega can spare for them: fewer rows, phases or map entries")
+        out.blockers.append(f"the task's data takes {size} B of RAM, over {TASK_RAM_MAX} B")
 
 
 # --------------------------------------------------------------------------- #

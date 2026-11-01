@@ -85,10 +85,10 @@ TONE_RAM_BYTES = 32
 #: BehaviorBox.h and the Arduino core, measured by that same test. A build can
 #: come in some bytes under the sum (the compiler folds a small constant channel
 #: array away), never over it.
-RUNNER_RAM_BYTES = 462
+RUNNER_RAM_BYTES = 464
 #: The most RAM a task's data (`task_ram_bytes`) may take, out of a Mega's 8192 B.
-#: With the runner's own, globals stay at most 5462 B (67%), leaving the stack
-#: and the serial buffers at least 2730 B (`TASKS.md#spine-diagnostics`). An
+#: With the runner's own, globals stay at most 5464 B (67%), leaving the stack
+#: and the serial buffers at least 2728 B (`TASKS.md#spine-diagnostics`). An
 #: 18-row 2AFC fits.
 TASK_RAM_MAX = 5000
 
@@ -688,8 +688,9 @@ def profile_json(definition: TaskDefinition) -> dict[str, Any]:
                    "blocks": [list(b) for b in low.blocks],
                    "entries": [list(e) for e in low.entries],
                    "overrides": [list(o) for o in low.overrides],
-                   # InterpBlocks.skipped: the classes a criterion passes over.
-                   "skipped": low.skipped}
+                   # InterpBlocks.skipped and .hits: the classes a criterion
+                   # passes over, and those it counts as correct.
+                   "skipped": low.skipped, "hits": low.hits}
                   if low else None),
         "structural": dict(STRUCTURAL),
     }
@@ -824,7 +825,9 @@ def _block_field(spine: Spine, s: lowering.ParamSlot) -> dict[str, Any]:
     if s.role == "correction":
         return _int_field(f"{name}_correction_max", s.key, f"{label}: correction repeats", block.correction or 0,
                           group, None, 0, _CORRECTION_MAX,
-                          "How many times in a row a trial that was not correct repeats its row.")
+                          "How many times in a row an error repeats its row: a trial marked "
+                          + (", ".join(block.correction_after) if block.correction_after
+                             else " or ".join(lowering.ERROR_CLASSES)) + ".")
     if s.role == "bias_window":
         return _int_field(f"{name}_bias_window", s.key, f"{label}: anti-bias window",
                           block.bias_window or _BIAS_WINDOW_DEFAULT, group, "responses", 1, lowering.HISTORY,
@@ -972,9 +975,11 @@ def task_spine_h(definition: TaskDefinition, banner: str) -> str:
         "/*  The blocks (BoxInterp.h, InterpBlocks): {first, count, select, n_min, n_max,",
         "    k, n, window, correct, next, errors}; an entry per branch of the pick,",
         "    {side, weight}; overrides, {block, slot, with}. An empty array is left out.",
-        "    SPINE_BLOCK_SKIPPED: the classes a criterion passes over, bit c-1 for class c. */",
+        "    SPINE_BLOCK_SKIPPED and SPINE_BLOCK_HITS: the classes a criterion passes over",
+        "    and those it counts as correct, bit c-1 for class c. */",
         f"#define SPINE_NUM_BLOCKS {len(low.blocks)}",
         f"#define SPINE_BLOCK_SKIPPED {low.skipped}",
+        f"#define SPINE_BLOCK_HITS {low.hits}",
         f"#define SPINE_BLOCKS {initialiser(['{' + ', '.join(map(str, b)) + '}' for b in low.blocks])}",
         f"#define SPINE_NUM_ENTRIES {len(low.entries)}",
         *([f"#define SPINE_ENTRIES {initialiser(['{' + ', '.join(map(str, e)) + '}' for e in low.entries])}"]

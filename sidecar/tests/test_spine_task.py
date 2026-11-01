@@ -93,7 +93,8 @@ def test_the_profile_carries_everything_replay_needs():
     assert spine["table"] == {"states": [list(s) for s in low.states], "edges": [list(e) for e in low.edges],
                               "phases": [0, 1, 2, 3, 3, 3, 4, 4], "rows": [0] * 7 + [None],
                               "counter": None, "blocks": [list(b) for b in low.blocks], "entries": [],
-                              "overrides": [], "skipped": 0b11000000}
+                              "overrides": [], "skipped": 0b11000000,
+                              "hits": 0b10001}
     #                             first count select n_min n_max k    n    window correct next errors
     assert spine["table"]["blocks"] == [[0, 1, 0, 6, 6, 255, 255, 255, 255, 255, 0]]
     assert spine["params"] == list(low.params)
@@ -416,7 +417,7 @@ def test_the_ram_budget_is_what_an_avr_build_adds_for_the_task(tmp_path):
             assert counted == globals_, (globals_, counted)
         assert 0 <= counted - globals_ <= 24, (raw["id"], globals_, counted)
     assert globals_ <= spine_module.RUNNER_RAM_BYTES + spine_module.TASK_RAM_MAX
-    assert 8192 - (spine_module.RUNNER_RAM_BYTES + spine_module.TASK_RAM_MAX) == 2730
+    assert 8192 - (spine_module.RUNNER_RAM_BYTES + spine_module.TASK_RAM_MAX) == 2728
 
     # Driven outputs (TASKS.md#driven-outputs), with a tone and without one: the
     # drives and tone()'s own globals are counted too.

@@ -574,6 +574,15 @@ def test_a_criterion_skips_exactly_the_classes_p_correct_excludes():
     assert low.skipped == lowering.class_mask(table_metrics.EXCLUDED)
 
 
+def test_a_criterion_counts_exactly_the_classes_p_correct_counts_right():
+    """A criterion's correct trials are the scorer's hits, a correct withhold
+    included: one list, so a block cannot end on what P(correct) calls wrong."""
+    from ephymeris_sidecar.analytics.stream import table_metrics
+    assert set(lowering.HIT_CLASSES) == set(table_metrics.HITS) == {"correct", "withheld"}
+    low = lowering.lower(TWO_AFC, **AFC_SLOTS, rows=REVERSAL_ROWS)
+    assert low.hits == lowering.class_mask(table_metrics.HITS)
+
+
 def test_a_block_s_correction_repeats_after_its_own_classes_or_the_default_errors():
     blocks = [{"id": "a", "rows": ["go_right", "go_left"], "correction": 2},
               {"id": "b", "rows": ["go_right"], "correction": 1, "correctionAfter": ["omission", "wrong_response"]},

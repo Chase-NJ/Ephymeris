@@ -173,7 +173,8 @@ def _decode(document: dict[str, Any]) -> SpineRecord:
             blocks=(rp.Blocks(rows=[rp.Block(*b) for b in table_doc["blocks"]],
                               entries=[rp.Entry(*e) for e in table_doc.get("entries") or []],
                               overrides=[rp.Override(*o) for o in table_doc.get("overrides") or []],
-                              skipped=int(table_doc.get("skipped") or 0))
+                              skipped=int(table_doc.get("skipped") or 0),
+                              hits=int(table_doc.get("hits") or 0))
                     if table_doc.get("blocks") else None),
         )
     except (KeyError, TypeError, ValueError) as exc:

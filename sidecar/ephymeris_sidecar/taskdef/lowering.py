@@ -130,6 +130,11 @@ ERROR_CLASSES = ("wrong_response", "false_alarm")
 #: reads it, and so does a block's criterion, whose "k correct of the last n"
 #: passes over these trials (`InterpBlocks.skipped`). They still count toward N.
 EXCLUDED_CLASSES = ("abort_before_stimulus", "abort_during_sampling")
+#: The hits: classes a trial is right in. A withhold is a no-go row's correct
+#: answer. The one list of them: `analytics/stream/trial_table.py`'s `HITS`
+#: (P(correct)) reads it, and a block's criterion counts these trials as its
+#: correct ones (`InterpBlocks.hits`), so the two never disagree.
+HIT_CLASSES = ("correct", "withheld")
 
 
 def class_mask(names) -> int:  # noqa: ANN001
@@ -225,7 +230,8 @@ class Lowered:
     k, n, window, correct, next, errors); `entries` one (side, weight) per
     branch of the pick, empty when no block selects by weight or side;
     `overrides` each (block, slot, with); `skipped` the classes a criterion
-    passes over, as a bitmask (`InterpBlocks.skipped`).
+    passes over and `hits` those it counts as correct, as bitmasks
+    (`InterpBlocks.skipped`, `.hits`).
     """
 
     states: tuple[tuple[int, ...], ...]
@@ -242,6 +248,7 @@ class Lowered:
     entries: tuple[tuple[int, int], ...] = ()
     overrides: tuple[tuple[int, int, int], ...] = ()
     skipped: int = 0
+    hits: int = 0
 
 
 def block_key(kind: str, block_index: int, extra: str = "") -> str:
@@ -706,4 +713,5 @@ def lower(
         entries=tuple(entries),
         overrides=tuple(overrides),
         skipped=class_mask(EXCLUDED_CLASSES),
+        hits=class_mask(HIT_CLASSES),
     )

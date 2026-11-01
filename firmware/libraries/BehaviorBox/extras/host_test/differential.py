@@ -179,7 +179,7 @@ def raw_blocks(rng: random.Random, n_params: int, states: list[rp.StateRow]) -> 
     overrides = [rp.Override(rng.randrange(n_blocks), rng.randrange(n_params), rng.randrange(n_params))
                  for _ in range(rng.choice((0, 0, 1, 2)))]
     return rp.Blocks(rows=tuple(rows), entries=tuple(entries), overrides=tuple(overrides),
-                     skipped=rng.getrandbits(9))
+                     skipped=rng.getrandbits(9), hits=rng.getrandbits(9))
 
 
 PORT, LEFT, RIGHT = 0, 1, 2       # inputs
@@ -381,7 +381,7 @@ def _lowered(phases, inputs, outputs, rows, blocks, cap, drives=None):  # noqa: 
                      blocks=rp.Blocks(rows=[rp.Block(*b) for b in low.blocks],
                                       entries=[rp.Entry(*e) for e in low.entries],
                                       overrides=[rp.Override(*o) for o in low.overrides],
-                                      skipped=low.skipped))
+                                      skipped=low.skipped, hits=low.hits))
     return table, low
 
 
@@ -549,7 +549,8 @@ def encode(cases: list[dict]) -> str:
         lines.append("0 255 255 0" if k is None else
                      " ".join(map(str, (1, k.count_min, k.count_max, len(k.ratios), *k.ratios))))
         b = t.blocks
-        lines.append("0 0 0 0" if b is None else f"{len(b.rows)} {len(b.entries)} {len(b.overrides)} {b.skipped}")
+        lines.append("0 0 0 0 0" if b is None else
+                     f"{len(b.rows)} {len(b.entries)} {len(b.overrides)} {b.skipped} {b.hits}")
         if b is not None:
             lines.extend(" ".join(map(str, (k.first, k.count, k.select, k.n_min, k.n_max, k.k, k.n, k.window,
                                             k.correct, k.next, k.errors))) for k in b.rows)
@@ -601,7 +602,7 @@ def _mutants() -> list[tuple[str, str, object]]:
     exactly as the honest one does, so only the rule's own choice differs."""
     honest = {name: getattr(rp, name) for name in (
         "_uniform", "_by_weight", "_from_bag", "_side_weight", "_block_ends", "_start_block", "_next_block",
-        "_repeats", "_param", "_is_error", "_skips")}
+        "_repeats", "_param", "_is_error", "_skips", "_hit")}
 
     def uniform(c, k):
         return k.first + k.count - 1 - (honest["_uniform"](c, k) - k.first)
@@ -652,6 +653,9 @@ def _mutants() -> list[tuple[str, str, object]]:
     def no_skip(c, cls):
         return False
 
+    def correct_only(c, cls):
+        return cls == rp.CORRECT
+
     return [("a changed uniform draw", "_uniform", uniform),
             ("a changed weighted draw", "_by_weight", weighted),
             ("a changed shuffle bag", "_from_bag", bag),
@@ -663,7 +667,8 @@ def _mutants() -> list[tuple[str, str, object]]:
             ("a correction one repeat over", "_repeats", repeats),
             ("an override ignored", "_param", no_override),
             ("a correction after any class not correct, its error set ignored", "_is_error", any_error),
-            ("a criterion that counts aborts", "_skips", no_skip)]
+            ("a criterion that counts aborts", "_skips", no_skip),
+            ("a criterion that counts only `correct`, not every hit", "_hit", correct_only)]
 
 
 def blocks_caught(c_runs, cases) -> str | None:

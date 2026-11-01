@@ -40,7 +40,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable, Sequence
 
-from ...taskdef.lowering import EXCLUDED_CLASSES, OUTCOME_CLASSES, OUTCOME_CORRECT
+from ...taskdef.lowering import EXCLUDED_CLASSES, HIT_CLASSES, OUTCOME_CLASSES, OUTCOME_CORRECT
 from . import replay as rp
 
 CORRECT = OUTCOME_CLASSES[OUTCOME_CORRECT - 1]
@@ -50,8 +50,9 @@ CORRECT = OUTCOME_CLASSES[OUTCOME_CORRECT - 1]
 #: A withhold is a no-go row's correct answer, so a perfect go/no-go session
 #: scores 1.0. Every other class (false alarm, wrong response, omission, hold
 #: broken, one added later) is a miss, except the aborts in `EXCLUDED`; those
-#: and a trial with no class are excluded.
-HITS = frozenset({CORRECT, "withheld"})
+#: and a trial with no class are excluded. A block's criterion counts the same
+#: trials as correct (`lowering.HIT_CLASSES`).
+HITS = frozenset(HIT_CLASSES)
 
 #: The classes a trial is excluded in, as a legacy run excludes a trial the
 #: animal left before it was answered: an abort is neither right nor wrong. It

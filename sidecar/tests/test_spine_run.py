@@ -959,6 +959,18 @@ async def test_a_correct_withhold_is_never_repeated_for_correction(tmp_path, mon
     assert not any(t.correction for t in trials)
 
 
+async def test_a_go_no_go_reversal_switches_on_correct_withholds(tmp_path, monkeypatch):
+    """A criterion counts the scorer's hits, a withhold included: a no-go block
+    of 2 of the last 2 ends after two withholds, as P(correct) would call them
+    right, and the go block then runs its two trials and ends the session."""
+    raw = fixture.go_no_go(blocks=[{"id": "a", "rows": ["no_go"], "criterion": {"correct": 2, "of": 2}},
+                                   {"id": "b", "rows": ["go"], "trials": 2}])
+    document = await run_generated(tmp_path, monkeypatch, raw, {}, [(-1, -1, 0)] * 4, 60000)
+    trials = spine_stream.replayed(document).trials
+    assert [(t.block, t.outcome, t.correct) for t in trials] == [
+        ("a", "withheld", True), ("a", "withheld", True), ("b", "omission", False), ("b", "omission", False)]
+
+
 async def test_a_reversal_criterion_passes_over_aborted_trials(tmp_path, monkeypatch):
     """Aborts count toward a block's N but not in its "8 correct of the last 10":
     with three aborts among eleven trials, block a ends on the 8th correct, though

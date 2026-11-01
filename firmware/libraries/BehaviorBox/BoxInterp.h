@@ -133,7 +133,8 @@
     outcome     The outcome class this state records, or 0. Replay reads it off
                 the states a trial entered. The core reads it only in a table
                 with blocks: a trial's class is that of the last marked state it
-                entered, and it is correct when that is INTERP_CORRECT (1).
+                entered, which the block rules read through the table's class
+                sets (InterpBlocks.hits and .skipped, InterpBlock.errors).
 
   InterpEdgeRow, one per exit on an input:
     input       The input's bit number; it must be in the state's `watch`.
@@ -176,21 +177,23 @@
                 with no entries or a NONE slot.
     n_min,      Parameter slots of the block's N, drawn at its start as a counter's
     n_max       N is and held as a uint16_t; NONE: no N.
-    k, n        Parameter slots of a criterion: k correct of the last n trials
+    k, n        Parameter slots of a criterion: k hits of the last n trials
                 (n read as at most INTERP_HISTORY); NONE: none.
     window      Anti-bias's window slot, NONE for every response held.
     correct     The correction limit's slot, NONE for no correction.
     next        The block entered when this one ends; NONE: the blocks are done.
     errors      The classes its correction repeats after, bit c-1 for class c.
   InterpBlocks.skipped: the classes every criterion's window passes over, bit
-  c-1 for class c (the aborts).
+  c-1 for class c (the aborts); InterpBlocks.hits: the classes it counts as
+  correct (the scorer's hits: correct, and a correct withhold).
   InterpEntry: side (an input bit, or NONE), weight (a slot, or NONE).
   InterpOverride: while `block` runs, a state's timer or chance, or the
   counter's N, that reads slot `slot` reads `with` instead (the first match).
 
   BLOCKS. In a table with blocks, entering a state that starts a trial:
     1. The first time, starts block 0. Otherwise closes the last trial: its
-       correctness goes into `corrects` (the block's, the latest in bit 0)
+       correctness, its class in `hits`, goes into `corrects` (the block's,
+       the latest in bit 0)
        unless its class is in `skipped`, and its response, if any, into the
        ring of the last INTERP_HISTORY.
     2. The running block's end rule: it has started N trials, or k of its last
@@ -329,7 +332,6 @@
 #define INTERP_BAG 2
 #define INTERP_ANTIBIAS 3
 
-#define INTERP_CORRECT 1               // the outcome class `correct`: OUTCOME_CLASSES[0]
 #define INTERP_HISTORY 32              // responses anti-bias can read; trials a criterion can; tokens a bag holds
 #define INTERP_WEIGHT_MAX 0xFFFFUL     // a weight is read as at most this
 
@@ -409,6 +411,7 @@ typedef struct {
   uint8_t entry_count;
   uint8_t override_count;
   uint16_t skipped;            // classes a criterion's window passes over: bit c-1 for class c
+  uint16_t hits;               // classes a criterion counts as correct, as the scorer's HITS
 } InterpBlocks;
 
 typedef struct {
@@ -575,7 +578,8 @@ static inline void interp__trial(InterpCore *c, InterpActions *a)
   } else {
     // An aborted trial counts toward N but not in the criterion's window.
     if (!interp__class_in(c->table->blocks->skipped, last_outcome))
-      c->corrects = (c->corrects << 1) | (last_outcome == INTERP_CORRECT ? 1UL : 0UL);
+      c->corrects = (c->corrects << 1)
+                    | (interp__class_in(c->table->blocks->hits, last_outcome) ? 1UL : 0UL);
     if (c->response != INTERP_NONE) {
       c->hist[c->hist_at] = c->response;
       c->hist_at = (uint8_t)((c->hist_at + 1) % INTERP_HISTORY);

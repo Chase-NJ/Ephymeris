@@ -429,13 +429,9 @@ One row per trial (`stream/trial_table.py`, `ReplayTrial` on the wire). Columns,
 | `outcome` | The outcome class of the **last** outcome-bearing state (`outcome` ≠ 0) the trial entered, named by `taskdef/lowering.py`'s `OUTCOME_CLASSES`, or `outcome_<n>` for a number this build has no name for. Null when it entered none, as an abort in a table lowered before INTERP 4 does; from INTERP 4 every early exit marks its class at its end ([TASKS.md](../../../docs/TASKS.md#lowering)) |
 | `response`, `responseEdge`, `responseMs`, `latencyMs` | When the snapshot maps states to phases (`table.phases`, or the re-lowered map): the first edge exit the trial took out of a **Response window** phase's states, the window and the hold after it, with its latency from the trial's first entry into that phase. So a held response, kept or broken, is the window's edge timed from the window opening, whatever phases lie between it and the Outcome. Null for a trial a timer decided (an omission, a withhold), and in a spine with no window (the tracer). This is the one column that reads a phase kind, and only to find the window. **Without a phase map**, the fallback is structural: an edge exit out of a *deciding* state, one with two or more exits (edge rows and timer) that can reach an outcome-bearing state before the next trial starts. The last such exit before the trial's first outcome-bearing state is taken, then traced back to the first edge exit of its state's visit |
 | `rewarded`, `rewardLine`, `rewardMs` | The trial took the `on_hit` branch of a chance state that bears an outcome. The line is the outputs `on_hit` drives and `on_miss` does not; the time is the ticks actually spent in `on_hit` |
-<<<<<<< HEAD
-| `correction` | The core reported `ACT_CORRECTION` at the trial's start: its block's correction rule repeated the last trial's row ([TASKS.md](../../../docs/TASKS.md#blocks)). False for a table without blocks |
-=======
 | `outcomeMs` | The tick the trial entered the outcome-bearing state its class is read from |
 | `correct` | True when `outcome` is in `table_metrics.HITS`, false for any other class, null when it has none or its class is in `table_metrics.EXCLUDED` (an abort) |
-| `correction` | Always false: no block has a correction rule yet |
->>>>>>> origin/main
+| `correction` | The core reported `ACT_CORRECTION` at the trial's start: its block's correction rule repeated the last trial's row ([TASKS.md](../../../docs/TASKS.md#blocks)). False for a table without blocks |
 | `inputCounts` | Each watched input's rises per phase, attributed to the state held before the tick, as the interpreter attributes them. Non-zero counts only |
 | `complete` | The next trial started, or the session ended at a trial start. Only a crashed run's last trial is incomplete |
 | `presented`, `scores` | Always true, and empty: they carry a [legacy run's](#how-a-legacy-run-becomes-a-trial-table) engagement and verdicts |

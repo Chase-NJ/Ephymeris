@@ -56,7 +56,8 @@ ACT_DONE = 0x10
 ACT_CORRECTION = 0x20
 #: `InterpBlock.select`.
 UNIFORM, WEIGHTED, BAG, ANTIBIAS = 0, 1, 2, 3
-#: The outcome class `correct` (`lowering.OUTCOME_CLASSES[0]`).
+#: The outcome class `correct` (`lowering.OUTCOME_CLASSES[0]`). The core reads
+#: no class by number: a criterion's hits come from the table (`Blocks.hits`).
 CORRECT = 1
 #: Responses anti-bias can read, trials a criterion can, tokens a bag holds.
 HISTORY = 32
@@ -224,6 +225,8 @@ class Blocks:
     overrides: tuple[Override, ...] = ()
     #: The classes a criterion's window passes over: bit c-1 for class c.
     skipped: int = 0
+    #: The classes a criterion counts as correct (the scorer's hits).
+    hits: int = 0
 
     def __post_init__(self) -> None:
         for name in ("rows", "entries", "overrides"):
@@ -298,8 +301,8 @@ def _check_blocks(table: Table, b: Blocks) -> None:
         for s in table.states:
             if s.is_pick and s.flags & STARTS_TRIAL and k.first + k.count > s.edge_count:
                 raise ValueError(f"block {i}'s branches run past a trial-starting pick's")
-    if not 0 <= b.skipped <= 0xFFFF:
-        raise ValueError("the blocks' skipped classes do not fit a uint16_t")
+    if not 0 <= b.skipped <= 0xFFFF or not 0 <= b.hits <= 0xFFFF:
+        raise ValueError("the blocks' skipped and hit classes each fit a uint16_t")
     for e in b.entries:
         byte(e.side, "an entry's side")
         byte(e.weight, "an entry's weight")
@@ -526,6 +529,11 @@ def _skips(c: _Run, cls: int) -> bool:
     return _class_in(c.table.blocks.skipped, cls)  # type: ignore[union-attr]
 
 
+def _hit(c: _Run, cls: int) -> bool:
+    """Whether a trial of class `cls` counts as correct in a criterion (the scorer's hits)."""
+    return _class_in(c.table.blocks.hits, cls)  # type: ignore[union-attr]
+
+
 def _is_error(k: Block, cls: int) -> bool:
     """Whether a trial of class `cls` is one block `k`'s correction repeats after."""
     return _class_in(k.errors, cls)
@@ -572,7 +580,7 @@ def _trial(c: _Run, a: _Tick) -> None:
     else:
         # An aborted trial counts toward N but not in the criterion's window.
         if not _skips(c, last_outcome):
-            c.corrects = ((c.corrects << 1) | (1 if last_outcome == CORRECT else 0)) & _U32
+            c.corrects = ((c.corrects << 1) | (1 if _hit(c, last_outcome) else 0)) & _U32
         if c.response != NONE:
             c.hist[c.hist_at] = c.response
             c.hist_at = (c.hist_at + 1) % HISTORY

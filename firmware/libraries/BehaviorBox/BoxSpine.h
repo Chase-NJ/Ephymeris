@@ -106,8 +106,8 @@
 #error "TaskSpine.h names no counter (SPINE_COUNT_MIN, SPINE_RATIOS): save the task again."
 #endif
 #if !defined(SPINE_NUM_BLOCKS) || !defined(SPINE_TRIALS_SLOT) || !defined(SPINE_NUM_PAIRS) \
-    || !defined(SPINE_BLOCK_SKIPPED)
-#error "TaskSpine.h names no blocks (SPINE_BLOCKS, SPINE_TRIALS_SLOT, SPINE_PAIRS): save the task again."
+    || !defined(SPINE_BLOCK_SKIPPED) || !defined(SPINE_BLOCK_HITS)
+#error "TaskSpine.h names no blocks (SPINE_NUM_BLOCKS, SPINE_TRIALS_SLOT, SPINE_NUM_PAIRS, SPINE_BLOCK_SKIPPED, SPINE_BLOCK_HITS): save the task again."
 #endif
 
 /* The generator holds a task's RAM to a budget at save, counting these rows and
@@ -302,7 +302,7 @@ static const uint8_t kPairs[][2] = SPINE_PAIRS;
 #endif
 static const InterpBlocks kBlocks = {kBlockRows, BOX_SPINE_ENTRIES, BOX_SPINE_OVERRIDES,
                                      SPINE_NUM_BLOCKS, SPINE_NUM_ENTRIES, SPINE_NUM_OVERRIDES,
-                                     SPINE_BLOCK_SKIPPED};
+                                     SPINE_BLOCK_SKIPPED, SPINE_BLOCK_HITS};
 static const InterpTable kTable = {kStates, kEdges, &kCounter, &kBlocks};
 
 /* The run's parameter block, filled from the table's defaults and the SET lines. */

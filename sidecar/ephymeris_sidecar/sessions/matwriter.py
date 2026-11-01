@@ -13,8 +13,10 @@ three places:
   with `_` with only a warning, and sizes a char array in code points where
   MATLAB counts UTF-16 code units, so a character outside the BMP would yield
   a char array whose dimensions disagree with its data. Both raise here
-  instead. The task profile, the one field carrying operator-written labels,
-  is ASCII-escaped JSON and can't trip the second.
+  instead, for a top-level string such as an animal name. The fields that
+  carry operator-written labels can't trip the second: the task profile is
+  ASCII-escaped JSON, and `derived` escapes each such character the same way
+  (`derived._bmp`).
 
 scipy is imported on first use, never at module scope, so a broken install
 costs the `.mat` and nothing else; `preload` takes that first-use cost at

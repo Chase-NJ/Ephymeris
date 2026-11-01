@@ -171,6 +171,19 @@ def to_matlab(block: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _bmp(text: str) -> str:
+    """`text` with each character outside the BMP escaped as JSON escapes it
+    (`\\ud83d\\udc2d`), as the embedded profile's labels always were.
+
+    `savemat` sizes a char array in code points where MATLAB counts UTF-16
+    code units, so such a character would be written wrongly
+    (`DATA.md#the-mat-mirror`). Escaped, a row, channel or phase name with an
+    emoji never costs the run its `.mat`, and `jsondecode(['"' s '"'])` gives
+    it back.
+    """
+    return "".join(c if ord(c) <= 0xFFFF else json.dumps(c)[1:-1] for c in text)
+
+
 def _mat(kind: _Kind, value: Any) -> Any:
     import numpy as np
 
@@ -179,11 +192,7 @@ def _mat(kind: _Kind, value: Any) -> Any:
     if kind.name == "bool":
         return bool(value)
     if kind.name == "text":
-        text = "" if value is None else str(value)
-        if any(ord(c) > 0xFFFF for c in text):
-            # As `matwriter.to_matlab` refuses: savemat would size it wrongly.
-            raise ValueError(f"{text!r} has a character outside the BMP, which savemat would size wrongly")
-        return text
+        return _bmp("" if value is None else str(value))
     if kind.name == "numbers":
         return np.asarray([math.nan if v is None else float(v) for v in value or []],
                           dtype=np.float64).reshape(1, -1)
@@ -205,16 +214,21 @@ def _mat(kind: _Kind, value: Any) -> Any:
 
 def rederive_file(json_path: Path) -> dict[str, Any] | None:
     """Re-derive one run's block (`DATA.md#re-derive`), as a `RederivedRun`
-    entry, or None for a file that is not a spine run (or does not parse).
+    entry plus `written`, the files it wrote; or None for a file that is not
+    a spine run (or does not parse). The `.tsv` is never opened.
 
-    Rewrites the `.mat` and then the `.json` only when the stored block
-    differs from what this build derives; every other key is written back as
-    read. A write that fails leaves the run failed, to try again. The `.tsv`
-    is never opened.
+    - A block this build may not replace is `skipped`: one a newer replay
+      derived, or a replayed (`ok`) one this build cannot replay.
+    - A block that differs from what this build derives is written into the
+      `.json`, every other key as read. A `.json` that fails changes nothing.
+    - Then the `.mat`, from the same document, whenever the `.json` changed or
+      the `.mat` is older than it (or missing). One that fails never holds the
+      `.json` back: it is reported as `matError`, and the next Re-derive finds
+      it older than its `.json` and writes it.
+    - Otherwise the run is `current` and nothing is written.
     """
     # Here, not at the top: both import this module.
-    from . import matwriter
-    from .writer import write_atomic
+    from . import matwriter, writer
 
     try:
         document = json.loads(json_path.read_text(encoding="utf-8"))
@@ -222,7 +236,8 @@ def rederive_file(json_path: Path) -> dict[str, Any] | None:
         return None  # a torn or unreadable file is Recover's, and the rescan reports it
     if not isinstance(document, dict) or not spine.is_spine_run(document):
         return None
-    entry: dict[str, Any] = {"jsonPath": str(json_path), "status": "failed", "reason": None}
+    entry: dict[str, Any] = {"jsonPath": str(json_path), "status": "failed", "reason": None,
+                             "matError": None, "written": []}
     rest = {key: value for key, value in document.items() if key != DERIVED_KEY}
     try:
         block = derive(rest)
@@ -230,37 +245,74 @@ def rederive_file(json_path: Path) -> dict[str, Any] | None:
         log.exception("couldn't re-derive %s", json_path)
         entry["reason"] = f"couldn't replay it: {exc!r}"
         return entry
-    if document.get(DERIVED_KEY) == block:
+    stored = document.get(DERIVED_KEY)
+    held = _kept(stored, block)
+    if held is not None:
+        entry.update(status="skipped", reason=held)
+        return entry
+
+    mat_path = reader.sibling_mat(reader.sibling_tsv(json_path))
+    if stored != block:
+        document = {**rest, DERIVED_KEY: block}
+        try:
+            writer.write_atomic(json_path, json.dumps(document, indent=2))
+        except OSError as exc:
+            entry["reason"] = f"couldn't write {json_path.name}: {exc}"
+            return entry
+        entry["written"].append(str(json_path))
+        entry["status"] = "rewritten"
+    elif _no_older(mat_path, json_path):
         entry["status"] = "current"
         return entry
-    rewritten = {**rest, DERIVED_KEY: block}
-    # The `.mat` first: were the `.json` rewritten past a `.mat` that failed,
-    # the run would read as current from then on and the `.mat` keep the old
-    # table. This way a failure leaves both as they were, to try again.
-    mat_path = reader.sibling_mat(reader.sibling_tsv(json_path))
+
     try:
         mat_path.parent.mkdir(parents=True, exist_ok=True)
-        write_atomic(mat_path, lambda part: matwriter.savemat(str(part), rewritten))
+        writer.write_atomic(mat_path, lambda part: matwriter.savemat(str(part), document))
     except Exception as exc:  # noqa: BLE001 - scipy missing, a full disk, a value it can't write
         log.error("couldn't write %s: %s", mat_path, exc)
-        entry["reason"] = f"couldn't write {mat_path.name}: {exc}"
+        entry["matError"] = f"couldn't write {mat_path.name}: {exc}"
+        if entry["status"] != "rewritten":
+            entry["reason"] = entry["matError"]
         return entry
-    try:
-        write_atomic(json_path, json.dumps(rewritten, indent=2))
-    except OSError as exc:
-        entry["reason"] = f"couldn't write {json_path.name}: {exc}"
-        return entry
+    entry["written"].append(str(mat_path))
     entry["status"] = "rewritten"
     return entry
 
 
+def _kept(stored: Any, block: dict[str, Any]) -> str | None:
+    """Why a stored block must not be replaced by `block`, or None.
+
+    Two lab machines on different builds can share one archive, so an older
+    build must never undo a newer one's work.
+    """
+    if not isinstance(stored, dict):
+        return None
+    version = stored.get("replay_version")
+    if _is_int(version) and version > spine.REPLAY_VERSION:
+        return (f"its table was derived by a newer replay (version {version}; this "
+                f"build's is {spine.REPLAY_VERSION})")
+    if stored.get("status") == "ok" and block["status"] == "unreplayable":
+        return f"this build cannot replay it ({block['detail']}), and a build that could derived its table"
+    return None
+
+
+def _no_older(mat_path: Path, json_path: Path) -> bool:
+    """The `.mat` is there and no older than its `.json`, which is always
+    written first, so it was written from that `.json`'s document."""
+    try:
+        return mat_path.stat().st_mtime_ns >= json_path.stat().st_mtime_ns
+    except OSError:
+        return False
+
+
 def rederive_cohort(data_folder: str) -> dict[str, Any]:
     """Re-derive every spine run under one cohort's data folder, as the
-    `RederiveResult` wire shape minus `cohortId`. Current runs are counted,
-    not listed."""
+    `RederiveResult` wire shape minus `cohortId`, plus `written`: every file
+    it wrote, for the backup queue. Current runs are counted, not listed."""
     folder_exists = Path(data_folder).expanduser().is_dir()
     paths = reader.walk_session_files(data_folder) if folder_exists else []
     entries = [e for e in (rederive_file(p) for p in paths) if e is not None]
+    written = [path for e in entries for path in e.pop("written")]
 
     def count(status: str) -> int:
         return sum(1 for e in entries if e["status"] == status)
@@ -269,8 +321,11 @@ def rederive_cohort(data_folder: str) -> dict[str, Any]:
         "scanned": len(entries),
         "rewritten": count("rewritten"),
         "current": count("current"),
+        "skipped": count("skipped"),
         "failed": count("failed"),
         "entries": [e for e in entries if e["status"] != "current"],
         "dataFolder": data_folder,
         "folderMissing": not folder_exists,
+        # Not on the wire: what to queue for backup, file by file.
+        "written": written,
     }

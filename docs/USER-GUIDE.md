@@ -846,7 +846,8 @@ These buttons are at the top of Analytics. Use them when the lab manager asks, o
   the app or computer crashed during a session. It is refused while any box is running.
 - **Re-derive** rewrites the trial table stored in each spine task run's `.json` and `.mat`, for your own
   MATLAB or Python scripts. Use it after an update whose notes say the trial table changed. It changes only
-  that table, never the recorded strobes, and leaves alone a file that is already current. Nothing in
+  that table, never the recorded strobes, and leaves alone a file that is already current or that a newer
+  version of Ephymeris (on the other lab machine, say) wrote. Nothing in
   Analytics changes, because Analytics works the trials out afresh every time. It is refused while any box
   is running.
 - **Tidy records** merges one session that ended up as two records (for example after starting the same

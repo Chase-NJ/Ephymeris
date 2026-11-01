@@ -1680,12 +1680,19 @@ export interface RederivedRun {
   /** The run's `.json`; its `.mat` is the sibling in the session's mat folder. */
   jsonPath: string;
   /**
-   * `rewritten`: its derived block differed from what this build derives, so the `.json` and
-   * `.mat` were rewritten with it. A run whose block is current is counted, never listed.
+   * `rewritten`: its `.json` was rewritten with this build's table, or its `.mat` was older than
+   * its `.json` and was written from it. `skipped`: a newer replay derived its table, or it was
+   * replayed (`ok`) and this build cannot replay it; nothing was written. `failed`: nothing was
+   * written. A current run is counted, never listed.
    */
-  status: "rewritten" | "failed";
-  /** Why it failed, when it did. */
+  status: "rewritten" | "skipped" | "failed";
+  /** Why it was skipped or failed, when it was. */
   reason: string | null;
+  /**
+   * Why its `.mat` could not be written, when it could not. Never holds the `.json` back; the
+   * next Re-derive finds the `.mat` older than its `.json` and writes it.
+   */
+  matError: string | null;
 }
 
 /** What `sessions.rederive` did to a cohort's spine runs (`DATA.md#re-derive`). */
@@ -1699,6 +1706,12 @@ export interface RederiveResult {
   rewritten: number;
   /** Runs whose stored block already equals what this build derives: left untouched. */
   current: number;
+  /**
+   * Runs this build must not rewrite: a newer replay derived their table, or they were replayed
+   * and this build does not know their INTERP. Two lab machines on different builds can share one
+   * archive.
+   */
+  skipped: number;
   /** Runs that could not be replayed or written; each is listed with why. */
   failed: number;
   /** The rewritten and failed runs. */

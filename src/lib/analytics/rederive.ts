@@ -21,9 +21,16 @@ export function describeRederive(result: RederiveResult): string {
       ? `Every trial table is current (${runs(result.scanned)})`
       : `Rewrote the trial table of ${result.rewritten} of ${runs(result.scanned)}`,
   ];
+  if (result.skipped > 0) {
+    parts.push(
+      `left ${runs(result.skipped)} a newer version derived alone`,
+    );
+  }
   for (const entry of result.entries) {
     if (entry.status === "failed") {
       parts.push(`${entry.jsonPath}: ${entry.reason ?? "failed"}`);
+    } else if (entry.matError) {
+      parts.push(`${entry.jsonPath}: ${entry.matError}`);
     }
   }
   return `${parts.join("; ")}.`;

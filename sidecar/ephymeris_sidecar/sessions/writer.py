@@ -174,13 +174,9 @@ class AnimalWriter:
         self._finalized = True
         self._stop_reason = stop_reason
 
-        # A spine run's trial table, replayed here, in this worker thread, once
-        # (`DATA.md#the-derived-trial-table`): tens of milliseconds for a long run,
-        # and never able to cost the run its files.
-        document = derived.with_derived(self._document(stop_reason))
-        self._final = document
-
         # Footer: the two fields not knowable at header time (`DATA.md#the-tsv-log`).
+        # First, and fsync'd, so that nothing after it (the replay below) can
+        # cost the run its recorded stop reason.
         if self._tsv is not None:
             try:
                 self._tsv.write(f"# stop_reason: {stop_reason}\n")
@@ -189,6 +185,12 @@ class AnimalWriter:
             finally:
                 self._tsv.close()
                 self._tsv = None
+
+        # A spine run's trial table, replayed here, in this worker thread, once
+        # (`DATA.md#the-derived-trial-table`): tens of milliseconds for a long run,
+        # and never able to cost the run its files.
+        document = derived.with_derived(self._document(stop_reason))
+        self._final = document
 
         # Structured formats, built once from the same list (`DATA.md#built-once-at-the-end`). A failure
         # here doesn't cost data — the .tsv already holds everything durably.

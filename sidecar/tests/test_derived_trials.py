@@ -239,6 +239,29 @@ def test_a_derivation_that_fails_never_costs_the_json(tmp_path: Path, monkeypatc
     assert mat.is_file()
 
 
+def test_the_footer_is_durable_before_the_replay_starts(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    """A kill while the trial table is derived must not cost the run its stop
+    reason: the `.tsv` footer is written and fsync'd first."""
+
+    class Killed(BaseException):
+        """The process dying mid-derive: nothing below `finalize` catches it."""
+
+    def killed(_document):  # noqa: ANN001, ANN202
+        raise Killed
+
+    monkeypatch.setattr(spine_stream, "replayed", killed)
+    with pytest.raises(Killed):
+        run_through_writer(tmp_path, recorded_document())
+    tsv, json_path, _ = files(tmp_path)
+    assert not json_path.exists()
+
+    monkeypatch.undo()
+    fixture.install()
+    entry = recovery.recover_file(tsv)
+    assert entry["stopReason"] == "BF_END_SESSION received", "the footer's reason, not a crash"
+    assert read_json(json_path)[DERIVED]["status"] == "ok"
+
+
 # --- Analytics never reads it -------------------------------------------------
 
 
@@ -299,7 +322,9 @@ async def test_rederive_rewrites_only_the_derived_table(rig) -> None:  # noqa: A
 
     result = await rig.archive.rederive(rig.cohort.id)
     assert (result["scanned"], result["rewritten"], result["current"], result["failed"]) == (1, 1, 0, 0)
-    assert result["entries"] == [{"jsonPath": str(json_path), "status": "rewritten", "reason": None}]
+    assert result["entries"] == [{"jsonPath": str(json_path), "status": "rewritten", "reason": None,
+                                  "matError": None}]
+    assert result["skipped"] == 0 and "written" not in result, "the backup list stays off the wire"
     assert result["cohortId"] == rig.cohort.id
 
     assert json_path.read_text(encoding="utf-8") == finalized, \
@@ -339,15 +364,22 @@ async def test_rederive_fills_in_a_spine_run_with_no_table_and_skips_a_legacy_ru
     assert legacy.read_bytes() == legacy_bytes
 
 
-async def test_a_mat_rederive_could_not_write_leaves_the_run_to_try_again(rig, monkeypatch) -> None:  # noqa: ANN001, F811
-    """The two files never disagree: a `.json` rewritten past a failed `.mat`
-    would read as current forever, and the `.mat` would keep the old table."""
+def stale_on_disk(json_path: Path, **block_edits) -> dict:  # noqa: ANN003
+    """Rewrite a run's `.json` with its derived block edited, as an older (or
+    newer) build would have left it."""
+    stale = read_json(json_path)
+    stale[DERIVED] = {**stale[DERIVED], **block_edits}
+    json_path.write_text(json.dumps(stale, indent=2), encoding="utf-8")
+    return stale
+
+
+async def test_rederive_refreshes_the_json_when_the_mat_cannot_be_written(rig, monkeypatch) -> None:  # noqa: ANN001, F811
+    """A `.mat` that cannot be written never holds the `.json` back, is
+    reported on its own, and is written by the next Re-derive that can."""
     from ephymeris_sidecar.sessions import matwriter
 
-    _, json_path, _ = run_through_writer(rig.root, recorded_document())
-    stale = read_json(json_path)
-    stale[DERIVED] = {**stale[DERIVED], "replay_version": 0}
-    json_path.write_text(json.dumps(stale, indent=2), encoding="utf-8")
+    _, json_path, mat = run_through_writer(rig.root, recorded_document())
+    stale_on_disk(json_path, replay_version=0)
     real = matwriter.savemat
 
     def full_disk(*_args):  # noqa: ANN002, ANN202
@@ -355,12 +387,101 @@ async def test_a_mat_rederive_could_not_write_leaves_the_run_to_try_again(rig, m
 
     monkeypatch.setattr(matwriter, "savemat", full_disk)
     result = await rig.archive.rederive(rig.cohort.id)
-    assert result["failed"] == 1 and "disk full" in result["entries"][0]["reason"]
-    assert read_json(json_path) == stale, "the .json is left for the next Re-derive"
-    assert not rig.changes
+    [entry] = result["entries"]
+    assert (result["rewritten"], result["failed"], entry["status"]) == (1, 0, "rewritten")
+    assert "disk full" in entry["matError"]
+    assert read_json(json_path)[DERIVED]["replay_version"] == spine_stream.REPLAY_VERSION
+    assert rig.changes[-1].files_to_back_up == (str(json_path),), "only what changed is queued"
 
     monkeypatch.setattr(matwriter, "savemat", real)
-    assert (await rig.archive.rederive(rig.cohort.id))["rewritten"] == 1
+    again = await rig.archive.rederive(rig.cohort.id)
+    assert again["rewritten"] == 1 and again["entries"][0]["matError"] is None, \
+        "the .json is current, but its .mat is older than it, so the .mat is written"
+    assert rig.changes[-1].files_to_back_up == (str(mat),)
+    assert float(load_mat(mat)[DERIVED][0, 0]["replay_version"][0, 0]) == spine_stream.REPLAY_VERSION
+    assert (await rig.archive.rederive(rig.cohort.id))["current"] == 1
+
+
+async def test_a_json_rederive_could_not_write_changes_nothing(rig, monkeypatch) -> None:  # noqa: ANN001, F811
+    from ephymeris_sidecar.sessions import matwriter, writer
+
+    _, json_path, mat = run_through_writer(rig.root, recorded_document())
+    stale = stale_on_disk(json_path, replay_version=0)
+    matwriter.savemat(str(mat), stale)  # the .mat as stale as the .json
+    mat_bytes = mat.read_bytes()
+    real = writer.write_atomic
+
+    def refuse_json(path, data):  # noqa: ANN001, ANN202
+        if Path(path).suffix == ".json":
+            raise OSError("permission denied")
+        real(path, data)
+
+    monkeypatch.setattr(writer, "write_atomic", refuse_json)
+    result = await rig.archive.rederive(rig.cohort.id)
+    assert result["failed"] == 1 and "permission denied" in result["entries"][0]["reason"]
+    assert read_json(json_path) == stale and mat.read_bytes() == mat_bytes, "both as they were"
+    assert not rig.changes
+
+
+async def test_rederive_never_overwrites_a_table_from_a_newer_replay(rig) -> None:  # noqa: ANN001, F811
+    """Two machines on different builds can share one archive."""
+    _, json_path, _ = run_through_writer(rig.root, recorded_document())
+    newer = stale_on_disk(json_path, replay_version=spine_stream.REPLAY_VERSION + 1, trials=[])
+    result = await rig.archive.rederive(rig.cohort.id)
+    assert (result["skipped"], result["rewritten"]) == (1, 0)
+    [entry] = result["entries"]
+    assert entry["status"] == "skipped" and "newer" in entry["reason"]
+    assert read_json(json_path) == newer and not rig.changes
+
+
+async def test_rederive_never_replaces_a_replayed_table_with_unreplayable(rig, monkeypatch) -> None:  # noqa: ANN001, F811
+    """A build that does not know a run's INTERP has nothing to say about its table."""
+    from ephymeris_sidecar.analytics.stream import replay
+
+    _, json_path, _ = run_through_writer(rig.root, recorded_document())
+    before = json_path.read_bytes()
+    monkeypatch.setattr(replay, "INTERP_VERSIONS", frozenset({99}))
+    result = await rig.archive.rederive(rig.cohort.id)
+    assert (result["skipped"], result["rewritten"]) == (1, 0)
+    assert "INTERP" in result["entries"][0]["reason"]
+    assert json_path.read_bytes() == before and not rig.changes
+
+
+EMOJI = "\U0001F42D"
+
+
+def test_a_name_outside_the_bmp_is_escaped_never_costing_the_mat(tmp_path: Path) -> None:
+    """A row, channel or phase name with an emoji: escaped as JSON escapes it,
+    as the embedded profile always was, so the `.mat` is still written."""
+    import scipy.io
+
+    from ephymeris_sidecar.sessions import derived, matwriter
+
+    block = derived.derive(recorded_document())
+    block["phases"][1] = f"present {EMOJI}"
+    block["trials"][0]["row_name"] = f"Odor 1 {EMOJI}"
+    block["trials"][0]["input_counts"][0]["channel"] = f"port {EMOJI}"
+    path = tmp_path / "run.mat"
+    matwriter.savemat(str(path), {"rat": "remy1", DERIVED: block})
+
+    got = scipy.io.loadmat(str(path))[DERIVED][0, 0]
+    escaped = json.dumps(EMOJI)[1:-1]  # 🐭
+    assert str(got["phases"][0][1][0]) == f"present {escaped}"
+    first = got["trials"][0, 0]
+    assert mat_value(first["row_name"]) == f"Odor 1 {escaped}"
+    assert mat_value(first["input_counts"][0, 0]["channel"]) == f"port {escaped}"
+    assert json.loads(f'"{mat_value(first["row_name"])}"') == f"Odor 1 {EMOJI}", "jsondecode gives it back"
+
+
+async def test_an_animal_name_outside_the_bmp_never_holds_the_json_back(rig) -> None:  # noqa: ANN001, F811
+    """A top-level string the `.mat` still refuses (`DATA.md#the-mat-mirror`):
+    Re-derive refreshes the `.json` and reports the `.mat` apart."""
+    _, json_path, mat = run_through_writer(rig.root, {**recorded_document(), "rat": f"remy{EMOJI}"})
+    assert DERIVED in read_json(json_path) and not mat.exists()
+    stale_on_disk(json_path, replay_version=0)
+    [entry] = (await rig.archive.rederive(rig.cohort.id))["entries"]
+    assert entry["status"] == "rewritten" and "BMP" in entry["matError"]
+    assert read_json(json_path)[DERIVED]["replay_version"] == spine_stream.REPLAY_VERSION
 
 
 async def test_rederive_is_refused_while_a_box_is_writing(rig) -> None:  # noqa: ANN001, F811

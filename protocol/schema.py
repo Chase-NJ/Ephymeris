@@ -1738,12 +1738,21 @@ SHAPES = (
             f("jsonPath", STR, doc="The run's `.json`; its `.mat` is the sibling in the session's mat folder."),
             f(
                 "status",
-                lit("rewritten", "failed"),
-                doc="`rewritten`: its derived block differed from what this build derives, so the "
-                "`.json` and `.mat` were rewritten with it. A run whose block is current is "
-                "counted, never listed.",
+                lit("rewritten", "skipped", "failed"),
+                doc="`rewritten`: its `.json` was rewritten with this build's table, or its `.mat` "
+                "was older than its `.json` and was written from it. `skipped`: a newer replay "
+                "derived its table, or it was replayed (`ok`) and this build cannot replay it; "
+                "nothing was written. `failed`: nothing was written. A current run is counted, "
+                "never listed.",
             ),
-            f("reason", nullable(STR), doc="Why it failed, when it did."),
+            f("reason", nullable(STR), doc="Why it was skipped or failed, when it was."),
+            f(
+                "matError",
+                nullable(STR),
+                doc="Why its `.mat` could not be written, when it could not. Never holds the "
+                "`.json` back; the next Re-derive finds the `.mat` older than its `.json` and "
+                "writes it.",
+            ),
         ),
         doc="One spine run Re-derive rewrote or could not (`DATA.md#re-derive`).",
     ),
@@ -1758,6 +1767,13 @@ SHAPES = (
             ),
             f("rewritten", INT, doc="Runs whose `.json` and `.mat` were rewritten with this build's table."),
             f("current", INT, doc="Runs whose stored block already equals what this build derives: left untouched."),
+            f(
+                "skipped",
+                INT,
+                doc="Runs this build must not rewrite: a newer replay derived their table, or they "
+                "were replayed and this build does not know their INTERP. Two lab machines on "
+                "different builds can share one archive.",
+            ),
             f("failed", INT, doc="Runs that could not be replayed or written; each is listed with why."),
             f("entries", ListOf(Ref("RederivedRun")), doc="The rewritten and failed runs."),
             f("cohortId", STR, doc="The cohort asked about."),

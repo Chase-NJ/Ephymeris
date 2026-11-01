@@ -7,6 +7,7 @@ function result(overrides: Partial<RederiveResult> = {}): RederiveResult {
     scanned: 3,
     rewritten: 0,
     current: 3,
+    skipped: 0,
     failed: 0,
     entries: [],
     cohortId: "c1",
@@ -30,13 +31,30 @@ describe("describeRederive", () => {
         current: 1,
         failed: 1,
         entries: [
-          { jsonPath: "/a.json", status: "rewritten", reason: null },
-          { jsonPath: "/b.json", status: "failed", reason: "disk full" },
+          { jsonPath: "/a.json", status: "rewritten", reason: null, matError: null },
+          { jsonPath: "/b.json", status: "failed", reason: "disk full", matError: null },
         ],
       }),
     );
     expect(note).toBe(
       "Rewrote the trial table of 1 of 3 spine runs; /b.json: disk full.",
+    );
+  });
+
+  it("names runs left to a newer version, and a .mat that wasn't written", () => {
+    const note = describeRederive(
+      result({
+        rewritten: 1,
+        current: 1,
+        skipped: 1,
+        entries: [
+          { jsonPath: "/a.json", status: "rewritten", reason: null, matError: "couldn't write a.mat: disk full" },
+          { jsonPath: "/c.json", status: "skipped", reason: "newer", matError: null },
+        ],
+      }),
+    );
+    expect(note).toBe(
+      "Rewrote the trial table of 1 of 3 spine runs; left 1 spine run a newer version derived alone; /a.json: couldn't write a.mat: disk full.",
     );
   });
 

@@ -58,7 +58,7 @@ RESCAN_WHILE_WRITING = (
 
 
 class ArchiveBusy(Exception):
-    """A scan, tidy, relocate, move or recover already holds the archive."""
+    """A scan, tidy, relocate, move, recover or re-derive already holds the archive."""
 
 
 class RigInUse(Exception):
@@ -419,30 +419,16 @@ class CohortArchive:
         `RederiveResult` wire shape.
 
         Refused while a box runs, as `recover` is: a finishing run writes
-        its own `.json`. What it rewrote is queued for backup.
+        its own `.json`. Every file it wrote, and only those, is queued for
+        backup.
         """
         from ..sessions import derived  # sessions imports analytics.reader
 
         async with self.write(refuse_while="writing", because=REDERIVE_WHILE_WRITING) as write:
             cohort = await asyncio.to_thread(self._cohorts.get, cohort_id)
             result = await asyncio.to_thread(derived.rederive_cohort, cohort.data_folder)
-            write.changed(files=await asyncio.to_thread(_rederived_files, result["entries"]))
+            write.changed(files=result.pop("written"))
         return {**result, "cohortId": cohort_id}
-
-
-def _rederived_files(entries: list[dict[str, Any]]) -> list[Path]:
-    """The files a Re-derive wrote: each rewritten `.json`, and its `.mat`
-    when that best-effort write landed."""
-    files: list[Path] = []
-    for entry in entries:
-        if entry["status"] != "rewritten":
-            continue
-        json_path = Path(entry["jsonPath"])
-        files.append(json_path)
-        mat = reader.sibling_mat(reader.sibling_tsv(json_path))
-        if mat.is_file():
-            files.append(mat)
-    return files
 
 
 def _recovered_files(entries: list[dict[str, Any]]) -> list[Path]:

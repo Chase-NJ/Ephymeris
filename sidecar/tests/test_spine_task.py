@@ -75,7 +75,8 @@ def test_the_table_names_pins_and_codes_from_the_rig_and_the_vocabulary(tmp_path
     assert f"{{{port.index}, 0, {port.debounce_ms}, BF_ODOR_PORT_ENTER, BF_ODOR_PORT_EXIT}}" in header
     assert f"{{{light.index}, BF_TRIAL_LIGHT_ON, BF_TRIAL_LIGHT_OFF}}" in header
     assert "#define SPINE_NUM_STATES 8" in header and "#define SPINE_NUM_EDGES 2" in header
-    assert '{"NT", 20UL, 1UL, ' in header and '{"T1", 1000UL, 0UL, ' in header
+    assert '{"BN1", 20UL, 1UL, ' in header and '{"T1", 1000UL, 0UL, ' in header
+    assert "#define SPINE_TRIALS_SLOT 255" in header, "no session cap: the one block ends the session"
     pins = generate.task_pins_h(tracer())
     assert f"#define BF_ODOR_PORT_ENTER {vocab.code_of('ODOR_PORT_ENTER')}" in pins
     assert f"#define BF_TRIAL_START {vocab.code_of('TRIAL_START')}" in pins
@@ -85,17 +86,22 @@ def test_the_profile_carries_everything_replay_needs():
     profile = generate.build_profile(tracer())
     spine = profile.spine
     low = lowering.lower([p.to_json() for p in tracer().spine.phases],
-                         inputs=["port"], outputs=["cue", "sample", "reward"])
+                         inputs=["port"], outputs=["cue", "sample", "reward"],
+                         rows=[r.to_json() for r in tracer().spine.rows],
+                         blocks=[b.to_json() for b in tracer().spine.blocks])
     assert spine["interp"] == lowering.INTERP_VERSION
     assert spine["table"] == {"states": [list(s) for s in low.states], "edges": [list(e) for e in low.edges],
                               "phases": [0, 1, 2, 3, 3, 3, 4, 4], "rows": [0] * 7 + [None],
-                              "counter": None}
+                              "counter": None, "blocks": [list(b) for b in low.blocks], "entries": [],
+                              "overrides": []}
+    #                             first count select n_min n_max k    n    window correct next
+    assert spine["table"]["blocks"] == [[0, 1, 0, 6, 6, 255, 255, 255, 255, 255]]
     assert spine["params"] == list(low.params)
     assert spine["inputs"] == [{"slot": "port", "channel": "odor_port",
                                 "rise": "ODOR_PORT_ENTER", "fall": "ODOR_PORT_EXIT"}]
     assert [o["channel"] for o in spine["outputs"]] == ["trial_light", "odor_line_1", "fluid_2"]
-    assert spine["structural"] == {"sessionStart": "START_SESSION", "trialStart": "TRIAL_START",
-                                   "sessionEnd": "END_SESSION"}
+    assert spine["structural"] == {"sessionStart": "START_SESSION", "blockStart": "BLOCK_START",
+                                   "trialStart": "TRIAL_START", "sessionEnd": "END_SESSION"}
     # Every parameter slot is a declared field, so its value reaches the header.
     assert [f.wire_key for f in profile.config] == list(low.params)
     assert profile.live_metrics == [] and profile.end_code == registry.vocabulary().code_of("END_SESSION")
@@ -116,10 +122,10 @@ def test_a_legacy_profile_carries_no_spine_and_hashes_as_before():
 
 
 def test_the_set_lines_carry_every_parameter_and_an_override_wins():
-    definition = tracer(params={"block_trials": 5})
+    definition = tracer(params={"block_b1_trials": 5})
     command = build_start_command(generate.build_profile(definition), {})
     tokens = list(command.tokens)
-    assert "NT=5" in tokens and "T1=1000" in tokens and "RW1=100" in tokens and "RP1=1000" in tokens
+    assert "BN1=5" in tokens and "T1=1000" in tokens and "RW1=100" in tokens and "RP1=1000" in tokens
 
 
 def test_a_rig_whose_edges_have_no_codes_is_diagnosed():
@@ -149,7 +155,7 @@ def test_a_task_with_a_window_and_rows_round_trips_and_is_clean(make):
 def test_the_go_no_go_snapshot_names_each_bit_and_annotates_each_state():
     definition = TaskDefinition.from_json(fixture.go_no_go())
     spine = generate.build_profile(definition).spine
-    assert spine["interp"] == lowering.INTERP_VERSION == 4
+    assert spine["interp"] == lowering.INTERP_VERSION == 5
     # One bit per channel: `sample` is two odor lines, one per row.
     assert [(o["slot"], o["channel"]) for o in spine["outputs"]] == [
         ("cue", "trial_light"), ("sample", "odor_line_1"), ("sample", "odor_line_2"), ("reward", "fluid_2")]
@@ -169,7 +175,6 @@ def test_each_row_and_entry_has_its_own_parameter_keyed_by_row_id():
     profile = generate.build_profile(TaskDefinition.from_json(fixture.two_afc()))
     fields = {f.metadata_key: (f.wire_key, f.default) for f in profile.config}
     assert fields == {
-        "block_trials": ("NT", 20),
         "present_1_ms": ("T1", 1000),
         "response_2_ms": ("T2", 5000),
         "response_2_hold_ms": ("H2", 200),
@@ -179,18 +184,19 @@ def test_each_row_and_entry_has_its_own_parameter_keyed_by_row_id():
         "reward_permille_odor_1_right": ("RP1_2", 1000),
         "reward_ms_odor_2": ("RW2", 100),
         "reward_permille_odor_2_left": ("RP2_1", 1000),
+        "block_b1_trials": ("BN1", 20),
     }
     assert [f.wire_key for f in profile.config] == profile.spine["params"]
 
 
 def test_the_tracer_s_reward_keys_name_its_row():
     keys = [f.metadata_key for f in generate.build_profile(tracer()).config]
-    assert keys[-2:] == ["reward_ms_r1", "reward_permille_r1"]
+    assert keys[-3:] == ["reward_ms_r1", "reward_permille_r1", "block_b1_trials"]
 
 
 def test_a_go_no_go_folder_carries_its_table():
     header = generate.task_spine_h(TaskDefinition.from_json(fixture.go_no_go()))
-    assert "#define SPINE_INTERP 4" in header and "#error" not in header
+    assert "#define SPINE_INTERP 5" in header and "#error" not in header
     assert "#define SPINE_NUM_STATES 15" in header and "#define SPINE_NUM_OUTPUTS 4" in header
 
 
@@ -213,7 +219,8 @@ def _window(d: dict) -> dict:
         (lambda d: d["spine"].insert(0, {"phase": "outcome", "line": "reward_r", "ms": 0}), "SPN105", "spine[0]"),
         # A second Outcome would mark a trial's class twice.
         (lambda d: d["spine"].insert(1, {"phase": "outcome", "line": "reward_r", "ms": 0}), "SPN105", "spine"),
-        (lambda d: d["blocks"][0].update(rows=["odor_1"]), "SPN106", "blocks[0].rows"),
+        # A block may draw some of the rows; a row no block draws is named.
+        (lambda d: d["blocks"][0].update(rows=["odor_1"]), "SPN106", "rows[1].id"),
         (lambda d: d["blocks"][0].update(rows=["odor_1", "odor_1", "odor_2"]), "SPN106", "blocks[0].rows"),
         (lambda d: d["rows"][1].update(id="odor_1"), "SPN106", "rows[1].id"),
         (lambda d: d["rows"][1].update(id="Odor 2"), "SPN106", "rows[1].id"),
@@ -391,7 +398,13 @@ def test_the_ram_budget_is_what_an_avr_build_adds_for_the_task(tmp_path):
     # build is the sum to the byte. A task of one input or two outputs comes in
     # under it: the compiler folds a small constant channel array away (the PR
     # task, by 19 B).
+    # Blocks with entries, an override and two pairs pin those rows' sizes too.
+    blocks = fixture.two_afc(id="spine_blocks", name="Spine Blocks", sessionTrials=50, blocks=[
+        {"id": "a", "rows": ["odor_1", "odor_2"], "select": "antibias", "criterion": {"correct": 3, "of": 4},
+         "phaseMs": {"4": 100}},
+        {"id": "b", "rows": ["odor_2"], "select": "bag", "trials": 2, "trialsMax": 5, "next": "a"}])
     cases = [fixture.tracer(), fixture.go_no_go(), fixture.held_trial(), fixture.progressive_ratio(),
+             fixture.reversal(), blocks,
              two_afc_rows(18), dict(every_entry_pays(largest), id="spine_edge", name="Spine Edge")]
     for raw in cases:
         definition = TaskDefinition.from_json(raw)
@@ -403,7 +416,7 @@ def test_the_ram_budget_is_what_an_avr_build_adds_for_the_task(tmp_path):
             assert counted == globals_, (globals_, counted)
         assert 0 <= counted - globals_ <= 24, (raw["id"], globals_, counted)
     assert globals_ <= spine_module.RUNNER_RAM_BYTES + spine_module.TASK_RAM_MAX
-    assert 8192 - (spine_module.RUNNER_RAM_BYTES + spine_module.TASK_RAM_MAX) == 2795
+    assert 8192 - (spine_module.RUNNER_RAM_BYTES + spine_module.TASK_RAM_MAX) == 2732
 
 
 def test_a_tables_bytes_are_its_rows_at_the_c_structs_sizes():
@@ -495,10 +508,10 @@ def test_the_snapshot_and_the_folder_carry_the_counter():
     table = generate.build_profile(pr).spine["table"]
     assert table["counter"] == {"min": lowering.NONE, "max": lowering.NONE, "ratios": fixture.RICHARDSON_ROBERTS}
     header = generate.task_spine_h(pr)
-    assert "#define SPINE_INTERP 4" in header and "#error" not in header
+    assert "#define SPINE_INTERP 5" in header and "#error" not in header
     assert "#define SPINE_NUM_RATIOS 10" in header and "1, 2, 4, 6, 9, 12, 15, 20, 25, 32" in header
     fr = generate.build_profile(TaskDefinition.from_json(fixture.fixed_ratio()))
-    assert fr.spine["table"]["counter"] == {"min": 1, "max": 1, "ratios": []}
+    assert fr.spine["table"]["counter"] == {"min": 0, "max": 0, "ratios": []}, "slot 0: no session cap"
     assert generate.build_profile(tracer()).spine["table"]["counter"] is None
     assert "#define SPINE_COUNT_MIN 255" in generate.task_spine_h(tracer())
 
@@ -589,3 +602,131 @@ def test_a_release_watched_on_an_input_that_may_not_be_held_still_lowers():
     definition = TaskDefinition.from_json(raw)
     assert [d.code for d in validate(definition)] == ["SPN111"]
     assert "#error" not in generate.task_spine_h(definition)
+
+
+# --- blocks (#103) ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize("make", [fixture.reversal, fixture.bandit])
+def test_a_task_of_blocks_round_trips_and_is_clean(make):
+    definition = TaskDefinition.from_json(make())
+    assert TaskDefinition.from_json(definition.to_json()) == definition
+    assert validate(definition) == []
+
+
+def test_each_block_value_is_a_parameter_keyed_by_the_block_s_id():
+    """Block and row counts are compiled; their values ride the SET lines."""
+    profile = generate.build_profile(TaskDefinition.from_json(fixture.reversal()))
+    fields = {f.metadata_key: (f.wire_key, f.default, f.max) for f in profile.config
+              if f.metadata_key.startswith("block_")}
+    assert fields == {
+        "block_a_criterion_correct": ("BK1", 8, 32),
+        "block_a_criterion_of": ("BKN1", 10, 32),
+        "block_a_correction_max": ("BC1", 1, 100),
+        "block_b_trials": ("BN2", 4, 10000),
+    }
+    bandit = {f.metadata_key: (f.wire_key, f.default) for f in
+              generate.build_profile(TaskDefinition.from_json(fixture.bandit())).config}
+    assert bandit["session_trials"] == ("NT", 130)
+    assert bandit["block_a_trials"] == ("BN1", 40) and bandit["block_a_trials_max"] == ("BNX1", 60)
+    command = build_start_command(generate.build_profile(TaskDefinition.from_json(fixture.bandit())),
+                                  {"block_b_trials_max": 55})
+    assert "NT=130" in command.tokens and "BNX2=55" in command.tokens
+
+
+def test_weights_overrides_and_pairs_reach_the_folder():
+    raw = fixture.two_afc(blocks=[
+        {"id": "pool", "rows": ["odor_1", "odor_2"], "select": "bag", "weights": [3, 1], "trials": 8,
+         "trialsMax": 12, "phaseMs": {"4": 6000}},
+        {"id": "ab", "rows": ["odor_1", "odor_2"], "select": "antibias", "biasWindow": 12,
+         "criterion": {"correct": 3, "of": 4}, "next": "pool"}])
+    raw["sessionTrials"] = 200
+    definition = TaskDefinition.from_json(raw)
+    assert validate(definition) == []
+    fields = {f.metadata_key: f for f in generate.build_profile(definition).config}
+    assert fields["block_pool_weight_odor_1"].default == 3 and fields["block_pool_weight_odor_1"].max == 16
+    assert fields["block_ab_weight_odor_2"].max == 1000
+    assert fields["block_pool_iti_4_ms"].default == 6000 and fields["block_ab_bias_window"].default == 12
+    header = generate.task_spine_h(definition)
+    low = spine_module._resolve(definition).lowered
+    assert "#define SPINE_NUM_BLOCKS 2" in header and "#define SPINE_NUM_ENTRIES 4" in header
+    assert "#define SPINE_NUM_OVERRIDES 1" in header
+    slot = {k: low.params.index(k) for k in ("NT", "BN1", "BNX1", "BK2", "BKN2", "T4", "B1T4")}
+    assert f"#define SPINE_TRIALS_SLOT {slot['NT']}" in header
+    assert f"{{{slot['BN1']}, {slot['BNX1']}}}" in header and f"{{{slot['BK2']}, {slot['BKN2']}}}" in header
+    assert f"{{0, {slot['T4']}, {slot['B1T4']}}}" in header
+    assert low.blocks[1][9] == 0, "block ab loops back to pool"
+
+
+def test_the_ram_budget_counts_blocks_entries_overrides_and_pairs():
+    plain = spine_module._resolve(TaskDefinition.from_json(fixture.two_afc())).lowered
+    raw = fixture.two_afc(blocks=[{"id": "b1", "rows": ["odor_1", "odor_2"], "select": "weighted", "trials": 4,
+                                   "trialsMax": 6, "phaseMs": {"4": 10}}])
+    low = spine_module._resolve(TaskDefinition.from_json(raw)).lowered
+    added = (2 * lowering.ENTRY_BYTES + lowering.OVERRIDE_BYTES + spine_module.PAIR_BYTES
+             + sum(spine_module.PARAM_BYTES + len(k) + 1 for k in ("BNX1", "W1_1", "W1_2", "B1T4")))
+    assert spine_module.task_ram_bytes(low) - spine_module.task_ram_bytes(plain) == added
+    assert lowering.BLOCK_BYTES == 10 and spine_module.task_ram_bytes(plain) == (
+        lowering.table_bytes(len(plain.states), len(plain.edges), 1)
+        + sum(spine_module.PARAM_BYTES + len(k) + 1 for k in plain.params)
+        + 3 * spine_module.INPUT_BYTES + 5 * spine_module.OUTPUT_BYTES + spine_module.RATIO_BYTES)
+
+
+def test_a_one_block_task_s_stored_trial_count_is_its_block_s():
+    definition = TaskDefinition.from_json(fixture.tracer(params={"block_trials": 7}))
+    assert definition.params == {"block_b1_trials": 7}
+    assert "BN1=7" in build_start_command(generate.build_profile(definition), {}).tokens
+
+
+def _blocks(*blocks) -> dict:  # noqa: ANN002
+    return fixture.two_afc(blocks=list(blocks))
+
+
+AB = {"id": "a", "rows": ["odor_1", "odor_2"], "trials": 10}
+
+
+@pytest.mark.parametrize(
+    ("raw", "code", "where"),
+    [
+        (_blocks(), "SPN106", "blocks"),
+        (_blocks(dict(AB, id="A b")), "SPN106", "blocks[0].id"),
+        (_blocks(AB, AB), "SPN106", "blocks[1].id"),
+        (_blocks(dict(AB, rows=[])), "SPN106", "blocks[0].rows"),
+        (_blocks(dict(AB, rows=["odor_1", "odor_1"])), "SPN106", "blocks[0].rows"),
+        (_blocks(dict(AB, select="lottery")), "SPN106", "blocks[0].select"),
+        (_blocks(dict(AB, select="weighted", weights=[1])), "SPN106", "blocks[0].weights"),
+        (_blocks(dict(AB, weights=[2, 1])), "SPN106", "blocks[0].weights"),
+        (_blocks(dict(AB, select="bag", weights=[20, 20])), "SPN106", "blocks[0].weights"),
+        (_blocks(dict(AB, trials=0)), "SPN106", "blocks[0].trials"),
+        (_blocks(dict(AB, trialsMax=5)), "SPN106", "blocks[0].trialsMax"),
+        (_blocks(dict(AB, criterion={"correct": 9, "of": 8})), "SPN106", "blocks[0].criterion"),
+        (_blocks(dict(AB, criterion={"correct": 9, "of": 40})), "SPN106", "blocks[0].criterion"),
+        (_blocks(dict(AB, next="nope")), "SPN106", "blocks[0].next"),
+        (_blocks(dict(AB, correction=101)), "SPN106", "blocks[0].correction"),
+        (_blocks(dict(AB, biasWindow=10)), "SPN106", "blocks[0].biasWindow"),
+        (_blocks(dict(AB, phaseMs={"0": 10})), "SPN106", "blocks[0].phaseMs.0"),
+        (_blocks(dict(AB, rows=["odor_1"])), "SPN106", "rows[1].id"),
+        # Nothing but End Session would end it.
+        (_blocks(dict(AB, next="a")), "SPN106", "sessionTrials"),
+        (_blocks({"id": "a", "rows": ["odor_1", "odor_2"]}), "SPN106", "sessionTrials"),
+    ],
+)
+def test_each_block_problem_is_located(raw, code, where):
+    found = {(d.code, d.location) for d in validate(TaskDefinition.from_json(raw))}
+    assert (code, where) in found, found
+
+
+def test_an_antibias_block_needs_each_row_on_one_side():
+    """A row's side is its one response mapped correct; the bandit's rows have two."""
+    raw = fixture.bandit()
+    raw["blocks"][0]["select"] = "antibias"
+    found = {(d.code, d.location) for d in validate(TaskDefinition.from_json(raw))}
+    assert ("SPN106", "blocks[0].rows") in found
+    assert validate(TaskDefinition.from_json(_blocks(dict(AB, select="antibias", biasWindow=8)))) == []
+
+
+def test_a_stored_criterion_whose_n_is_below_its_k_is_refused_at_save():
+    raw = fixture.reversal(params={"block_a_criterion_of": 5})
+    found = {(d.code, d.location) for d in validate(TaskDefinition.from_json(raw))}
+    assert ("SPN106", "params.block_a_criterion_of") in found
+    assert "#error" in generate.task_spine_h(TaskDefinition.from_json(raw))

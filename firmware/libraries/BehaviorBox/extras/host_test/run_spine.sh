@@ -22,7 +22,7 @@ CXX="${CXX:-clang++}"
 "$CXX" -std=c++11 -Wall -Werror -Wno-unused-function \
   -I"$HERE/box_shim" -I"$HERE" -I"$LIB" \
   -x c++ "$HERE/test_spine.cpp" -o "$HERE/test_spine"
-for scenario in handshake stream stop last; do
+for scenario in handshake stream stop last blocks pairs; do
   "$HERE/test_spine" "$scenario"
 done
 echo "test_spine: all passed"

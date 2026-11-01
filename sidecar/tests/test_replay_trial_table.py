@@ -24,7 +24,7 @@ N = rp.NONE
 
 
 def tracer_table() -> tuple[rp.Table, lowering.Lowered]:
-    low = lowering.lower(fixture.tracer()["spine"], ["port"], ["cue", "sample", "reward"])
+    low = lowering.lower(fixture.tracer()["spine"], ["port"], ["cue", "sample", "reward"], session_cap=True)
     table = rp.Table(states=[rp.StateRow(*s) for s in low.states],
                      edges=[rp.EdgeRow(*e) for e in low.edges])
     return table, low

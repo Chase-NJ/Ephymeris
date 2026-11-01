@@ -53,7 +53,7 @@ SEED = 1234567
 FREE_RAM = 4321
 #: The run's per-box overrides: three trials, and a reward drawn 60% of the
 #: time so the session RNG is exercised and must replay.
-OVERRIDES = {"block_trials": 3, "reward_permille_r1": 600}
+OVERRIDES = {"block_b1_trials": 3, "reward_permille_r1": 600}
 
 compiler = shutil.which("clang++") or shutil.which("g++")
 pytestmark = [
@@ -218,25 +218,26 @@ async def test_a_saved_spine_task_runs_a_session_and_its_tsv_alone_replays(tmp_p
     folder = save_tracer(tmp_path)
     port = registry.channels().get("odor_port").index
     transcript = run_board(folder, host_lines(folder), animal(port), 16000, tmp_path)
-    assert transcript[:3] == ["INTERP=4", f"FREE_RAM={FREE_RAM}", "READY"]
+    assert transcript[:3] == ["INTERP=5", f"FREE_RAM={FREE_RAM}", "READY"]
     assert not any(line.startswith("CLAMPED") for line in transcript)
 
     tsv = await run_session(tmp_path, folder, transcript, monkeypatch)
     text = tsv.read_text(encoding="utf-8")
     header = text[: text.index("\n", text.index("# task_profile:"))]
     # Everything replay needs is in the header, before the first strobe.
-    assert "# interp: 4\n" in header and f"# free_ram: {FREE_RAM}\n" in header
-    assert f"# trial_seed: {SEED}\n" in header and "# block_trials: 3\n" in header
+    assert "# interp: 5\n" in header and f"# free_ram: {FREE_RAM}\n" in header
+    assert f"# trial_seed: {SEED}\n" in header and "# block_b1_trials: 3\n" in header
     assert '"spine":' in header
 
     document = json.loads(json_of(tsv).read_text(encoding="utf-8"))
     vocab = registry.vocabulary()
     names = {document["task_profile"]["strobes"][str(c)] for c, _ in document["ts_data"]}
     edge_names = set(registry.channel_set().edge_codes())
-    assert names <= edge_names | {"START_SESSION", "TRIAL_START", "END_SESSION"}, \
+    assert names <= edge_names | {"START_SESSION", "BLOCK_START", "TRIAL_START", "END_SESSION"}, \
         "the stream holds only channel edge codes and structural codes"
     assert names >= {"ODOR_PORT_ENTER", "TRIAL_LIGHT_ON", "ODOR_LINE_1_ON", "END_SESSION"}
     assert [n for c, _ in document["ts_data"] for n in [vocab.name_of(c)]].count("TRIAL_START") == 3
+    assert [vocab.name_of(c) for c, _ in document["ts_data"]][1] == "BLOCK_START", "the one block starts at once"
     assert document["stop_reason"] == runner_module.CLEAN_STOP_REASON
 
     record = spine_stream.decode(document)
@@ -429,7 +430,7 @@ async def run_task(tmp_path, monkeypatch, raw: dict, overrides: dict, ticks: int
     """`run_generated`, for scripted (ms, pin, level) `events` or any animal."""
     folder = save(tmp_path, raw)
     transcript = run_board(folder, host_lines(folder, overrides), list(events), ticks, tmp_path, animal)
-    assert transcript[:3] == ["INTERP=4", f"FREE_RAM={FREE_RAM}", "READY"]
+    assert transcript[:3] == ["INTERP=5", f"FREE_RAM={FREE_RAM}", "READY"]
     assert not any(line.startswith("CLAMPED") for line in transcript)
     tsv = await run_session(tmp_path, folder, transcript, monkeypatch, overrides)
     document = json.loads(json_of(tsv).read_text(encoding="utf-8"))
@@ -450,7 +451,7 @@ async def test_a_2afc_task_runs_and_replays_to_its_outcome_classes(tmp_path, mon
         "hold_broken": (right, left, 50),
     }
     plan = ["correct", "wrong_response", "omission", "hold_broken", "correct", "correct", "correct", "correct"]
-    overrides = {"block_trials": len(plan), "reward_permille_odor_1_right": 600,
+    overrides = {"block_b1_trials": len(plan), "reward_permille_odor_1_right": 600,
                  "reward_permille_odor_2_left": 600}
     document = await run_generated(tmp_path, monkeypatch, fixture.two_afc(), overrides,
                                    [answers[a] for a in plan], 70000)
@@ -474,7 +475,7 @@ async def test_a_go_no_go_pair_runs_and_replays_to_its_outcome_classes(tmp_path,
     resp = registry.channels().get("right_well").index
     respond, withhold = (resp, resp, 50), (-1, -1, 0)
     plan = [respond, withhold] * 5
-    overrides = {"block_trials": len(plan), "reward_permille_go_resp": 600}
+    overrides = {"block_b1_trials": len(plan), "reward_permille_go_resp": 600}
     document = await run_generated(tmp_path, monkeypatch, fixture.go_no_go(), overrides, plan, 80000)
 
     trials = trials_of(document)
@@ -513,7 +514,7 @@ def scored(document: dict) -> list[tuple[str | None, int, bool]]:
 
 
 async def test_a_fixed_ratio_session_pays_every_fifth_press(tmp_path, monkeypatch):
-    document = await run_task(tmp_path, monkeypatch, fixture.fixed_ratio(5), {"block_trials": 6}, 8000,
+    document = await run_task(tmp_path, monkeypatch, fixture.fixed_ratio(5), {"block_b1_trials": 6}, 8000,
                               events=presses(lever(), 100, 7000))
     trials = trials_of(document)
     assert [(t["outcome"], t["presses"], t["rewarded"]) for t in trials] == [("correct", 5, True)] * 6
@@ -521,7 +522,7 @@ async def test_a_fixed_ratio_session_pays_every_fifth_press(tmp_path, monkeypatc
 
 
 async def test_a_variable_ratio_session_draws_n_for_each_reward(tmp_path, monkeypatch):
-    document = await run_task(tmp_path, monkeypatch, fixture.variable_ratio(1, 9), {"block_trials": 12}, 12000,
+    document = await run_task(tmp_path, monkeypatch, fixture.variable_ratio(1, 9), {"block_b1_trials": 12}, 12000,
                               events=presses(lever(), 100, 11000))
     trials = trials_of(document)
     assert [t["outcome"] for t in trials] == ["correct"] * 12
@@ -534,7 +535,7 @@ async def test_a_progressive_ratio_session_ends_at_its_breakpoint(tmp_path, monk
     """The rat presses for 6 s and stops. Each reward needed the next ratio; the
     unfinished one runs out its 2 s limit, an omission, and the session ends
     after that trial's ITI by itself, long before its 50 trials."""
-    document = await run_task(tmp_path, monkeypatch, fixture.progressive_ratio(2000), {"block_trials": 50}, 14000,
+    document = await run_task(tmp_path, monkeypatch, fixture.progressive_ratio(2000), {"block_b1_trials": 50}, 14000,
                               events=presses(lever(), 100, 6000))
     trials = trials_of(document)
     *done, last = trials
@@ -563,7 +564,7 @@ def test_the_board_refuses_a_drawn_count_whose_range_is_inverted(tmp_path, overr
     VR an FR. The board answers CLAMPED for the high end, so the host never
     sends START (`TASKS.md#confirming-the-parameters`)."""
     folder = save(tmp_path, fixture.variable_ratio(1, 9))
-    transcript = run_board(folder, host_lines(folder, {"block_trials": 3, **override}), [], 10, tmp_path)
+    transcript = run_board(folder, host_lines(folder, {"block_b1_trials": 3, **override}), [], 10, tmp_path)
     assert ("CLAMPED NX0" in transcript) == clamped, transcript
     assert not any(line.startswith("CLAMPED") and line != "CLAMPED NX0" for line in transcript)
 
@@ -574,7 +575,7 @@ async def test_an_abort_after_the_outcome_leaves_a_paid_trial_correct(tmp_path, 
     raw = fixture.fixed_ratio(2)
     raw["spine"].insert(2, {"phase": "delay", "ms": 300, "abortOnEnter": "lever"})
     assert validate(TaskDefinition.from_json(raw)) == []
-    document = await run_task(tmp_path, monkeypatch, raw, {"block_trials": 5}, 6000,
+    document = await run_task(tmp_path, monkeypatch, raw, {"block_b1_trials": 5}, 6000,
                               events=presses(lever(), 100, 5500))
     record = spine_stream.decode(document)
     phase_of = document["task_profile"]["spine"]["table"]["phases"]
@@ -599,7 +600,7 @@ async def test_a_broken_hold_and_each_abort_replay_to_their_class(tmp_path, monk
         (10200, early, poke), (10250, early, clear),    #    a poke at the right well in the delay
         (11200, port, poke), (12100, port, clear),      # 5: through the odor; the delay runs out
     ]
-    document = await run_task(tmp_path, monkeypatch, fixture.held_trial(), {"block_trials": 5}, 16000,
+    document = await run_task(tmp_path, monkeypatch, fixture.held_trial(), {"block_b1_trials": 5}, 16000,
                               events=events)
     classes = ["abort_before_stimulus", "hold_broken", "abort_during_sampling", "abort_during_sampling", "correct"]
     assert [t["outcome"] for t in trials_of(document)] == classes
@@ -648,9 +649,9 @@ def test_a_version_2_run_whose_table_holds_a_pick_state_is_refused():
     pick = [0, 0, n, n, n, n, n, n, 0, 1, rp.STARTS_TRIAL | rp.PICK, 0]
     rest = [0, 0, 0, 0, 0, n, n, n, 0, 0, 0, 0]
     document = {
-        "interp": 2, "trial_seed": 7, "ts_data": [], "block_trials": 1,
+        "interp": 2, "trial_seed": 7, "ts_data": [], "block_b1_trials": 1,
         "task_profile": {"strobes": {"1": "START_SESSION", "2": "TRIAL_START", "3": "END_SESSION"},
-                         "config": [{"wireKey": "NT", "metadataKey": "block_trials"}], "spine": {
+                         "config": [{"wireKey": "NT", "metadataKey": "block_b1_trials"}], "spine": {
             "interp": 2, "params": ["NT"], "inputs": [], "outputs": [],
             "table": {"states": [pick, rest], "edges": [[0, 0, 1]]},
             "structural": {"sessionStart": "START_SESSION", "trialStart": "TRIAL_START",
@@ -668,7 +669,7 @@ def test_a_version_3_run_whose_table_holds_a_counter_is_refused():
     n = rp.NONE
     counter = [1, 1, n, n, n, n, n, n, 0, 1, rp.STARTS_TRIAL | rp.COUNT, 0]
     document = {
-        "interp": 3, "trial_seed": 7, "ts_data": [], "block_trials": 1, "count": 5,
+        "interp": 3, "trial_seed": 7, "ts_data": [], "block_b1_trials": 1, "count": 5,
         "task_profile": {"strobes": {}, "config": [], "spine": {
             "interp": 3, "params": [], "inputs": [], "outputs": [],
             "table": {"states": [counter], "edges": [[0, rp.RISE, 0]],
@@ -678,6 +679,81 @@ def test_a_version_3_run_whose_table_holds_a_counter_is_refused():
     }
     with pytest.raises(spine_stream.SpineDecodeError, match="counter"):
         spine_stream.decode(document)
+
+
+# --- blocks (#103) ----------------------------------------------------------------
+
+
+#: Short trials: odor for 50 ms, an ITI of 50 ms. The animal answers 100 ms
+#: after the odor goes off and holds 300 ms, past the window's 200 ms hold.
+FAST = {"present_1_ms": 50, "iti_4_ms": 50}
+
+
+def board_names(document: dict) -> list[str]:
+    vocab = registry.vocabulary()
+    return [vocab.name_of(c) for c, _ in document["ts_data"]]
+
+
+async def test_a_reversal_switches_blocks_on_the_trial_after_8_of_10_correct(tmp_path, monkeypatch):
+    """Block a ends once 8 of its last 10 trials were correct; block b reverses
+    the maps for 4 trials, and its end ends the session. An error in block a
+    repeats its row once. The block column comes from the core, through replay."""
+    left, right = (registry.channels().get(n).index for n in ("left_well", "right_well"))
+    as_a, as_b, wrong = (right, left, 300), (left, right, 300), (left, right, 50)
+    # A wrong answer (repeated once, wrong again), then eight right: block a's
+    # 10 trials hold 8 correct when trial 11 starts. Then block b, answered reversed.
+    plan = [wrong, wrong] + [as_a] * 8 + [as_b] * 4
+    document = await run_generated(tmp_path, monkeypatch, fixture.reversal(), FAST, plan, 40000)
+
+    result = spine_stream.replayed(document)
+    assert result.divergence is None
+    trials = result.trials
+    assert [t.block for t in trials] == ["a"] * 10 + ["b"] * 4
+    assert [t.outcome for t in trials] == ["wrong_response"] * 2 + ["correct"] * 12
+    assert [t.correction for t in trials] == [False, True] + [False] * 12, "one repeat, k = 1"
+    assert trials[1].row == trials[0].row, "a correction repeats the row"
+    assert {t.row for t in trials[10:]} <= {"odor_1_rev", "odor_2_rev"}
+    names = board_names(document)
+    assert names.count("BLOCK_START") == 2 and names[-1] == "END_SESSION"
+    assert names.count("TRIAL_START") == 14, "the blocks' end ended the session, at no trial cap"
+
+
+async def test_a_looping_bandit_runs_blocks_of_40_to_60_until_its_trial_cap(tmp_path, monkeypatch):
+    """Two blocks, each lasting N drawn from 40-60 at its start, loop until the
+    session's 130 trials. The animal always picks the left well, which pays 80%
+    of the time in block a and 20% in block b."""
+    left = registry.channels().get("left_well").index
+    document = await run_generated(tmp_path, monkeypatch, fixture.bandit(), FAST, [(left, left, 300)] * 130,
+                                   130 * 700)
+
+    result = spine_stream.replayed(document)
+    assert result.divergence is None
+    blocks = [t.block for t in result.trials]
+    assert len(blocks) == 130
+    runs: list[list] = []
+    for block in blocks:
+        if runs and runs[-1][0] == block:
+            runs[-1][1] += 1
+        else:
+            runs.append([block, 1])
+    assert [b for b, _ in runs] == ["a", "b", "a"][: len(runs)] and len(runs) == 3
+    assert all(40 <= n <= 60 for _, n in runs[:-1]) and runs[-1][1] <= 60, runs
+    assert board_names(document).count("BLOCK_START") == 3
+    paid = {b: sum(t.rewarded for t in result.trials if t.block == b) / blocks.count(b) for b in "ab"}
+    assert paid["a"] > 0.6 > 0.4 > paid["b"], paid
+
+
+async def test_a_shuffle_bag_draws_each_row_its_weight_in_every_refill(tmp_path, monkeypatch):
+    """Pool selection is a shuffle bag per block, drawn from the seeded stream
+    as the session runs: of every four trials, three draw odor 1 and one odor 2."""
+    left, right = (registry.channels().get(n).index for n in ("left_well", "right_well"))
+    raw = fixture.two_afc(blocks=[{"id": "pool", "rows": ["odor_1", "odor_2"], "select": "bag",
+                                   "weights": [3, 1], "trials": 12}])
+    document = await run_generated(tmp_path, monkeypatch, raw, FAST, [(right, left, 300)] * 12, 20000)
+    rows = [t.row for t in spine_stream.replayed(document).trials]
+    assert len(rows) == 12
+    for refill in range(0, 12, 4):
+        assert sorted(rows[refill : refill + 4]) == ["odor_1"] * 3 + ["odor_2"], rows
 
 
 @pytest.mark.parametrize("header", [1, None])

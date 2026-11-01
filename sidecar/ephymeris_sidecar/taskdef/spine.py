@@ -1,7 +1,7 @@
 """A phase-spine task: what is wrong with one, and the folder it generates (`TASKS.md#spine-tasks`).
 
 ADR 0003's spine: a spine of phases, rows that bind its slots to this rig's
-channels and map each response to an outcome class, one block drawing them.
+channels and map each response to an outcome class, blocks drawing them.
 The definition's data is
 `model.Spine`; this module judges it against the rig and the vocabulary and
 writes what the board runs:
@@ -38,7 +38,8 @@ from .validate import Diagnostic
 #: The structural codes a spine strobes, by role (`0003-phase-spine-task-model.md#the-strobe-stream`).
 #: The ADR's SESSION_START and SESSION_END are the vocabulary's existing
 #: START_SESSION and END_SESSION: the same events, so no code is spent twice.
-STRUCTURAL = {"sessionStart": "START_SESSION", "trialStart": "TRIAL_START", "sessionEnd": "END_SESSION"}
+STRUCTURAL = {"sessionStart": "START_SESSION", "blockStart": "BLOCK_START", "trialStart": "TRIAL_START",
+              "sessionEnd": "END_SESSION"}
 
 #: Which edge of a channel's type a bit reports as its rise and its fall.
 _INPUT_EDGES = ("enter", "exit")
@@ -68,24 +69,51 @@ OUTPUT_BYTES = 5
 #: BehaviorBox.h and the Arduino core, measured by that same test. A build can
 #: come in some bytes under the sum (the compiler folds a small constant channel
 #: array away), never over it.
-RUNNER_RAM_BYTES = 397
+RUNNER_RAM_BYTES = 460
 #: The most RAM a task's data (`task_ram_bytes`) may take, out of a Mega's 8192 B.
-#: With the runner's own, globals stay at most 5397 B (66%), leaving the stack
-#: and the serial buffers at least 2795 B (`TASKS.md#spine-diagnostics`). An
+#: With the runner's own, globals stay at most 5460 B (67%), leaving the stack
+#: and the serial buffers at least 2732 B (`TASKS.md#spine-diagnostics`). An
 #: 18-row 2AFC fits.
 TASK_RAM_MAX = 5000
 
 
 #: A progressive ratio's bytes: a `uint16_t` each in `SPINE_RATIOS`.
 RATIO_BYTES = 2
+#: A pair of parameter slots the board holds in order, low end first (`SPINE_PAIRS`).
+PAIR_BYTES = 2
+
+#: The ranges a block's values are held to. A criterion and anti-bias look back
+#: at most `lowering.HISTORY` trials or responses, and a bag holds that many tokens.
+_WEIGHT_MAX = 1000
+_CORRECTION_MAX = 100
+_BIAS_WINDOW_DEFAULT = 10
+#: A pair's (low, high) roles: the board refuses a high end below its low end.
+_PAIRS = (("count", "count_max"), ("block_trials", "block_trials_max"), ("criterion_correct", "criterion_of"))
+
+
+def pairs(low: lowering.Lowered) -> list[tuple[int, int]]:
+    """The (low, high) parameter slots the board holds in order (`SPINE_PAIRS`):
+    a drawn N's ends, a block's drawn N, a criterion's k and n."""
+    out = []
+    for lo_role, hi_role in _PAIRS:
+        for hi, s in enumerate(low.slots):
+            if s.role == hi_role:
+                lo = next(n for n, t in enumerate(low.slots)
+                          if t.role == lo_role and t.phase == s.phase and t.block == s.block)
+                out.append((lo, hi))
+    return out
 
 
 def task_ram_bytes(low: lowering.Lowered) -> int:
     """The bytes of RAM a task's generated `TaskSpine.h` adds to a Mega build:
-    its states and edge rows, its parameters, its channel bits and its ratios."""
+    its states, edge rows, blocks, entries and overrides, its parameters and the
+    pairs of them held in order, its channel bits and its ratios. Entries,
+    overrides and pairs are left out when there are none."""
     ratios = len(low.counter[2]) if low.counter is not None else 0
-    return (lowering.table_bytes(len(low.states), max(1, len(low.edges)))
+    return (lowering.table_bytes(len(low.states), max(1, len(low.edges)), len(low.blocks), len(low.entries),
+                                 len(low.overrides))
             + sum(PARAM_BYTES + len(key) + 1 for key in low.params)
+            + PAIR_BYTES * len(pairs(low))
             + INPUT_BYTES * max(1, len(low.inputs)) + OUTPUT_BYTES * max(1, len(low.outputs))
             + RATIO_BYTES * max(1, ratios))
 
@@ -185,7 +213,8 @@ def _resolve(definition: TaskDefinition) -> _Resolved:
     if shape_ok and rows_ok and map_ok:
         try:
             out.lowered = lowering.lower([p.to_json() for p in spine.phases], inputs=inputs, outputs=outputs,
-                                         rows=rows)
+                                         rows=rows, blocks=[b.to_json() for b in spine.blocks],
+                                         session_cap=spine.trials is not None)
         except lowering.LoweringError as exc:  # too many states, or two responses on one channel
             problem("spine", "SPN105", str(exc))
     if out.lowered is not None:
@@ -317,9 +346,6 @@ def _row_problems(spine: Spine, problem) -> bool:  # noqa: ANN001
     ids_ok = True
     if not spine.rows:
         problem("rows", "SPN106", "a spine task has at least one row")
-    if len(spine.blocks) != 1:
-        # Several blocks need the block runner (#103).
-        problem("blocks", "SPN106", f"a spine task has exactly one block for now, not {len(spine.blocks)}")
     seen: set[str] = set()
     for r, row in enumerate(spine.rows):
         at = f"rows[{r}]"
@@ -338,14 +364,110 @@ def _row_problems(spine: Spine, problem) -> bool:  # noqa: ANN001
         if not 0 <= row.reward_ms <= _REWARD_MS_MAX:
             # The board holds RW<r> to this range and would refuse the start (CLAMPED).
             problem(f"{at}.rewardMs", "SPN106", f"a reward opens its line for 0 to {_REWARD_MS_MAX} ms")
-    if spine.blocks:
-        block = spine.blocks[0]
-        drawn = list(block.rows)
-        if len(set(drawn)) != len(drawn) or set(drawn) != {row.id for row in spine.rows}:
-            problem("blocks[0].rows", "SPN106", "the block draws every row exactly once, by its id")
-        if not 1 <= block.trials <= _TRIALS_MAX:
-            problem("blocks[0].trials", "SPN106", f"a block runs 1 to {_TRIALS_MAX} trials")
-    return bool(spine.rows) and ids_ok
+    blocks_ok = _block_problems(spine, problem)
+    return bool(spine.rows) and ids_ok and blocks_ok
+
+
+def _block_problems(spine: Spine, problem) -> bool:  # noqa: ANN001, C901
+    """The blocks (SPN106). True when they can be lowered."""
+    ok = True
+
+    def bad(location: str, message: str, blocks: bool = True) -> None:
+        nonlocal ok
+        ok = ok and not blocks
+        problem(location, "SPN106", message)
+
+    if spine.trials is not None and not 1 <= spine.trials <= _TRIALS_MAX:
+        bad("sessionTrials", f"a session runs 1 to {_TRIALS_MAX} trials", blocks=False)
+    if not spine.blocks:
+        bad("blocks", "a spine task has at least one block: what draws its rows")
+        return False
+    if len(spine.blocks) >= lowering.NONE:
+        bad("blocks", f"a spine task has at most {lowering.NONE - 1} blocks")
+    row_ids = {row.id for row in spine.rows}
+    ids = [b.id for b in spine.blocks]
+    timed = {i for i, p in enumerate(spine.phases)
+             if p.phase in lowering._TIMED or (p.phase in ("wait", "counter") and p.timeout_ms is not None)}
+    window = next((p for p in spine.phases if p.phase == "response"), None)
+    for b, block in enumerate(spine.blocks):
+        at = f"blocks[{b}]"
+        if not ID_RE.match(block.id) or ids.count(block.id) > 1:
+            bad(f"{at}.id", f"{block.id!r} is not a block id of its own: lower case letters, digits and "
+                "underscores, starting with a letter. It names the block's parameters")
+        if not block.rows or any(r not in row_ids for r in block.rows):
+            bad(f"{at}.rows", "a block draws one or more of the task's rows, by id")
+        elif len(set(block.rows)) != len(block.rows):
+            bad(f"{at}.rows", "a block draws each of its rows once; give a row more weight instead")
+        if block.select not in lowering.SELECTIONS:
+            bad(f"{at}.select", f"{block.select!r} is not a selection {tuple(lowering.SELECTIONS)}")
+        weighted = block.select in lowering.WEIGHTED
+        if block.weights and len(block.weights) != len(block.rows):
+            bad(f"{at}.weights", "a block's weights line up with its rows, one each", blocks=False)
+        elif block.weights and not weighted:
+            bad(f"{at}.weights", f"a {block.select} block reads no weights", blocks=False)
+        top = _weight_max(block)
+        if block.select == "bag" and len(block.rows) > lowering.HISTORY:
+            bad(f"{at}.rows", f"a bag holds at most {lowering.HISTORY} tokens, one row each at least", blocks=False)
+        elif weighted and any(not 0 <= block.weight(e) <= top for e in range(len(block.rows))):
+            bad(f"{at}.weights", f"a weight here is 0 to {top}"
+                + (f": a bag holds at most {lowering.HISTORY} tokens" if block.select == "bag" else ""),
+                blocks=False)
+        if block.trials is not None and not 1 <= block.trials <= _TRIALS_MAX:
+            bad(f"{at}.trials", f"a block runs 1 to {_TRIALS_MAX} trials", blocks=False)
+        if block.trials_max is not None and (block.trials is None
+                                             or not block.trials <= block.trials_max <= _TRIALS_MAX):
+            bad(f"{at}.trialsMax", f"trialsMax draws N from trials up to it, at most {_TRIALS_MAX}; it needs "
+                "a trials no greater than it", blocks=block.trials is None)
+        if block.criterion is not None and not 1 <= block.criterion[0] <= block.criterion[1] <= lowering.HISTORY:
+            bad(f"{at}.criterion", f"a criterion is k correct of the last n, 1 <= k <= n <= {lowering.HISTORY}",
+                blocks=False)
+        if block.next is not None and block.next not in ids:
+            bad(f"{at}.next", f"{block.next!r} is not a block of this task")
+        if block.correction is not None and not 0 <= block.correction <= _CORRECTION_MAX:
+            bad(f"{at}.correction", f"an error repeats 0 to {_CORRECTION_MAX} times", blocks=False)
+        if block.bias_window is not None and (block.select != "antibias"
+                                              or not 1 <= block.bias_window <= lowering.HISTORY):
+            bad(f"{at}.biasWindow", f"an antibias block weighs the last 1 to {lowering.HISTORY} responses",
+                blocks=False)
+        if block.select == "antibias":
+            for r in block.rows:
+                row = next((x for x in spine.rows if x.id == r), None)
+                correct = [k for k in (window.responses if window else ()) if row and row.map.get(k)
+                           and row.map[k].outcome == "correct"]
+                if row is not None and len(correct) != 1:
+                    bad(f"{at}.rows", f"row {r!r} has no one response mapped correct, so anti-bias cannot say "
+                        "which side it is on", blocks=False)
+        for key, ms in block.phase_ms.items():
+            if not key.isdigit() or int(key) not in timed:
+                bad(f"{at}.phaseMs.{key}", "an override names a phase that lasts a set time, by its index")
+            elif not 0 <= ms <= _MS_MAX:
+                bad(f"{at}.phaseMs.{key}", f"a duration is 0 to {_MS_MAX} ms", blocks=False)
+    for r, row in enumerate(spine.rows):
+        if not any(row.id in b.rows for b in spine.blocks):
+            problem(f"rows[{r}].id", "SPN106", f"no block draws row {row.id!r}")
+    if spine.trials is None and not _sequence_ends(spine):
+        problem("sessionTrials", "SPN106", "nothing but End Session ends this session: its blocks loop, or one never "
+                "ends. Give the session sessionTrials, or every block an end rule and the last no next")
+    return ok
+
+
+def _weight_max(block) -> int:  # noqa: ANN001
+    """The most a row's weight may be: a bag's must fit its 32 tokens."""
+    return lowering.HISTORY // max(1, len(block.rows)) if block.select == "bag" else _WEIGHT_MAX
+
+
+def _sequence_ends(spine: Spine) -> bool:
+    """Whether the blocks, from the first, run out: every block met ends, and none comes round again."""
+    ids = [b.id for b in spine.blocks]
+    seen: set[int] = set()
+    b: int | None = 0
+    while b is not None:
+        block = spine.blocks[b]
+        if b in seen or (block.trials is None and block.criterion is None):
+            return False
+        seen.add(b)
+        b = ids.index(block.next) if block.next in ids else (b + 1 if b + 1 < len(ids) else None)
+    return True
 
 
 def _map_problems(spine: Spine, slot_type: dict[str, str], problem) -> bool:  # noqa: ANN001
@@ -417,18 +539,19 @@ def _table_problems(definition: TaskDefinition, out: _Resolved, problem) -> None
         if key not in owner:
             problem(f"params.{key}", "SPN110", f"no parameter of this task is {key!r}, so its stored value "
                     f"{definition.params[key]!r} is not used. Move it to the parameter it belongs to, or remove it")
-    # A drawn N as it will run, stored values included: a high end below the low
-    # end would fix N at the low end every trial, VR run as FR. The board refuses
-    # the same pair from a SET line (CLAMPED); this refuses it before a flash.
-    value = {f["metadataKey"]: _with_value(f, definition)["default"] for f in fields}
-    for s in low.slots:
-        if s.role == "count_max":
-            lo, hi = f"counter_{s.phase}_count", f"counter_{s.phase}_count_max"
-            if value.get(lo, 0) > value.get(hi, 0) and (lo in definition.params or hi in definition.params):
-                at = hi if hi in definition.params else lo
-                problem(f"params.{at}", "SPN105", f"the stored counts draw N from {value[lo]} up to "
-                        f"{value[hi]}: the highest is below the lowest, so N would be {value[lo]} every trial")
-                out.blockers.append(f"counter {s.phase}'s stored count range is inverted")
+    # A pair as it will run, stored values included: a drawn N's high end below
+    # its low end would fix N at the low end every time, VR run as FR; a
+    # criterion's n below its k could never be met. The board refuses the same
+    # pair from a SET line (CLAMPED); this refuses it before a flash.
+    value = [_with_value(f, definition)["default"] for f in fields]
+    for lo, hi in pairs(low):
+        lo_key, hi_key = fields[lo]["metadataKey"], fields[hi]["metadataKey"]
+        if value[lo] > value[hi] and (lo_key in definition.params or hi_key in definition.params):
+            at = hi_key if hi_key in definition.params else lo_key
+            code = "SPN105" if low.slots[hi].role == "count_max" else "SPN106"
+            problem(f"params.{at}", code, f"the stored {lo_key} ({value[lo]}) is above {hi_key} ({value[hi]}): "
+                    "the high end is below the low end, so the board would refuse the start")
+            out.blockers.append(f"the stored {lo_key} and {hi_key} are inverted")
     size = task_ram_bytes(low)
     if size > TASK_RAM_MAX:
         problem("spine", "SPN105", f"the state table, parameters and channels take {size} B of the board's RAM, "
@@ -463,7 +586,13 @@ def profile_json(definition: TaskDefinition) -> dict[str, Any]:
                    # BoxInterp.h's InterpCounter: N's parameter slots, or 255
                    # and a compiled sequence. Null for a spine with no Counter.
                    "counter": ({"min": low.counter[0], "max": low.counter[1], "ratios": list(low.counter[2])}
-                               if low.counter is not None else None)}
+                               if low.counter is not None else None),
+                   # BoxInterp.h's InterpBlocks: one InterpBlock per block, in
+                   # `blocks` order, an entry per branch of the pick (empty when
+                   # no block selects by weight or side), and the overrides.
+                   "blocks": [list(b) for b in low.blocks],
+                   "entries": [list(e) for e in low.entries],
+                   "overrides": [list(o) for o in low.overrides]}
                   if low else None),
         "structural": dict(STRUCTURAL),
     }
@@ -491,19 +620,21 @@ def _param_fields(spine: Spine, low: lowering.Lowered | None) -> list[dict[str, 
     """
     if low is None:
         return []
-    block = spine.blocks[0] if spine.blocks else None
     out: list[dict[str, Any]] = []
     for s in low.slots:
         if s.role == "trials":
-            out.append(_int_field("block_trials", s.key, "Trials", block.trials if block else 1,
+            out.append(_int_field("session_trials", s.key, "Session trials", spine.trials or 1,
                                   "Session", None, 1, _TRIALS_MAX,
-                                  "How many trials the session runs; it ends at the start of the next."))
+                                  "The most trials the session runs, whatever its blocks; it ends at the start "
+                                  "of the next."))
+        elif s.block is not None:
+            out.append(_block_field(spine, s))
         elif s.role == "timer":
             i = s.phase
             p = spine.phases[i]
             wait = p.phase == "wait"
             limited = wait or p.phase == "counter"
-            metadata = f"{p.phase}_{i}_timeout_ms" if limited else f"{p.phase}_{i}_ms"
+            metadata = _timer_metadata(p, i)
             name = {"wait": "Wait timeout", "response": "Response window",
                     "counter": "Counter time limit"}.get(p.phase, p.phase.capitalize())
             default = (p.timeout_ms if limited else p.ms) or 0
@@ -552,6 +683,60 @@ def _param_fields(spine: Spine, low: lowering.Lowered | None) -> list[dict[str, 
                                       row.map[s.entry].reward_permille, "Reward volume", "‰", 0, 1000,
                                       f"The chance, in thousandths, that {s.entry} opens its line."))
     return out
+
+
+def _timer_metadata(p, i: int) -> str:  # noqa: ANN001
+    """A phase timer's metadata key: `<phase>_<i>_ms`, or `_timeout_ms` for a Wait's or a Counter's limit."""
+    return f"{p.phase}_{i}_timeout_ms" if p.phase in ("wait", "counter") else f"{p.phase}_{i}_ms"
+
+
+def _block_field(spine: Spine, s: lowering.ParamSlot) -> dict[str, Any]:
+    """The config field of a block's parameter slot, keyed by the block's id
+    (and a weight's by its row's), so reordering blocks or rows moves nothing stored."""
+    assert s.block is not None
+    block = spine.blocks[s.block]
+    name = f"block_{block.id}"
+    label = f"Block {block.id}"
+    group = "Blocks"
+    if s.role == "block_trials":
+        drawn = block.trials_max is not None
+        return _int_field(f"{name}_trials", s.key, f"{label}: trials{', fewest' if drawn else ''}",
+                          block.trials or 1, group, None, 1, _TRIALS_MAX,
+                          "How many trials the block runs, or the fewest a draw can give."
+                          if drawn else "How many trials the block runs before the next block.")
+    if s.role == "block_trials_max":
+        return _int_field(f"{name}_trials_max", s.key, f"{label}: trials, most", block.trials_max or 1, group,
+                          None, 1, _TRIALS_MAX, "The most trials a draw can give. N is drawn uniformly each "
+                          "time the block starts.")
+    if s.role == "criterion_correct":
+        return _int_field(f"{name}_criterion_correct", s.key, f"{label}: correct to end", block.criterion[0]
+                          if block.criterion else 1, group, None, 1, lowering.HISTORY,
+                          "The block ends once this many of its last trials (below) were correct.")
+    if s.role == "criterion_of":
+        return _int_field(f"{name}_criterion_of", s.key, f"{label}: of the last", block.criterion[1]
+                          if block.criterion else 1, group, "trials", 1, lowering.HISTORY,
+                          "How many of the block's latest trials the criterion looks at.")
+    if s.role == "correction":
+        return _int_field(f"{name}_correction_max", s.key, f"{label}: correction repeats", block.correction or 0,
+                          group, None, 0, _CORRECTION_MAX,
+                          "How many times in a row a trial that was not correct repeats its row.")
+    if s.role == "bias_window":
+        return _int_field(f"{name}_bias_window", s.key, f"{label}: anti-bias window",
+                          block.bias_window or _BIAS_WINDOW_DEFAULT, group, "responses", 1, lowering.HISTORY,
+                          "How many of the animal's latest responses anti-bias weighs a side against.")
+    if s.role == "weight":
+        assert s.row is not None
+        row = spine.rows[s.row]
+        e = block.rows.index(row.id)
+        return _int_field(f"{name}_weight_{row.id}", s.key, f"{label}: weight — {row.name}", block.weight(e),
+                          group, None, 0, _weight_max(block),
+                          "How many tokens of this row the bag holds." if block.select == "bag"
+                          else "How often this row is drawn, against the block's other rows.")
+    assert s.role == "block_timer" and s.phase is not None
+    p = spine.phases[s.phase]
+    return _int_field(f"{name}_{_timer_metadata(p, s.phase)}", s.key,
+                      f"{label}: {p.phase} (phase {s.phase + 1})", block.phase_ms.get(str(s.phase), 0), group, "ms",
+                      0, _MS_MAX, "How long this phase lasts while the block runs.")
 
 
 def _int_field(metadata: str, wire: str, label: str, default: int, group: str, unit: str | None,
@@ -649,8 +834,8 @@ def task_spine_h(definition: TaskDefinition, banner: str) -> str:
         f"#define SPINE_NUM_OUTPUTS {len(outputs)}",
         f"#define SPINE_OUTPUTS {initialiser(outputs)}",
         "",
-        "/*  Parameter slot s: {wire key, default, min, max}. Slot 0 is the block's",
-        "    trial count. A SET value outside [min, max] is CLAMPED. */",
+        "/*  Parameter slot s: {wire key, default, min, max}. A SET value outside",
+        "    [min, max] is CLAMPED. */",
         f"#define SPINE_NUM_PARAMS {len(params)}",
         f"#define SPINE_PARAMS {initialiser(params)}",
         "",
@@ -660,6 +845,27 @@ def task_spine_h(definition: TaskDefinition, banner: str) -> str:
         f"#define SPINE_COUNT_MAX {counter[1]}",
         f"#define SPINE_NUM_RATIOS {len(counter[2])}",
         f"#define SPINE_RATIOS {{ {', '.join(map(str, counter[2])) or '0'} }}",
+        "",
+        "/*  The session's trial cap: the slot of NT, or 255 for none (the blocks end it). */",
+        f"#define SPINE_TRIALS_SLOT {low.params.index(lowering.TRIALS_KEY) if lowering.TRIALS_KEY in low.params else lowering.NONE}",
+        "",
+        "/*  The blocks (BoxInterp.h, InterpBlocks): {first, count, select, n_min, n_max,",
+        "    k, n, window, correct, next}; an entry per branch of the pick, {side,",
+        "    weight}; overrides, {block, slot, with}. An empty array is left out. */",
+        f"#define SPINE_NUM_BLOCKS {len(low.blocks)}",
+        f"#define SPINE_BLOCKS {initialiser(['{' + ', '.join(map(str, b)) + '}' for b in low.blocks])}",
+        f"#define SPINE_NUM_ENTRIES {len(low.entries)}",
+        *([f"#define SPINE_ENTRIES {initialiser(['{' + ', '.join(map(str, e)) + '}' for e in low.entries])}"]
+          if low.entries else []),
+        f"#define SPINE_NUM_OVERRIDES {len(low.overrides)}",
+        *([f"#define SPINE_OVERRIDES {initialiser(['{' + ', '.join(map(str, o)) + '}' for o in low.overrides])}"]
+          if low.overrides else []),
+        "",
+        "/*  Parameter slots held in order, {low, high}: the board answers CLAMPED for",
+        "    a high end below its low end, which it takes first. */",
+        f"#define SPINE_NUM_PAIRS {len(pairs(low))}",
+        *([f"#define SPINE_PAIRS {initialiser(['{' + str(a) + ', ' + str(b) + '}' for a, b in pairs(low)])}"]
+          if pairs(low) else []),
         "",
         "#endif // TASK_SPINE_H",
         "",

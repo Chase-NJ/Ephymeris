@@ -122,11 +122,12 @@ jobs:
         run: python -c "import sys, pathlib; from ephymeris_sidecar.taskdef.bundled import repin_all; n = repin_all(pathlib.Path(sys.argv[1])); print(n, 'sketches'); sys.exit(n == 0)" "$RUNNER_TEMP/sketches"
       # A saved spine task has no bundled sketch of its own: its folder is the
       # library's BoxSpine.h plus generated headers. Save the tasks the tests
-      # use (the tracer, a progressive ratio and a held trial with every early
-      # exit), on a rig whose edges have codes, and build those folders too.
+      # use (the tracer, a progressive ratio, a held trial with every early
+      # exit, a reversal and a looping bandit), on a rig whose edges have codes,
+      # and build those folders too.
       - name: Generate spine tasks
         working-directory: sidecar
-        run: python -c "import sys, pathlib; from tests.fixtures import spine; from ephymeris_sidecar.taskdef.model import TaskDefinition; from ephymeris_sidecar.taskdef.store import TaskStore; spine.install(); store = TaskStore(pathlib.Path(sys.argv[1]), library_root=pathlib.Path('../firmware')); problems = [p for make in (spine.tracer, spine.progressive_ratio, spine.held_trial) for p in store.save(TaskDefinition.from_json(make()))]; print(problems); sys.exit(1 if problems else 0)" "$RUNNER_TEMP/spine"
+        run: python -c "import sys, pathlib; from tests.fixtures import spine; from ephymeris_sidecar.taskdef.model import TaskDefinition; from ephymeris_sidecar.taskdef.store import TaskStore; spine.install(); store = TaskStore(pathlib.Path(sys.argv[1]), library_root=pathlib.Path('../firmware')); problems = [p for make in (spine.tracer, spine.progressive_ratio, spine.held_trial, spine.reversal, spine.bandit) for p in store.save(TaskDefinition.from_json(make()))]; print(problems); sys.exit(1 if problems else 0)" "$RUNNER_TEMP/spine"
       - name: Compile each for the Mega 2560
         shell: bash
         run: |

@@ -74,7 +74,7 @@ def test_the_export_numbers_every_code_the_task_strobes_from_this_vocabulary():
         "ODOR_PORT_ENTER", "ODOR_PORT_EXIT", "TRIAL_LIGHT_ON", "TRIAL_LIGHT_OFF",
         "ODOR_LINE_1_ON", "ODOR_LINE_1_OFF", "FLUID_2_ON", "FLUID_2_OFF",
         # odor_line_1's declared onset, and a spine's structural codes
-        "ODOR_1_ON", "START_SESSION", "TRIAL_START", "END_SESSION",
+        "ODOR_1_ON", "START_SESSION", "BLOCK_START", "TRIAL_START", "END_SESSION",
     }
     assert export()["codes"] == {name: vocab.code_of(name) for name in sorted(names)}
 

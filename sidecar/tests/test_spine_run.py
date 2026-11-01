@@ -257,8 +257,8 @@ async def test_a_saved_spine_task_runs_a_session_and_its_tsv_alone_replays(tmp_p
     # The real session path wrote the same table into the file as derived
     # (`DATA.md#the-derived-trial-table`), under the file's own field names.
     derived = document["derived"]
-    assert derived["status"] == "ok" and derived["interp"] == 3
-    assert [t["outcome"] for t in derived["trials"]] == ["correct", None, "correct"]
+    assert derived["status"] == "ok" and derived["interp"] == rp.INTERP_VERSION
+    assert [t["outcome"] for t in derived["trials"]] == ["correct", "abort_during_sampling", "correct"]
     assert [t["phase_entries"][1] for t in derived["trials"]] == [200, 5000, 8500]
 
 

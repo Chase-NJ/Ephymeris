@@ -28,7 +28,7 @@ from typing import Any
 
 from ....tasks.profile import TaskProfile
 from ..document import _pairs_of
-from ..trial_table import ReplayTrial
+from ..trial_table import ConditionScore, ReplayTrial
 from . import strobes
 from .trials import MetricAccumulator, boundaries_for
 
@@ -216,7 +216,7 @@ def _table(pairs: list[tuple[int, int | None]], profile: TaskProfile | None) -> 
             correction=None,
             complete=True,
             presented=o in presented,
-            scores=tuple(scores[k].items()),
+            scores=tuple(ConditionScore(c, v) for c, v in scores[k].items()),
         )))
     for light, poked in odorless:
         rows.append((light, 1, ReplayTrial(

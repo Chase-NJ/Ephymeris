@@ -303,6 +303,18 @@ class InputCount:
 
 
 @dataclass(frozen=True)
+class ConditionScore:
+    """A legacy trial's verdict under one condition its onset opens."""
+
+    condition: str
+    #: A hit, a miss, or None for excluded.
+    correct: bool | None
+
+    def to_json(self) -> dict[str, object]:
+        return {"condition": self.condition, "correct": self.correct}
+
+
+@dataclass(frozen=True)
 class Naming:
     """What a snapshot says the table's numbers are, for `name`.
 
@@ -361,18 +373,17 @@ class ReplayTrial:
     complete: bool = True
     #: The trial opens a presentation on the engagement ladder.
     presented: bool = True
-    #: A legacy trial's hit (True), miss (False) or exclusion (None) under every
-    #: condition its onset opens, as (condition id, verdict) pairs: one, unless a
-    #: profile declares two conditions on one onset. Empty on a spine run.
-    scores: tuple[tuple[str, bool | None], ...] = ()
+    #: A legacy trial's verdict under every condition its onset opens: one,
+    #: unless a profile declares two conditions on one onset. Empty on a spine run.
+    scores: tuple[ConditionScore, ...] = ()
 
     def scored(self, condition: str) -> bool:
         """The trial was scored under `condition`: its onset opens it."""
-        return any(c == condition for c, _ in self.scores)
+        return any(s.condition == condition for s in self.scores)
 
     def verdict(self, condition: str) -> bool | None:
         """Its hit or miss under `condition`, or None (excluded, or not scored under it)."""
-        return next((v for c, v in self.scores if c == condition), None)
+        return next((s.correct for s in self.scores if s.condition == condition), None)
 
     def to_json(self) -> dict[str, object]:
         return {
@@ -397,7 +408,7 @@ class ReplayTrial:
             "inputCounts": [c.to_json() for c in self.input_counts],
             "complete": self.complete,
             "presented": self.presented,
-            "scores": [{"condition": condition, "correct": verdict} for condition, verdict in self.scores],
+            "scores": [s.to_json() for s in self.scores],
         }
 
 

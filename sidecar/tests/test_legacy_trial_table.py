@@ -109,7 +109,7 @@ def test_two_conditions_on_one_onset_each_keep_their_verdict() -> None:
                      metric("l1", "ODOR_1_ON", "WATER_POKE_L", "WATER_POKE_R"))
     table = decode.table_of(document(WORKED[:1]), shared)
     [trial] = table.trials
-    assert trial.row == "r1" and trial.scores == (("r1", True), ("l1", False))
+    assert trial.row == "r1" and [(s.condition, s.correct) for s in trial.scores] == [("r1", True), ("l1", False)]
     assert trial.to_json()["scores"] == [{"condition": "r1", "correct": True},
                                          {"condition": "l1", "correct": False}]
 

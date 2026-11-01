@@ -84,7 +84,7 @@ class SpineRecord:
 #: fingerprint of fixed runs' tables; when it fails, bump this and update the
 #: pin. Not `scoring.SCORE_VERSION`: the cache never holds a trial table, so a
 #: table change need not make every machine re-read its archive.
-REPLAY_VERSION = 1
+REPLAY_VERSION = 2
 
 #: The phase kind a response is read from (`ANALYTICS.md#the-trial-table`).
 WINDOW_PHASE = "response"

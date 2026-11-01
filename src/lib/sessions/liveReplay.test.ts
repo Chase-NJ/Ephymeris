@@ -2,9 +2,15 @@ import { describe, expect, it } from "vitest";
 
 import type { LiveReplay, MetricSummary } from "@/lib/ws/protocol";
 
-import { replayNote, replayStrip, replayWarns } from "./liveReplay";
+import { replayNote, replayStrip, replayWarns, spineAccuracy } from "./liveReplay";
 
-function metric(id: string, label: string, pSession: number | null, counted: number): MetricSummary {
+function metric(
+  id: string,
+  label: string,
+  pSession: number | null,
+  counted: number,
+  interval: [number, number] | null = null,
+): MetricSummary {
   return {
     id,
     label,
@@ -15,8 +21,8 @@ function metric(id: string, label: string, pSession: number | null, counted: num
     triggered: counted,
     excluded: 0,
     windowSize: 0,
-    wilsonLow: null,
-    wilsonHigh: null,
+    wilsonLow: interval?.[0] ?? null,
+    wilsonHigh: interval?.[1] ?? null,
     lowConfidence: true,
     answerSide: null,
   };
@@ -32,6 +38,7 @@ function replay(extra: Partial<LiveReplay> = {}): LiveReplay {
     phase: 2,
     row: "go",
     provisional: false,
+    unavailable: null,
     trials: 0,
     current: null,
     last: null,
@@ -73,5 +80,40 @@ describe("a spine run's live numbers, as the sidecar sent them", () => {
     expect(replayNote(replay())).toMatch(/No complete trial yet/);
     expect(replayWarns(replay())).toBe(false);
     expect(replayNote(null)).toMatch(/replaying the run/);
+  });
+
+  it("carries each figure's n and its 95% interval to the strip", () => {
+    const strip = replayStrip(
+      replay({ metrics: [metric("replay:go:correct", "P(correct | Go)", 0.75, 4, [0.3, 0.95])] }),
+    );
+    expect(strip.intervals).toEqual({ "replay:go:correct": [0.3, 0.95] });
+    expect(strip.metrics[0]!.n).toBe(4);
+  });
+
+  it("says why its numbers are gone when the live scorer is down, and keeps the token", () => {
+    const down = replay({ unavailable: "the live scorer stopped, so live numbers are unavailable" });
+    expect(replayStrip(down).metrics).toEqual([]);
+    expect(replayNote(down)).toMatch(/live scorer stopped/);
+    expect(replayWarns(down)).toBe(false);
+  });
+
+  it("calls a replay that failed unavailable, with no numbers", () => {
+    const failed = replay({ status: "unavailable", detail: "the live replay could not take a strobe" });
+    expect(replayWarns(failed)).toBe(true);
+    expect(replayNote(failed)).toMatch(/could not take a strobe/);
+  });
+});
+
+describe("a spine star's temperature", () => {
+  it("is the run's pooled P(correct) so far, as the sidecar scored it", () => {
+    expect(spineAccuracy(replay({ overall: metric("overall", "Overall accuracy", 0.8, 10) }))).toBe(0.8);
+  });
+
+  it("is nothing before a scored trial, for a run that will not be scored, or with the scorer down", () => {
+    expect(spineAccuracy(null)).toBeNull();
+    expect(spineAccuracy(replay())).toBeNull();
+    const overall = metric("overall", "Overall accuracy", 0.8, 10);
+    expect(spineAccuracy(replay({ status: "diverged", overall }))).toBeNull();
+    expect(spineAccuracy(replay({ unavailable: "down", overall }))).toBeNull();
   });
 });

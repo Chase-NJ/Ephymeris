@@ -141,6 +141,27 @@ def renamed(document: dict) -> dict:
     return out
 
 
+#: Every module of the sidecar's live spine path.
+LIVE_PATH = ("analytics/stream/live.py", "sessions/live_replay.py", "sessions/scorer.py")
+
+
+@pytest.mark.parametrize("module", LIVE_PATH)
+def test_no_module_on_the_live_path_looks_a_code_up_by_name(module: str) -> None:
+    """A pin beside the renamed-snapshot test below: no name lookup, no code
+    name written into the source (comments aside)."""
+    import io
+    import tokenize
+    from pathlib import Path
+
+    path = Path(live.__file__).resolve().parents[2] / module
+    code = [t.string for t in tokenize.generate_tokens(io.StringIO(path.read_text(encoding="utf-8")).readline)
+            if t.type not in (tokenize.COMMENT,)]
+    text = " ".join(code)
+    for banned in ("name_of", "code_of", ".names", "vocabulary(", '"TRIAL_START"', '"END_SESSION"',
+                   '"START_SESSION"', "_ON\"", "_ENTER\""):
+        assert banned not in text, f"{module} uses {banned}"
+
+
 def test_nothing_in_the_live_replay_reads_a_codes_name() -> None:
     document = simulated_document(fixture.two_afc(), two_afc_animal, trials=6)
     other = renamed(document)

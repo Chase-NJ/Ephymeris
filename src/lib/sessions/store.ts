@@ -67,6 +67,7 @@ export class SessionStore {
    * sidecar replays the run; this only holds what it said.
    */
   private replays = new Map<number, LiveReplay>();
+  private replayVersion = 0;
   /** Finished runs this session, per box. */
   private ended = new Map<number, AnimalEnded>();
   /**
@@ -169,7 +170,9 @@ export class SessionStore {
         const before = this.replays.get(d.box);
         this.replays.set(d.box, d);
         if (d.trials !== (before?.trials ?? 0)) this.appendHistory(d.box, replayStrip(d).metrics);
+        this.replayVersion += 1;
         this.notify(`replay:${d.box}`);
+        this.notify("replay");
       }),
 
       // Debug Mode's counterpart to the above (`debug_run.py`). Same slot, same
@@ -259,6 +262,11 @@ export class SessionStore {
     return this.telemetry.get(box) ?? NO_METRICS;
   }
 
+  /** Bumped whenever any box's replay changes — the star temperatures' trigger. */
+  getReplayVersion(): number {
+    return this.replayVersion;
+  }
+
   /** A box's latest spine-run replay, or null for none. */
   getReplay(box: number): LiveReplay | null {
     return this.replays.get(box) ?? null;
@@ -330,6 +338,7 @@ export class SessionStore {
     this.telemetry.clear();
     this.history.clear();
     this.replays.clear();
+    this.replayVersion += 1;
     this.ended.clear();
     this.writeErrors.clear();
     this.strobes.clear();
@@ -338,7 +347,7 @@ export class SessionStore {
     for (const key of this.subs.keys()) {
       if (
         key.startsWith("telemetry:") ||
-        key.startsWith("replay:") ||
+        key.startsWith("replay") ||
         key.startsWith("ended") ||
         key.startsWith("writeError:")
       ) {
@@ -352,6 +361,7 @@ export class SessionStore {
     this.telemetry.delete(box);
     this.history.delete(box);
     this.replays.delete(box);
+    this.replayVersion += 1;
     this.ended.delete(box);
     this.writeErrors.delete(box);
     this.strobes.delete(box);
@@ -360,6 +370,7 @@ export class SessionStore {
     this.notify("strobes");
     this.notify(`telemetry:${box}`);
     this.notify(`replay:${box}`);
+    this.notify("replay");
     this.notify(`ended:${box}`);
     this.notify(`writeError:${box}`);
     this.notify("ended");

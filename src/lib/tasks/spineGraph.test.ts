@@ -73,10 +73,14 @@ const SOURCES = import.meta.glob("/src/**/*.{ts,tsx}", {
 }) as Record<string, string>;
 
 describe("nothing on the live spine path matches strobe names (#100)", () => {
+  /** Every module a spine run's live view is drawn by. `StarPanelFrame` is
+   *  shared with legacy tasks: its strobe feed names codes for a person, and
+   *  matches nothing. `useBoxAccuracies` folds legacy strobes, never a spine run's. */
   const SPINE_PATH = [
     "/src/lib/tasks/spineGraph.ts",
     "/src/lib/sessions/liveReplay.ts",
     "/src/components/sessions/LiveSpine.tsx",
+    "/src/components/sessions/SpinePanel.tsx",
   ];
   it.each(SPINE_PATH)("%s reads no strobe and no legacy token", (path) => {
     const text = SOURCES[path];
@@ -88,5 +92,16 @@ describe("nothing on the live spine path matches strobe names (#100)", () => {
     for (const banned of [".strobes", "liveNodeId", "entryNames", "useLiveNode", "useLiveTrials", "getStrobes"]) {
       expect(source, `${path} uses ${banned}`).not.toContain(banned);
     }
+  });
+});
+
+describe("a spine run's star is never folded from strobe names (#100)", () => {
+  it("useBoxAccuracies hands a spine profile to the replay before any legacy fold", () => {
+    const source = SOURCES["/src/lib/sessions/useBoxAccuracies.ts"]!;
+    const spine = source.indexOf("spineAccuracy(");
+    const fold = source.indexOf("vocabFrom(");
+    expect(spine).toBeGreaterThan(-1);
+    expect(spine).toBeLessThan(fold);
+    expect(source).toMatch(/profile\?\.spine !== undefined[\s\S]*?spineAccuracy\([\s\S]*?continue;/);
   });
 });

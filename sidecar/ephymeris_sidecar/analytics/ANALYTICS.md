@@ -406,7 +406,8 @@ which `sessions/live_replay.py` feeds each strobe after it is fsync'd, and repor
   calls `summary.summarize` makes. A stream cut mid-run reads as a crashed run: its open trial is in the
   table, incomplete, and out of the metrics. So at `END_SESSION` the live figures are Analytics', by
   construction; it runs at each trial start and at each recorded `TRIAL_START` or `END_SESSION`, in the
-  loop's executor, one at a time per box.
+  [live scorer](../../../docs/ARCHITECTURE.md#the-live-scorer), a process of its own, one at a time per
+  box. With the scorer down the live numbers are unavailable, never stale.
 - **Divergence** is that same check: the first strobe replay does not predict makes the box `diverged`
   live, with no token and no numbers, as Analytics will not score it.
 

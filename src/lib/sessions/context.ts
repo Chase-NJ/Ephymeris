@@ -105,3 +105,10 @@ export function useBoxReplay(box: number): LiveReplay | null {
   );
   return useSyncExternalStore(subscribe, () => store.getReplay(box));
 }
+
+/** Bumped whenever any box's spine-run replay changes. */
+export function useReplayVersion(): number {
+  const store = useSessionStore();
+  const subscribe = useCallback((cb: () => void) => store.subscribe("replay", cb), [store]);
+  return useSyncExternalStore(subscribe, () => store.getReplayVersion());
+}

@@ -178,6 +178,10 @@ class LiveReplay:
         """How many strobes have been fed."""
         return len(self._strobes)
 
+    def strobes_since(self, k: int) -> list[list[int]]:
+        """Every strobe fed after the first `k`, in order."""
+        return [list(s) for s in self._strobes[k:]]
+
     def document(self) -> dict[str, Any]:
         """The run's document so far: the header and every strobe received."""
         return {**self._header, "ts_data": [list(s) for s in self._strobes]}
@@ -246,3 +250,21 @@ def scored(document: dict[str, Any], *, min_counted: int = DEFAULT_MIN_COUNTED) 
         metrics=tuple(table_metrics.correct_metrics(score, min_counted=min_counted)),
         overall=table_metrics.overall_correct(score, min_counted=min_counted),
     )
+
+
+def fields(score: LiveScore) -> dict[str, Any]:
+    """`score` as plain values, the part of `session.replay` it fills: what the
+    live scorer's process sends back (`sessions/scorer.py`)."""
+    complete = [t for t in score.trials if t.complete]
+    open_ = score.trials[-1] if score.trials and not score.trials[-1].complete else None
+    return {
+        "status": score.status,
+        "detail": score.detail,
+        "divergence": score.divergence.to_json() if score.divergence is not None else None,
+        "trials": len(complete),
+        "current": open_.to_json() if open_ is not None else None,
+        "last": complete[-1].to_json() if complete else None,
+        "metrics": [m.to_json() for m in score.metrics],
+        "overall": score.overall.to_json() if score.overall is not None else None,
+        "replay": score.score.to_json() if score.score is not None else None,
+    }

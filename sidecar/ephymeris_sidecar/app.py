@@ -458,6 +458,9 @@ class Application:
             await self.utility.stop()
         if self.ports is not None:
             await self.ports.stop()
+        # The live scorer is killed, never waited on (`ARCHITECTURE.md#the-live-scorer`).
+        if self.runner is not None:
+            self.runner.close()
         # After ports: nothing may be mid-flash once the manager has stopped,
         # so the daemon child (if the gRPC backend is active) can go too.
         await self.tool.close()

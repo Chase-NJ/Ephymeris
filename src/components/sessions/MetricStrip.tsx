@@ -16,6 +16,7 @@ export function MetricStrip({
   labels,
   note = liveScoring(null).note,
   bare = false,
+  intervals,
 }: {
   box: number;
   metrics: TelemetryMetric[];
@@ -40,6 +41,12 @@ export function MetricStrip({
    * carries when it sits at the bottom of a `BoxCard`.
    */
   bare?: boolean;
+  /**
+   * Metric id → its 95% Wilson interval, when the sidecar sent one (a spine
+   * run's `session.replay`, `replayStrip`): every number travels with its
+   * sample size and its interval (`ANALYTICS.md#uncertainty`).
+   */
+  intervals?: Record<string, [number, number]>;
 }) {
   if (metrics.length === 0) {
     return (
@@ -58,6 +65,7 @@ export function MetricStrip({
           box={box}
           metric={metric}
           label={labels?.[metric.id] ?? metric.id}
+          interval={intervals?.[metric.id] ?? null}
         />
       ))}
     </div>
@@ -68,10 +76,12 @@ function MetricRow({
   box,
   metric,
   label,
+  interval,
 }: {
   box: number;
   metric: TelemetryMetric;
   label: string;
+  interval: [number, number] | null;
 }) {
   const history = useMetricHistory(box, metric.id);
   return (
@@ -89,6 +99,14 @@ function MetricRow({
       <span className="w-[42px] text-right font-mono text-[10px] tabular-nums text-static">
         n={metric.n}
       </span>
+      {interval && (
+        <span
+          className="w-[64px] text-right font-mono text-[10px] tabular-nums text-static"
+          title="95% Wilson interval"
+        >
+          {interval[0].toFixed(2)}–{interval[1].toFixed(2)}
+        </span>
+      )}
     </div>
   );
 }

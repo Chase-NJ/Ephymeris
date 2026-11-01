@@ -936,7 +936,10 @@ function BoxCard({
   const telemetry = useBoxTelemetry(box.box);
   const replay = useBoxReplay(box.box);
   const strip = useMemo(
-    () => (spine ? replayStrip(replay) : { metrics: telemetry, labels: metricLabels }),
+    () =>
+      spine
+        ? replayStrip(replay)
+        : { metrics: telemetry, labels: metricLabels, intervals: {} },
     [spine, replay, telemetry, metricLabels],
   );
   const ended = useBoxEnded(box.box);
@@ -1002,6 +1005,7 @@ function BoxCard({
           box={box.box}
           metrics={strip.metrics}
           labels={strip.labels}
+          intervals={strip.intervals}
           note={spine ? replayNote(replay) : metricsNote}
         />
       )}

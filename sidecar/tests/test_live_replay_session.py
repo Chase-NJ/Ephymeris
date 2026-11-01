@@ -20,6 +20,7 @@ from ephymeris_sidecar.analytics.stream.summary import summarize
 from ephymeris_sidecar.ports import handler as handler_module
 from ephymeris_sidecar.protocol import Evt, validate_event_data
 from ephymeris_sidecar.sessions import live_replay
+from ephymeris_sidecar.sessions.scorer import LiveScorer
 from ephymeris_sidecar.sessions.runner import BoxConfig, SessionRunner
 from ephymeris_sidecar.tasks import profile as task_profile
 from ephymeris_sidecar.tasks.start_command import build_start_command
@@ -29,12 +30,18 @@ from tests.test_live_replay import header_of
 from tests.test_spine_analytics import go_no_go_animal, simulated_document
 
 
+#: Runners `make_runner` made, whose scorers each test's end kills.
+_RUNNERS: list[SessionRunner] = []
+
+
 @pytest.fixture(autouse=True)
 def _issued_rig(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(handler_module, "SESSION_SEED_WINDOW_S", 0.05)
     fixture.install()
     yield
     fixture.uninstall()
+    while _RUNNERS:
+        _RUNNERS.pop().close()
 
 
 @pytest.fixture
@@ -44,11 +51,19 @@ async def bench():  # noqa: ANN201
     made.shutdown()
 
 
+@pytest.fixture
+def scorer():  # noqa: ANN201
+    made = LiveScorer()
+    yield made
+    made.stop()
+
+
 def document(trials: int = 6) -> dict:
     return simulated_document(fixture.go_no_go(), go_no_go_animal, trials=trials)
 
 
-def make_runner(tmp_path: Path, bench: Bench, recorded: dict) -> tuple[SessionRunner, list[dict]]:
+def make_runner(tmp_path: Path, bench: Bench, recorded: dict,
+                scorer: LiveScorer | None = None) -> tuple[SessionRunner, list[dict]]:
     events: list[dict] = []
 
     async def broadcast(message: dict) -> None:
@@ -60,7 +75,7 @@ def make_runner(tmp_path: Path, bench: Bench, recorded: dict) -> tuple[SessionRu
     profile = task_profile.parse_profile(recorded[task_profile.SNAPSHOT_KEY])
     config = {f.metadata_key: recorded[f.metadata_key] for f in profile.config}
     runner = SessionRunner(loop=asyncio.get_running_loop(), ports=bench.ports,
-                           broadcast=broadcast, on_animal_ended=nothing)
+                           broadcast=broadcast, on_animal_ended=nothing, scorer=scorer)
     runner.configure(
         tmp_path, "SPN-gng_1", "g1",
         [BoxConfig(box=1, animal_id="a1", animal_name="remy1", sketch_path="/sk/spine",
@@ -68,6 +83,7 @@ def make_runner(tmp_path: Path, bench: Bench, recorded: dict) -> tuple[SessionRu
                    config_metadata=config, profile=profile)],
         duration_s=None, session_id="s1",
     )
+    _RUNNERS.append(runner)
     return runner, events
 
 
@@ -178,7 +194,7 @@ class Clock:
         return self.now
 
 
-async def test_a_silent_transition_is_reported_on_the_boards_time() -> None:
+async def test_a_silent_transition_is_reported_on_the_boards_time(scorer) -> None:  # noqa: ANN001
     """The outcome's timeout runs out into the ITI with nothing strobed: the
     token moves there when the board's clock says so, never by polling it."""
     recorded = document()
@@ -189,7 +205,7 @@ async def test_a_silent_transition_is_reported_on_the_boards_time() -> None:
         published.append(payload)
 
     box = live_replay.BoxReplay(1, "a1", header_of(recorded), loop=asyncio.get_running_loop(),
-                                publish=publish, clock=clock)
+                                publish=publish, scorer=scorer, clock=clock)
     code_of = {name: int(c) for c, name in recorded[task_profile.SNAPSHOT_KEY]["strobes"].items()}
     strobes = recorded["ts_data"]
     # Through the first reward's end: the board is in the outcome's timeout.
@@ -210,7 +226,7 @@ async def test_a_silent_transition_is_reported_on_the_boards_time() -> None:
 # --- a client that connects mid-session ------------------------------------------
 
 
-async def test_a_client_that_connects_is_told_each_boxs_replay(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+async def test_a_client_that_connects_is_told_each_boxs_replay(tmp_path: Path, monkeypatch, scorer) -> None:  # noqa: ANN001
     from tests.wire import running_app
 
     recorded = document()
@@ -219,7 +235,7 @@ async def test_a_client_that_connects_is_told_each_boxs_replay(tmp_path: Path, m
         return None
 
     box = live_replay.BoxReplay(3, "a3", header_of(recorded), loop=asyncio.get_running_loop(),
-                                publish=publish)
+                                publish=publish, scorer=scorer)
     for code, ts in recorded["ts_data"][:10]:
         box.feed(code, ts)
     await asyncio.sleep(0.05)
@@ -230,3 +246,61 @@ async def test_a_client_that_connects_is_told_each_boxs_replay(tmp_path: Path, m
         monkeypatch.setattr(app.runner, "replay_snapshot", lambda: [payload])
         [told] = await app.server.snapshot(Evt.SESSION_REPLAY)
         assert told["evt"] == Evt.SESSION_REPLAY and told["data"] == payload
+
+
+# --- the scorer fenced off ---------------------------------------------------------
+
+
+async def test_a_scorer_killed_mid_session_costs_only_the_live_numbers(
+        tmp_path: Path, bench: Bench, scorer: LiveScorer) -> None:
+    recorded = document(trials=8)
+    strobes = recorded["ts_data"]
+    runner, events = make_runner(tmp_path, bench, recorded, scorer=scorer)
+    board = await start(runner, bench, recorded)
+    half = len(strobes) // 2
+    await board.said(*lines(strobes[:half]))
+    await until(lambda: any(r["metrics"] for r in replays(events)), timeout=20)
+    scorer.kill_for_test()
+    await until(lambda: replays(events)[-1]["unavailable"] is not None, timeout=10)
+
+    down = replays(events)[-1]
+    assert down["status"] == "replaying" and down["metrics"] == [] and down["overall"] is None
+    assert "unavailable" in down["unavailable"]
+    await board.said(*lines(strobes[half:]))
+    await until(lambda: not runner.running_boxes(), timeout=10)
+    moving = [r for r in replays(events) if r["unavailable"] and r["phase"] is not None]
+    assert len({r["phase"] for r in moving}) > 1, "the token carried on"
+    final = replays(events)[-1]
+    assert final["status"] == "ended" and final["metrics"] == [] and final["unavailable"]
+    await until(lambda: any(p.is_file() for p in tmp_path.rglob("*.json")), timeout=10)
+    tsv = next(p for p in tmp_path.rglob("*.tsv") if p.is_file())
+    body = [line for line in tsv.read_text(encoding="utf-8").splitlines() if not line.startswith("#")]
+    assert body == lines(strobes), "every strobe is in the .tsv, in order"
+
+
+async def test_a_feed_that_fails_is_unavailable_never_a_clean_end(
+        tmp_path: Path, bench: Bench, monkeypatch) -> None:  # noqa: ANN001
+    from ephymeris_sidecar.analytics.stream import live
+
+    recorded = document()
+    strobes = recorded["ts_data"]
+    real = live.LiveReplay.feed
+    calls = {"n": 0}
+
+    def flaky(self, code, ts):  # noqa: ANN001, ANN202
+        calls["n"] += 1
+        if calls["n"] == 20:
+            raise RuntimeError("a bug in the live replay")
+        return real(self, code, ts)
+
+    monkeypatch.setattr(live.LiveReplay, "feed", flaky)
+    runner, events = make_runner(tmp_path, bench, recorded)
+    board = await start(runner, bench, recorded)
+    await board.said(*lines(strobes))
+    await until(lambda: not runner.running_boxes(), timeout=10)
+    await asyncio.sleep(0.2)
+    final = replays(events)[-1]
+    assert final["status"] == "unavailable" and "a bug in the live replay" in final["detail"]
+    assert final["metrics"] == [] and final["overall"] is None and final["phase"] is None
+    assert not any(r["status"] == "ended" for r in replays(events))
+    runner.close()

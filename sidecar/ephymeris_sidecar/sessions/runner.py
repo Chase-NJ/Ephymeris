@@ -29,6 +29,7 @@ from ..tasks.profile import TaskProfile
 from ..tasks.seed import new_trial_seed
 from ..tasks.start_command import StartCommand, StartRefused
 from .live_replay import BoxReplay
+from .scorer import LiveScorer
 from .models import SessionAnimalRun
 from .paths import AnimalFilePaths, resolve_animal_files
 from .writer import AnimalWriter
@@ -122,6 +123,7 @@ class SessionRunner:
         broadcast: Callable[[dict[str, Any]], Awaitable[None]],
         on_animal_ended: Callable[[ActiveRun, str], Awaitable[None]],
         backup: Any = None,
+        scorer: LiveScorer | None = None,
     ) -> None:
         self._loop = loop
         self._ports = ports
@@ -142,6 +144,9 @@ class SessionRunner:
         # until the box starts again or a new mapping is confirmed
         # (`ARCHITECTURE.md#live-session-views`).
         self._replays: dict[int, BoxReplay] = {}
+        # The one process that scores every box's spine run, started on the
+        # first one (`ARCHITECTURE.md#the-live-scorer`).
+        self._scorer = scorer if scorer is not None else LiveScorer()
         # In-flight fire-and-forget finalizations (end strobes, board drops).
         # `end_all` drains this so a caller that clears session state right
         # after it returns can't strand a finalization mid-write.
@@ -193,7 +198,7 @@ class SessionRunner:
         self._group_id = group_id
         self._configs = {c.box: c for c in box_configs}
         self._ended = set()
-        self._replays = {}
+        self._forget_replays()
         self._duration_s = duration_s
 
     def clear(self) -> None:
@@ -202,7 +207,7 @@ class SessionRunner:
             raise RuntimeError("cannot clear a runner with active runs")
         self._configs = {}
         self._ended = set()
-        self._replays = {}
+        self._forget_replays()
         self._session_folder = None
         self._session_id_label = ""
         self._session_id = ""
@@ -291,7 +296,8 @@ class SessionRunner:
         )
         self._active[box] = run
         self._ended.discard(box)
-        self._replays.pop(box, None)
+        if (gone := self._replays.pop(box, None)) is not None:
+            self._scorer.forget(gone.key)
         # The time limit counts from this box's own start (`ARCHITECTURE.md#configuration`). STOP is
         # still only a request the firmware honours at a trial boundary, so
         # the deadline sends it and the board's end strobe does the ending.
@@ -416,7 +422,7 @@ class SessionRunner:
             # finished file (`ANALYTICS.md#live-scoring`). Never at the run's cost.
             try:
                 run.live = BoxReplay(box, run.config.animal_id, header, loop=self._loop,
-                                     publish=self._push_replay)
+                                     publish=self._push_replay, scorer=self._scorer)
                 self._replays[box] = run.live
             except Exception:  # noqa: BLE001
                 log.exception("box %d: couldn't start its live replay", box)
@@ -604,6 +610,15 @@ class SessionRunner:
         # here forever and starves the loop that would run it.
         while pending := [t for t in self._finalizations if not t.done()]:
             await asyncio.gather(*pending, return_exceptions=True)
+
+    def close(self) -> None:
+        """Kill the live scorer, without waiting on it: the sidecar is going."""
+        self._scorer.stop()
+
+    def _forget_replays(self) -> None:
+        for replay in self._replays.values():
+            self._scorer.forget(replay.key)
+        self._replays = {}
 
     def replay_snapshot(self) -> list[dict[str, Any]]:
         """One `session.replay` payload per box with a live replay: what a

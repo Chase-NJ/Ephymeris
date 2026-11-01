@@ -299,6 +299,10 @@ macOS as run-from-source. Packaged-only path bugs exist (Windows verbatim `\\?\`
 
 ### Not yet done
 
+- **The live scorer in the frozen Windows sidecar.** The scorer is a `spawn` child
+  ([The live scorer](docs/ARCHITECTURE.md#the-live-scorer)). It is proven in a dev run and in a
+  PyInstaller-frozen probe on macOS. It has not yet started from the frozen sidecar on a lab machine. If
+  it fails to start there, the live numbers read unavailable and nothing else changes.
 - **A full-length recording from a real animal.** Recording has been run through the app against a
   real RHX and real boxes; a complete recording session with an animal has not.
   [Not yet verified](docs/RECORDING.md#not-yet-verified) lists what to watch for on the first one.

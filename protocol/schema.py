@@ -897,12 +897,13 @@ SHAPES = (
     ),
     Shape(
         "LiveReplayStatus",
-        lit("replaying", "diverged", "unreplayable", "ended"),
+        lit("replaying", "diverged", "unreplayable", "unavailable", "ended"),
         doc="Where a running spine run's live replay stands (`ANALYTICS.md#live-scoring`). "
         "`replaying`: every strobe so far is what replay predicts, and `phase` is where the board "
         "is. `diverged`: a strobe is not, so the run has no token and no numbers, as Analytics "
-        "will not score it. `unreplayable`: replay cannot run this run at all. `ended`: the run "
-        "is over, and its numbers are Analytics'.",
+        "will not score it. `unreplayable`: replay cannot run this run at all. `unavailable`: the "
+        "live replay failed to take a strobe, so it no longer describes the run; the run itself "
+        "is unaffected. `ended`: the run is over, and its numbers, when it has them, are Analytics'.",
     ),
     Shape(
         "LiveReplay",
@@ -936,6 +937,14 @@ SHAPES = (
                 "sidecar's estimate on the host clock of what the board does when nothing happens "
                 "(a Wait timing out, an outcome running into the ITI), which no strobe has confirmed "
                 "yet. False whenever the strobes so far put the board there, and unless `replaying`.",
+            ),
+            f(
+                "unavailable",
+                nullable(STR),
+                doc="Why the live numbers are unavailable while the token carries on: the live "
+                "scorer process could not start or stopped (`ARCHITECTURE.md#the-live-scorer`). "
+                "The run, its strobes and its file are unaffected; Analytics scores it as ever. "
+                "Null while the scorer is up, and unless `replaying` or `ended`.",
             ),
             f("trials", INT, doc="Complete trials so far, as the live trial table counts them."),
             f(

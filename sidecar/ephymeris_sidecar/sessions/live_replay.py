@@ -12,13 +12,17 @@ on the port's session thread. What it owns:
   out on the board even though nothing is strobed then, marked `provisional`
   until a strobe confirms it. One loop timer per box, re-armed after every
   strobe; the board is never polled;
-- **the check and the numbers** (`live.scored`), run in the loop's executor and
-  coalesced: while one runs, another request only marks it due again;
+- **its requests to the live scorer** (`sessions/scorer.py`), the process that
+  checks and scores the stream so far: one outstanding at a time, carrying only
+  the strobes since the last. While the scorer is down the token carries on and
+  the numbers say they are unavailable;
 - **the payload** `session.replay` carries, broadcast whenever it changes and
   replayed to a client that connects (`ARCHITECTURE.md#replay-on-connect`).
 
 Per strobe the session thread does `LiveReplay.feed` and `at`, a few
-microseconds, and nothing here can raise into it: a failure is logged.
+microseconds, and nothing here can raise into it. A feed that fails anyway
+leaves the replay `unavailable` for the rest of the run: never a clean end with
+numbers read from a stream it did not take.
 """
 
 from __future__ import annotations
@@ -27,10 +31,12 @@ import asyncio
 import logging
 import threading
 import time
+import uuid
 from typing import Any, Awaitable, Callable
 
 from ..analytics.stream import live
 from ..analytics.stream.spine import SpineDecodeError
+from .scorer import LiveScorer
 
 log = logging.getLogger(__name__)
 
@@ -38,8 +44,9 @@ log = logging.getLogger(__name__)
 #: reported, so an edge that beat it on the board, still on its way here, wins.
 GRACE_MS = 30
 
-#: `LiveReplay.status` values (`LiveReplay` on the wire).
-REPLAYING, DIVERGED, UNREPLAYABLE, ENDED = "replaying", "diverged", "unreplayable", "ended"
+#: `LiveReplayStatus` values (`LiveReplay` on the wire).
+REPLAYING, DIVERGED, UNREPLAYABLE, UNAVAILABLE, ENDED = (
+    "replaying", "diverged", "unreplayable", "unavailable", "ended")
 
 
 class BoxReplay:
@@ -53,14 +60,18 @@ class BoxReplay:
         *,
         loop: asyncio.AbstractEventLoop,
         publish: Callable[[dict[str, Any]], Awaitable[None]],
+        scorer: LiveScorer,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.box = box
+        self.key = uuid.uuid4().hex
         self._animal_id = animal_id
         self._loop = loop
         self._publish = publish
+        self._scorer = scorer
         self._clock = clock
         self._lock = threading.Lock()
+        self._header = header
         self._status = REPLAYING
         self._detail: str | None = None
         self._replay: live.LiveReplay | None = None
@@ -70,9 +81,13 @@ class BoxReplay:
             self._status, self._detail = UNREPLAYABLE, f"replay cannot run this spine run: {exc}"
         self._view: live.View | None = self._replay.at(0) if self._replay is not None else None
         self._anchor = (0, clock())  # (board tick, host seconds) of the last strobe
-        self._score: live.LiveScore | None = None
-        #: How many strobes `_score` read: an ended run is `ended` only once it read them all.
+        #: The scorer's latest answer (`live.fields`), and how many strobes it read.
+        self._fields: dict[str, Any] | None = None
         self._scored = 0
+        #: Strobes sent to the scorer so far.
+        self._sent = 0
+        #: Why the live numbers are unavailable: the scorer is down.
+        self._unavailable: str | None = None
         self._timer: asyncio.TimerHandle | None = None
         self._scoring = False
         self._again = False
@@ -87,14 +102,31 @@ class BoxReplay:
         """One strobe, already on disk. Called on the port's session thread."""
         try:
             with self._lock:
-                if self._replay is None or self._closed:
+                if self._replay is None or self._closed or self._status != REPLAYING:
                     return
                 fed = self._replay.feed(code, ts)
                 self._anchor = (ts, self._clock())
                 moved = self._move(self._replay.at(ts))
             self._loop.call_soon_threadsafe(self._changed, moved, fed.check)
-        except Exception:  # noqa: BLE001 - the live view never costs the session
+        except Exception as exc:  # noqa: BLE001 - the live view never costs the session
             log.exception("box %d: live replay could not take a strobe", self.box)
+            self._failed(f"the live replay could not take a strobe: {exc!r}")
+
+    def _failed(self, reason: str) -> None:
+        """The replay missed a strobe, so nothing it says is the run's any more."""
+        try:
+            with self._lock:
+                self._status, self._detail = UNAVAILABLE, reason
+        except Exception:  # noqa: BLE001
+            log.exception("box %d: couldn't mark its live replay failed", self.box)
+        self._post(self._changed, True, False)
+
+    def _post(self, fn: Callable[..., None], *args: Any) -> None:
+        """Run `fn` on the loop, from any thread; nothing once the loop is gone."""
+        try:
+            self._loop.call_soon_threadsafe(fn, *args)
+        except RuntimeError:  # the loop closed: the sidecar is going
+            pass
 
     # --- the loop ------------------------------------------------------------
 
@@ -140,54 +172,71 @@ class BoxReplay:
     def _on_due(self) -> None:
         self._timer = None
         with self._lock:
-            if self._replay is None or self._closed or self._replay.ended:
+            if self._replay is None or self._closed or self._replay.ended or self._status != REPLAYING:
                 return
             tick, host = self._anchor
             board = tick + int((self._clock() - host) * 1000) - GRACE_MS
             moved = self._move(self._replay.at(max(board, tick)))
         self._changed(moved, False)
 
+    # --- the scorer ------------------------------------------------------------
+
     def _score_soon(self) -> None:
-        if self._replay is None or self._status == DIVERGED:
+        """Ask the scorer for the stream so far: at most one request out at a
+        time, and only the strobes since the last."""
+        if self._replay is None or self._status != REPLAYING or self._unavailable is not None:
             return
         if self._scoring:
             self._again = True
             return
         self._scoring = True
-        task = asyncio.ensure_future(self._score_now())
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        with self._lock:
+            count = self._replay.received
+            strobes = self._replay.strobes_since(self._sent)
+            header = self._header if self._sent == 0 else None
+            self._sent = count
+        self._scorer.submit(self.key, header, strobes, count,
+                            on_result=self._from_scorer, on_down=self._scorer_down)
 
-    async def _score_now(self) -> None:
-        assert self._replay is not None
-        try:
-            while True:
-                self._again = False
-                with self._lock:
-                    document = self._replay.document()
-                score = await self._loop.run_in_executor(None, live.scored, document)
-                self._take(score, len(document["ts_data"]))
-                if not self._again:
-                    return
-        except Exception:  # noqa: BLE001
-            log.exception("box %d: the live trial table could not be read", self.box)
-        finally:
-            self._scoring = False
+    def _from_scorer(self, count: int, fields: dict[str, Any]) -> None:
+        """On the scorer's reader thread."""
+        self._post(self._take, count, fields)
 
-    def _take(self, score: live.LiveScore, read: int) -> None:
-        self._scored = read
-        if score.status == "ok":
-            self._score = score
+    def _scorer_down(self, reason: str) -> None:
+        """On the scorer's threads, or the loop."""
+        self._post(self._down, reason)
+
+    def _take(self, count: int, fields: dict[str, Any]) -> None:
+        self._scoring = False
+        if self._status != REPLAYING:
+            return
+        self._scored = count
+        status = fields.get("status")
+        if status == "ok":
+            self._fields = fields
         else:
             # Never left standing: a stream replay does not reproduce has no
             # numbers, and its token no phase (`ANALYTICS.md#diverged-and-unreplayable-runs`).
-            self._status = DIVERGED if score.status == "diverged" else UNREPLAYABLE
-            self._detail = score.detail
-            self._score = score
+            with self._lock:
+                self._status = status if status in (DIVERGED, UNREPLAYABLE) else UNAVAILABLE
+                self._detail = fields.get("detail")
+            self._fields = fields
             if self._timer is not None:
                 self._timer.cancel()
                 self._timer = None
         self._emit()
+        if self._again:
+            self._again = False
+            self._score_soon()
+
+    def _down(self, reason: str) -> None:
+        self._scoring = False
+        self._again = False
+        self._unavailable = reason
+        self._fields = None
+        self._emit()
+
+    # --- the payload -------------------------------------------------------------
 
     def _emit(self) -> None:
         payload = self._build()
@@ -204,33 +253,31 @@ class BoxReplay:
 
     def _build(self) -> dict[str, Any]:
         with self._lock:
-            status = self._status
+            status, detail = self._status, self._detail
             over = self._closed or (self._replay is not None and self._replay.ended)
-            # Ended, with numbers that are the whole run's: until its last
-            # score lands it is still replaying, with no token.
+            # Ended once its numbers are the whole run's, or once no numbers
+            # are coming: until then it is still replaying, with no token.
             if status == REPLAYING and over and self._replay is not None \
-                    and self._scored == self._replay.received:
+                    and (self._scored == self._replay.received or self._unavailable is not None):
                 status = ENDED
             view = self._view if status == REPLAYING and not over else None
-        score = self._score if status in (REPLAYING, ENDED) else None
-        trials = score.trials if score is not None else ()
-        complete = [t for t in trials if t.complete]
-        open_ = trials[-1] if trials and not trials[-1].complete and status == REPLAYING else None
-        divergence = self._score.divergence if self._score is not None and status == DIVERGED else None
+        numbers = self._fields if status in (REPLAYING, ENDED) and self._unavailable is None else None
+        divergence = self._fields.get("divergence") if self._fields is not None and status == DIVERGED else None
         return {
             "box": self.box,
             "animalId": self._animal_id,
             "status": status,
-            "detail": self._detail if status in (DIVERGED, UNREPLAYABLE) else None,
+            "detail": detail if status in (DIVERGED, UNREPLAYABLE, UNAVAILABLE) else None,
             "state": view.state if view is not None else None,
             "phase": view.phase if view is not None else None,
             "row": view.row if view is not None else None,
             "provisional": view.provisional if view is not None else False,
-            "trials": len(complete),
-            "current": open_.to_json() if open_ is not None else None,
-            "last": complete[-1].to_json() if complete else None,
-            "metrics": [m.to_json() for m in score.metrics] if score is not None else [],
-            "overall": score.overall.to_json() if score is not None and score.overall is not None else None,
-            "replay": score.score.to_json() if score is not None and score.score is not None else None,
-            "divergence": divergence.to_json() if divergence is not None else None,
+            "unavailable": self._unavailable if status in (REPLAYING, ENDED) else None,
+            "trials": numbers["trials"] if numbers is not None else 0,
+            "current": numbers["current"] if numbers is not None and status == REPLAYING else None,
+            "last": numbers["last"] if numbers is not None else None,
+            "metrics": numbers["metrics"] if numbers is not None else [],
+            "overall": numbers["overall"] if numbers is not None else None,
+            "replay": numbers["replay"] if numbers is not None else None,
+            "divergence": divergence,
         }

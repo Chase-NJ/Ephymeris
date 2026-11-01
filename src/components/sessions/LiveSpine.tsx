@@ -140,7 +140,12 @@ function Caption({ graph, replay }: { graph: SpineGraph; replay: LiveReplay | nu
   if (replayWarns(replay)) {
     return (
       <p className={line} style={{ color: "var(--color-status-warning)" }} title={replay.detail ?? undefined}>
-        ⚠ {replay.status === "diverged" ? "Diverged" : "Not replayable"} — {replay.detail}
+        ⚠ {replay.status === "diverged"
+          ? "Diverged"
+          : replay.status === "unavailable"
+            ? "Live replay unavailable"
+            : "Not replayable"}{" "}
+        — {replay.detail}
       </p>
     );
   }
@@ -163,6 +168,9 @@ function Caption({ graph, replay }: { graph: SpineGraph; replay: LiveReplay | nu
       {replay.provisional && <span title="No strobe has confirmed this yet"> (by the board&apos;s clock)</span>}
       {row && <> · {row}</>}
       {trial !== null && <> · trial {trial}</>}
+      {replay.unavailable !== null && (
+        <span style={{ color: "var(--color-status-warning)" }}> · live numbers unavailable</span>
+      )}
       {replay.last?.outcome && (
         <> · last: {replay.last.outcome.replace(/_/g, " ")}</>
       )}

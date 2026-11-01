@@ -104,7 +104,9 @@ flowchart LR
     boards["Up to 6 × Mega2560"]
     store[("ephymeris.db<br/>session files")]
     rhx["Intan RHX<br/>(recordings only)"]
+    scorer["Live scorer<br/>(Python child, spine runs only)"]
     shell -->|"spawns, holds stdin open,<br/>kills on exit"| sidecar
+    sidecar -->|"spawns on the first spine run,<br/>pipes, kills on exit"| scorer
     shell -->|"serves"| webview
     webview <-->|"WebSocket on 127.0.0.1<br/>commands, replies, events"| sidecar
     sidecar -->|"serial, arduino-cli"| boards
@@ -117,6 +119,7 @@ flowchart LR
 | **Sidecar** (`sidecar/ephymeris_sidecar/`) | Everything stateful: serial ports, `arduino-cli`, SQLite, session files, Intan RHX, the port state machine | Own settings — it receives them |
 | **Shell** (`src-tauri/`) | Spawning the sidecar, settings persistence, OS dialogs and windows | Hardware or session logic |
 | **Webview** (`src/`) | Rendering what the sidecar reports; editing settings | Touch serial ports or `arduino-cli`; predict a state transition |
+| **Live scorer** (`sessions/scorer.py`), a child of the sidecar | Scoring every box's running spine run, from the strobes the sidecar sends it | Hold state the sidecar needs; touch a port, a file or the database ([The live scorer](#the-live-scorer)) |
 
 ### Rules that explain most decisions
 
@@ -125,8 +128,9 @@ flowchart LR
 2. **A serial port has exactly one owner.** This is why the [port state machine](#port-state-machine) exists.
 3. **Box number 1–6 is the key, never a port address.** Windows renumbers COM ports across reboots; the
    sidecar resolves `box → hardware_id → current address` internally ([Box bindings](#box-bindings)).
-4. **Nothing slow or optional may stall a session.** The backup mirror ([DATA.md](DATA.md#backup-mirroring))
-   and Intan RHX ([RECORDING.md](RECORDING.md#the-rule)) may be slow, absent or dead.
+4. **Nothing slow or optional may stall a session.** The backup mirror ([DATA.md](DATA.md#backup-mirroring)),
+   Intan RHX ([RECORDING.md](RECORDING.md#the-rule)) and the [live scorer](#the-live-scorer) may be slow,
+   absent or dead.
 5. **Data is written as it happens.** Every strobe is fsync'd to the animal's `.tsv` on arrival
    ([DATA.md](DATA.md#crash-safety)).
 
@@ -190,6 +194,37 @@ With no shell (a plain-browser dev preview), `src/lib/ws/client.ts` reads a manu
 If the sidecar dies, `sidecar://down` is surfaced and the user restarts the app. A silent respawn would
 resurrect the process without the port ownership or session state it had. For the same reason a group is
 never resumed mid-run after a restart; continuing *between* groups is supported ([Group step](#group-step)).
+
+### The live scorer
+
+A running spine run's live numbers are a whole replay of its stream so far
+([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#live-scoring)): tens of milliseconds
+at a thousand trials. On any thread of the sidecar that work holds the GIL every session thread needs to
+write and fsync its next strobe ([DATA.md](DATA.md#written-live)); six boxes so scored put a strobe's
+write most of a second behind. So it runs in **one child process for every box**, `sessions/scorer.py`,
+which can hold nothing the sidecar needs.
+
+> [!IMPORTANT]
+> **The scorer dies with the sidecar, is never respawned, and is never waited on.**
+> - It is a `multiprocessing` child started with `spawn` on every platform, on the first spine run's first
+>   request, from a sender thread: never the session thread or the loop.
+> - It exits when its request pipe closes, which a dead sidecar's does, or when its parent changes; the
+>   sidecar kills it on the way out (`Application.stop`), without joining it.
+> - In the frozen build it is the sidecar's own executable started again: `packaging/entry.py` calls
+>   `multiprocessing.freeze_support()` before anything parses arguments, which is where that run turns into
+>   the child instead of a second sidecar. Remove it and the frozen sidecar starts a copy of itself.
+> - If it cannot start or dies, it is down for the rest of the sidecar's life: every box's live numbers
+>   say `unavailable` (`LiveReplay.unavailable`), and the token, the strobes, the files and the session are
+>   untouched. Analytics scores the run afterwards as ever.
+
+- **Fed deltas.** A box sends a run's header once, then only the strobes since its last request. The
+  session thread only appends to the live replay ([Live session views](#live-session-views)); requests are
+  made on the loop, handed to the sender thread, and written to the pipe there, so nothing on the session
+  path waits on the child.
+- **Coalesced.** Each run has one request out at a time. Requests waiting to be sent merge, and the child
+  drains every request before it scores, then scores each run once at its latest count. A slow score drops
+  the stale requests behind it; nothing queues.
+- **Answers** come back on a reader thread and are handed to the loop, which broadcasts `session.replay`.
 
 ### Which sidecar runs
 
@@ -1501,9 +1536,16 @@ path for them. A `diverged` run shows its divergence in the warning colour, with
   strobe confirms it. One loop timer per box; the board is never polled, and a later strobe replaces the
   estimate.
 - **Off the strobe's path.** The feed runs on the port's session thread after the strobe's fsync, a few
-  microseconds; the check and the numbers (`live.scored`, a whole replay) run in the loop's executor, one
-  at a time per box. A box keeps its last payload after its run ends, until it starts again or a new
+  microseconds. The check and the numbers (`live.scored`, a whole replay) run in [the live
+  scorer](#the-live-scorer), a process of their own, one request out at a time per box;
+  `test_live_replay_load.py` holds six boxes' write-and-fsync latency with live scoring on to twice the
+  figure with it off. A box keeps its last payload after its run ends, until it starts again or a new
   mapping is confirmed, and `session.replay` is replayed on connect.
+- **Unavailable, never wrong.** With the scorer down, the payload's `unavailable` says why and the numbers
+  go, while the token carries on. A feed that fails makes the whole replay `unavailable` for the rest of
+  the run: it no longer describes the run, so it never ends with numbers.
+- **The star.** A spine star's temperature is the replay's pooled P(correct) (`spineAccuracy`), never the
+  legacy name fold `useBoxAccuracies` runs for other tasks.
 
 **The session store forgets a run when the sidecar reports the next one began**, never on a click, so a
 refused start leaves the last run on screen. A port entering `IN_SESSION` (a real transition, not the

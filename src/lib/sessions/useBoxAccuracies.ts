@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 
-import { useSessionStore } from "./context";
+import { useReplayVersion, useSessionStore } from "./context";
+import { spineAccuracy } from "./liveReplay";
 import {
   EMPTY_LIVE_TRIALS,
   advance,
@@ -21,6 +22,10 @@ import type { SessionBox, TaskProfile } from "./types";
  * Recomputing all six from their strobe logs is cheap — the logs are decoded
  * `{code, at}` pairs and the fold is linear — and it runs on the store's
  * version bump, which is already batched at the sidecar's 20 Hz.
+ *
+ * A spine run is never folded: its strobes name channels, not answers. Its
+ * temperature is the pooled P(correct) the sidecar's live replay scored
+ * (`spineAccuracy`), read before the legacy vocabulary is even built.
  */
 export function useBoxAccuracies(
   boxes: SessionBox[],
@@ -34,11 +39,16 @@ export function useBoxAccuracies(
 ): Record<string, number | null> {
   const store = useSessionStore();
   const version = useStrobeVersion();
+  const replays = useReplayVersion();
 
   return useMemo(() => {
     const out: Record<string, number | null> = {};
     for (const box of boxes) {
       const profile = profiles[box.sketchPath];
+      if (profile?.spine !== undefined) {
+        out[box.animalId] = spineAccuracy(store.getReplay(box.box));
+        continue;
+      }
       const vocab = vocabFrom(profile?.strobes ?? {});
       if (!vocabIsUsable(vocab)) {
         out[box.animalId] = null;
@@ -51,5 +61,5 @@ export function useBoxAccuracies(
     // `version` is the store's change signal; the strobe arrays it exposes are
     // mutated in place, so nothing else here would tell us they grew.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [boxes, profiles, store, version, window]);
+  }, [boxes, profiles, store, version, replays, window]);
 }

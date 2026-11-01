@@ -81,6 +81,9 @@ CORE_METADATA_KEYS = frozenset(
         "intan_port",
         "intan_channels",
         "intan_sample_rate",
+        # A spine run's derived trial table (`DATA.md#the-derived-trial-table`), written
+        # after the data at finalization: a field of this name would be replaced by it.
+        "derived",
     }
 )
 
@@ -404,9 +407,15 @@ def params_hash(config: dict[str, Any] | None) -> str | None:
 #: The key a per-animal session document carries its profile snapshot under.
 #:
 #: Written by `sessions/writer.py`, read here — one constant so the two halves
-#: of the contract cannot drift. It is the ONLY nested value in an otherwise
-#: flat document, which is deliberate and is why `matwriter` has a rule for it.
+#: of the contract cannot drift. With `DERIVED_KEY` it is one of the two nested
+#: values in an otherwise flat document, which is deliberate and is why
+#: `matwriter` has a rule for each.
 SNAPSHOT_KEY = "task_profile"
+
+#: The key a spine run's document carries its derived trial table under
+#: (`DATA.md#the-derived-trial-table`): written by `sessions/derived.py`, and
+#: dropped by `analytics/reader.py` so that Analytics never reads it.
+DERIVED_KEY = "derived"
 
 
 def embedded_profile(document: dict[str, Any]) -> TaskProfile | None:

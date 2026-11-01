@@ -957,7 +957,7 @@ session is in progress asks it, and it answers three different questions:
 |---|---|---|
 | `held` | A session holds the rig, from its mapping's confirmation or a resume until it ends or is abandoned | `sessions.tidy`, which never touches it |
 | `in_use` | A session is held, or any box is running | every rig definition write, the data-folder relocate, moving animals |
-| `writing` | Any box is running, or finishing until its run is recorded: a `.tsv` has no `.json` yet, or a `.json` has no record claiming it yet | `sessions.recover`, `analytics.rescan` |
+| `writing` | Any box is running, or finishing until its run is recorded: a `.tsv` has no `.json` yet, or a `.json` has no record claiming it yet | `sessions.recover`, `sessions.rederive`, `analytics.rescan` |
 
 Every archive write asks through `CohortArchive.write`, once it holds the archive lock, never before
 ([DATA.md](DATA.md#the-cohort-archive)).

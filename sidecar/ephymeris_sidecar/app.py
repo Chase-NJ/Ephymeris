@@ -256,6 +256,7 @@ class Application:
         self.server.register(Cmd.ANALYTICS_RESCAN, self._analytics_rescan)
         self.server.register(Cmd.ANALYTICS_RECENT_SESSIONS, self._analytics_recent_sessions)
         self.server.register(Cmd.SESSIONS_RECOVER, self._sessions_recover)
+        self.server.register(Cmd.SESSIONS_REDERIVE, self._sessions_rederive)
         self.server.register(Cmd.SESSIONS_TIDY, self._sessions_tidy)
 
         self.server.register(Cmd.LOGBOOK_COHORT, self._logbook_cohort)
@@ -1405,6 +1406,11 @@ class Application:
         """The crash-recovery backfill (`DATA.md#crash-recovery`), through the
         archive (`CohortArchive.recover`)."""
         return await self._require_archive().recover(_str_arg(args, "cohortId"))
+
+    async def _sessions_rederive(self, args: Args) -> dict[str, Any]:
+        """Re-derive spine runs' trial tables (`DATA.md#re-derive`), through the
+        archive (`CohortArchive.rederive`)."""
+        return await self._require_archive().rederive(_str_arg(args, "cohortId"))
 
     # --- sessions (PROTOCOL.md#prefixes-and-sessions) ---------------------
 

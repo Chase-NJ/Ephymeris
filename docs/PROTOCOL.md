@@ -1127,6 +1127,19 @@ The crash-recovery backfill (`DATA.md#crash-recovery`): rebuilds `.json`/`.mat` 
 
 **Result:** [RecoverResult](#shape-recoverresult)
 
+<a id="cmd-sessions.rederive"></a>
+#### `sessions.rederive`
+
+Re-derive (`DATA.md#re-derive`): replay every spine run under the cohort's data folder and, where the derived trial table its `.json` carries differs from what this build derives (a `REPLAY_VERSION` change, a missing block, a hand edit), rewrite the `.json` and `.mat` with the new one. Every other key is written back as it was read; the `.tsv` is never opened. Legacy runs are skipped. The app never reads the derived table, so no number in Analytics changes. `RIG_IN_USE` while any box is running; `ARCHIVE_BUSY` while another archive write runs. Queues what it wrote for backup. Long-running; the client raises its reply timeout.
+
+**Args**
+
+| Field | Type | Notes |
+|---|---|---|
+| `cohortId` | string |  |
+
+**Result:** [RederiveResult](#shape-rederiveresult)
+
 <a id="cmd-sessions.tidy"></a>
 #### `sessions.tidy`
 
@@ -1627,7 +1640,7 @@ One live view's payload, only while that scope is open (`RECORDING.md#live-windo
 | `BACKUP_UNAVAILABLE` | `backup.syncNow` with no `backupDirectory` set, or with a sync already running. An ordinary mirroring failure is never a command error; it appears on `backup.status`. |
 | `UTILITY_UNAVAILABLE` | A `utility.*` command when the box utility can't be used at all — the install's sketch library has none, or its profile is unreadable or not a utility profile; for `utility.identify`, also a profile with no `identify` pair. A box-level problem never raises this: it is that box's `state` in the snapshot, because 'box 4 has no board' is a fact about the rig, not a failure of the command. |
 | `RIG_INVALID` | The wiring document is not a wiring document — wrong shape, or too large. NOT a wiring MISTAKE: a document that is well-formed and describes an impossible box is a successful `hardware.preview` reply carrying located problems. |
-| `RIG_IN_USE` | `hardware.save`, `hardware.reset`, `tasks.save`, `tasks.import` or `tasks.delete` while a session is set up or a box is running. Each regenerates sketch folders a box was or will be flashed from, under a session whose profiles were read from the old ones (`TASKS.md#the-rig-definition`). Also an archive write the rig refuses (`DATA.md#the-cohort-archive`): `cohorts.setDataFolder` moving the contents while a session is set up or a box is running, and `analytics.rescan` or `sessions.recover` while a box is running. |
+| `RIG_IN_USE` | `hardware.save`, `hardware.reset`, `tasks.save`, `tasks.import` or `tasks.delete` while a session is set up or a box is running. Each regenerates sketch folders a box was or will be flashed from, under a session whose profiles were read from the old ones (`TASKS.md#the-rig-definition`). Also an archive write the rig refuses (`DATA.md#the-cohort-archive`): `cohorts.setDataFolder` moving the contents while a session is set up or a box is running, and `analytics.rescan`, `sessions.recover` or `sessions.rederive` while a box is running. |
 | `RIG_WOULD_BREAK_TASKS` | `hardware.save` without `confirm` on a change that would stop a saved task profile generating. `detail.breaks` lists them. Retry with `confirm: true` to proceed — the app does not veto a rewiring, it refuses to let one happen unnoticed. |
 | `RIG_WIRING_UNLOADED` | `port.startSession`, `sessions.startAll`, `sessions.flash`, `flash.enqueue`, `utility.identify`, `tasks.export` or `tasks.import` while the wiring in force is the shipped one because the rig's stored wiring was not put in force when it was installed: it did not load (unreadable, unparseable, out of shape, a channel without a pin, a wiring rule broken, or an older layout that disagrees with itself), or it is held because the record cannot vouch for it (copied in, changed by hand, or saved here when a save after it did not finish). A box started, flashed or identified would drive pins the operator never declared. `hardware.get` names the problem. Saving the wiring (its pins confirmed) or resetting it clears it; a file fixed by hand meanwhile does not, and a restart does only onto the wiring last saved here (`TASKS.md#the-channel-set-and-the-pin-map`). |
 | `RIG_SAVE_BLOCKED` | `hardware.save` that the rig's state does not allow yet: stored wiring that did not load and has nothing to repair (unreadable, unparseable, not a JSON object, or one half of a two-file pair alone), which only `hardware.reset` replaces; a draft read from a stored file not in force, sent without `confirmedPins`; or a draft with a wiring-rule problem (RIG101–RIG107), which the editor holds Save on too. Nothing was written and no code was issued (`TASKS.md#the-channel-set-and-the-pin-map`). |
@@ -1648,7 +1661,7 @@ One live view's payload, only while that scope is open (`RECORDING.md#live-windo
 | `INTAN_UNAVAILABLE` | RHX is not reachable: not running, its Remote TCP Control command server not opened, or the socket died. The message says what to click. |
 | `INTAN_NOT_READY` | RHX is reachable but this cannot be done now — RHX is already recording, no recording is configured for this group as its mapping was last confirmed, a box has no digital input, the rig's wiring has no sync channel, or a scope asked for a channel the box does not own. The message is the operator's next step. |
 | `INTAN_COMMAND_FAILED` | RHX refused a command, or **accepted it and stored something else** (a read-back mismatch — the save-location-with-a-space case). `detail.command` carries what was sent. |
-| `ARCHIVE_BUSY` | A scan, tidy, recover, data-folder move or move of animals already holds the archive (`analytics.rescan`, `sessions.tidy`, `sessions.recover`, `cohorts.setDataFolder`, `cohorts.moveAnimals`). Nothing was done; try again when it finishes. |
+| `ARCHIVE_BUSY` | A scan, tidy, recover, re-derive, data-folder move or move of animals already holds the archive (`analytics.rescan`, `sessions.tidy`, `sessions.recover`, `sessions.rederive`, `cohorts.setDataFolder`, `cohorts.moveAnimals`). Nothing was done; try again when it finishes. |
 | `INTERNAL` | Unhandled sidecar exception, or a subsystem that isn't running. Also the code `sidecar.error` carries for a mid-session write failure. Every other refusal has its own code (`ARCHITECTURE.md#dispatch`). |
 
 ## Payload shapes
@@ -2608,6 +2621,35 @@ One orphaned write-ahead log the crash-recovery backfill processed.
 | `entries` | [RecoveredTsv](#shape-recoveredtsv)[] |  |
 | `cohortId` | string |  |
 | `dataFolder` | string |  |
+| `folderMissing` | boolean | Same distinction as RescanResult's: 'nothing there' vs 'nowhere to look'. |
+
+<a id="shape-rederivedrun"></a>
+#### RederivedRun
+
+One spine run Re-derive rewrote or could not (`DATA.md#re-derive`).
+
+| Field | Type | Notes |
+|---|---|---|
+| `jsonPath` | string | The run's `.json`; its `.mat` is the sibling in the session's mat folder. |
+| `status` | "rewritten" \| "skipped" \| "failed" | `rewritten`: its `.json` was rewritten with this build's table, or its `.mat` held another table and was written from the `.json`. `skipped`: nothing was written, because a newer replay derived its table, it was replayed (`ok`) and this build cannot replay it, or its `.mat` can be written by no build (an animal name outside the BMP). `failed`: something went wrong and nothing was written. A current run is counted, never listed. |
+| `reason` | string \| null | Why it was skipped or failed, when it was. |
+| `matError` | string \| null | Why its `.mat` could not be written, when it could not. Never holds the `.json` back; the next Re-derive finds the `.mat`'s table stale and writes it. |
+
+<a id="shape-rederiveresult"></a>
+#### RederiveResult
+
+What `sessions.rederive` did to a cohort's spine runs (`DATA.md#re-derive`).
+
+| Field | Type | Notes |
+|---|---|---|
+| `scanned` | number | Spine runs found: `.json` files whose own file says a state table ran them. Legacy runs are never derived, so never counted. |
+| `rewritten` | number | Runs whose `.json` and `.mat` were rewritten with this build's table. |
+| `current` | number | Runs whose stored block already equals what this build derives: left untouched. |
+| `skipped` | number | Runs left alone, each listed with why: a newer replay derived their table, they were replayed and this build does not know their INTERP (two lab machines on different builds can share one archive), or their `.mat` can be written by no build. |
+| `failed` | number | Runs that could not be replayed or written; each is listed with why. |
+| `entries` | [RederivedRun](#shape-rederivedrun)[] | The rewritten and failed runs. |
+| `cohortId` | string | The cohort asked about. |
+| `dataFolder` | string | The cohort's data folder, walked as `analytics.rescan` walks it. |
 | `folderMissing` | boolean | Same distinction as RescanResult's: 'nothing there' vs 'nowhere to look'. |
 
 <a id="shape-replaydivergence"></a>

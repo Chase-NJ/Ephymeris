@@ -55,7 +55,7 @@ flowchart LR
     subgraph generated ["⚙️  Generated into the folder"]
         pins["TaskPins.h<br/>pins + every BF_ code"]
         trials["TaskTrials.h<br/>trial table"]
-        util["UtilityChannels.h<br/>outputs + beams"]
+        util["UtilityChannels.h<br/>outputs + inputs"]
         profile["task.json<br/>what the app reads"]
     end
     board(["🔌 arduino-cli → Mega 2560"])
@@ -173,8 +173,7 @@ name outputs by their Rig channel name, case-insensitively:
 |---|---|
 | `TOGGLE <ch>` · `ON <ch>` · `OFF <ch>` | Latch, open, close one output, e.g. `TOGGLE fluid_2` |
 | `PULSE <ch>` | Open it for the pulse width, then close it |
-| `DUTY <ch> <n>` | A PWM line's duty, 0–255 (default 255) |
-| `HZ <ch> <n>` | A tone line's pitch, 31–65535 Hz (default 1000), or a train's rate, 1–100 Hz (default 20) |
+| `DUTY <ch> <n>` · `HZ <ch> <n>` | A PWM line's duty; a tone's pitch or a train's rate. Limits and defaults: [TASKS.md › The box utility](../docs/TASKS.md#the-box-utility) |
 | `SET PULSE=<ms>` | Pulse width, 10–5000 ms |
 | `ALLOFF` | Close everything. Always safe, always available |
 | `SELFTEST` · `STOP` | Run or abort the hardware self-test |

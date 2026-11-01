@@ -273,7 +273,8 @@ SHAPES = (
                 "canIdentify",
                 BOOL,
                 doc="The utility's profile declares an `identify` pair (generated on "
-                "the rig's first cue). "
+                "the rig's first level cue, never a tone or a train; a rig whose cues "
+                "are all driven has none). "
                 "False means placement can still run, just without lights.",
             ),
             f(

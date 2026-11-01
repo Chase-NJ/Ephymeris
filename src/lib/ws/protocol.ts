@@ -400,8 +400,9 @@ export interface UtilityStatus {
   /** The box utility's folder name. */
   sketchName: string | null;
   /**
-   * The utility's profile declares an `identify` pair (generated on the rig's first cue). False
-   * means placement can still run, just without lights.
+   * The utility's profile declares an `identify` pair (generated on the rig's first level cue,
+   * never a tone or a train; a rig whose cues are all driven has none). False means placement can
+   * still run, just without lights.
    */
   canIdentify: boolean;
   /**

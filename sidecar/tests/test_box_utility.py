@@ -253,12 +253,27 @@ def test_every_setting_offered_is_one_the_board_takes():
     a control that silently does nothing."""
     from ephymeris_sidecar.taskdef.spine import DRIVE_VALUES
 
-    for drive, (_, suffix, _, values) in utility.SETTINGS.items():
-        key = "duty" if suffix == "duty" else "hz"
-        lo, hi = next((lo, hi) for k, *_, lo, hi in DRIVE_VALUES[drive] if k == key)
-        assert all(lo <= n <= hi for _, n in values), drive
-    width_ms = 5  # BoxUtility.h's BOX_UTIL_TRAIN_WIDTH_MS
-    assert all(width_ms < 1000 // n for _, n in utility.SETTINGS["train"][3]), "width < period"
+    board = _box_utility_defines()
+    limits = {  # drive -> (the board's min, max, default) for its one setting
+        "pwm": (0, board["BOX_UTIL_PWM_DUTY_MAX"], board["BOX_UTIL_PWM_DUTY"]),
+        "tone": (board["BOX_UTIL_TONE_HZ_MIN"], board["BOX_UTIL_TONE_HZ_MAX"], board["BOX_UTIL_TONE_HZ"]),
+        "train": (board["BOX_UTIL_TRAIN_HZ_MIN"], board["BOX_UTIL_TRAIN_HZ_MAX"], board["BOX_UTIL_TRAIN_HZ"]),
+    }
+    for drive, (lo, hi, default) in limits.items():
+        setting = utility.DRIVES[drive].setting
+        # The STATUS suffix is the row value's own key: `duty` or `hz`.
+        assert (lo, hi) == next((lo, hi) for k, *_, lo, hi in DRIVE_VALUES[drive] if k == setting.suffix), \
+            f"the board's {drive} limits are a spine row's"
+        offered = [n for _, n in setting.values]
+        assert all(lo <= n <= hi for n in offered) and default in offered, drive
+    width = board["BOX_UTIL_TRAIN_WIDTH_MS"]
+    assert all(width < 1000 // n for n in range(1, board["BOX_UTIL_TRAIN_HZ_MAX"] + 1)), "width < period"
+
+
+def _box_utility_defines() -> dict[str, int]:
+    """BoxUtility.h's numeric `#define`s, read from the source."""
+    text = (FIRMWARE / "libraries" / "BehaviorBox" / "BoxUtility.h").read_text(encoding="utf-8")
+    return {m[1]: int(m[2]) for m in re.finditer(r"^#define (BOX_UTIL_\w+) (\d+)$", text, re.M)}
 
 
 def test_every_output_but_the_sync_line_and_every_input_is_generated():
@@ -460,10 +475,11 @@ UTILITY_SOURCES = (
     *sorted((FIRMWARE / "Utility" / "BOX_Utility").glob("*.ino")),
     *sorted((FIRMWARE / "Utility" / "BOX_Utility").glob("*.h")),
 )
+#: Every Debug Mode component, and the helpers its grids read.
 DEBUG_MODE_SOURCES = (
-    REPO / "src" / "components" / "debug" / "UtilityControls.tsx",
-    REPO / "src" / "components" / "debug" / "PrimeControls.tsx",
-    REPO / "src" / "components" / "debug" / "all" / "BroadcastControls.tsx",
+    *sorted((REPO / "src" / "components" / "debug").rglob("*.tsx")),
+    *sorted((REPO / "src" / "components" / "debug").rglob("*.ts")),
+    REPO / "src" / "lib" / "hardware" / "utility.ts",
 )
 
 

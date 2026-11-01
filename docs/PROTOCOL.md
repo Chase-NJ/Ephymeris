@@ -3544,7 +3544,7 @@ The whole baseline picture — one snapshot, shared by the command and the event
 | `configured` | boolean | The install's library has a box utility. Not a setting: the app finds it (`TASKS.md#the-box-utility`). |
 | `sketchPath` | string \| null | Where the copy rebuilt for this rig lives — an install-specific fact, informational only. |
 | `sketchName` | string \| null | The box utility's folder name. |
-| `canIdentify` | boolean | The utility's profile declares an `identify` pair (generated on the rig's first cue). False means placement can still run, just without lights. |
+| `canIdentify` | boolean | The utility's profile declares an `identify` pair (generated on the rig's first level cue, never a tone or a train; a rig whose cues are all driven has none). False means placement can still run, just without lights. |
 | `held` | boolean | Restores are suspended because a confirmed session mapping owns the boxes — reflashing then would erase the task sketch. |
 | `message` | string \| null | Why the baseline isn't operating at all (no sketch set, a name not in the bundled library, a non-utility profile). |
 | `boxes` | [UtilityBoxState](#shape-utilityboxstate)[] |  |

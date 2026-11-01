@@ -29,9 +29,9 @@
     TOGGLE <ch>        latch an output on/off
     PULSE  <ch>        turn it on for the pulse width, then off
     ON <ch> | OFF <ch> explicit set, for scripted use
-    DUTY <ch> <n>      a PWM line's duty, 0..255 (default 255)
-    HZ <ch> <n>        a tone line's pitch, 31..65535 Hz (default 1000), or a
-                       train's rate, 1..100 Hz (default 20)
+    DUTY <ch> <n>      a PWM line's duty
+    HZ <ch> <n>        a tone line's pitch, or a train's rate
+                       (limits and defaults: the BOX_UTIL_* defines below)
     SET PULSE=<ms>     pulse width, 10..5000 ms (default 200)
     ALLOFF             turn everything off -- always safe, always available
     SELFTEST           run the full hardware test
@@ -477,12 +477,12 @@ bool testSensors()
     Serial.print(inputs[i].label);
     Serial.println(" within 15 s.");
     unsigned long start = millis();
-    bool went = false;
+    bool activated = false;
     while (millis() - start < 15000)
     {
       if (active(i))
       {
-        went = true;
+        activated = true;
         break;
       }
       if (stopRequested())
@@ -498,8 +498,8 @@ bool testSensors()
     }
     if (light >= 0)
       setOutput(light, false);
-    record(inputs[i].label, went);
-    if (went && !waitOrStop(400))
+    record(inputs[i].label, activated);
+    if (activated && !waitOrStop(400))
       return false;
   }
   return true;
@@ -558,25 +558,32 @@ long parseCount(const char *text)
   return n;
 }
 
-/* DUTY <ch> <n> or HZ <ch> <n>: set a driven output's one setting, within its
-   drive's limits, and re-drive it at once if it is on. */
-void setSetting(const char *args, bool duty)
+/* Whether `n` is a setting this drive takes, by the verb that sent it. */
+bool takes(uint8_t drive, bool dutyVerb, long n)
+{
+  if (dutyVerb)
+    return drive == BOX_UTIL_PWM && n <= BOX_UTIL_PWM_DUTY_MAX;
+  if (drive == BOX_UTIL_TONE)
+    return n >= BOX_UTIL_TONE_HZ_MIN && n <= BOX_UTIL_TONE_HZ_MAX;
+  if (drive == BOX_UTIL_TRAIN)
+    return n >= BOX_UTIL_TRAIN_HZ_MIN && n <= BOX_UTIL_TRAIN_HZ_MAX;
+  return false;
+}
+
+/* DUTY <ch> <n> (dutyVerb) or HZ <ch> <n>: set a driven output's one setting,
+   within its drive's limits, and re-drive it at once if it is on. A train
+   restarts at its new rate, so no pulse runs longer than its width. */
+void setSetting(const char *args, bool dutyVerb)
 {
   const char *space = strrchr(args, ' ');
   if (space == NULL)
     return;
   int i = outputNamed(args, (size_t)(space - args));
   long n = parseCount(space + 1);
-  if (i < 0 || n < 0)
-    return;
-  uint8_t drive = outputs[i].drive;
-  bool fits = duty ? drive == BOX_UTIL_PWM && n <= BOX_UTIL_PWM_DUTY_MAX
-                   : (drive == BOX_UTIL_TONE && n >= BOX_UTIL_TONE_HZ_MIN && n <= BOX_UTIL_TONE_HZ_MAX) ||
-                         (drive == BOX_UTIL_TRAIN && n >= BOX_UTIL_TRAIN_HZ_MIN && n <= BOX_UTIL_TRAIN_HZ_MAX);
-  if (!fits)
+  if (i < 0 || n < 0 || !takes(outputs[i].drive, dutyVerb, n))
     return;
   setting[i] = (uint16_t)n;
-  if (isOpen[i] && drive != BOX_UTIL_TRAIN) // a train reads its rate on every poll
+  if (isOpen[i])
     setOutput(i, true);
   reportStatus();
 }

@@ -388,7 +388,7 @@ section headers count what is open. Prime is the app's own control
 { "identify": { "on": "ON trial_light", "off": "OFF trial_light" } }
 ```
 
-The two commands that make a box announce itself, used by the utility baseline's `utility.identify` and the guided placement walk ([ARCHITECTURE.md](ARCHITECTURE.md#hardware-utility-baseline)). Keeping them in the profile is what lets the walk work on a rig that signals with a buzzer, another LED, or not at all. **Both halves are required together** — a box that can be lit but not unlit would announce itself indefinitely. Omitting the block is normal: that box simply cannot be asked. For the box utility it is generated, on the rig's first `cue`-role level line ([The box utility](#the-box-utility)). `identify` is not the same as that channel's row in a `grid`: that is a manual control; this is a contract the app drives on its own.
+The two commands that make a box announce itself, used by the utility baseline's `utility.identify` and the guided placement walk ([ARCHITECTURE.md](ARCHITECTURE.md#hardware-utility-baseline)). Keeping them in the profile is what lets the walk work on a rig that signals with a buzzer, another LED, or not at all. **Both halves are required together** — a box that can be lit but not unlit would announce itself indefinitely. Omitting the block is normal: that box simply cannot be asked. For the box utility it is generated, on the rig's first level cue, never a tone or a train ([The box utility](#the-box-utility)). `identify` is not the same as that channel's row in a `grid`: that is a manual control; this is a contract the app drives on its own.
 
 ### Legacy names
 
@@ -555,7 +555,7 @@ The shipped sketches compile against `BoxPins.h`'s defaults — the box as built
 
 ### The box utility
 
-`BOX_Utility` is the resting firmware on every idle box and Debug Mode's control panel: it latches and pulses outputs, sets a driven output's duty or Hz, primes lines, and runs a hardware self-test. **Nothing in it describes the box.** The logic is written once in the library's `BoxUtility.h` and host-tested (`extras/host_test/run_box.sh`, against a deliberately smaller fixture box). What the box *is* comes from the rig's [channel set](#the-channel-set-and-the-pin-map), through `taskdef/utility.py`, whenever the sketch is rebuilt (every start, wiring change and vocabulary edit, the same triggers as any [rebuilt bundled sketch](#rebuilt-bundled-sketches)). It reads each channel's `type`, `mode`, `role`, `active_level`, label and pin, never its `kind`, so a channel added on the Rig page appears in Debug Mode, responds there, and is in the self-test straight away.
+`BOX_Utility` is the resting firmware on every idle box and Debug Mode's control panel: it latches and pulses outputs, sets a driven output's duty or Hz, primes lines, and runs a hardware self-test. **Nothing in it describes the box.** The logic is written once in the library's `BoxUtility.h` and host-tested (`extras/host_test/run_box.sh`, against a deliberately smaller fixture box). What the box *is* comes from the rig's [channel set](#the-channel-set-and-the-pin-map), through `taskdef/utility.py`, whenever the sketch is rebuilt (every start, wiring change and vocabulary edit, the same triggers as any [rebuilt bundled sketch](#rebuilt-bundled-sketches)). It reads each channel's `type`, `mode`, `role`, `active_level`, label and pin, and its `kind` only for the colour Debug Mode draws its row in and to keep the sync line out. So a channel added on the Rig page appears in Debug Mode, responds there, and is in the self-test straight away.
 
 ```mermaid
 flowchart LR
@@ -572,7 +572,7 @@ flowchart LR
 | Every `digital_out`, `pwm_out` and `tone_out`, except the sync line | An output row, grouped by role (below), in declaration order within a group: its **channel name** is the command token (`PULSE fluid_2`) and STATUS key (`fluid_2=1`); its **Rig label** names it in the self-test and the Debug Mode grid (a reward line adds the port it serves, a tone or train what it plays) |
 | A [driven output](#driven-outputs) | Its row also carries its one **setting**, a select in its grid row (below) |
 | Every `digital_in`, whatever its role | An input: a STATUS key (`1` while active, by its own `active_level`), a telemetry field, a prompted step in the self-test. An active-low input is pulled up; an active-high one is not |
-| The first `cue`-role output that is a level line | The `identify` pair (`ON trial_light` / `OFF trial_light`), and the light the self-test turns on while any input is active. Never a tone or a train: identify runs while animals are placed. A rig whose cues are all driven has no `identify` |
+| The first level line in the cue group (below) | The `identify` pair (`ON trial_light` / `OFF trial_light`), and the light the self-test turns on while any input is active. Never a tone or a train: identify runs while animals are placed. A rig whose cues are all driven has no `identify` |
 | Role `sync` (or the `sync` kind's line) | Nothing. A pulse on it would be an edge in a recording |
 
 | Role | Self-test | Debug Mode grid |

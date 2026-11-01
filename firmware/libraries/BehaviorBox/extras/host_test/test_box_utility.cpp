@@ -230,6 +230,13 @@ int main()
   }
   expect("a 100 Hz train rises every 10 ms, its 5 ms pulse shorter than the period",
          rises >= 9 && rises <= 10);
+  while (digitalRead(LASER) == HIGH) ::loop();
+  sendCommand("HZ laser 5");
+  expect("a new rate restarts the train with a fresh pulse", digitalRead(LASER) == HIGH);
+  from = millis();
+  while (digitalRead(LASER) == HIGH && millis() - from < 50) ::loop();
+  expect("whose width is still 5 ms, give or take a poll", millis() - from <= 5 + POLL_MS + 1);
+  sendCommand("HZ laser 100");
   sendCommand("OFF laser");
   sendCommand("HZ trial_light 10");
   sendCommand("DUTY fluid_0 10");

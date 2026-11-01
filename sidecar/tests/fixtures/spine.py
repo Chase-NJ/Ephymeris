@@ -69,3 +69,92 @@ def tracer(**edits) -> dict:
     }
     doc.update(edits)
     return doc
+
+
+def two_afc(**edits) -> dict:
+    """Odor 2AFC: odor 1 pays at the right well, odor 2 at the left, each only
+    when the well is held; the other well is a wrong response."""
+    bind = {"port": "odor_port", "left": "left_well", "right": "right_well", "cue": "trial_light",
+            "reward_l": "fluid_1", "reward_r": "fluid_2"}
+
+    def row(row_id: str, name: str, odor: str, correct: str, wrong: str, line: str) -> dict:
+        return {
+            "id": row_id,
+            "name": name,
+            "bind": dict(bind, sample=odor),
+            "rewardMs": 100,
+            "rewardPermille": 1000,
+            "map": {
+                correct: {"outcome": "correct", "line": line, "rewardPermille": 1000, "hold": True},
+                wrong: {"outcome": "wrong_response"},
+                "timeout": {"outcome": "omission"},
+            },
+        }
+
+    doc = {
+        "id": "spine_2afc",
+        "name": "Spine 2AFC",
+        "category": "Tasks",
+        "slots": [
+            {"id": "port", "type": "digital_in"},
+            {"id": "left", "type": "digital_in"},
+            {"id": "right", "type": "digital_in"},
+            {"id": "cue", "type": "digital_out"},
+            {"id": "sample", "type": "digital_out"},
+            {"id": "reward_l", "type": "digital_out"},
+            {"id": "reward_r", "type": "digital_out"},
+        ],
+        "spine": [
+            {"phase": "wait", "on": "port", "outputs": ["cue"]},
+            {"phase": "present", "outputs": ["cue", "sample"], "ms": 1000, "abortOnRelease": "port"},
+            {"phase": "response", "responses": ["left", "right"], "ms": 5000, "holdMs": 200},
+            {"phase": "outcome", "ms": 0},
+            {"phase": "iti", "ms": 3000},
+        ],
+        "rows": [
+            row("odor_1", "Odor 1", "odor_line_1", "right", "left", "reward_r"),
+            row("odor_2", "Odor 2", "odor_line_2", "left", "right", "reward_l"),
+        ],
+        "blocks": [{"id": "b1", "rows": ["odor_1", "odor_2"], "trials": 20}],
+        "params": {},
+    }
+    doc.update(edits)
+    return doc
+
+
+def go_no_go(**edits) -> dict:
+    """Go/no-go: odor 1 asks for a poke at the right well, which pays; odor 2
+    asks the animal to withhold, and a poke there is a false alarm."""
+    bind = {"port": "odor_port", "resp": "right_well", "cue": "trial_light", "reward": "fluid_2"}
+    doc = {
+        "id": "spine_go_no_go",
+        "name": "Spine Go No-Go",
+        "category": "Tasks",
+        "slots": [
+            {"id": "port", "type": "digital_in"},
+            {"id": "resp", "type": "digital_in"},
+            {"id": "cue", "type": "digital_out"},
+            {"id": "sample", "type": "digital_out"},
+            {"id": "reward", "type": "digital_out"},
+        ],
+        "spine": [
+            {"phase": "wait", "on": "port", "outputs": ["cue"]},
+            {"phase": "present", "outputs": ["cue", "sample"], "ms": 1000},
+            {"phase": "response", "responses": ["resp"], "ms": 3000},
+            {"phase": "outcome", "ms": 0},
+            {"phase": "iti", "ms": 3000},
+        ],
+        "rows": [
+            {"id": "go", "name": "Go", "bind": dict(bind, sample="odor_line_1"),
+             "rewardMs": 100, "rewardPermille": 1000,
+             "map": {"resp": {"outcome": "correct", "line": "reward", "rewardPermille": 1000},
+                     "timeout": {"outcome": "omission"}}},
+            {"id": "no_go", "name": "No-go", "bind": dict(bind, sample="odor_line_2"),
+             "rewardMs": 100, "rewardPermille": 1000,
+             "map": {"resp": {"outcome": "false_alarm"}, "timeout": {"outcome": "withheld"}}},
+        ],
+        "blocks": [{"id": "b1", "rows": ["go", "no_go"], "trials": 20}],
+        "params": {},
+    }
+    doc.update(edits)
+    return doc

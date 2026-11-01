@@ -1,8 +1,9 @@
 """Hold BoxInterp.h and replay.py equal: the differential test (run_diff.sh).
 
 Generates state tables (spines lowered by the generator itself,
-`taskdef/lowering.py`; spines of the first phases lowered here; and raw
-tables that stress the format), randomized input logs with simultaneous edges, seeds
+`taskdef/lowering.py`, with Response windows, contingency maps, holds and
+several rows; spines of the first phases lowered here; and raw tables that
+stress the format, pick states included), randomized input logs with simultaneous edges, seeds
 and start times near the millis() wrap. Runs every case through the C core
 (`interp_driver`, stepping every tick as a board does) and through the Python
 replay (jumping between edges and timers), and fails on the first tick where
@@ -10,9 +11,10 @@ their actions differ.
 
 Then it checks itself: with the Python tie rule deliberately changed, the same
 cases must differ. A differential test that cannot see a changed tie rule is
-generating too few ties to be trusted. The generator's own tables hold no ties
-(a lowered state has at most one exit), so their family has a check of its
-own: with every RNG draw reflected, those cases alone must differ.
+generating too few ties to be trusted. So too a changed pick draw, which the
+raw tables and the generator's tables must each see. And with every RNG draw
+reflected, the generator's tables alone must differ, through their chance and
+pick states.
 
 Usage:  python3 differential.py --driver ./interp_driver [--cases N] [--seed S]
 """
@@ -51,14 +53,26 @@ NONE, RISE, FALL = rp.NONE, rp.RISE, rp.FALL
 
 
 def raw_table(rng: random.Random, n_params: int) -> rp.Table:
-    """Any valid table: every field, ties between up to four exits, chance states."""
-    n = rng.randint(2, 8)
-    chance = [i > 0 and rng.random() < 0.2 for i in range(n)]
-    plain = [i for i in range(n) if not chance[i]]
+    """Any valid table: every field, ties between up to four exits, chance states,
+    and pick states of one to four branches (state 0 often one, as a block of
+    several rows lowers)."""
+    n = rng.randint(3, 8)
+    kind = ["pick" if rng.random() < (0.5 if i == 0 else 0.15) else
+            "chance" if i > 0 and rng.random() < 0.2 else "plain" for i in range(n)]
+    if kind.count("plain") < 2:
+        kind[-2:] = ["plain", "plain"]
+    plain = [i for i in range(n) if kind[i] == "plain"]
     inputs = [0, 1, 2, 3] + ([31] if rng.random() < 0.2 else [])
     states, edges = [], []
     for i in range(n):
-        if chance[i]:
+        if kind[i] == "pick":
+            branches = [rng.choice(plain) for _ in range(rng.choice((1, 2, 2, 3, 4)))]
+            first = len(edges)
+            edges.extend(rp.EdgeRow(0, 0, b) for b in branches)
+            states.append(rp.StateRow(edge_first=first, edge_count=len(branches),
+                                      flags=rp.PICK | rng.choice((0, rp.STARTS_TRIAL)), outcome=rng.randrange(8)))
+            continue
+        if kind[i] == "chance":
             states.append(rp.StateRow(chance=rng.randrange(n_params), on_hit=rng.choice(plain),
                                       on_miss=rng.choice(plain), flags=rng.choice((0, rp.STARTS_TRIAL)),
                                       outcome=rng.randrange(8)))
@@ -153,20 +167,24 @@ def spine_table(rng: random.Random, n_params: int) -> rp.Table:
     return rp.Table(states=tuple(rows), edges=tuple(edge_rows))
 
 
-def generated_table(rng: random.Random, n_params: int) -> tuple[rp.Table, int]:
+def generated_table(rng: random.Random, n_params: int) -> tuple[rp.Table, int, int]:
     """A random spine DEFINITION, lowered by the generator's own `lowering.lower()`:
-    the tables a saved spine task compiles into its `TaskSpine.h`. Returns the
-    table and how many parameter slots it reads, which the generator decides."""
+    the tables a saved spine task compiles into its `TaskSpine.h`. One to three
+    rows, each binding some slots to a channel of its own and some to a shared
+    one; often a Response window with a contingency map per row, holds and a
+    line on some entries. Returns the table, how many parameter slots it reads
+    (which the generator decides) and how many input bits it has."""
     del n_params  # lowering assigns the slots
     inputs = [f"in{i}" for i in range(rng.randint(1, 4))]
     outputs = [f"out{j}" for j in range(rng.randint(1, 6))]
+    n_rows = rng.choice((1, 1, 2, 2, 3))
+    classes = lowering.OUTCOME_CLASSES
 
     def some_outputs():
         return rng.sample(outputs, rng.randint(0, min(3, len(outputs))))
 
-    phases = []
-    for _ in range(rng.randint(1, 5)):
-        kind = rng.choice(("wait", "present", "delay", "outcome"))
+    def plain_phase(kinds):
+        kind = rng.choice(kinds)
         p = {"phase": kind, "outputs": some_outputs()}
         if kind == "wait":
             p["on"] = rng.choice(inputs)
@@ -176,11 +194,43 @@ def generated_table(rng: random.Random, n_params: int) -> tuple[rp.Table, int]:
             p["abortOnRelease"] = rng.choice(inputs)
         elif kind == "outcome":
             p["line"] = rng.choice(outputs)
-        phases.append(p)
+        return p
+
+    phases = []
+    for n in range(rng.randint(0 if rng.random() < 0.6 else 1, 4)):
+        # With several rows a pick branch never lands on an Outcome's chance state.
+        first = n == 0 and n_rows > 1
+        phases.append(plain_phase(("wait", "present", "delay") if first else ("wait", "present", "delay", "outcome")))
+    window = None
+    if rng.random() < 0.6 or not phases:
+        window = {"phase": "response", "responses": rng.sample(inputs, rng.randint(1, len(inputs))),
+                  "ms": 1, "outputs": some_outputs()}
+        if rng.random() < 0.6:
+            window["holdMs"] = 1
+        phases.append(window)
+        post = [plain_phase(("present", "delay")) for _ in range(rng.choice((0, 0, 1, 2)))]
+        post.insert(rng.randint(0, len(post)), {"phase": "outcome", "ms": 1, "outputs": some_outputs()})
+        phases.extend(post)
     phases.append({"phase": "iti", "outputs": some_outputs() if rng.random() < 0.2 else []})
-    low = lowering.lower(phases, inputs=inputs, outputs=outputs)
+
+    rows = []
+    for r in range(n_rows):
+        bind = {slot: slot if rng.random() < 0.5 else f"{slot}@{r}" for slot in (*inputs, *outputs)}
+        row = {"id": f"r{r}", "bind": bind}
+        if window is not None:
+            entries = {}
+            for key in (*window["responses"], lowering.TIMEOUT):
+                entry = {"outcome": rng.choice(classes)}
+                if rng.random() < 0.5:
+                    entry["line"] = rng.choice(outputs)
+                if key != lowering.TIMEOUT and "holdMs" in window and rng.random() < 0.5:
+                    entry["hold"] = True
+                entries[key] = entry
+            row["map"] = entries
+        rows.append(row)
+    low = lowering.lower(phases, inputs=inputs, outputs=outputs, rows=rows)
     table = rp.Table(states=[rp.StateRow(*s) for s in low.states], edges=[rp.EdgeRow(*e) for e in low.edges])
-    return table, len(low.params)
+    return table, len(low.params), len(low.inputs)
 
 
 # --- cases --------------------------------------------------------------------
@@ -223,8 +273,10 @@ def make_cases(seed: int, count: int) -> list[dict]:
     cases = []
     for i in range(count):
         n_params = rng.randint(2, 6)
+        bits = [0, 1, 2, 3, 31]
         if i % 3 == 2:
-            table, n_params = generated_table(rng, n_params)
+            table, n_params, n_inputs = generated_table(rng, n_params)
+            bits = list(range(n_inputs))
         else:
             table = (spine_table if i % 3 else raw_table)(rng, n_params)
         params = params_for(rng, n_params)
@@ -232,7 +284,7 @@ def make_cases(seed: int, count: int) -> list[dict]:
         start = 0 if r < 0.4 else 0xFFFFFFFF - rng.randint(0, 3000) if r < 0.7 else rng.getrandbits(32)
         session_seed = rng.choice((1, 0, 0x80000000, 0xFFFFFFFF)) if rng.random() < 0.1 else rng.randint(1, 2**31 - 2)
         ticks = rng.randint(200, 5000)
-        log = input_log(rng, ticks, [0, 1, 2, 3, 31])
+        log = input_log(rng, ticks, bits)
         cases.append(dict(table=table, params=params, seed=session_seed, start=start, ticks=ticks, log=log))
     return cases
 
@@ -327,10 +379,30 @@ def main() -> int:
         print("differential: a reversed tie rule went unnoticed; the cases hold too few ties")
         return 1
 
-    # The lowering gives a state at most one exit, so the generator's tables
-    # hold no ties and the check above cannot see them. Their own check: with
+    # A pick state's draw, the same way: take the branch mirrored from the one
+    # drawn (k -> n-1-k), drawing exactly as before. Raw tables and the
+    # generator's tables of several rows must each see it.
+    honest_pick = rp._pick
+
+    def mirrored_pick(rng, branches):
+        k, rng = honest_pick(rng, branches)
+        return branches - 1 - k, rng
+
+    rp._pick = mirrored_pick
+    try:
+        for name, family in (("raw", [i for i in range(len(cases)) if i % 3 == 0]),
+                             ("generated", [i for i in range(len(cases)) if i % 3 == 2])):
+            if not first_difference([c_runs[i] for i in family], [cases[i] for i in family]):
+                print(f"differential: a changed pick draw went unnoticed on the {name} tables; they "
+                      "reach too few pick states")
+                return 1
+    finally:
+        rp._pick = honest_pick
+
+    # The generator's tables have ties only in a window of several responses,
+    # so the tie check above leans on the raw tables. Their own check: with
     # every RNG draw reflected (k -> n-1-k), the generated cases alone must now
-    # differ, through their Outcome phases' chance states.
+    # differ, through their chance and pick states.
     family = [i for i in range(len(cases)) if i % 3 == 2]
     honest_draw = rp.draw
 
@@ -350,7 +422,7 @@ def main() -> int:
 
     generated = len(family)
     print(f"differential: {len(cases)} cases ({generated} lowered by the generator), "
-          f"{actions} actions equal; a changed tie rule and a changed draw are caught")
+          f"{actions} actions equal; a changed tie rule, pick draw and draw are caught")
     return 0
 
 

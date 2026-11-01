@@ -169,6 +169,7 @@ def test_counts_and_phase_entries_group_states_by_the_phase_map() -> None:
 def test_metrics_are_functions_of_the_table() -> None:
     def trial(i: int, row: str | None, outcome: str | None, rewarded: bool, complete: bool = True):
         return trial_table.ReplayTrial(index=i, at_ms=i * 1000, row=row, outcome=outcome,
+                                       correct=trial_table.correct_of(outcome),
                                        rewarded=rewarded, complete=complete)
 
     table = [trial(0, "go", "correct", True), trial(1, "go", "omission", False),
@@ -195,7 +196,8 @@ def test_an_aborted_trial_is_excluded_from_p_correct_but_tallied_in_its_class() 
     """As a legacy run excludes an aborted trial: the animal quit before it was
     asked. Hold broken is no abort; it stays a miss."""
     def trial(i: int, outcome: str):
-        return trial_table.ReplayTrial(index=i, at_ms=i * 1000, row="r1", outcome=outcome)
+        return trial_table.ReplayTrial(index=i, at_ms=i * 1000, row="r1", outcome=outcome,
+                                       correct=trial_table.correct_of(outcome))
 
     outcomes = ["correct", "correct", "abort_during_sampling", "abort_before_stimulus", "hold_broken"]
     score = table_metrics.score([trial(i, o) for i, o in enumerate(outcomes)], rows=(("r1", "Odor 1"),))

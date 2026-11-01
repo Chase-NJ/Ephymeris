@@ -1,20 +1,25 @@
 """A run walked trial by trial — `DATA.md#learning-curves`, `DATA.md#strategy-plane`.
 
-The summary is a session's endpoint; these are its shape. Both replay the
-stream through the live accumulator, so a curve agrees with what Mission
-Control displayed rather than approximating it.
+The summary is a session's endpoint; these are its shape. Both read the run's
+trial table, the same rows the summary is counted from, so a curve agrees with
+the summary beside it, and on a legacy run with what Mission Control
+displayed, since its verdicts are the live accumulator's.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from collections import deque
+from itertools import groupby
+from dataclasses import dataclass
 from typing import Any, Iterable
 
 from ...tasks.profile import TaskProfile
+from . import legacy
 from .document import codes_of
+from .spine import SpineDecodeError, is_spine_run, replayed
 from .stats import _round
-from .summary import DEFAULT_MIN_COUNTED, answer_side_of
-from .trials import MetricAccumulator, boundaries_for, compute_series
+from .summary import DEFAULT_MIN_COUNTED
+from .table_metrics import CORRECT, verdicts
 
 
 @dataclass(frozen=True)
@@ -55,6 +60,43 @@ class StrategyPoint:
         return {"trial": self.trial, "x": _round(self.x), "y": _round(self.y), "n": self.n}
 
 
+
+
+@dataclass(frozen=True)
+class _Curve:
+    """One condition's counted trials, in order, and its authored window (None
+    for a spine row, which has none)."""
+
+    id: str
+    label: str
+    window: int | None
+    verdicts: list[bool]
+
+
+def _curves(document: dict[str, Any], profile: TaskProfile | None) -> list[_Curve]:
+    """Each condition's verdicts, read off the run's trial table: a spine run's
+    rows (complete trials only, as its metrics count them), or a legacy run's
+    conditions."""
+    if is_spine_run(document):
+        try:
+            result = replayed(document)
+        except SpineDecodeError:
+            return []
+        if result.divergence is not None:
+            return []
+        done = [t for t in result.trials if t.complete]
+        return [
+            _Curve(id=f"replay:{row}:{CORRECT}", label=f"P({CORRECT} | {name or row})", window=None,
+                   verdicts=[t.correct for t in done if t.row == row and t.correct is not None])
+            for row, name in result.rows
+        ]
+    if profile is None or not profile.live_metrics:
+        return []
+    table = legacy.table_of(document, profile)
+    return [_Curve(id=c.id, label=c.label, window=c.window, verdicts=verdicts(table, c.id))
+            for c in table.conditions]
+
+
 def series(
     document: dict[str, Any],
     profile: TaskProfile | None,
@@ -63,39 +105,34 @@ def series(
     metric_ids: Iterable[str] | None = None,
 ) -> list[MetricSeries]:
     """The within-session trajectory, one entry per counted trial
-    (`DATA.md#learning-curves`).
+    (`DATA.md#learning-curves`), read off the run's trial table.
 
     `mode="cumulative"` widens the window to the whole session, so the curve
-    is the running whole-session average rather than the rolling one. Unlike
-    `_summarize_metric`, which only wants the endpoint and reads it off the
-    accumulator's totals, this needs the value *after every trial* — so the
-    widened window is the mechanism rather than a shortcut. `len(codes)` is a
-    safe width for it: a counted trial costs at least two codes (a trigger and
-    a response), so the window can never fill and never drops a trial.
+    is the running whole-session average rather than the rolling one.
+    `len(codes)` is a safe width for it: a counted trial costs at least two
+    codes (a trigger and a response), so the window can never fill and never
+    drops a trial. A spine row has no authored window, so its curve is the
+    cumulative one in either mode.
     """
-    if profile is None or not profile.live_metrics:
-        return []
     wanted = set(metric_ids) if metric_ids is not None else None
-    codes = codes_of(document)
-    boundaries = boundaries_for(profile)
-
+    whole = max(1, len(codes_of(document)) or 1)
     out: list[MetricSeries] = []
-    for metric in profile.live_metrics:
-        if wanted is not None and metric.id not in wanted:
+    for curve in _curves(document, profile):
+        if wanted is not None and curve.id not in wanted:
             continue
-        effective = (
-            replace(metric, window_size=max(1, len(codes) or 1))
-            if mode == "cumulative"
-            else metric
-        )
-        values = compute_series(effective, codes, boundaries)
+        width = curve.window if mode != "cumulative" and curve.window is not None else whole
+        values = [
+            sum(window) / len(window)
+            for k in range(len(curve.verdicts))
+            if (window := curve.verdicts[max(0, k + 1 - width): k + 1] if width > 0 else [])
+        ]
         out.append(
             MetricSeries(
-                id=metric.id,
-                label=metric.label,
+                id=curve.id,
+                label=curve.label,
                 values=values,
-                counts=_window_lengths(len(values), effective.window_size),
-                window_size=effective.window_size,
+                counts=_window_lengths(len(values), width),
+                window_size=width,
             )
         )
     return out
@@ -137,6 +174,8 @@ class StrategyAxes:
         }
 
 
+
+
 def strategy_axes(profile: TaskProfile | None) -> StrategyAxes | None:
     """Fold a profile's conditions onto two opposing axes, or `None`.
 
@@ -145,12 +184,14 @@ def strategy_axes(profile: TaskProfile | None) -> StrategyAxes | None:
     resolve to nothing, or one whose conditions all reward the same well. Every
     one of those is a real answer rather than a failure, and the panels say so.
     """
-    if profile is None or not profile.live_metrics:
-        return None
+    return _axes(legacy.decode.conditions_of(profile))
+
+
+def _axes(conditions: Iterable[legacy.Condition]) -> StrategyAxes | None:
     sides: dict[str, list[str]] = {}
     order: list[str] = []
-    for metric in profile.live_metrics:
-        side = answer_side_of(profile, metric)
+    for condition in conditions:
+        side = condition.answer_side
         # A withhold is not an axis: it is the ABSENCE of an answer, so it has
         # no opposing side to be plotted against.
         if side is None or side == "withhold":
@@ -158,7 +199,7 @@ def strategy_axes(profile: TaskProfile | None) -> StrategyAxes | None:
         if side not in sides:
             sides[side] = []
             order.append(side)
-        sides[side].append(metric.id)
+        sides[side].append(condition.id)
     if len(order) != 2:
         return None
     x_side, y_side = order
@@ -187,19 +228,14 @@ def strategy_trail(
     Why it cannot be assembled on the frontend from `series`: those are indexed
     by each metric's **own** counted trials, and the conditions interleave, so
     index *k* of one is not the same moment as index *k* of the other. Pairing
-    them requires replaying the stream with both accumulators fed together —
-    which is what happens here, using the live `MetricAccumulator` so the walk
-    agrees with what Mission Control displayed rather than approximating it.
+    them needs the verdicts in the order the strobes gave them, which the
+    legacy table keeps (`LegacyTable.settled`): one point after each strobe
+    that counted a trial on either side, as the live accumulators would.
 
-    Sampled after every counted trial in any condition, at each metric's own
-    authored `windowSize`: the point is "what strategy is this animal running
-    *right now*", which is the rolling figure, never the whole-session one.
-
-    **Any number of conditions, folded onto two axes by `strategy_axes`.** This
-    used to demand exactly two metrics, which silently blanked the panel for
-    every task presenting more — the four-odor task got no walk at all, on
-    precisely the plot that would have told its operator whether the animal was
-    discriminating or picking a side.
+    Sampled at each condition's own authored `windowSize`: the point is "what
+    strategy is this animal running *right now*", which is the rolling figure,
+    never the whole-session one. **Any number of conditions, folded onto two
+    axes by `strategy_axes`.**
 
     **The walk starts once both windows hold `min_window` trials**, not at the
     first scored trial. A rolling proportion over one trial is exactly 0.0 or
@@ -208,78 +244,61 @@ def strategy_trail(
     estimator that reads as a behaviour, which is the worst kind of wrong here.
     `DEFAULT_MIN_COUNTED` is reused rather than a fresh constant invented: it is
     already the app's answer to "too few trials to read firmly"
-    (`ANALYTICS.md#uncertainty`). A window
-    authored shorter than that caps the requirement at its own size, so a
-    small-window profile still gets a walk instead of silently getting none.
+    (`ANALYTICS.md#uncertainty`). A window authored shorter than that caps the
+    requirement at its own size, so a small-window profile still gets a walk.
+    A spine run has no answer sides, so no walk.
     """
-    axes = strategy_axes(profile)
-    if profile is None or axes is None:
+    if profile is None or is_spine_run(document):
         return []
-    codes = codes_of(document)
-    boundaries = boundaries_for(profile)
-    by_id = {metric.id: metric for metric in profile.live_metrics}
-
-    def side(ids: tuple[str, ...]) -> list[MetricAccumulator]:
-        return [MetricAccumulator(by_id[i], boundaries) for i in ids if i in by_id]
-
-    x_accs, y_accs = side(axes.x_metrics), side(axes.y_metrics)
-    if not x_accs or not y_accs:
+    table = legacy.table_of(document, profile)
+    axes = _axes(table.conditions)
+    if axes is None:
         return []
+    by_id = {condition.id: condition for condition in table.conditions}
+    x_ids = [i for i in axes.x_metrics if i in by_id]
+    y_ids = [i for i in axes.y_metrics if i in by_id]
+    if not x_ids or not y_ids:
+        return []
+    windows = {i: deque(maxlen=by_id[i].window) for i in (*x_ids, *y_ids)}
 
-    def floor(ids: tuple[str, ...]) -> int:
+    def floor(ids: list[str]) -> int:
         # The requirement is per SIDE, not per condition: three conditions of
         # five trials each is a readable side, and demanding the floor from each
         # of them would blank a walk that is perfectly well supported.
-        windows = [by_id[i].window_size for i in ids if i in by_id]
-        return max(1, min(min_window, max(windows) if windows else min_window))
+        sizes = [by_id[i].window for i in ids]
+        return max(1, min(min_window, max(sizes) if sizes else min_window))
 
-    x_floor, y_floor = floor(axes.x_metrics), floor(axes.y_metrics)
+    x_floor, y_floor = floor(x_ids), floor(y_ids)
 
-    def pooled(accs: list[MetricAccumulator]) -> tuple[float | None, int]:
-        """One side's rolling figure, over integers.
-
-        Summed hits over summed window lengths — never the mean of the
-        conditions' proportions, which would let a condition the animal barely
-        met drag the side as hard as one it met constantly.
-        """
-        hits = 0
-        n = 0
-        for acc in accs:
-            value = acc.value()
-            if value.value is None:
-                continue
-            hits += round(value.value * value.n)
-            n += value.n
+    def pooled(ids: list[str]) -> tuple[float | None, int]:
+        """One side's rolling figure, over integers: summed hits over summed
+        window lengths, never the mean of the conditions' proportions."""
+        hits = sum(sum(windows[i]) for i in ids)
+        n = sum(len(windows[i]) for i in ids)
         return (hits / n if n else None), n
 
     out: list[StrategyPoint] = []
     counted = 0
-    for code in codes:
-        for acc in (*x_accs, *y_accs):
-            acc.offer(code)
-        total = sum(acc.counted_total for acc in (*x_accs, *y_accs))
-        if total == counted:
+    for _, step in groupby(table.settled, key=lambda s: s[0]):
+        moved = False
+        for _, row, condition in step:
+            if condition in windows:
+                windows[condition].append(bool(table.trials[row].verdict(condition)))
+                counted += 1
+                moved = True
+        if not moved:
             continue
-        counted = total
-        x_value, x_n = pooled(x_accs)
-        y_value, y_n = pooled(y_accs)
+        x_value, x_n = pooled(x_ids)
+        y_value, y_n = pooled(y_ids)
         # Until both SIDES carry enough trials to mean anything there is no
-        # position in the plane. A run that only ever triggered one side has a
-        # coordinate and a blank, which is not a point either.
+        # position in the plane.
         if x_value is None or y_value is None:
             continue
         if x_n < x_floor or y_n < y_floor:
             continue
-        out.append(
-            StrategyPoint(
-                trial=counted,
-                x=x_value,
-                y=y_value,
-                # The weaker of the two sides: a point is only as trustworthy as
-                # the axis supporting it least.
-                n=min(x_n, y_n),
-            )
-        )
+        # The weaker of the two sides: a point is only as trustworthy as the
+        # axis supporting it least.
+        out.append(StrategyPoint(trial=counted, x=x_value, y=y_value, n=min(x_n, y_n)))
     return out
 
 

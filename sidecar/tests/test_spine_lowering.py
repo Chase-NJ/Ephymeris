@@ -569,7 +569,9 @@ def test_every_lowered_table_with_blocks_is_one_replay_accepts():
 def test_a_criterion_skips_exactly_the_classes_p_correct_excludes():
     """The aborts a criterion's window passes over are the scorer's own EXCLUDED set."""
     from ephymeris_sidecar.analytics.stream import table_metrics
-    assert set(lowering.CRITERION_SKIPS) == set(table_metrics.EXCLUDED)
+    assert set(lowering.EXCLUDED_CLASSES) == set(table_metrics.EXCLUDED)
+    low = lowering.lower(TWO_AFC, **AFC_SLOTS, rows=REVERSAL_ROWS)
+    assert low.skipped == lowering.class_mask(table_metrics.EXCLUDED)
 
 
 def test_a_block_s_correction_repeats_after_its_own_classes_or_the_default_errors():

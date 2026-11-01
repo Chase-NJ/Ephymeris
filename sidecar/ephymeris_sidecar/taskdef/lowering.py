@@ -125,10 +125,11 @@ OUTCOME_ABORT_DURING = OUTCOME_CLASSES.index("abort_during_sampling") + 1
 #: own (`correctionAfter`): the animal answered, wrongly. A correct withhold, an
 #: omission and an abort are not errors.
 ERROR_CLASSES = ("wrong_response", "false_alarm")
-#: The classes a criterion's "k correct of the last n" passes over: the aborts,
-#: as P(correct) excludes them (`analytics/stream/table_metrics.py`'s
-#: `EXCLUDED`, which a test holds this equal to). They still count toward N.
-CRITERION_SKIPS = ("abort_before_stimulus", "abort_during_sampling")
+#: The aborts: classes a trial is excluded in, neither right nor wrong. The one
+#: list of them: `analytics/stream/trial_table.py`'s `EXCLUDED` (P(correct))
+#: reads it, and so does a block's criterion, whose "k correct of the last n"
+#: passes over these trials (`InterpBlocks.skipped`). They still count toward N.
+EXCLUDED_CLASSES = ("abort_before_stimulus", "abort_during_sampling")
 
 
 def class_mask(names) -> int:  # noqa: ANN001
@@ -704,5 +705,5 @@ def lower(
         blocks=tuple(block_table),
         entries=tuple(entries),
         overrides=tuple(overrides),
-        skipped=class_mask(CRITERION_SKIPS),
+        skipped=class_mask(EXCLUDED_CLASSES),
     )

@@ -41,17 +41,20 @@ def _imports(path: Path) -> list[tuple[int, str]]:
     return out
 
 
-@pytest.mark.parametrize("path", sorted(STREAM.glob("*.py")), ids=lambda p: p.name)
+@pytest.mark.parametrize("path", sorted(STREAM.rglob("*.py")),
+                         ids=lambda p: p.relative_to(STREAM).as_posix())
 def test_a_stream_module_imports_nothing_impure(path: Path) -> None:
+    # 0 for a module in stream/, 1 for one in stream/legacy/.
+    depth = len(path.relative_to(STREAM).parts) - 1
     for level, module in _imports(path):
         if level == 0:
             assert module.split(".")[0] not in FORBIDDEN_STDLIB, f"{path.name} imports {module}"
             assert not module.startswith("ephymeris_sidecar"), f"{path.name}: use a relative import"
-        elif level == 1:
-            # A sibling inside stream/ — pure by this same test.
+        elif level <= 1 + depth:
+            # A module inside stream/ — pure by this same test.
             continue
-        elif level == 3:
-            assert module in ALLOWED_SIDECAR, f"{path.name} imports ...{module}"
+        elif level == 3 + depth:
+            assert module in ALLOWED_SIDECAR, f"{path.name} imports {'.' * level}{module}"
         else:
-            # level 2 is analytics/ itself: reader, scoring, the cache, the archive.
+            # One level up from stream/ is analytics/ itself: reader, scoring, the cache, the archive.
             pytest.fail(f"{path.name} imports {'.' * level}{module}, outside stream/")

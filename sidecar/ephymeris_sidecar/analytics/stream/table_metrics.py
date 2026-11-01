@@ -1,7 +1,9 @@
-"""A spine run's numbers, every one a function of its trial table
-(`ANALYTICS.md#metrics-from-the-trial-table`).
+"""A run's numbers, every one a function of its trial table
+(`ANALYTICS.md#metrics-from-the-trial-table`): a replayed spine run's, and a
+decoded legacy run's P(hit) per condition (`legacy_metrics`, `legacy_overall`,
+`ANALYTICS.md#how-a-legacy-run-becomes-a-trial-table`).
 
-Only complete trials count: a crashed run's last trial may have been cut short
+On a spine run, only complete trials count: a crashed run's last trial may have been cut short
 of its outcome. Each proportion carries its 95% Wilson interval
 (`ANALYTICS.md#uncertainty`), and none is `0.0` for "no trials".
 
@@ -10,10 +12,10 @@ of its outcome. Each proportion carries its 95% Wilson interval
   `unclassified`, so classes plus unclassified partition the trials.
 - **Rewarded:** trials paid / trials.
 - **P(correct | row):** as a `MetricSummary`, so a spine run fills every panel
-  a legacy run does. Counted trials are the classified ones not in `EXCLUDED`,
-  hits those whose class is in `HITS` (a correct response, or a correct
-  withhold on a no-go row). The unclassified and the aborted are excluded, as
-  an unanswered or aborted trial is on a legacy run
+  a legacy run does. It reads each row's `correct`: hits are the trials whose
+  class is in `HITS` (a correct response, or a correct withhold on a no-go
+  row); the unclassified and the aborts (`EXCLUDED`) are excluded, as an
+  unanswered or abandoned trial is on a legacy run
   (`ANALYTICS.md#trials-hits-misses-and-exclusions`).
 
 **Pure**, like the rest of `stream/`.
@@ -24,24 +26,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Sequence
 
-from ...taskdef.lowering import OUTCOME_CLASSES, OUTCOME_CORRECT
 from .stats import _round, wilson_interval
 from .metric_summary import OVERALL_ID, MetricSummary
-from .trial_table import ReplayTrial, class_rank
+from .legacy.decode import LegacyTable
+from .trial_table import CORRECT, EXCLUDED, HITS, ReplayTrial, class_rank
 
-CORRECT = OUTCOME_CLASSES[OUTCOME_CORRECT - 1]
-
-#: The outcome classes a trial is right in, for P(correct | row) and the pooled
-#: figure (`ANALYTICS.md#metrics-from-the-trial-table`). A withhold is a no-go
-#: row's correct answer, so a perfect go/no-go session scores 1.0. Every other
-#: class (false alarm, wrong response, omission, hold broken, one added later)
-#: is a miss, except those in `EXCLUDED`; a trial with no class is excluded too.
-HITS = frozenset({CORRECT, "withheld"})
-
-#: The outcome classes left out of P(correct | row), as a legacy run leaves out
-#: an aborted trial: the animal quit before it was asked. They stay in the class
-#: tallies (P(outcome | row)), just not in `counted` or `hits`.
-EXCLUDED = frozenset(name for name in OUTCOME_CLASSES if name in ("abort_before_stimulus", "abort_during_sampling"))
+#: Re-exported: P(correct | row) reads the rows' `correct`, which
+#: `trial_table.HITS` and `trial_table.EXCLUDED` decide.
+__all__ = ["CORRECT", "EXCLUDED", "HITS", "ReplayScore", "correct_metrics", "legacy_metrics", "legacy_overall",
+           "overall_correct", "score", "verdicts"]
 
 
 @dataclass(frozen=True)
@@ -89,6 +82,9 @@ class RowTally:
     trials: int
     unclassified: int
     classes: tuple[ClassTally, ...]
+    #: Its trials whose `correct` is true, and those it is not None for.
+    hits: int = 0
+    counted: int = 0
 
     def to_json(self) -> dict[str, object]:
         return {"rowId": self.row_id, "name": self.name, "trials": self.trials,
@@ -105,6 +101,9 @@ class ReplayScore:
     classes: tuple[ClassTally, ...]
     rows: tuple[RowTally, ...]
     rewarded: Proportion
+    #: Trials whose `correct` is true, and those it is not None for.
+    hits: int = 0
+    counted: int = 0
 
     def to_json(self) -> dict[str, object]:
         return {
@@ -141,7 +140,9 @@ def score(
         own = [t for t in done if (t.row if t.row in known else None) == row_id]
         row_tallies.append(RowTally(row_id=row_id, name=row_name, trials=len(own),
                                     unclassified=sum(1 for t in own if t.outcome is None),
-                                    classes=_classes(own)))
+                                    classes=_classes(own),
+                                    hits=sum(1 for t in own if t.correct),
+                                    counted=sum(1 for t in own if t.correct is not None)))
     return ReplayScore(
         interp=interp,
         trials=len(done),
@@ -149,13 +150,13 @@ def score(
         classes=_classes(done),
         rows=tuple(row_tallies),
         rewarded=Proportion(n=sum(1 for t in done if t.rewarded), of=len(done)),
+        hits=sum(1 for t in done if t.correct),
+        counted=sum(1 for t in done if t.correct is not None),
     )
 
 
 def _correct(row: RowTally, *, metric_id: str, label: str, min_counted: int) -> MetricSummary:
-    hits = sum(c.n for c in row.classes if c.outcome_class in HITS)
-    excluded = row.unclassified + sum(c.n for c in row.classes if c.outcome_class in EXCLUDED)
-    counted = row.trials - excluded
+    hits, counted = row.hits, row.counted
     interval = wilson_interval(hits, counted) if counted else None
     return MetricSummary(
         id=metric_id,
@@ -166,7 +167,7 @@ def _correct(row: RowTally, *, metric_id: str, label: str, min_counted: int) -> 
         hits=hits,
         counted=counted,
         triggered=row.trials,
-        excluded=excluded,
+        excluded=row.trials - counted,
         window_size=0,
         wilson_low=interval[0] if interval else None,
         wilson_high=interval[1] if interval else None,
@@ -189,5 +190,96 @@ def overall_correct(result: ReplayScore, *, min_counted: int = 10) -> MetricSumm
     if result.trials == 0:
         return None
     pooled = RowTally(row_id=None, name=None, trials=result.trials,
-                      unclassified=result.unclassified, classes=result.classes)
+                      unclassified=result.unclassified, classes=result.classes, hits=result.hits,
+                      counted=result.counted)
     return _correct(pooled, metric_id=OVERALL_ID, label="Overall accuracy", min_counted=min_counted)
+
+
+# --- a legacy table (`ANALYTICS.md#how-a-legacy-run-becomes-a-trial-table`) ---------
+
+
+def verdicts(table: LegacyTable, condition: str) -> list[bool]:
+    """A condition's counted trials, in order: True a hit, False a miss."""
+    return [v for t in table.trials if (v := t.verdict(condition)) is not None]
+
+
+def legacy_metrics(table: LegacyTable, *, min_counted: int = 10) -> list[MetricSummary]:
+    """P(hit) per condition, in authored order (`ANALYTICS.md#trials-hits-misses-and-exclusions`).
+
+    `pSession` and `pWindow` are read off one list of verdicts, so they differ
+    *only* in averaging window and cannot disagree on how a trial was
+    classified (`ANALYTICS.md#two-probabilities-per-metric`).
+    """
+    out = []
+    for c in table.conditions:
+        counted_ = verdicts(table, c.id)
+        triggered = sum(1 for t in table.trials if t.scored(c.id))
+        counted, hits = len(counted_), sum(counted_)
+        window = counted_[-c.window:] if c.window > 0 else []
+        interval = wilson_interval(hits, counted) if counted else None
+        out.append(MetricSummary(
+            id=c.id,
+            label=c.label,
+            p_session=hits / counted if counted else None,
+            p_window=sum(window) / len(window) if window else None,
+            hits=hits,
+            counted=counted,
+            triggered=triggered,
+            # Trials where neither response arrived before the next boundary —
+            # lazy, invalid, or no-response. Meaningful in its own right: 200
+            # triggers with 90 counted is a very different session from 200 with
+            # 195, at identical P(correct).
+            excluded=max(0, triggered - counted),
+            window_size=c.window,
+            wilson_low=interval[0] if interval else None,
+            wilson_high=interval[1] if interval else None,
+            low_confidence=counted < min_counted,
+            answer_side=c.answer_side,
+        ))
+    return out
+
+
+def legacy_overall(metrics: Sequence[MetricSummary], *, min_counted: int = 10) -> MetricSummary | None:
+    """Accuracy pooled across every condition — correct trials over scored trials
+    (`ANALYTICS.md#pooled-accuracy`).
+
+    Why this exists, and why it is every per-run readout's default: **a single
+    metric cannot show a side bias.** An animal that pokes right on every trial
+    scores ~1.0 on "P(R | Odor 1)" and ~0.0 on "P(L | Odor 3)", so a readout
+    keyed on the first metric alone paints a completely bias-locked animal as one of the
+    best in the cohort. Pooling puts it at chance, which is the truth.
+
+    Pooled by summing hits and trials rather than averaging the two
+    proportions, so a session that scored 90 odor-1 trials and 10 odor-3 trials
+    is weighted the way it actually happened.
+
+    **The rate pools only conditions that scored; the trial counts pool all of
+    them.** A condition that fired twenty times and was never answered
+    contributes nothing to P, but those twenty trials are exactly what
+    `triggered` and `excluded` exist to report. Counting all of them keeps
+    `triggered == counted + excluded` true of the pooled row. None when no
+    condition counted a trial.
+    """
+    scored = [m for m in metrics if m.p_session is not None and m.counted > 0]
+    if not scored:
+        return None
+    counted = sum(m.counted for m in scored)
+    hits = sum(m.hits for m in scored)
+    interval = wilson_interval(hits, counted)
+    return MetricSummary(
+        id=OVERALL_ID,
+        label="Overall accuracy",
+        p_session=hits / counted,
+        p_window=None,
+        hits=hits,
+        counted=counted,
+        triggered=sum(m.triggered for m in metrics),
+        excluded=sum(m.excluded for m in metrics),
+        window_size=0,
+        wilson_low=interval[0] if interval else None,
+        wilson_high=interval[1] if interval else None,
+        low_confidence=counted < min_counted,
+        # The pooled figure spans every condition, so it is not answered at any
+        # one side and has no axis. Its own kind of null, not a missing one.
+        answer_side=None,
+    )

@@ -535,7 +535,7 @@ A [spine run](TASKS.md#spine-tasks)'s `.json` and `.mat` carry its [trial table]
   "status": "ok",           // ok | diverged | unreplayable
   "detail": null,           // why, when not ok
   "interp": 3,              // the INTERP it was replayed under (the header's, when unreplayable)
-  "replay_version": 1,      // spine.REPLAY_VERSION
+  "replay_version": 2,      // spine.REPLAY_VERSION
   "phases": ["wait", "present", "delay", "outcome", "iti"],
   "trials": [{"index": 0, "at_ms": 0, "block": "b1", "row": "r1", "row_name": "Odor 1", "level": null,
               "phase_entries": [0, 200, 1200, 1700, 1701], "outcome": "correct", "rewarded": true, /* … */
@@ -550,7 +550,7 @@ A [spine run](TASKS.md#spine-tasks)'s `.json` and `.mat` carry its [trial table]
 - **Strings are escaped in the `.mat` where they must be.** A character outside the BMP in a row, channel or phase name is written as its JSON escape ([the mat mirror](#the-mat-mirror)), so it never costs the run its `.mat`.
 - **Written at clean finalization** ([built once at the end](#built-once-at-the-end)) and by [crash recovery](#crash-recovery), where a crashed run's table runs through its last strobe and its last trial is `complete: false`. **Rewritten only by [Re-derive](#re-derive).**
 
-**In the `.mat`**, `derived` is a scalar struct. `derived.trials` is an **N×1 struct array**, one element per trial, so `T = struct2table(S.derived.trials)` gives one row per trial and `S.derived.trials(5).outcome` reads one. Each element's `input_counts` is a K×1 struct array, and `phases` is a 1×P cell of char. Each field's class comes from its type: a number is a `double`, a bool a `logical`, a string `char`, and a list of numbers a 1×K `double` row. An empty `trials` is a 0×1 struct that keeps its fields.
+**In the `.mat`**, `derived` is a scalar struct. `derived.trials` is an **N×1 struct array**, one element per trial, so `T = struct2table(S.derived.trials)` gives one row per trial and `S.derived.trials(5).outcome` reads one. Each element's `input_counts` and `scores` are K×1 struct arrays, and `phases` is a 1×P cell of char. Each field's class comes from its type: a number is a `double`, a bool a `logical` (a bool that may be null, such as `correct`, a `double` 1, 0 or `NaN`), a string `char`, and a list of numbers a 1×K `double` row. An empty `trials` is a 0×1 struct that keeps its fields.
 
 > [!CAUTION]
 > **A null number is `NaN` in the `.mat`, never `[]`, and a null string is `''`.** `[S.derived.trials.latency_ms]` concatenates one value per element, so an empty field would be dropped silently and every later trial's latency would line up with the wrong trial. Keep nulls as `NaN` in any column added to the trial table.
@@ -958,7 +958,7 @@ This is the **only** path by which a pre-Ephymeris archive reaches Analytics, an
 
 ### Caching
 
-**Persist summaries; never persist series.** Summaries go in `run_metrics_cache` and survive a sidecar restart (every app launch). Series (`analytics.series`), and a spine run's trial table with them, are computed from the file on each request: persisted, a cohort's floats would bloat a database the backup copies wholesale on a 5 s debounce.
+**Persist summaries; never persist series.** Summaries go in `run_metrics_cache` and survive a sidecar restart (every app launch). Series (`analytics.series`), and every run's trial table with them, are computed from the file on each request: persisted, a cohort's floats would bloat a database the backup copies wholesale on a 5 s debounce.
 
 The cache key (`repository.CacheKey`) is file path, mtime, size, profile hash and the **cache version**. **Every part is answerable without opening the file, so a cache hit opens nothing**: `stat_run` settles the key and `parse_run` runs only on a miss. On a networked 444-run archive that is the difference between reading 30 MB per dashboard open and reading nothing.
 

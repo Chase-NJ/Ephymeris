@@ -13,7 +13,8 @@ import type { LiveReplay, TaskProfile } from "@/lib/ws/protocol";
  * The spine's phases left to right, from the profile's snapshot
  * (`spineGraph`), with the ITI leading back to the start. The token sits on
  * the phase **the sidecar's replay says the board is in** (`session.replay`'s
- * `phase`), and nowhere else: this component computes no transition and reads
+ * `phase`), and nowhere else; a phase the sidecar reached by a timer alone is
+ * captioned as its estimate (`provisional`): this component computes no transition and reads
  * no strobe. A run whose stream replay does not reproduce has no token, and
  * says why in the warning colour, since its numbers are withdrawn too.
  *
@@ -157,6 +158,9 @@ function Caption({ graph, replay }: { graph: SpineGraph; replay: LiveReplay | nu
   return (
     <p className={`${line} text-static`}>
       <span className="text-starlight">{phase?.label ?? "Between phases"}</span>
+      {/* Reached by a timer alone since the last strobe: the sidecar's estimate
+          on the board's clock, which the next strobe confirms or replaces. */}
+      {replay.provisional && <span title="No strobe has confirmed this yet"> (by the board&apos;s clock)</span>}
       {row && <> · {row}</>}
       {trial !== null && <> · trial {trial}</>}
       {replay.last?.outcome && (

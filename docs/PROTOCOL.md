@@ -2323,6 +2323,7 @@ A running spine run as its live replay reads it (`ANALYTICS.md#live-scoring`): w
 | `state` | number \| null | The table state the board is in, by replay; null unless `replaying`. |
 | `phase` | number \| null | That state's phase, an index into the profile snapshot's `spine.spine` (its `table.phases`). What the live token sits on: never read from a strobe's name. Null unless `replaying`, or for a state in no phase. |
 | `row` | string \| null | The row id the state belongs to; null for a state the rows share (the pick, an early exit's end) or unless `replaying`. |
+| `provisional` | boolean | The board entered this state after its latest strobe, by a timer alone: the sidecar's estimate on the host clock of what the board does when nothing happens (a Wait timing out, an outcome running into the ITI), which no strobe has confirmed yet. False whenever the strobes so far put the board there, and unless `replaying`. |
 | `trials` | number | Complete trials so far, as the live trial table counts them. |
 | `current` | [ReplayTrial](#shape-replaytrial) \| null | The trial in progress, as the table reads it so far (`complete: false`); null between trials and unless `replaying`. |
 | `last` | [ReplayTrial](#shape-replaytrial) \| null | The latest complete trial. |

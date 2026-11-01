@@ -62,6 +62,9 @@ class View:
     row: str | None
     #: The tick its timer runs out at, or None for a state with no timer.
     due: int | None
+    #: The state was entered after the latest strobe's tick, by a timer alone:
+    #: what the board does if nothing happened since, which no strobe confirms yet.
+    provisional: bool = False
 
 
 @dataclass(frozen=True)
@@ -166,7 +169,9 @@ class LiveReplay:
         state = core.state
         phase = naming.phase_of[state] if naming.phase_of is not None else None
         row = naming.row_of[state] if naming.row_of is not None else naming.row
-        return View(state=state, phase=phase, row=row, due=_due(core, now))
+        last = self._strobes[-1][1] if self._strobes else 0
+        return View(state=state, phase=phase, row=row, due=_due(core, now),
+                    provisional=core.entered_at > last)
 
     @property
     def received(self) -> int:

@@ -985,6 +985,13 @@ export interface LiveReplay {
    * end) or unless `replaying`.
    */
   row: string | null;
+  /**
+   * The board entered this state after its latest strobe, by a timer alone: the sidecar's
+   * estimate on the host clock of what the board does when nothing happens (a Wait timing out, an
+   * outcome running into the ITI), which no strobe has confirmed yet. False whenever the strobes
+   * so far put the board there, and unless `replaying`.
+   */
+  provisional: boolean;
   /** Complete trials so far, as the live trial table counts them. */
   trials: number;
   /**

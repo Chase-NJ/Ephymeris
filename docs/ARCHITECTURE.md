@@ -1497,8 +1497,9 @@ path for them. A `diverged` run shows its divergence in the warning colour, with
   stepped with every edge of that tick: the board strobes a tick's inputs before anything else.
 - **Between strobes, the board's clock.** A state the board leaves without strobing (a Wait timing out) is
   reported when its timer runs out on the board, estimated from the last strobe's tick and the host's
-  monotonic clock, 30 ms late so an edge on its way still wins. One loop timer per box; the board is never
-  polled, and a later strobe replaces the estimate.
+  monotonic clock, 30 ms late so an edge on its way still wins. The payload marks it `provisional` until a
+  strobe confirms it. One loop timer per box; the board is never polled, and a later strobe replaces the
+  estimate.
 - **Off the strobe's path.** The feed runs on the port's session thread after the strobe's fsync, a few
   microseconds; the check and the numbers (`live.scored`, a whole replay) run in the loop's executor, one
   at a time per box. A box keeps its last payload after its run ends, until it starts again or a new

@@ -400,7 +400,8 @@ which `sessions/live_replay.py` feeds each strobe after it is fsync'd, and repor
   is stepped once with all its edges. So the state it commits equals offline replay's at every tick
   (`test_live_replay.py`). Between strobes, `at(tick)` runs only the core's timers, with the board's
   tick estimated from the last strobe's and the host clock, so a state the board leaves silently (a
-  Wait timing out, an outcome's timeout into the ITI) is reported on time. That view is never committed.
+  Wait timing out, an outcome's timeout into the ITI) is reported on time. That view is never committed,
+  and is reported `provisional` until a strobe confirms it.
 - **The numbers.** `live.scored` runs `spine.replayed` over the stream so far, then the `table_metrics`
   calls `summary.summarize` makes. A stream cut mid-run reads as a crashed run: its open trial is in the
   table, incomplete, and out of the metrics. So at `END_SESSION` the live figures are Analytics', by

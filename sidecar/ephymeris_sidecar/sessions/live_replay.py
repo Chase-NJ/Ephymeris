@@ -9,8 +9,9 @@ on the port's session thread. What it owns:
 - **the lock** between that thread, which feeds it, and the loop, which reads it;
 - **the board's clock**, estimated from the last strobe's tick and the host's
   monotonic time when it arrived, so a state's timer is reported when it runs
-  out on the board even though nothing is strobed then. One loop timer per box,
-  re-armed after every strobe; the board is never polled;
+  out on the board even though nothing is strobed then, marked `provisional`
+  until a strobe confirms it. One loop timer per box, re-armed after every
+  strobe; the board is never polled;
 - **the check and the numbers** (`live.scored`), run in the loop's executor and
   coalesced: while one runs, another request only marks it due again;
 - **the payload** `session.replay` carries, broadcast whenever it changes and
@@ -113,7 +114,8 @@ class BoxReplay:
         """Take a new view, under the lock; whether what is reported moved."""
         before = self._view
         self._view = view
-        return before is None or (view.state, view.phase, view.row) != (before.state, before.phase, before.row)
+        return before is None or (view.state, view.phase, view.row, view.provisional) != \
+            (before.state, before.phase, before.row, before.provisional)
 
     def _changed(self, moved: bool, check: bool) -> None:
         if moved:
@@ -223,6 +225,7 @@ class BoxReplay:
             "state": view.state if view is not None else None,
             "phase": view.phase if view is not None else None,
             "row": view.row if view is not None else None,
+            "provisional": view.provisional if view is not None else False,
             "trials": len(complete),
             "current": open_.to_json() if open_ is not None else None,
             "last": complete[-1].to_json() if complete else None,

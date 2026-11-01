@@ -197,9 +197,13 @@ async def test_a_silent_transition_is_reported_on_the_boards_time() -> None:
     for code, ts in strobes[: k + 1]:
         box.feed(code, ts)
     await until(lambda: bool(published) and published[-1]["phase"] == 3)
+    assert published[-1]["provisional"] is False
     clock.now += 0.5  # half a second of silence on the board
     await until(lambda: published[-1]["phase"] == 4, timeout=2)
     assert published[-1]["status"] == "replaying"
+    assert published[-1]["provisional"] is True, "marked: no strobe has confirmed it yet"
+    box.feed(*strobes[k + 1])  # the next trial's first strobe confirms the board moved on
+    await until(lambda: published[-1]["provisional"] is False, timeout=2)
     box.close()
 
 

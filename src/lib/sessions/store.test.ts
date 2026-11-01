@@ -458,6 +458,7 @@ describe("a spine run's live replay (`session.replay`)", () => {
       state: phase,
       phase,
       row: null,
+      provisional: false,
       trials,
       current: null,
       last: null,

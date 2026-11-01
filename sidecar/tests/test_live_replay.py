@@ -56,11 +56,26 @@ def pressing_animal(phase, row, ms):  # noqa: ANN001, ARG001
     return 1 if ms % 40 < 20 else 0
 
 
+def quitting_animal(phase, row, ms):  # noqa: ANN001, ARG001
+    """Pokes at the wait, then lets go 300 ms into the odor: every trial an abort."""
+    return 1 if phase == 0 or (phase == 1 and ms < 300) else 0
+
+
 DOCUMENTS = {
     "2afc": lambda: simulated_document(fixture.two_afc(), two_afc_animal, trials=8),
     "go/no-go": lambda: simulated_document(fixture.go_no_go(), go_no_go_animal, trials=8),
     "vr": lambda: simulated_document(fixture.variable_ratio(1, 6), pressing_animal, trials=6),
+    # Aborts are tallied but EXCLUDED from P(correct): live must leave them out as Analytics does.
+    "aborts": lambda: simulated_document(fixture.tracer(), quitting_animal, trials=5),
 }
+
+
+def test_aborts_are_excluded_live_as_offline() -> None:
+    document = DOCUMENTS["aborts"]()
+    scored = live.scored(document)
+    assert scored.status == "ok" and scored.overall is not None
+    assert {t.outcome for t in scored.trials} == {"abort_during_sampling"}
+    assert scored.overall.counted == 0 and scored.overall.excluded == 5
 
 
 @pytest.mark.parametrize("name", DOCUMENTS)
@@ -191,3 +206,19 @@ def test_the_view_names_the_phase_and_row_from_the_snapshot() -> None:
             assert view.row == (rows[index] if index is not None else None)
             seen.add(view.phase)
     assert seen == {0, 1, 2, 3, 4}, "the token visits every phase"
+
+
+def test_a_state_reached_only_by_a_timer_past_the_last_strobe_is_provisional() -> None:
+    """What the strobes prove is committed; the core's timers run past the last
+    one only on the host's estimate of the board's clock, and say so."""
+    document = simulated_document(fixture.go_no_go(), go_no_go_animal, trials=4)
+    code_of = {name: int(c) for c, name in document[task_profile.SNAPSHOT_KEY]["strobes"].items()}
+    replay = live.LiveReplay(header_of(document))
+    strobes = document["ts_data"]
+    k = next(i for i, (c, _) in enumerate(strobes) if c == code_of["FLUID_2_OFF"])
+    for code, ts in strobes[: k + 1]:
+        replay.feed(code, ts)
+    ts = strobes[k][1]
+    assert not replay.at(ts).provisional, "the outcome's timeout: its strobe is in"
+    later = replay.at(ts + 1)
+    assert later.phase == 4 and later.provisional, "the ITI: entered by a timer nothing strobed"

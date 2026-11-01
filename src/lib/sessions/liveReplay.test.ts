@@ -31,6 +31,7 @@ function replay(extra: Partial<LiveReplay> = {}): LiveReplay {
     state: 3,
     phase: 2,
     row: "go",
+    provisional: false,
     trials: 0,
     current: null,
     last: null,

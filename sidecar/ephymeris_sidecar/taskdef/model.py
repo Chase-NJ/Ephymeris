@@ -36,6 +36,46 @@ ID_RE = re.compile(r"^[a-z][a-z0-9_]{0,47}$")
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _.\-]{0,47}$")
 
 
+#: Characters no folder name may hold on Windows, where the lab machines run,
+#: or that make it a path: separators, a drive's colon, and the rest of
+#: Windows' list. Control characters are refused separately.
+_NOT_IN_A_FOLDER_NAME = frozenset('<>:"/\\|?*')
+
+#: Device names Windows reserves, with or without an extension, any case.
+_WINDOWS_RESERVED = re.compile(r"^(CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])(\..*)?$", re.IGNORECASE)
+
+
+def folder_name_problem(value: str) -> str | None:
+    """Why `value` cannot be one folder name on both Windows and macOS, or None.
+
+    A task's category and name each become a folder under `<data_dir>/tasks/`
+    that every save deletes and rewrites, so either one being a path -- `..`,
+    a separator, a drive or UNC prefix -- would delete and write outside the
+    library. A trailing dot or space is dropped by Windows, so "Tracer." and
+    "Tracer" would be one folder there; a reserved device name is no folder
+    at all. Anything else is the operator's free text."""
+    if not value.strip():
+        return "it is empty"
+    if value in (".", ".."):
+        return "it is a relative path, not a folder name"
+    bad = sorted({c for c in value if c in _NOT_IN_A_FOLDER_NAME or ord(c) < 32})
+    if bad:
+        return f"it holds {' '.join(repr(c) for c in bad)}, which a folder name cannot"
+    if value[-1] in ". ":
+        return "it ends in a dot or a space, which Windows drops from a folder name"
+    if _WINDOWS_RESERVED.match(value):
+        return "Windows reserves it for a device"
+    if len(value) > 64:
+        return "it is over 64 characters"
+    return None
+
+
+def folder_key(name: str) -> str:
+    """`name` as Windows compares folder names: case-folded, with trailing
+    dots and spaces dropped. Two tasks whose names share a key share a folder."""
+    return name.rstrip(". ").casefold()
+
+
 class TaskDefinitionError(ValueError):
     """The document is not a task definition. Not the same as an invalid one."""
 
@@ -374,18 +414,15 @@ class TaskDefinition:
                 "it must start alphanumeric and hold only letters, digits, "
                 "spaces, dots, dashes and underscores"
             )
+        problem = folder_name_problem(name)
+        if problem:
+            raise TaskDefinitionError(f"name {name!r} is not a usable folder name: {problem}")
 
-        # A folder under `<data_dir>/tasks/`, so one plain folder name, never a
-        # path: `..`, a separator, an absolute path or a drive would put the
-        # generated folder -- which every save deletes and rewrites -- outside
-        # the task library. The name's rule, for the same reason.
+        # Free text, but one folder under `<data_dir>/tasks/` (`folder_name_problem`).
         category = str(raw.get("category") or "Tasks")
-        if not NAME_RE.match(category):
-            raise TaskDefinitionError(
-                f"category {category!r} is not a usable category — it becomes a "
-                "folder, so it must be one folder name: start alphanumeric and "
-                "hold only letters, digits, spaces, dots, dashes and underscores"
-            )
+        problem = folder_name_problem(category)
+        if problem:
+            raise TaskDefinitionError(f"category {category!r} is not a usable folder name: {problem}")
 
         mode = raw.get("selectionMode", "antibias")
         if mode not in ("antibias", "pool", "weighted"):

@@ -1974,11 +1974,20 @@ export interface TaskImportPlan {
   diagnostics: TaskDiagnostic[];
 }
 
-/** A row in the profile list, and everything a task card states before the definition is opened. */
+/**
+ * A row in the profile list, and everything a task card states before the definition is opened. A
+ * stored task that will not read is listed too, with `unreadable` set.
+ */
 export interface TaskEntry {
   id: string;
   /** Also the generated sketch's folder name. */
   name: string;
+  /**
+   * Why the stored file will not read as a definition (not JSON, or a category or name that is
+   * not a safe folder name, `TASKS.md#what-a-definition-holds`), or null. Such an entry has no
+   * folder: `path` is empty and the counts are 0.
+   */
+  unreadable: string | null;
   category: string;
   /** The generated sketch folder — what a flash takes. */
   path: string;

@@ -168,7 +168,7 @@ export function Task() {
   );
 
   const needingAttention = useMemo(
-    () => tasks.reduce((n, t) => n + (t.problems > 0 ? 1 : 0), 0),
+    () => tasks.reduce((n, t) => n + (t.problems > 0 || t.unreadable !== null ? 1 : 0), 0),
     [tasks],
   );
 

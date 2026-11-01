@@ -42,7 +42,7 @@ from .strobes.usage import ArchiveScanner
 from .taskdef import bundled as bundled_sketches
 from .taskdef import store as taskdef_store
 from .taskdef import transfer as task_transfer
-from .taskdef.model import TaskDefinition
+from .taskdef.model import TaskDefinition, folder_key
 from .taskdef.validate import validate as validate_task
 from .tasks import profile as task_profile
 from .tasks.start_command import build_start_command
@@ -1045,12 +1045,14 @@ class Application:
             # Two saved tasks sharing a name share a sketch folder: saving one
             # overwrites the other's firmware and deleting either removes both.
             # Duplicating a task makes this the easy mistake, so it is refused
-            # too. Case-folded because the lab machines' filesystem is
-            # case-insensitive.
+            # too. Compared as Windows compares folder names (`folder_key`),
+            # since the lab machines' filesystem is case-insensitive and drops
+            # a trailing dot or space. A stored task that no longer reads still
+            # holds its folder, so it is counted too.
             twin = next(
                 (e for e in await asyncio.to_thread(self.task_store.list_entries)
                  if e["id"] != definition.id
-                 and str(e["name"]).casefold() == definition.name.casefold()),
+                 and folder_key(str(e["name"])) == folder_key(definition.name)),
                 None,
             )
             if twin is not None:

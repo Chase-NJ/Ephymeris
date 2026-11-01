@@ -2145,6 +2145,14 @@ SHAPES = (
         obj(
             f("id", STR),
             f("name", STR, doc="Also the generated sketch's folder name."),
+            f(
+                "unreadable",
+                nullable(STR),
+                doc="Why the stored file will not read as a definition (not JSON, "
+                "or a category or name that is not a safe folder name, "
+                "`TASKS.md#what-a-definition-holds`), or null. Such an entry has "
+                "no folder: `path` is empty and the counts are 0.",
+            ),
             f("category", STR),
             f("path", STR, doc="The generated sketch folder — what a flash takes."),
             f("label", STR),
@@ -2170,7 +2178,8 @@ SHAPES = (
             ),
         ),
         doc="A row in the profile list, and everything a task card states "
-        "before the definition is opened.",
+        "before the definition is opened. A stored task that will not read is "
+        "listed too, with `unreadable` set.",
     ),
     Shape(
         "TaskSaved",

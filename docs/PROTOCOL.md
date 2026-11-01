@@ -3115,12 +3115,13 @@ This machine's strobe vocabulary (`TASKS.md#strobe-vocabulary`) — the one sour
 <a id="shape-taskentry"></a>
 #### TaskEntry
 
-A row in the profile list, and everything a task card states before the definition is opened.
+A row in the profile list, and everything a task card states before the definition is opened. A stored task that will not read is listed too, with `unreadable` set.
 
 | Field | Type | Notes |
 |---|---|---|
 | `id` | string |  |
 | `name` | string | Also the generated sketch's folder name. |
+| `unreadable` | string \| null | Why the stored file will not read as a definition (not JSON, or a category or name that is not a safe folder name, `TASKS.md#what-a-definition-holds`), or null. Such an entry has no folder: `path` is empty and the counts are 0. |
 | `category` | string |  |
 | `path` | string | The generated sketch folder — what a flash takes. |
 | `label` | string |  |

@@ -505,3 +505,69 @@ def test_a_task_id_that_is_not_an_id_reads_and_deletes_nothing(tmp_path, task_id
     assert store.document(task_id) is None and store.get(task_id) is None
     assert store.delete(task_id) is False
     assert (tmp_path / "victim.json").exists()
+
+
+# --------------------------------------------------------------------------- #
+# Folder names that are safe on Windows and macOS
+# --------------------------------------------------------------------------- #
+
+
+UNSAFE_FOLDER_NAMES = [
+    "..", ".", "a/b", "a\\b", "C:victim", "\\\\server\\share", "nul\x00byte", "tab\there",
+    "trailing.", "trailing ", "CON", "con.txt", "Lpt1", "COM9.json", "aux.v2", "what?",
+]
+
+
+def test_a_free_text_category_still_reads_lists_and_saves(tmp_path):
+    store = TaskStore(tmp_path, library_root=FIRMWARE)
+    store.save_document(tracer(category="Shaping (old)"))
+    [entry] = store.list_entries()
+    assert entry["category"] == "Shaping (old)" and entry["unreadable"] is None
+    assert (tmp_path / "tasks" / "Shaping (old)" / "Spine Tracer" / "task.json").is_file()
+
+
+@pytest.mark.parametrize("value", UNSAFE_FOLDER_NAMES)
+def test_a_category_or_name_that_is_not_a_safe_folder_name_is_not_a_definition(value):
+    with pytest.raises(TaskDefinitionError, match="category"):
+        TaskDefinition.from_json(tracer(category=value))
+    if value.strip() == value:  # a name is trimmed first, which makes it safe
+        with pytest.raises(TaskDefinitionError, match="name"):
+            TaskDefinition.from_json(tracer(name=value))
+
+
+def test_a_stored_task_that_will_not_read_is_listed_as_unreadable_with_its_reason(tmp_path):
+    store = TaskStore(tmp_path, library_root=FIRMWARE)
+    store.save_document(tracer())
+    (tmp_path / "tasks" / "old_one.json").write_text(
+        json.dumps(tracer(id="old_one", name="Old One", category="Shaping/old")), encoding="utf-8"
+    )
+    (tmp_path / "tasks" / "garbled.json").write_text("{ not json", encoding="utf-8")
+    entries = {e["id"]: e for e in store.list_entries()}
+    assert entries["spine_tracer"]["unreadable"] is None
+    assert "category" in entries["old_one"]["unreadable"] and entries["old_one"]["name"] == "Old One"
+    assert "JSON" in entries["garbled"]["unreadable"]
+
+
+def test_a_symlinked_category_folder_still_lists_and_regenerates(tmp_path):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (tmp_path / "data" / "tasks").mkdir(parents=True)
+    (tmp_path / "data" / "tasks" / "Tasks").symlink_to(elsewhere, target_is_directory=True)
+    store = TaskStore(tmp_path / "data", library_root=FIRMWARE)
+    store.save_document(tracer())
+    [entry] = store.list_entries()
+    assert entry["unreadable"] is None
+    assert store.regenerate_all() == 1
+    assert (elsewhere / "Spine Tracer" / "task.json").is_file()
+
+
+def test_a_name_another_task_holds_as_windows_sees_it_is_taken(tmp_path):
+    """Windows drops a trailing dot or space, so "Spine Tracer." and "Spine
+    Tracer" are one folder there. A stored task that no longer reads still
+    holds its folder."""
+    (tmp_path / "tasks").mkdir()
+    (tmp_path / "tasks" / "older.json").write_text(
+        json.dumps(tracer(id="older", name="SPINE TRACER.")), encoding="utf-8"
+    )
+    conflicts = plan(export(), tmp_path).conflicts
+    assert [c["kind"] for c in conflicts] == ["name_taken"]

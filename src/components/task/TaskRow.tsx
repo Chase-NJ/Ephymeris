@@ -42,7 +42,10 @@ export function TaskRow({
   onExport: () => void;
   onDelete: () => void;
 }) {
-  const ready = task.problems === 0;
+  // A stored file that will not read is listed, never dropped: the sidecar
+  // says why (`TaskEntry.unreadable`).
+  const unreadable = task.unreadable;
+  const ready = task.problems === 0 && unreadable === null;
   return (
     <div className="group relative flex items-center transition-colors hover:bg-nebula/60">
       <button
@@ -58,9 +61,18 @@ export function TaskRow({
           <span className="block truncate text-[13px] font-medium text-starlight">
             {task.name}
           </span>
-          <span className="mt-0.5 block truncate font-mono text-[9px] uppercase tracking-wide text-static/70">
-            {task.category} · {modeLabel(task.selectionMode)}
-          </span>
+          {unreadable !== null ? (
+            <span
+              title={unreadable}
+              className="mt-0.5 block truncate font-mono text-[10px] text-status-error"
+            >
+              will not read: {unreadable}
+            </span>
+          ) : (
+            <span className="mt-0.5 block truncate font-mono text-[9px] uppercase tracking-wide text-static/70">
+              {task.category} · {modeLabel(task.selectionMode)}
+            </span>
+          )}
         </span>
 
         {/* The condition strip: one square per condition in its own colour. A
@@ -98,11 +110,15 @@ export function TaskRow({
             </span>
           ) : (
             <span
-              title={`${task.problems} problem${task.problems === 1 ? "" : "s"} — it will still flash, but check it first`}
+              title={
+                unreadable !== null
+                  ? "This task's file will not read, so it has no sketch to flash"
+                  : `${task.problems} problem${task.problems === 1 ? "" : "s"} — it will still flash, but check it first`
+              }
               className="flex items-center gap-0.5 font-mono text-[10px] text-status-error"
             >
               <TriangleAlert size={10} strokeWidth={1.75} />
-              {task.problems}
+              {unreadable !== null ? "!" : task.problems}
             </span>
           )}
         </span>

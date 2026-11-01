@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from ..rig import registry
-from .model import TaskDefinition, TaskDefinitionError
+from .model import TaskDefinition, TaskDefinitionError, folder_key
 from .spine import STRUCTURAL
 from .store import MAX_DEFINITION_BYTES
 from .validate import validate
@@ -297,7 +297,7 @@ def plan_import(
         ))
     twin = next(
         (e for e in tasks.list_entries()
-         if e["id"] != definition.id and str(e["name"]).casefold() == definition.name.casefold()),
+         if e["id"] != definition.id and folder_key(str(e["name"])) == folder_key(definition.name)),
         None,
     )
     if twin is not None:

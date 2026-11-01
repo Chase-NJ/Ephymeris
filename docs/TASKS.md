@@ -429,7 +429,20 @@ Four answers, nothing derivable (`taskdef/model.py`):
 
 Plus `id`, `name` (becomes the sketch folder and must be a legal folder name), `category`, `legacyNames` and `notes`.
 
-**`name` and `category` are each one plain folder name**: they start with a letter or digit and hold only letters, digits, spaces, dots, dashes and underscores. A definition with any other value is not a definition (`TASK_INVALID`, or `TASK_TRANSFER_INVALID` on import), and nothing is written. Each save deletes and rewrites `<category>/<name>/`, so a `..`, a separator, an absolute path or a drive letter would delete and write outside the task library. `TaskStore` also refuses any generated folder that resolves outside `<data_dir>/tasks/` before it deletes or writes, and an id that is not an id names no file.
+**`category` is free text and `name` follows the shape above, but each must be one folder name that is safe on Windows and macOS** (`folder_name_problem` in `taskdef/model.py`). Each save deletes and rewrites `<category>/<name>/`, so the rule refuses:
+
+- a path: `.` or `..`, a separator (`/` or `\`), a drive or UNC prefix;
+- a character Windows forbids (`<>:"|?*`), or a control character;
+- a trailing dot or space, which Windows drops, so `Tracer.` and `Tracer` would be one folder;
+- a name Windows reserves for a device (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`), in any case, with or without an extension.
+
+A definition breaking the rule is not a definition (`TASK_INVALID`, or `TASK_TRANSFER_INVALID` on import), and nothing is written.
+
+- **A stored task that no longer reads is listed, never dropped.** `tasks.list` lists it with `unreadable` saying why, and its name still holds its folder.
+- **Two names clash as Windows compares them** (`folder_key`: case-folded, trailing dots and spaces dropped), on save and on import.
+- **`TaskStore` refuses any generated folder outside `<data_dir>/tasks/`** before it deletes or writes. It judges by the path's normalised components, not by resolving it, so a symlinked category folder keeps working.
+- **An id that is not an id names no file.**
+- **Listing and regeneration skip one bad task** and report it, so the rest go on.
 
 A definition stores **channel names and strobe code names, never pins or numbers.** That indirection makes "odor line 3 means go-left on this rig" an edit to one document rather than to firmware, and lets a rewiring be costed before it is written.
 

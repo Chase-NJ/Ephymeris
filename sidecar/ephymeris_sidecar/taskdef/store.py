@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -66,9 +67,13 @@ class TaskEntry:
     trials: int
     stages: int
     selection_mode: str
+    #: Why the stored file will not read as a definition, or None. Such a task
+    #: is listed rather than dropped, so it never vanishes without a word.
+    unreadable: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
+            "unreadable": self.unreadable,
             "id": self.id,
             "name": self.name,
             "category": self.category,
@@ -117,15 +122,23 @@ class TaskStore:
         A file that will not parse is reported as None with a logged warning
         rather than raised: one broken document must not make the whole library
         unlistable, which is the same reasoning `hardware/store.py` applies.
+        `list_entries` lists it as unreadable, with `read`'s reason.
         """
-        document = self.document(task_id)
+        definition, reason = self.read(task_id)
+        if reason is not None:
+            log.warning("task definition %s will not read (%s)", task_id, reason)
+        return definition
+
+    def read(self, task_id: str) -> tuple[TaskDefinition | None, str | None]:
+        """(the definition, None), or (None, why it will not read), or
+        (None, None) when nothing is stored under this id."""
+        document, reason = self._load(task_id)
         if document is None:
-            return None
+            return None, reason
         try:
-            return TaskDefinition.from_json(document)
+            return TaskDefinition.from_json(document), None
         except TaskDefinitionError as exc:
-            log.warning("task definition %s will not parse (%s)", task_id, exc)
-            return None
+            return None, str(exc)
 
     def document(self, task_id: str) -> Any | None:
         """The stored `<id>.json` as JSON, verbatim, or None when there is no
@@ -133,24 +146,25 @@ class TaskStore:
         which drops what this build does not know: a task export carries this
         (TASKS.md#moving-a-task-between-machines). An id that is not an id
         names no file: `..` would read outside the library."""
+        return self._load(task_id)[0]
+
+    def _load(self, task_id: str) -> tuple[Any | None, str | None]:
+        """`document`, with why it will not read when there is a file."""
         if not ID_RE.match(task_id):
-            return None
+            return None, None
         path = self.definition_path(task_id)
         if not path.is_file():
-            return None
+            return None, None
         try:
             raw = path.read_bytes()
         except OSError as exc:
-            log.warning("task definition %s unreadable (%s)", task_id, exc)
-            return None
+            return None, f"the file will not open ({exc})"
         if len(raw) > MAX_DEFINITION_BYTES:
-            log.warning("task definition %s is %d bytes, over the limit", task_id, len(raw))
-            return None
+            return None, f"the file is {len(raw)} bytes, over the {MAX_DEFINITION_BYTES}-byte limit"
         try:
-            return json.loads(raw)
-        except json.JSONDecodeError as exc:
-            log.warning("task definition %s will not parse (%s)", task_id, exc)
-            return None
+            return json.loads(raw), None
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            return None, f"the file is not JSON ({exc})"
 
     def list_definitions(self) -> list[TaskDefinition]:
         if not self.root.is_dir():
@@ -171,19 +185,50 @@ class TaskStore:
         shipping every message would make the reply grow with the library.
         """
         out: list[dict[str, Any]] = []
-        for definition in self.list_definitions():
-            path = self.definition_path(definition.id)
+        if not self.root.is_dir():
+            return out
+        for path in sorted(self.root.glob("*.json")):
+            task_id = path.stem
             try:
                 edited = datetime.fromtimestamp(path.stat().st_mtime, UTC)
                 edited_at = edited.strftime("%Y-%m-%dT%H:%M:%SZ")
             except OSError:
                 edited_at = None
+            if not ID_RE.match(task_id):
+                reason: str | None = f"{path.name} is not named after a task id"
+                definition = None
+            else:
+                definition, reason = self.read(task_id)
+            if definition is not None:
+                try:
+                    folder = str(self.sketch_dir(definition))
+                except TaskDefinitionError as exc:
+                    definition, reason = None, str(exc)
+            if definition is None:
+                # Listed, never dropped: a task that vanished without a word
+                # reads as deleted. Its name still holds its folder.
+                if reason is None:
+                    continue
+                raw = self.document(task_id) if ID_RE.match(task_id) else None
+                name = raw.get("name") if isinstance(raw, dict) else None
+                category = raw.get("category") if isinstance(raw, dict) else None
+                name = name if isinstance(name, str) and name else task_id
+                out.append(
+                    TaskEntry(
+                        id=task_id, name=name,
+                        category=category if isinstance(category, str) else "",
+                        path="", edited_at=edited_at, problems=0, trials=0, stages=0,
+                        selection_mode="antibias", unreadable=reason,
+                    ).to_json()
+                    | {"label": name}
+                )
+                continue
             out.append(
                 TaskEntry(
                     id=definition.id,
                     name=definition.name,
                     category=definition.category,
-                    path=str(self.sketch_dir(definition)),
+                    path=folder,
                     edited_at=edited_at,
                     problems=len(validate(definition)),
                     trials=definition.trial_count,
@@ -305,7 +350,14 @@ class TaskStore:
         """
         count = 0
         for definition in self.list_definitions():
-            if self.regenerate(definition) is not None:
+            # One task that cannot be regenerated never stops the rest: the
+            # list reports it unreadable, with this reason.
+            try:
+                regenerated = self.regenerate(definition)
+            except TaskDefinitionError as exc:
+                log.warning("task %s not regenerated (%s)", definition.id, exc)
+                continue
+            if regenerated is not None:
                 count += 1
         return count
 
@@ -351,9 +403,16 @@ class TaskStore:
         self._prune_category(previous.category)
 
     def _inside(self, path: Path) -> Path:
-        root = self.root.resolve()
-        resolved = path.resolve()
-        if resolved == root or not resolved.is_relative_to(root):
+        """`path`, if it names something under the library, by its normalised
+        components. Lexical, never through `resolve()`: an operator's symlinked
+        category folder is theirs to keep, and still works."""
+        root = os.path.normpath(os.path.abspath(self.root))
+        target = os.path.normpath(os.path.abspath(path))
+        try:
+            common = os.path.commonpath([root, target])
+        except ValueError:  # another drive, on Windows
+            common = None
+        if target == root or common != root:
             raise TaskDefinitionError(
                 f"{path} is outside the task library {self.root}; nothing was written there."
             )

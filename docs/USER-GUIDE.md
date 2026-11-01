@@ -134,7 +134,8 @@ the top left.
 
 **Task.** What the animal does: the trial types, the shaping ramp and every number the box uses. Saving
 a task makes a program that can be put on a box. Usually managed by the lab manager. The landing page
-lists each saved task with its number of conditions, its stages and whether it is **ready**.
+lists each saved task with its number of conditions, its stages and whether it is **ready**. A task
+whose saved file can no longer be read is still listed, in red, with the reason.
 
 To use a task on the lab's other computer, click **Export** on its row and save the file. On the other
 computer, click **Import task** on the Task tab and choose that file. The task runs on that computer's own

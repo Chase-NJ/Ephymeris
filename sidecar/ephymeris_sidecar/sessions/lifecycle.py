@@ -617,6 +617,9 @@ class SessionLifecycle:
                     profile_hash=None,
                     config=run_config,
                     params_hash=task_profile.params_hash(run_config),
+                    # What the run's header records too (`DATA.md#run-records`).
+                    interp=run.interp,
+                    channel_set_hash=run.config.channel_set_hash,
                 ),
                 run.config.profile,
             )

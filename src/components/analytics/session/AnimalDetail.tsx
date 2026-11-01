@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ChartFrame } from "@/components/charts/ChartFrame";
 import { Segmented } from "@/components/common/controls";
 import { outcomeParts } from "@/lib/analytics/session";
+import { classParts, trialRows } from "@/lib/analytics/trialTable";
 import type {
   ConditionOutcomes,
   RunSeries,
@@ -28,6 +29,8 @@ import { tagOf } from "@/components/logbook/tags";
  * animal stopped working are invisible in any aggregate. The other three are
  * the card's own numbers at full size — the trajectory the sparkline
  * compresses, the per-odor composition, and the engagement ladder as a funnel.
+ * A spine run opens on its **trial table** instead, read off its replay
+ * (`ANALYTICS.md#the-trial-table`); the legacy views have nothing to show it.
  */
 export function AnimalDetail({
   run,
@@ -40,7 +43,8 @@ export function AnimalDetail({
   color: string;
   revealKey: string;
 }) {
-  const [view, setView] = useState<DetailView>("tape");
+  const spine = run.replay !== null;
+  const [view, setView] = useState<DetailView>(spine ? "trials" : "tape");
 
   return (
     <motion.div
@@ -54,16 +58,21 @@ export function AnimalDetail({
           value={view}
           onChange={setView}
           label="Detail view"
-          options={[
-            { value: "tape", label: "Tape" },
-            { value: "trajectory", label: "Trajectory" },
-            { value: "odors", label: "By odor" },
-            { value: "engagement", label: "Engagement" },
-          ]}
+          options={
+            spine
+              ? [{ value: "trials", label: "Trials" }]
+              : [
+                  { value: "tape", label: "Tape" },
+                  { value: "trajectory", label: "Trajectory" },
+                  { value: "odors", label: "By odor" },
+                  { value: "engagement", label: "Engagement" },
+                ]
+          }
         />
       </div>
 
       <div className="mt-2.5">
+        {view === "trials" && <TrialsView run={run} series={series} />}
         {view === "tape" && <TapeView run={run} series={series} />}
         {view === "trajectory" && <TrajectoryView series={series} />}
         {view === "odors" && <OdorView run={run} />}
@@ -75,7 +84,96 @@ export function AnimalDetail({
   );
 }
 
-type DetailView = "tape" | "trajectory" | "odors" | "engagement";
+type DetailView = "trials" | "tape" | "trajectory" | "odors" | "engagement";
+
+/**
+ * A spine run's trials as replay read them (`ANALYTICS.md#the-trial-table`):
+ * each row's outcome classes, P(outcome | row), above one line per trial —
+ * when it started, its row, how it ended, what paid, the response and its
+ * latency, and when each phase began. Every value is the sidecar's; nothing
+ * here decides an outcome.
+ */
+function TrialsView({ run, series }: { run: RunSummary; series: RunSeries | null }) {
+  const replay = run.replay;
+  const table = series?.trialTable ?? null;
+  if (!replay) return null;
+  const rows = table ? trialRows(table) : [];
+  const phases = table?.phases ?? [];
+  const showPhases = rows.some((row) => row.phases.length > 0);
+
+  return (
+    <div className="flex flex-col gap-2">
+      {replay.rows.map((row) => {
+        const parts = classParts(row.classes, row.unclassified);
+        return (
+          <div key={row.rowId ?? "unattributed"}>
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="truncate text-[11px] text-static">{row.name ?? "no row"}</span>
+              <span className="shrink-0 font-mono text-[10px] tabular-nums text-static/80">
+                {parts.map((part) => `${part.n} ${part.label}`).join(" · ") || "no trials"}
+              </span>
+            </div>
+            {row.trials > 0 && (
+              <div className="mt-1 flex h-2.5 overflow-hidden rounded-[2px]">
+                {parts.map((part) => (
+                  <span
+                    key={part.key}
+                    title={`${part.n} ${part.label}`}
+                    style={{ width: `${(part.n / row.trials) * 100}%`, background: part.fill }}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {!table ? (
+        <Fallback>The trial table could not be read for this run.</Fallback>
+      ) : (
+        <div className="max-h-64 overflow-auto border-t border-halo pt-1.5">
+          <table className="w-full font-mono text-[10px] tabular-nums text-static/80">
+            <thead className="text-left text-[9px] text-static/60">
+              <tr>
+                <th className="pr-2 font-normal">#</th>
+                <th className="pr-2 font-normal">at</th>
+                <th className="pr-2 font-normal">row</th>
+                <th className="pr-2 font-normal">outcome</th>
+                <th className="pr-2 font-normal">reward</th>
+                <th className="pr-2 font-normal">response</th>
+                {showPhases &&
+                  phases.map((phase, i) => (
+                    <th key={i} className="pr-2 font-normal" title={`ms after the trial began that it entered phase ${i + 1}`}>
+                      {phase}
+                    </th>
+                  ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.key} className={row.complete ? "" : "text-static/40"}>
+                  <td className="pr-2">{row.number}</td>
+                  <td className="pr-2">{row.at}</td>
+                  <td className="max-w-[96px] truncate pr-2">{row.row}</td>
+                  <td className="pr-2" style={{ color: row.fill }}>
+                    {row.outcome}
+                  </td>
+                  <td className="pr-2">{row.reward}</td>
+                  <td className="pr-2">{row.response}</td>
+                  {showPhases && row.phases.map((cell, i) => <td key={i} className="pr-2">{cell}</td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="text-[10px] leading-relaxed text-static/80">
+        Read off a replay of the run&rsquo;s own state table. A greyed row is a trial the run was cut off
+        during, and is left out of every count.
+      </p>
+    </div>
+  );
+}
 
 /** Wire spelling → the shared outcome palette; aborted drawn by shape below. */
 const TAPE_KEY: Record<string, OutcomeKey | null> = {

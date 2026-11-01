@@ -796,6 +796,13 @@ is saved in an `ephys` folder in the session folder, unless the Recording defaul
    note from the [log](#keeping-the-log), at about the trial it was taken; hover it to read the note. Clicking an animal in the **Animals** rail picks it
    out in these charts.
 
+   A spine task's card counts its trials by how each ended (correct, wrong response, no outcome, and so
+   on), and opens on **Trials**: one line per trial with its start, row, outcome, reward, response and
+   when each phase began. Ephymeris works these out by replaying the run exactly as the box ran it. If the
+   recorded run does not match what the replay predicts, the card says **not scored** and names the first
+   strobe that differs; a run from a box firmware this version of Ephymeris does not know is never
+   scored either. Both are recorded in full.
+
    ![One session with remy3 picked out: per-animal condition cards with outcome bars, the Strategy within this session chart tracing remy3's trials, and Rolling accuracy per trial](images/analytics-session-detail.webp)
 
 5. **All cohorts** goes back to the cohort choice.

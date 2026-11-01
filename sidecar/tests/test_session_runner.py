@@ -212,7 +212,7 @@ async def test_both_seeds_are_recorded_when_the_board_disagrees(tmp_path: Path, 
 async def test_the_interpreter_the_board_announced_is_recorded_in_the_header(
     tmp_path: Path, bench: Bench
 ) -> None:
-    runner, _events, _ended = make_runner(tmp_path, bench)
+    runner, _events, ended = make_runner(tmp_path, bench)
     runner.start_box(1)
     board = await bench.run_handshake(1, seed=5, interp=1)
     await board.said("101\t0")
@@ -221,6 +221,10 @@ async def test_the_interpreter_the_board_announced_is_recorded_in_the_header(
     assert "# interp: 1\n" in text
     # Before the first strobe, like the rest of the header.
     assert text.index("# interp: 1") < text.index("101\t0")
+    # And on the run, for its record (`DATA.md#run-records`).
+    await board.said("246\t10")
+    await wait_until(lambda: ended)
+    assert ended[0][0].interp == 1
 
 
 async def test_the_channel_set_hash_the_sketch_was_generated_against_is_in_the_header(

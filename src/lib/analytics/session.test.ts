@@ -32,15 +32,16 @@ describe("why a run has no numbers", () => {
   const run = (status: RunSummary["status"], detail: string | null = null) =>
     ({ status, detail }) as RunSummary;
 
-  it("says a spine run is not scored yet, never that its file is damaged", () => {
-    const reason = unscoredReason(run("replay-pending"));
+  it("says a diverged spine run is not scored, never that its file is damaged", () => {
+    const reason = unscoredReason(run("diverged"));
     expect(reason).toMatch(/spine/);
-    expect(reason).toMatch(/not available yet/);
+    expect(reason).toMatch(/not scored/);
     expect(reason).not.toMatch(/could not be read/);
+    expect(unscoredReason(run("unreplayable"))).toMatch(/replay cannot run/);
   });
 
   it("prefers the sidecar's own detail", () => {
-    expect(unscoredReason(run("replay-pending", "scored by replay later"))).toBe("scored by replay later");
+    expect(unscoredReason(run("unreplayable", "the header says INTERP 4"))).toBe("the header says INTERP 4");
   });
 
   it("gives a scored run no reason", () => {

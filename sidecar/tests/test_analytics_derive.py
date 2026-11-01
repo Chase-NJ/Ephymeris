@@ -1045,8 +1045,8 @@ def test_the_payload_shape_is_spelled_out() -> None:
     payload = stream.summarize(document((HIT_1 + HIT_3) * 12), FULL_PROFILE).to_json()
 
     assert sorted(payload) == [
-        "clean", "conditions", "detail", "durationMs", "engagement",
-        "excludedByDefault", "metrics", "outcomes", "overall", "seed",
+        "clean", "conditions", "detail", "divergence", "durationMs", "engagement",
+        "excludedByDefault", "metrics", "outcomes", "overall", "replay", "seed",
         "status", "stopReason", "totalEvents",
     ]
     assert sorted(payload["metrics"][0]) == [

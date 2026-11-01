@@ -1128,6 +1128,44 @@ def test_an_older_database_gains_the_former_member_and_move_tables(tmp_path: Pat
         conn.close()
 
 
+# --- v16: a run record's interpreter, channel set and replay verdict ----------
+
+
+def test_a_v15_run_record_gains_interp_channel_set_and_diverged_as_null(tmp_path: Path) -> None:
+    """`DATA.md#run-records`: the three columns arrive NULL on an existing run,
+    and a migration re-run (an interrupted startup) is harmless."""
+    path = tmp_path / "ephymeris.db"
+    write_shipped_database(path, 15)
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "INSERT INTO sessions (id, cohort_id, prefix_id, prefix_name, session_number, date, started_at, status,"
+        " folder_path) VALUES ('s1', 'c1', 'p1', 'P', '1', '2026-10-30', 'then', 'completed', '/data')"
+    )
+    conn.execute(
+        "INSERT INTO session_animal_runs (id, session_id, animal_id, box_number, sketch_path,"
+        " started_at) VALUES ('r1', 's1', 'a1', 1, '', 'then')"
+    )
+    conn.commit()
+    conn.close()
+
+    db = Database(path)
+    db.connect()
+    db.close()
+
+    assert user_version(path) == SCHEMA_VERSION
+    conn = sqlite3.connect(path)
+    try:
+        row = conn.execute(
+            "SELECT interp, channel_set_hash, diverged FROM session_animal_runs WHERE id = 'r1'"
+        ).fetchone()
+        assert row == (None, None, None)
+        from ephymeris_sidecar.cohorts.db import MIGRATIONS
+
+        MIGRATIONS[16](conn)
+    finally:
+        conn.close()
+
+
 # --- every upgrade lands on today's schema -----------------------------------
 
 
@@ -1171,7 +1209,7 @@ def _shipped(version: int):  # noqa: ANN202
     [
         write_v1_database, write_v2_database, write_v3_database, write_v5_database,
         write_v6_database, write_v7_database, write_v8_database, write_v9_database,
-        *(_shipped(v) for v in (4, 10, 11, 12, 13, 14)),
+        *(_shipped(v) for v in (4, 10, 11, 12, 13, 14, 15)),
     ],
     ids=lambda writer: writer.__name__.removeprefix("write_").removesuffix("_database"),
 )

@@ -4,7 +4,7 @@
 Finalization and recovery replay a spine run once (`analytics/stream/spine.py`'s
 `replayed`) and write what it gives into the document as one block, last:
 
-    "derived": {"status": "ok", "detail": null, "interp": 3, "replay_version": 1,
+    "derived": {"status": "ok", "detail": null, "interp": 6, "replay_version": 3,
                 "phases": [...], "trials": [{"index": 0, "at_ms": 0, ...}, ...]}
 
 stamped with the `INTERP` the run was replayed under and `spine.REPLAY_VERSION`.

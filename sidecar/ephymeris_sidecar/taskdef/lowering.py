@@ -22,10 +22,11 @@ then by row (`channel_bits`), and outputs the same. Durations and
 probabilities never enter it either: each is a parameter slot the host sets by
 `SET` line. So one table serves every tuning and every pin map.
 
-ROWS. Each row gets its own copy of the spine, ITI included, because its
-bindings, and so its bits, differ. With two or more rows, state 0 is a pick
-state whose branches are the rows' first states, in `rows` order; with one,
-the row's first state is state 0.
+ROWS AND BLOCKS. Each row gets its own copy of the spine, ITI included,
+because its bindings, and so its bits, differ. With two or more rows, state 0
+is a pick state whose branches are each block's rows' first states, block by
+block; with one, the row's first state is state 0. Each block is an
+`InterpBlock` naming its slice of those branches (`TASKS.md#blocks`).
 
 ENDS. Every exit that ends a trial early (an abort, a released Hold, a Wait's
 timeout, a Counter's time limit) goes to an END: a copy of the ITI state that
@@ -35,8 +36,9 @@ Outcome the trial is already marked: an early exit there goes to the row's own
 ITI, or to an unmarked end when a Counter's limit ends the session.
 
 PARAMETER SLOTS, in order (`ParamSlot`):
-    0       NT        the block's trial count, read by the session layer (BoxSpine.h)
-    1..     T<i>      the timer of phase i, one per timed phase, in phase order;
+            NT        the session's trial cap, read by the session layer (BoxSpine.h),
+                      only with `session_cap`
+            T<i>      the timer of phase i, one per timed phase, in phase order;
             H<i>      a Response window's hold, straight after its T<i>;
             N<i>      a Counter's N (or the low end of a drawn N), straight after
                       its T<i>, unless it reads a compiled sequence (`ratios`);
@@ -55,6 +57,13 @@ PARAMETER SLOTS, in order (`ParamSlot`):
             TH<r>_<s>, TW<r>_<s>, TL<r>_<s>
                        a pulse train's rate in Hz, pulse width and length in ms,
                        in three consecutive slots
+    then, per block b from 1:
+            BN<b>, BNX<b>   its N, and a drawn N's high end
+            BK<b>, BKN<b>   its criterion's k and n
+            BC<b>     its correction limit
+            BA<b>     an anti-bias block's window
+            W<b>_<e>  the weight of its e-th row, for a selection that reads weights
+            B<b>T<i>  phase i's duration while it runs
 
 DRIVEN OUTPUTS (`TASKS.md#driven-outputs`). An output slot the definition
 drives as `pwm`, `tone` or `train` gets one bit PER ROW rather than per
@@ -72,7 +81,7 @@ from typing import Any, Sequence
 #: which the spine runner announces as `INTERP=<n>`. A run's snapshot records
 #: it beside the table, and replay refuses one it does not know. 1 is the trial
 #: runner's, in the same numbering space (`analytics/stream/replay.py`).
-INTERP_VERSION = 5
+INTERP_VERSION = 6
 
 #: BoxInterp.h's constants (`INTERP_NONE`, `INTERP_RISE`, ...), mirrored.
 NONE = 0xFF
@@ -82,6 +91,15 @@ STARTS_TRIAL = 0x01
 PICK = 0x02
 COUNT = 0x04
 LAST_TRIAL = 0x08
+RESPONSE = 0x10
+
+#: A block's selection, by its `select` name: `InterpBlock.select`.
+SELECTIONS = {"uniform": 0, "weighted": 1, "bag": 2, "antibias": 3}
+#: The selections that read each row's weight.
+WEIGHTED = ("weighted", "bag", "antibias")
+#: How many trials a criterion can look back on, how many responses anti-bias
+#: can, and how many tokens a bag holds: BoxInterp.h's `INTERP_HISTORY`.
+HISTORY = 32
 
 #: The outcome classes a state can record (0003-phase-spine-task-model.md#phase-palette),
 #: numbered from 1; 0 is "none". The core carries the number and never reads
@@ -102,6 +120,26 @@ OUTCOME_HOLD_BROKEN = OUTCOME_CLASSES.index("hold_broken") + 1
 OUTCOME_OMISSION = OUTCOME_CLASSES.index("omission") + 1
 OUTCOME_ABORT_BEFORE = OUTCOME_CLASSES.index("abort_before_stimulus") + 1
 OUTCOME_ABORT_DURING = OUTCOME_CLASSES.index("abort_during_sampling") + 1
+
+#: The classes a block's correction repeats after unless the block names its
+#: own (`correctionAfter`): the animal answered, wrongly. A correct withhold, an
+#: omission and an abort are not errors.
+ERROR_CLASSES = ("wrong_response", "false_alarm")
+#: The aborts: classes a trial is excluded in, neither right nor wrong. The one
+#: list of them: `analytics/stream/trial_table.py`'s `EXCLUDED` (P(correct))
+#: reads it, and so does a block's criterion, whose "k correct of the last n"
+#: passes over these trials (`InterpBlocks.skipped`). They still count toward N.
+EXCLUDED_CLASSES = ("abort_before_stimulus", "abort_during_sampling")
+#: The hits: classes a trial is right in. A withhold is a no-go row's correct
+#: answer. The one list of them: `analytics/stream/trial_table.py`'s `HITS`
+#: (P(correct)) reads it, and a block's criterion counts these trials as its
+#: correct ones (`InterpBlocks.hits`), so the two never disagree.
+HIT_CLASSES = ("correct", "withheld")
+
+
+def class_mask(names) -> int:  # noqa: ANN001
+    """The bitmask of outcome classes `names`: bit c-1 for class number c."""
+    return sum(1 << OUTCOME_CLASSES.index(name) for name in set(names))
 
 #: Where `flags` sits in a state row (`Lowered.states`).
 _FLAGS = 10
@@ -133,11 +171,17 @@ DRIVE_PARAMS: dict[str, tuple[tuple[str, str], ...]] = {
 #: `test_spine_task.py` pins both against BoxInterp.h.
 STATE_ROW_BYTES = 18
 EDGE_ROW_BYTES = 3
+#: `InterpBlock`, `InterpEntry` and `InterpOverride`, likewise pinned.
+BLOCK_BYTES = 12
+ENTRY_BYTES = 2
+OVERRIDE_BYTES = 3
 
 
-def table_bytes(states: int, edges: int) -> int:
-    """The RAM a table of `states` states and `edges` edge rows takes on the board."""
-    return states * STATE_ROW_BYTES + edges * EDGE_ROW_BYTES
+def table_bytes(states: int, edges: int, blocks: int = 0, entries: int = 0, overrides: int = 0) -> int:
+    """The RAM a table of `states` states and `edges` edge rows, and its blocks,
+    entries and overrides, takes on the board."""
+    return (states * STATE_ROW_BYTES + edges * EDGE_ROW_BYTES + blocks * BLOCK_BYTES
+            + entries * ENTRY_BYTES + overrides * OVERRIDE_BYTES)
 
 
 class LoweringError(ValueError):
@@ -148,12 +192,16 @@ class LoweringError(ValueError):
 class ParamSlot:
     """What one parameter slot is, so the profile can declare a field for it.
 
-    `role` is `trials`, `timer`, `hold`, `count`, `count_max`, `reward_ms` or
-    `reward_permille`, or a driven output's value (`DRIVE_PARAMS`). `phase` is the
-    phase a timer, hold or count belongs to; `row` the row index a reward or a
-    drive value belongs to; `entry` the map key (a slot, or `timeout`) of a
-    window entry's probability, None for an Outcome with no window before it;
-    `slot` the driven output slot a drive value is for.
+    `role` is `trials`, `timer`, `hold`, `count`, `count_max`, `reward_ms`,
+    `reward_permille`, a driven output's value (`DRIVE_PARAMS`), or one of a
+    block's: `block_trials`, `block_trials_max`, `criterion_correct`,
+    `criterion_of`, `correction`, `bias_window`, `weight` and `block_timer`.
+    `phase` is the phase a timer, hold or count belongs to (or a block's
+    override is of); `row` the row index a reward, a drive value or a weight
+    belongs to; `entry` the map key (a slot, or `timeout`) of a window entry's
+    probability, None for an Outcome with no window before it; `slot` the
+    driven output slot a drive value is for; `block` the block index a block's
+    slot belongs to.
     """
 
     key: str
@@ -162,6 +210,7 @@ class ParamSlot:
     row: int | None = None
     entry: str | None = None
     slot: str | None = None
+    block: int | None = None
 
 
 @dataclass(frozen=True)
@@ -177,7 +226,12 @@ class Lowered:
     end, which every row shares. `counter` is BoxInterp.h's `InterpCounter` as
     (count_min, count_max, ratios), None for a spine with no Counter. `drives` is
     (output bit, kind, first parameter slot) for every driven output bit, in bit
-    order.
+    order. `blocks[b]` is an `InterpBlock` (first, count, select, n_min, n_max,
+    k, n, window, correct, next, errors); `entries` one (side, weight) per
+    branch of the pick, empty when no block selects by weight or side;
+    `overrides` each (block, slot, with); `skipped` the classes a criterion
+    passes over and `hits` those it counts as correct, as bitmasks
+    (`InterpBlocks.skipped`, `.hits`).
     """
 
     states: tuple[tuple[int, ...], ...]
@@ -190,6 +244,18 @@ class Lowered:
     outputs: tuple[tuple[str, str], ...]
     drives: tuple[tuple[int, str, int], ...] = ()
     counter: tuple[int, int, tuple[int, ...]] | None = None
+    blocks: tuple[tuple[int, ...], ...] = ()
+    entries: tuple[tuple[int, int], ...] = ()
+    overrides: tuple[tuple[int, int, int], ...] = ()
+    skipped: int = 0
+    hits: int = 0
+
+
+def block_key(kind: str, block_index: int, extra: str = "") -> str:
+    """A block's wire key: `BN<b>`, `BNX<b>`, `BK<b>`, `BKN<b>`, `BC<b>`, `BA<b>`,
+    `W<b>_<e>` or `B<b>T<i>`, b from 1."""
+    b = block_index + 1
+    return f"W{b}_{extra}" if kind == "W" else f"B{b}T{extra}" if kind == "T" else f"{kind}{b}"
 
 
 def timer_key(phase_index: int) -> str:
@@ -263,13 +329,19 @@ def lower(
     outputs: Sequence[str],
     rows: Sequence[dict[str, Any]] | None = None,
     drives: dict[str, str] | None = None,
+    blocks: Sequence[dict[str, Any]] | None = None,
+    session_cap: bool = False,
 ) -> Lowered:
-    """The state table for `phases` over `rows`.
+    """The state table for `phases` over `rows`, drawn by `blocks`.
 
     `inputs` and `outputs` are the slot ids of each direction, in slot order.
-    Each row is `{bind: {slot: channel}, map: {key: entry}}` in the definition's
-    JSON form. Without `rows`, one row binds each slot to a channel of its own
-    name. `drives` maps each driven output slot to its kind (`DRIVE_PARAMS`).
+    Each row is `{id, bind: {slot: channel}, map: {key: entry}}` and each block
+    `{rows: [row id], select, trials, trialsMax, criterion, next, correction,
+    correctionAfter, phaseMs}` in the definition's JSON form. Without `rows`,
+    one row binds each slot to a channel of its own name; without `blocks`, one
+    block draws every row uniformly and never ends. `drives` maps each driven
+    output slot to its kind (`DRIVE_PARAMS`). `session_cap` gives the session's
+    trial cap its slot, `NT`.
     """
     drives = dict(drives or {})
     for slot, kind in drives.items():
@@ -280,6 +352,26 @@ def lower(
         rows = [{"bind": {s: s for s in (*inputs, *outputs)}}]
     if not rows:
         raise LoweringError("a spine task needs at least one row")
+    row_index = {str(row.get("id", r)): r for r, row in enumerate(rows)}
+    if blocks is None:
+        blocks = [{"rows": list(row_index)}]
+    if not blocks or len(blocks) >= NONE:
+        raise LoweringError(f"a spine task has 1 to {NONE - 1} blocks")
+    block_index = {str(b.get("id", i)): i for i, b in enumerate(blocks)}
+    block_rows: list[list[int]] = []
+    for i, b in enumerate(blocks):
+        drawn = [row_index.get(str(r)) for r in b.get("rows") or []]
+        if not drawn or None in drawn:
+            raise LoweringError(f"block {i} draws one or more of the task's rows, by id")
+        if b.get("select", "uniform") not in SELECTIONS:
+            raise LoweringError(f"block {i}: a selection is one of {tuple(SELECTIONS)}")
+        if b.get("next") is not None and str(b["next"]) not in block_index:
+            raise LoweringError(f"block {i}: its next is not a block")
+        if b.get("trialsMax") is not None and b.get("trials") is None:
+            raise LoweringError(f"block {i}: trialsMax draws N from trials up to it")
+        if any(name not in OUTCOME_CLASSES for name in b.get("correctionAfter") or ()):
+            raise LoweringError(f"block {i}: correctionAfter names outcome classes {OUTCOME_CLASSES}")
+        block_rows.append(drawn)
     if not phases:
         raise LoweringError("a spine needs at least one phase")
     kinds = [p.get("phase") for p in phases]
@@ -350,8 +442,9 @@ def lower(
                     raise LoweringError(f"row {r}: entry {key!r} holds, which needs a response and the window's holdMs")
         maps.append(rmap)
 
-    # Parameter slots: NT, the timers (and the window's hold), then each row's rewards.
-    slots: list[ParamSlot] = [ParamSlot(TRIALS_KEY, "trials")]
+    # Parameter slots: NT, the timers (and the window's hold), each row's
+    # rewards, then each block's.
+    slots: list[ParamSlot] = [ParamSlot(TRIALS_KEY, "trials")] if session_cap else []
     for i, p in enumerate(phases):
         if p["phase"] in _TIMED or (p["phase"] == "wait" and p.get("timeoutMs") is not None):
             slots.append(ParamSlot(timer_key(i), "timer", phase=i))
@@ -378,6 +471,27 @@ def lower(
                 kind = drives[out_slot]
                 slots += [ParamSlot(key, role, row=r, slot=out_slot)
                           for key, (role, _) in zip(drive_keys(r, number, kind), DRIVE_PARAMS[kind])]
+    timed = {s.phase for s in slots if s.role == "timer"}
+    for b, spec in enumerate(blocks):
+        if spec.get("trials") is not None:
+            slots.append(ParamSlot(block_key("BN", b), "block_trials", block=b))
+            if spec.get("trialsMax") is not None:
+                slots.append(ParamSlot(block_key("BNX", b), "block_trials_max", block=b))
+        if spec.get("criterion") is not None:
+            slots.append(ParamSlot(block_key("BK", b), "criterion_correct", block=b))
+            slots.append(ParamSlot(block_key("BKN", b), "criterion_of", block=b))
+        if spec.get("correction") is not None:
+            slots.append(ParamSlot(block_key("BC", b), "correction", block=b))
+        select = spec.get("select", "uniform")
+        if select == "antibias":
+            slots.append(ParamSlot(block_key("BA", b), "bias_window", block=b))
+        if select in WEIGHTED:
+            for e, r in enumerate(block_rows[b], 1):
+                slots.append(ParamSlot(block_key("W", b, str(e)), "weight", row=r, block=b))
+        for phase in sorted(int(i) for i in (spec.get("phaseMs") or {})):
+            if phase not in timed:
+                raise LoweringError(f"block {b}: phase {phase} has no duration to override")
+            slots.append(ParamSlot(block_key("T", b, str(phase)), "block_timer", phase=phase, block=b))
     slot = {s.key: n for n, s in enumerate(slots)}
     number_of = {s: n for n, s in enumerate(outputs, 1)}
     drive_bits = tuple(sorted(
@@ -507,7 +621,7 @@ def lower(
             if len(set(bits)) != len(bits):
                 raise LoweringError(f"row {r}: two of the window's responses are one channel")
             state(w, r, win_mask, sum(1 << b for b in bits), timer_key(w), branch_ref[TIMEOUT],
-                  exits=[(b, RISE, branch_ref[slot]) for b, slot in zip(bits, responses)])
+                  exits=[(b, RISE, branch_ref[slot]) for b, slot in zip(bits, responses)], flags=RESPONSE)
             post = range(w + 1, iti)
             for k, key in enumerate(keys, 1):
                 branch_ref[key].at = len(states)
@@ -523,12 +637,15 @@ def lower(
         iti_ref.at = len(states)
         state(iti, r, output_mask(r, iti, phases[iti].get("outputs")), 0, timer_key(iti), 0)
 
+    branches = [r for drawn in block_rows for r in drawn]
     if len(rows) > 1:
-        refs = [_Ref() for _ in rows]
-        state(None, None, exits=[(0, 0, ref) for ref in refs], flags=STARTS_TRIAL | PICK)
+        # The pick's branches are the blocks' rows, block by block: a block
+        # draws its own slice of them (InterpBlock.first, .count).
+        state(None, None, exits=[(0, 0, _Ref()) for _ in branches], flags=STARTS_TRIAL | PICK)
         for r in range(len(rows)):
             emit_row(r)
-            refs[r].at = row_first[r].at
+        for e, r in enumerate(branches):
+            edges[e][2].at = row_first[r].at
     else:
         emit_row(0)
         states[0][_FLAGS] |= STARTS_TRIAL
@@ -545,7 +662,36 @@ def lower(
         else:
             counter = (NONE, NONE, tuple(int(n) for n in counter_phase["ratios"]))
 
-    if len(states) >= NONE or len(edges) >= NONE:
+    def side(r: int) -> int:
+        """The input bit of row r's one response mapped `correct`, or NONE."""
+        if w is None:
+            return NONE
+        correct = [key for key in phases[w].get("responses") or [] if maps[r][key].get("outcome") == "correct"]
+        return row_in[r][correct[0]] if len(correct) == 1 else NONE
+
+    def slot_or_none(key: str) -> int:
+        return slot.get(key, NONE)
+
+    block_table, entries, overrides, first = [], [], [], 0
+    reads_entries = any(b.get("select", "uniform") != "uniform" for b in blocks)
+    for b, spec in enumerate(blocks):
+        reads_weights = spec.get("select", "uniform") in WEIGHTED
+        nxt = block_index[str(spec["next"])] if spec.get("next") is not None else b + 1 if b + 1 < len(blocks) else NONE
+        n_min = slot_or_none(block_key("BN", b))
+        k = slot_or_none(block_key("BK", b))
+        errors = (class_mask(spec.get("correctionAfter") or ERROR_CLASSES)
+                  if spec.get("correction") is not None else 0)
+        block_table.append((first, len(block_rows[b]), SELECTIONS[spec.get("select", "uniform")],
+                            n_min, slot.get(block_key("BNX", b), n_min), k, slot_or_none(block_key("BKN", b)),
+                            slot_or_none(block_key("BA", b)), slot_or_none(block_key("BC", b)), nxt, errors))
+        if reads_entries:
+            entries += [(side(r), slot[block_key("W", b, str(e))] if reads_weights else NONE)
+                        for e, r in enumerate(block_rows[b], 1)]
+        overrides += [(b, slot[timer_key(s.phase)], n) for n, s in enumerate(slots)  # type: ignore[arg-type]
+                      if s.role == "block_timer" and s.block == b]
+        first += len(block_rows[b])
+
+    if len(states) >= NONE or len(edges) >= NONE or len(branches) >= NONE:
         raise LoweringError(f"the table has {len(states)} states and {len(edges)} edge rows; "
                             f"each is at most {NONE - 1}")
 
@@ -563,4 +709,9 @@ def lower(
         outputs=out_bits,
         drives=drive_bits,
         counter=counter,
+        blocks=tuple(block_table),
+        entries=tuple(entries),
+        overrides=tuple(overrides),
+        skipped=class_mask(EXCLUDED_CLASSES),
+        hits=class_mask(HIT_CLASSES),
     )

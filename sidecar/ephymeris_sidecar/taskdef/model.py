@@ -306,14 +306,49 @@ class SpineRow:
 
 @dataclass(frozen=True)
 class SpineBlock:
-    """Rows drawn for `trials` trials; the session ends after the last block."""
+    """Rows drawn by a selection until an end rule says the block is over, then
+    the next block, or the end of the session after the last one
+    (`TASKS.md#blocks`).
+
+    `weights` line up with `rows` (empty: 1 each). The end rule is `trials` (N),
+    with `trials_max` N drawn from [trials, trials_max] at each start, and/or
+    `criterion` (k correct of the last n); none of them: the block never ends.
+    `next` is a block id, None for the following block. `correction` is how many
+    times in a row an error repeats its row; `correction_after` the outcome
+    classes that count as an error, empty for `lowering.ERROR_CLASSES`. `phase_ms` overrides a timed
+    phase's duration, by phase index, while the block runs.
+    """
 
     id: str
     rows: tuple[str, ...]
-    trials: int
+    trials: int | None = None
+    trials_max: int | None = None
+    criterion: tuple[int, int] | None = None
+    select: str = "uniform"
+    weights: tuple[int, ...] = ()
+    next: str | None = None
+    correction: int | None = None
+    correction_after: tuple[str, ...] = ()
+    bias_window: int | None = None
+    phase_ms: dict[str, int] = field(default_factory=dict)
+
+    def weight(self, e: int) -> int:
+        return self.weights[e] if e < len(self.weights) else 1
 
     def to_json(self) -> dict[str, Any]:
-        return {"id": self.id, "rows": list(self.rows), "trials": self.trials}
+        out: dict[str, Any] = {"id": self.id, "rows": list(self.rows)}
+        if self.select != "uniform":
+            out["select"] = self.select
+        for key, value in (("weights", list(self.weights) or None), ("trials", self.trials),
+                           ("trialsMax", self.trials_max),
+                           ("criterion", {"correct": self.criterion[0], "of": self.criterion[1]}
+                            if self.criterion is not None else None),
+                           ("next", self.next), ("correction", self.correction),
+                           ("correctionAfter", list(self.correction_after) or None),
+                           ("biasWindow", self.bias_window), ("phaseMs", dict(self.phase_ms) or None)):
+            if value is not None:
+                out[key] = value
+        return out
 
 
 @dataclass(frozen=True)
@@ -330,14 +365,19 @@ class Spine:
     phases: tuple[SpinePhase, ...]
     rows: tuple[SpineRow, ...]
     blocks: tuple[SpineBlock, ...]
+    #: The session's trial cap (`NT`), None for none: the blocks end the session.
+    trials: int | None = None
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "slots": [s.to_json() for s in self.slots],
             "spine": [p.to_json() for p in self.phases],
             "rows": [r.to_json() for r in self.rows],
             "blocks": [b.to_json() for b in self.blocks],
         }
+        if self.trials is not None:
+            out["sessionTrials"] = self.trials
+        return out
 
     @staticmethod
     def from_json(raw: dict) -> "Spine":
@@ -404,12 +444,34 @@ class Spine:
                         for s in objects("slots")),
             phases=phases,
             rows=tuple(rows),
-            blocks=tuple(
-                SpineBlock(id=str(b.get("id", "")), rows=strings(b.get("rows"), "a block's rows"),
-                           trials=_int(b.get("trials", 1), "trials"))
-                for b in objects("blocks")
-            ),
+            blocks=tuple(_block(b, strings, opt_int, ints) for b in objects("blocks")),
+            trials=opt_int(raw.get("sessionTrials"), "sessionTrials"),
         )
+
+
+def _block(b: dict, strings, opt_int, ints) -> SpineBlock:  # noqa: ANN001
+    """One block, refused only for a value of the wrong JSON type."""
+    criterion = b.get("criterion")
+    if criterion is not None and not isinstance(criterion, dict):
+        raise TaskDefinitionError("a block's criterion is {correct, of}")
+    phase_ms = b.get("phaseMs") or {}
+    if not isinstance(phase_ms, dict):
+        raise TaskDefinitionError("a block's phaseMs maps a phase index to ms")
+    return SpineBlock(
+        id=str(b.get("id", "")),
+        rows=strings(b.get("rows"), "a block's rows"),
+        trials=opt_int(b.get("trials"), "trials"),
+        trials_max=opt_int(b.get("trialsMax"), "trialsMax"),
+        criterion=((_int(criterion.get("correct"), "a criterion's correct"), _int(criterion.get("of"), "its of"))
+                   if criterion is not None else None),
+        select=str(b.get("select", "uniform")),
+        weights=ints(b.get("weights"), "a block's weights"),
+        next=_opt_str(b.get("next")),
+        correction=opt_int(b.get("correction"), "correction"),
+        correction_after=strings(b.get("correctionAfter"), "a block's correctionAfter"),
+        bias_window=opt_int(b.get("biasWindow"), "biasWindow"),
+        phase_ms={str(k): _int(v, "a phase's ms") for k, v in phase_ms.items()},
+    )
 
 
 @dataclass(frozen=True)
@@ -536,7 +598,7 @@ class TaskDefinition:
             selection_mode=mode,
             trials=[TrialTypeDef.from_json(t) for t in trials_raw],
             stages=stages,
-            params=_one_row_reward_keys(dict(params), spine),
+            params=_one_block_trials_key(_one_row_reward_keys(dict(params), spine), spine),
             legacy_names=[n for n in legacy],
             notes=str(raw.get("notes", "")),
             # The `spine` key is what makes a definition a spine task.
@@ -568,6 +630,21 @@ def _one_row_reward_keys(params: dict[str, Any], spine: Spine | None) -> dict[st
         new = f"{old}_{row}"
         if old in params and new not in params:
             params[new] = params.pop(old)
+    return params
+
+
+def _one_block_trials_key(params: dict[str, Any], spine: Spine | None) -> dict[str, Any]:
+    """Carry a one-block spine's stored `block_trials` over to its block's key.
+
+    Its one block's trial count was the session's (`NT`); it is now that
+    block's N, `block_<id>_trials` (`TASKS.md#blocks`). As with the reward keys,
+    a key the block already holds wins, and the old one is left for SPN110.
+    """
+    if spine is None or len(spine.blocks) != 1 or "block_trials" not in params:
+        return params
+    new = f"block_{spine.blocks[0].id}_trials"
+    if new not in params:
+        params[new] = params.pop("block_trials")
     return params
 
 

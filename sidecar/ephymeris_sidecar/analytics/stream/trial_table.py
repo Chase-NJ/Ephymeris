@@ -40,7 +40,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable, Sequence
 
-from ...taskdef.lowering import OUTCOME_CLASSES, OUTCOME_CORRECT
+from ...taskdef.lowering import EXCLUDED_CLASSES, HIT_CLASSES, OUTCOME_CLASSES, OUTCOME_CORRECT
 from . import replay as rp
 
 CORRECT = OUTCOME_CLASSES[OUTCOME_CORRECT - 1]
@@ -50,13 +50,15 @@ CORRECT = OUTCOME_CLASSES[OUTCOME_CORRECT - 1]
 #: A withhold is a no-go row's correct answer, so a perfect go/no-go session
 #: scores 1.0. Every other class (false alarm, wrong response, omission, hold
 #: broken, one added later) is a miss, except the aborts in `EXCLUDED`; those
-#: and a trial with no class are excluded.
-HITS = frozenset({CORRECT, "withheld"})
+#: and a trial with no class are excluded. A block's criterion counts the same
+#: trials as correct (`lowering.HIT_CLASSES`).
+HITS = frozenset(HIT_CLASSES)
 
 #: The classes a trial is excluded in, as a legacy run excludes a trial the
 #: animal left before it was answered: an abort is neither right nor wrong. It
-#: still counts in the class tallies and on the engagement ladder.
-EXCLUDED = frozenset({"abort_before_stimulus", "abort_during_sampling"})
+#: still counts in the class tallies and on the engagement ladder. A block's
+#: criterion passes over the same trials (`lowering.EXCLUDED_CLASSES`).
+EXCLUDED = frozenset(EXCLUDED_CLASSES)
 
 
 def correct_of(outcome: str | None) -> bool | None:
@@ -476,7 +478,8 @@ def name(trial: Trial, naming: Naming) -> ReplayTrial:
         rewarded=trial.rewarded,
         reward_line=", ".join(channel(naming.outputs, j) for j in lines) if lines else None,
         reward_ms=trial.reward_ms,
-        # No block has a correction rule yet (#103): no trial is a correction.
+        # A block's correction rule is the core's: `stream/spine.py` sets this
+        # from what the core reports at the trial's start (`ACT_CORRECTION`).
         correction=False,
         input_counts=counts,
         complete=trial.complete,

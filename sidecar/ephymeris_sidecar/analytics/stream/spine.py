@@ -33,9 +33,9 @@ from . import replay as rp
 from . import trial_table as tt
 
 #: The session end rule BoxSpine.h follows: ends at the start of trial NT+1,
-#: or the first trial start after STOP or after a last-trial state. NT is
-#: parameter slot 0.
-TRIALS_SLOT = 0
+#: at the first trial start after STOP or after a last-trial state, or where
+#: the blocks are done. NT is the parameter slot whose wire key is this, if any.
+TRIALS_KEY = "NT"
 
 #: How many parameters each kind of driven output reads (BoxSpine.h, DRIVEN OUTPUTS).
 _DRIVE_VALUES = {"pwm": 1, "tone": 1, "train": 3}
@@ -80,6 +80,12 @@ class SpineRecord:
     phase_labels: tuple[str, ...] = ()
     #: The task's rows, (id, name), in its order.
     rows: tuple[tuple[str, str], ...] = ()
+    #: BLOCK_START's code, None for a snapshot that names none (one from before blocks).
+    block_start: int | None = None
+    #: The slot of the session's trial cap NT, None for none.
+    trials_slot: int | None = None
+    #: The blocks' ids, by index.
+    block_ids: tuple[str, ...] = ()
 
 
 #: The version of the trial table `replayed` reads off a run, stamped on the
@@ -90,7 +96,7 @@ class SpineRecord:
 #: fingerprint of fixed runs' tables; when it fails, bump this and update the
 #: pin. Not `scoring.SCORE_VERSION`: the cache never holds a trial table, so a
 #: table change need not make every machine re-read its archive.
-REPLAY_VERSION = 2
+REPLAY_VERSION = 3
 
 #: The phase kind a response is read from (`ANALYTICS.md#the-trial-table`).
 WINDOW_PHASE = "response"
@@ -164,6 +170,12 @@ def _decode(document: dict[str, Any]) -> SpineRecord:
             edges=[rp.EdgeRow(*row) for row in table_doc["edges"]],
             counter=(rp.Counter(int(counter["min"]), int(counter["max"]), tuple(int(n) for n in counter["ratios"]))
                      if counter is not None else None),
+            blocks=(rp.Blocks(rows=[rp.Block(*b) for b in table_doc["blocks"]],
+                              entries=[rp.Entry(*e) for e in table_doc.get("entries") or []],
+                              overrides=[rp.Override(*o) for o in table_doc.get("overrides") or []],
+                              skipped=int(table_doc.get("skipped") or 0),
+                              hits=int(table_doc.get("hits") or 0))
+                    if table_doc.get("blocks") else None),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise SpineDecodeError(f"the snapshot's state table is not one: {exc}") from exc
@@ -230,6 +242,9 @@ def _decode(document: dict[str, Any]) -> SpineRecord:
         naming=naming,
         phase_labels=labels,
         rows=rows,
+        block_start=code(structural["blockStart"]) if "blockStart" in structural else None,
+        trials_slot=(spine["params"].index(TRIALS_KEY) if TRIALS_KEY in (spine.get("params") or []) else None),
+        block_ids=tuple(str(b.get("id")) if isinstance(b, dict) else "?" for b in spine.get("blocks") or []),
     )
 
     by_tick: dict[int, list[int]] = {}
@@ -289,7 +304,8 @@ def _session(record: SpineRecord) -> tuple[list[tuple[int, rp.Actions]], int | N
     """The replay's actions through the session's end, and the tick it ended at.
 
     The end is BoxSpine.h's rule: the tick that would start trial NT+1, the
-    first trial start after a last-trial state, or the first trial start at or
+    first trial start after a last-trial state, the trial start where the
+    blocks are done (`ACT_DONE`), or the first trial start at or
     after the recorded END_SESSION. None for a run cut
     off before it ended, replayed through its last recorded strobe.
     """
@@ -300,11 +316,12 @@ def _session(record: SpineRecord) -> tuple[list[tuple[int, rp.Actions]], int | N
     except ValueError as exc:  # strobes out of order, an edge after the end, a bad parameter
         raise SpineDecodeError(f"the recorded strobes cannot be replayed: {exc}") from exc
     trials, last = 0, False
-    max_trials = record.params[TRIALS_SLOT]
+    max_trials = record.params[record.trials_slot] if record.trials_slot is not None else None
     for k, (now, a) in enumerate(actions):
         last = last or bool(a.flags & rp.ACT_LAST_TRIAL)
         starts = bool(a.flags & rp.ACT_TRIAL_START)
-        if starts and now > 0 and (trials >= max_trials or last or now == record.end_tick):
+        capped = max_trials is not None and trials >= max_trials
+        if starts and now > 0 and (capped or last or a.flags & rp.ACT_DONE or now == record.end_tick):
             return actions[: k + 1], now
         if starts:
             trials += 1
@@ -367,6 +384,8 @@ def _run(record: SpineRecord, actions: list[tuple[int, rp.Actions]],
             out.append((record.session_end, now))
             stopped(live, now)
             return out, spans
+        if starts and a.flags & rp.ACT_BLOCK_START and record.block_start is not None:
+            out.append((record.block_start, now))
         if starts:
             out.append((record.trial_start, now))
         off = (a.off | ran_out(now)) & live
@@ -510,8 +529,21 @@ def replayed(document: dict[str, Any]) -> Replayed:
                         record.phase_labels, record.rows)
     trials = tt.trials_of(record.table, actions, end=end, phase_of=record.naming.phase_of,
                           windows=record.naming.windows)
-    return Replayed(record.interp, None, tuple(tt.name(t, record.naming) for t in trials),
+    starts = {now: a for now, a in actions if a.flags & rp.ACT_TRIAL_START}
+    return Replayed(record.interp, None, tuple(_in_block(record, starts, t) for t in trials),
                     record.phase_labels, record.rows)
+
+
+def _in_block(record: SpineRecord, starts: dict[int, rp.Actions], trial: tt.Trial) -> tt.ReplayTrial:
+    """A trial named, with its block and whether it is a correction read off the
+    core's own report at the trial's start tick (`Actions.block`, `ACT_CORRECTION`),
+    never from a phase's name. A table without blocks keeps its one block's id."""
+    named = tt.name(trial, record.naming)
+    start = starts.get(trial.at)
+    if start is None or start.block == rp.NONE:
+        return named
+    block = record.block_ids[start.block] if start.block < len(record.block_ids) else f"block {start.block}"
+    return replace(named, block=block, correction=bool(start.flags & rp.ACT_CORRECTION))
 
 
 def _divergence(record: SpineRecord, expected: list[tuple[int, int]],

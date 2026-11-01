@@ -27,7 +27,8 @@
     BEGIN                 back to the table's defaults; the audit cleared
     SET <KEY>=<v> ...     each answered CLAMPED <KEY> (a value not held exactly as
                           written: junk, a sign, outside the slot's [min, max], or
-                          a drawn N's high end below its low end), then
+                          a pair's high end below its low end, SPINE_PAIRS: a drawn
+                          N, a block's drawn N, a criterion's k and n), then
                           PARAMS <n> <crc32>, the running total
     START SEED=<n>        the core's RNG seeded with it, echoed as SEED <n>
 
@@ -36,7 +37,8 @@
   board observed and what it did, each strobe stamped with the TICK, in the
   core's order within a tick:
     START_SESSION, watched inputs that rose (their channel's enter code), that
-    fell (exit), TRIAL_START, outputs driven LOW (off), driven HIGH (on).
+    fell (exit), BLOCK_START (a block's first trial), TRIAL_START, outputs
+    driven LOW (off), driven HIGH (on).
   An input edge no state is watching is never strobed: the core ignores it, so
   replay needs only what was strobed.
 
@@ -63,11 +65,14 @@
 
   THE SESSION END RULE, which replay reproduces:
     The session ends at the tick that would start trial NT+1, where NT is
-    parameter slot 0 (the block's trial count), or at the first trial start
-    after a STOP line or after a LAST-TRIAL state was entered (the core reports
-    INTERP_ACT_LAST_TRIAL: a Counter's time limit that ends the session). At that tick the board strobes the tick's watched input
-    edges, then the off code of every output still HIGH, then END_SESSION, and
-    nothing else: no TRIAL_START, and the new trial's outputs are not driven.
+    parameter slot SPINE_TRIALS_SLOT (the session's trial cap, when the task
+    has one), at the trial start where the last block ends (the core reports
+    INTERP_ACT_DONE), or at the first trial start after a STOP line or after a
+    LAST-TRIAL state was entered (the core reports INTERP_ACT_LAST_TRIAL: a
+    Counter's time limit that ends the session). At that tick the board strobes
+    the tick's watched input edges, then the off code of every output still
+    HIGH, then END_SESSION, and nothing else: no BLOCK_START or TRIAL_START,
+    and the new trial's outputs are not driven.
   So STOP never cuts a trial short, as with the trial runner.
 
 
@@ -94,22 +99,23 @@
 #if SPINE_NUM_INPUTS > 32 || SPINE_NUM_OUTPUTS > 32
 #error "a state table speaks of at most 32 inputs and 32 outputs"
 #endif
-#if SPINE_NUM_PARAMS < 1
-#error "a spine task's parameter slot 0 is its block's trial count"
-#endif
 #ifndef SPINE_NUM_DRIVES
 #error "TaskSpine.h names no SPINE_NUM_DRIVES: save the task again."
 #endif
 #if !defined(SPINE_RATIOS) || !defined(SPINE_COUNT_MIN)
 #error "TaskSpine.h names no counter (SPINE_COUNT_MIN, SPINE_RATIOS): save the task again."
 #endif
+#if !defined(SPINE_NUM_BLOCKS) || !defined(SPINE_TRIALS_SLOT) || !defined(SPINE_NUM_PAIRS) \
+    || !defined(SPINE_BLOCK_SKIPPED) || !defined(SPINE_BLOCK_HITS)
+#error "TaskSpine.h names no blocks (SPINE_NUM_BLOCKS, SPINE_TRIALS_SLOT, SPINE_NUM_PAIRS, SPINE_BLOCK_SKIPPED, SPINE_BLOCK_HITS): save the task again."
+#endif
 
 /* The generator holds a task's RAM to a budget at save, counting these rows and
    arrays at their AVR sizes (taskdef/spine.py's PARAM_BYTES, INPUT_BYTES,
-   OUTPUT_BYTES, RATIO_BYTES for kRatios below, DRIVE_BYTES, DRIVE_RUN_BYTES and
-   TONE_RAM_BYTES; docs/TASKS.md#spine-diagnostics).
-   test_spine_task.py holds the count to a Mega build: change a struct or array
-   here and it fails. */
+   OUTPUT_BYTES, RATIO_BYTES for kRatios and PAIR_BYTES for kPairs below,
+   DRIVE_BYTES, DRIVE_RUN_BYTES and TONE_RAM_BYTES, and lowering.py's row
+   sizes; docs/TASKS.md#spine-diagnostics). test_spine_task.py holds the
+   count to a Mega build: change a struct or array here and it fails. */
 
 /* SpineDrive.kind, which TaskSpine.h's SPINE_DRIVES names. */
 #define SPINE_DRIVE_PWM 1
@@ -255,7 +261,7 @@ inline SpineTick spine_step(SpineRun &r, InterpEdges edges, uint32_t now, uint32
     r.last = true;
   if (t.actions.flags & INTERP_ACT_TRIAL_START)
   {
-    if (stop || r.last || r.trials >= maxTrials)
+    if (stop || r.last || r.trials >= maxTrials || (t.actions.flags & INTERP_ACT_DONE))
     {
       t.ends = true;
       t.endOff = was;
@@ -277,7 +283,27 @@ static const SpineOutput kOutputs[] = SPINE_OUTPUTS;
 static const SpineParam kParams[] = SPINE_PARAMS;
 static const uint16_t kRatios[] = SPINE_RATIOS;
 static const InterpCounter kCounter = {kRatios, SPINE_NUM_RATIOS, SPINE_COUNT_MIN, SPINE_COUNT_MAX};
-static const InterpTable kTable = {kStates, kEdges, &kCounter};
+static const InterpBlock kBlockRows[] = SPINE_BLOCKS;
+#if SPINE_NUM_ENTRIES > 0
+static const InterpEntry kEntries[] = SPINE_ENTRIES;
+#define BOX_SPINE_ENTRIES kEntries
+#else
+#define BOX_SPINE_ENTRIES NULL
+#endif
+#if SPINE_NUM_OVERRIDES > 0
+static const InterpOverride kOverrides[] = SPINE_OVERRIDES;
+#define BOX_SPINE_OVERRIDES kOverrides
+#else
+#define BOX_SPINE_OVERRIDES NULL
+#endif
+#if SPINE_NUM_PAIRS > 0
+/* {low, high}: parameter slots held in order (takeTokens). */
+static const uint8_t kPairs[][2] = SPINE_PAIRS;
+#endif
+static const InterpBlocks kBlocks = {kBlockRows, BOX_SPINE_ENTRIES, BOX_SPINE_OVERRIDES,
+                                     SPINE_NUM_BLOCKS, SPINE_NUM_ENTRIES, SPINE_NUM_OVERRIDES,
+                                     SPINE_BLOCK_SKIPPED, SPINE_BLOCK_HITS};
+static const InterpTable kTable = {kStates, kEdges, &kCounter, &kBlocks};
 
 /* The run's parameter block, filled from the table's defaults and the SET lines. */
 static uint32_t params[SPINE_NUM_PARAMS];
@@ -289,6 +315,16 @@ static uint32_t rawSince[SPINE_NUM_INPUTS > 0 ? SPINE_NUM_INPUTS : 1];
 static uint32_t lastTick = 0;
 static bool stopRequested = false;
 static bool done = true;
+
+/*  The session's trial cap: NT's slot, or none, when the blocks alone end it. */
+inline uint32_t maxTrials()
+{
+#if SPINE_TRIALS_SLOT != INTERP_NONE
+  return params[SPINE_TRIALS_SLOT];
+#else
+  return 0xFFFFFFFFUL;
+#endif
+}
 
 #if SPINE_NUM_DRIVES > 0
 static const SpineDrive kDrives[] = SPINE_DRIVES;
@@ -388,11 +424,13 @@ inline void takeTokens(char *line, ParamAudit *audit)
       unsigned long x = parseUlongField(v, exact);
       if (x < kParams[s].min) { x = kParams[s].min; exact = false; }
       if (x > kParams[s].max) { x = kParams[s].max; exact = false; }
-#if SPINE_COUNT_MIN != SPINE_COUNT_MAX
-      // A drawn N's high end below its low end would fix N at the low end: VR
-      // run as FR. The host sends the low end first (slot order), so the pair is
-      // judged when the high end arrives, and held as a range, CLAMPED.
-      if (s == SPINE_COUNT_MAX && x < params[SPINE_COUNT_MIN]) { x = params[SPINE_COUNT_MIN]; exact = false; }
+#if SPINE_NUM_PAIRS > 0
+      // A pair's high end below its low end: a drawn N fixed at its low end (VR
+      // run as FR), or a criterion that can never be met. The host sends the low
+      // end first (slot order), so the pair is judged when the high end arrives,
+      // and held as a range, CLAMPED.
+      for (int p = 0; p < SPINE_NUM_PAIRS; p++)
+        if (s == kPairs[p][1] && x < params[kPairs[p][0]]) { x = params[kPairs[p][0]]; exact = false; }
 #endif
       params[s] = (uint32_t)x;
       if (audit)
@@ -537,6 +575,7 @@ inline void emitTick(const SpineTick &t, uint32_t now)
     if (a.rose & ((uint32_t)1 << i)) emitStrobeAt(kInputs[i].riseCode, ts);
   for (int i = 0; i < SPINE_NUM_INPUTS; i++)
     if (a.fell & ((uint32_t)1 << i)) emitStrobeAt(kInputs[i].fallCode, ts);
+  if (!ends && (a.flags & INTERP_ACT_BLOCK_START)) emitStrobeAt(BF_BLOCK_START, ts);
   if (!ends && (a.flags & INTERP_ACT_TRIAL_START)) emitStrobeAt(BF_TRIAL_START, ts);
   for (int j = 0; j < SPINE_NUM_OUTPUTS; j++)
     if (off & ((uint32_t)1 << j)) emitStrobeAt(kOutputs[j].offCode, ts);
@@ -594,7 +633,7 @@ inline void loop()
   {
     ++lastTick;
     InterpEdges none = {0, 0};
-    SpineTick t = spine_step(run, lastTick == now ? in : none, lastTick, params[0], stopRequested);
+    SpineTick t = spine_step(run, lastTick == now ? in : none, lastTick, maxTrials(), stopRequested);
 #if SPINE_NUM_DRIVES > 0
     spine_drives_step(drives, params, t, lastTick);
 #endif

@@ -13,8 +13,10 @@ three places:
   with `_` with only a warning, and sizes a char array in code points where
   MATLAB counts UTF-16 code units, so a character outside the BMP would yield
   a char array whose dimensions disagree with its data. Both raise here
-  instead. The task profile, the one field carrying operator-written labels,
-  is ASCII-escaped JSON and can't trip the second.
+  instead, for a top-level string such as an animal name. The fields that
+  carry operator-written labels can't trip the second: the task profile is
+  ASCII-escaped JSON, and `derived` escapes each such character the same way
+  (`derived._bmp`).
 
 scipy is imported on first use, never at module scope, so a broken install
 costs the `.mat` and nothing else; `preload` takes that first-use cost at
@@ -28,6 +30,9 @@ import logging
 import warnings
 from typing import Any
 
+from ..tasks.profile import DERIVED_KEY
+from . import derived
+
 log = logging.getLogger(__name__)
 
 
@@ -37,6 +42,22 @@ def preload() -> None:
         import scipy.io  # noqa: F401
     except Exception:  # noqa: BLE001 - the first savemat will report it properly
         log.exception("scipy.io failed to import; .mat files will not be written")
+
+
+#: How `refusal` names a top-level field to the operator.
+_FIELD_NAMES = {"rat": "the animal name"}
+
+
+def refusal(data: dict[str, Any]) -> str | None:
+    """Why `data` can never be written to a `.mat`, on any build, or None.
+
+    A top-level string with a character outside the BMP, such as an animal
+    name with an emoji: `to_matlab` refuses it rather than mis-size it.
+    """
+    for name, value in data.items():
+        if isinstance(value, str) and any(ord(c) > 0xFFFF for c in value):
+            return f"{_FIELD_NAMES.get(name, repr(name))} can't be written to a .mat"
+    return None
 
 
 def to_matlab(data: dict[str, Any]) -> dict[str, Any]:
@@ -52,8 +73,14 @@ def to_matlab(data: dict[str, Any]) -> dict[str, Any]:
         elif isinstance(value, (list, tuple)):
             # The only array in the schema is ts_data: [[code, ts], …] → N×2.
             out[name] = np.asarray(value, dtype=np.float64).reshape(-1, 2)
+        elif isinstance(value, dict) and name == DERIVED_KEY:
+            # A spine run's trial table (`DATA.md#the-derived-trial-table`): a
+            # struct whose `trials` is an N×1 struct array, since this one is
+            # read as a table.
+            out[name] = derived.to_matlab(value)
+            continue
         elif isinstance(value, dict):
-            # The task profile snapshot (`DATA.md#the-embedded-task-profile`): a
+            # Any other dict is the task profile snapshot (`DATA.md#the-embedded-task-profile`): a
             # deep, ragged tree nobody reads as a struct, so JSON text that
             # `jsondecode(...)` gives straight back. ASCII (json's default
             # `ensure_ascii`), so no label in it can trip the BMP check below.

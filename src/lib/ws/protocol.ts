@@ -105,6 +105,7 @@ export const CMD = {
   ANALYTICS_RESCAN: "analytics.rescan",
   ANALYTICS_RECENT_SESSIONS: "analytics.recentSessions",
   SESSIONS_RECOVER: "sessions.recover",
+  SESSIONS_REDERIVE: "sessions.rederive",
   SESSIONS_TIDY: "sessions.tidy",
 
   // Intan recording
@@ -1674,6 +1675,56 @@ export interface RecoverResult {
   folderMissing: boolean;
 }
 
+/** One spine run Re-derive rewrote or could not (`DATA.md#re-derive`). */
+export interface RederivedRun {
+  /** The run's `.json`; its `.mat` is the sibling in the session's mat folder. */
+  jsonPath: string;
+  /**
+   * `rewritten`: its `.json` was rewritten with this build's table, or its `.mat` held another
+   * table and was written from the `.json`. `skipped`: nothing was written, because a newer
+   * replay derived its table, it was replayed (`ok`) and this build cannot replay it, or its
+   * `.mat` can be written by no build (an animal name outside the BMP). `failed`: something went
+   * wrong and nothing was written. A current run is counted, never listed.
+   */
+  status: "rewritten" | "skipped" | "failed";
+  /** Why it was skipped or failed, when it was. */
+  reason: string | null;
+  /**
+   * Why its `.mat` could not be written, when it could not. Never holds the `.json` back; the
+   * next Re-derive finds the `.mat`'s table stale and writes it.
+   */
+  matError: string | null;
+}
+
+/** What `sessions.rederive` did to a cohort's spine runs (`DATA.md#re-derive`). */
+export interface RederiveResult {
+  /**
+   * Spine runs found: `.json` files whose own file says a state table ran them. Legacy runs are
+   * never derived, so never counted.
+   */
+  scanned: number;
+  /** Runs whose `.json` and `.mat` were rewritten with this build's table. */
+  rewritten: number;
+  /** Runs whose stored block already equals what this build derives: left untouched. */
+  current: number;
+  /**
+   * Runs left alone, each listed with why: a newer replay derived their table, they were replayed
+   * and this build does not know their INTERP (two lab machines on different builds can share one
+   * archive), or their `.mat` can be written by no build.
+   */
+  skipped: number;
+  /** Runs that could not be replayed or written; each is listed with why. */
+  failed: number;
+  /** The rewritten and failed runs. */
+  entries: RederivedRun[];
+  /** The cohort asked about. */
+  cohortId: string;
+  /** The cohort's data folder, walked as `analytics.rescan` walks it. */
+  dataFolder: string;
+  /** Same distinction as RescanResult's: 'nothing there' vs 'nowhere to look'. */
+  folderMissing: boolean;
+}
+
 /** One session record as the tidy preview names it (`DATA.md#reading-the-archive`). */
 export interface TidySession {
   sessionId: string;
@@ -2659,6 +2710,7 @@ export interface CommandArgsMap {
   "analytics.rescan": { cohortId: string; adoptOrphans?: boolean };
   "analytics.recentSessions": { limit?: number };
   "sessions.recover": { cohortId: string };
+  "sessions.rederive": { cohortId: string };
   "sessions.tidy": { cohortId: string; apply?: boolean };
   "intan.status": Record<string, never>;
   "intan.connect": Record<string, never>;
@@ -2753,6 +2805,7 @@ export interface CommandResultMap {
   "analytics.rescan": RescanResult;
   "analytics.recentSessions": { sessions: DiskSession[] };
   "sessions.recover": RecoverResult;
+  "sessions.rederive": RederiveResult;
   "sessions.tidy": TidyPlan;
   "intan.status": IntanStatus;
   "intan.connect": IntanStatus;

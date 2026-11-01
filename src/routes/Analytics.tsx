@@ -13,6 +13,7 @@ import {
   Info,
   Loader2,
   RefreshCw,
+  TableProperties,
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -36,7 +37,7 @@ import { SessionSummary } from "@/components/analytics/SessionSummary";
 import { TidyRecords, describeTidy } from "@/components/analytics/TidyRecords";
 import { Button } from "@/components/common/controls";
 import { FolderButton } from "@/components/common/FolderButton";
-import { errorMessage, recover, rescan } from "@/lib/analytics/commands";
+import { errorMessage, recover, rederive, rescan } from "@/lib/analytics/commands";
 import {
   useAnalyticsStore,
   useDataVersion,
@@ -48,6 +49,7 @@ import {
   useSessionList,
   useSummary,
 } from "@/lib/analytics/context";
+import { describeRederive } from "@/lib/analytics/rederive";
 import { useRunSeries } from "@/lib/analytics/series";
 import { ALL_SESSIONS } from "@/lib/analytics/store";
 import type {
@@ -99,6 +101,7 @@ export function Analytics() {
 
   const [rescanning, setRescanning] = useState(false);
   const [recovering, setRecovering] = useState(false);
+  const [rederiving, setRederiving] = useState(false);
   const [tidyOpen, setTidyOpen] = useState(false);
   const [rescanNote, setRescanNote] = useState<string | null>(null);
   // Bumped whenever the data underneath changes identity — a cohort swap or a
@@ -312,6 +315,24 @@ export function Analytics() {
     }
   }
 
+  /**
+   * Re-derive (`DATA.md#re-derive`): rewrite the derived trial table in spine
+   * runs' files. Analytics never reads that table, so there is nothing to
+   * refresh afterwards; the note says what was rewritten.
+   */
+  async function runRederive() {
+    if (!cohortId) return;
+    setRederiving(true);
+    setRescanNote(null);
+    try {
+      setRescanNote(describeRederive(await rederive(client, cohortId)));
+    } catch (error) {
+      setRescanNote(errorMessage(error));
+    } finally {
+      setRederiving(false);
+    }
+  }
+
   // Group names for the tidy preview's "ran Morning, Afternoon" lines.
   const groupNames = useMemo(
     () => new Map((summary?.groups ?? []).map((g) => [g.id, g.name])),
@@ -478,7 +499,7 @@ export function Analytics() {
               <Button
                 variant="outline"
                 onClick={() => void runRescan()}
-                disabled={!connected || !cohortId || rescanning || recovering}
+                disabled={!connected || !cohortId || rescanning || recovering || rederiving}
                 title="Look for session files no run record points at"
               >
                 <RefreshCw size={13} strokeWidth={1.75} />
@@ -487,7 +508,7 @@ export function Analytics() {
               <Button
                 variant="outline"
                 onClick={() => void runRecover()}
-                disabled={!connected || !cohortId || rescanning || recovering}
+                disabled={!connected || !cohortId || rescanning || recovering || rederiving}
                 title="Rebuild .json/.mat from write-ahead .tsv files a crash left behind"
               >
                 <ArchiveRestore size={13} strokeWidth={1.75} />
@@ -495,8 +516,17 @@ export function Analytics() {
               </Button>
               <Button
                 variant="outline"
+                onClick={() => void runRederive()}
+                disabled={!connected || !cohortId || rescanning || recovering || rederiving}
+                title="Rewrite the trial table stored in spine runs' .json/.mat files with this version's replay. Strobes are never touched"
+              >
+                <TableProperties size={13} strokeWidth={1.75} />
+                {rederiving ? "Re-deriving…" : "Re-derive"}
+              </Button>
+              <Button
+                variant="outline"
                 onClick={() => setTidyOpen(true)}
-                disabled={!connected || !cohortId || rescanning || recovering}
+                disabled={!connected || !cohortId || rescanning || recovering || rederiving}
                 title="Merge one session's split records and remove empty ones — shows what it will do first"
               >
                 <Combine size={13} strokeWidth={1.75} />
@@ -512,7 +542,7 @@ export function Analytics() {
                     void exporter.run(reportInput, reportFilename(reportInput));
                 }}
                 disabled={
-                  !reportInput || exporter.busy || rescanning || recovering
+                  !reportInput || exporter.busy || rescanning || recovering || rederiving
                 }
                 title={
                   selectedSession

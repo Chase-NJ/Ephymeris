@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ..tasks.profile import SNAPSHOT_KEY
-from . import matwriter
+from . import derived, matwriter
 
 log = logging.getLogger(__name__)
 
@@ -103,6 +103,8 @@ class AnimalWriter:
         self._tsv = None  # type: Any
         self._finalized = False
         self._stop_reason: str | None = None
+        #: The document `finalize` wrote, returned again by a redundant call.
+        self._final: dict[str, Any] | None = None
 
     # --- setup ------------------------------------------------------------
 
@@ -168,13 +170,13 @@ class AnimalWriter:
         finalize racing an operator stop) can't rewrite the recorded reason.
         """
         if self._finalized:
-            return self._document(self._stop_reason or stop_reason)
+            return self._final if self._final is not None else self._document(self._stop_reason or stop_reason)
         self._finalized = True
         self._stop_reason = stop_reason
 
-        document = self._document(stop_reason)
-
         # Footer: the two fields not knowable at header time (`DATA.md#the-tsv-log`).
+        # First, and fsync'd, so that nothing after it (the replay below) can
+        # cost the run its recorded stop reason.
         if self._tsv is not None:
             try:
                 self._tsv.write(f"# stop_reason: {stop_reason}\n")
@@ -183,6 +185,12 @@ class AnimalWriter:
             finally:
                 self._tsv.close()
                 self._tsv = None
+
+        # A spine run's trial table, replayed here, in this worker thread, once
+        # (`DATA.md#the-derived-trial-table`): tens of milliseconds for a long run,
+        # and never able to cost the run its files.
+        document = derived.with_derived(self._document(stop_reason))
+        self._final = document
 
         # Structured formats, built once from the same list (`DATA.md#built-once-at-the-end`). A failure
         # here doesn't cost data — the .tsv already holds everything durably.

@@ -1677,6 +1677,7 @@ export interface RecoverResult {
 
 /** One spine run Re-derive rewrote or could not (`DATA.md#re-derive`). */
 export interface RederivedRun {
+  /** The run's `.json`; its `.mat` is the sibling in the session's mat folder. */
   jsonPath: string;
   /**
    * `rewritten`: its derived block differed from what this build derives, so the `.json` and
@@ -1687,19 +1688,24 @@ export interface RederivedRun {
   reason: string | null;
 }
 
+/** What `sessions.rederive` did to a cohort's spine runs (`DATA.md#re-derive`). */
 export interface RederiveResult {
   /**
    * Spine runs found: `.json` files whose own file says a state table ran them. Legacy runs are
    * never derived, so never counted.
    */
   scanned: number;
+  /** Runs whose `.json` and `.mat` were rewritten with this build's table. */
   rewritten: number;
   /** Runs whose stored block already equals what this build derives: left untouched. */
   current: number;
+  /** Runs that could not be replayed or written; each is listed with why. */
   failed: number;
   /** The rewritten and failed runs. */
   entries: RederivedRun[];
+  /** The cohort asked about. */
   cohortId: string;
+  /** The cohort's data folder, walked as `analytics.rescan` walks it. */
   dataFolder: string;
   /** Same distinction as RescanResult's: 'nothing there' vs 'nowhere to look'. */
   folderMissing: boolean;

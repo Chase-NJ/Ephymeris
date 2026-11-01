@@ -6,7 +6,7 @@ report.
 
 ## Start here
 
-1. **The app never reads a stored trial.** A run's file holds raw strobes: `[code, timestamp]` pairs, in the
+1. **The app never reads the derived trial table.** A run's file holds raw strobes: `[code, timestamp]` pairs, in the
    order the box sent them. Every trial, accuracy and count is derived from them each time they are read. A
    spine run's file also carries its [derived trial table](../../../docs/DATA.md#the-derived-trial-table) for
    the lab's own scripts; `reader.py` drops it, and Analytics replays.
@@ -425,9 +425,9 @@ One row per trial (`stream/trial_table.py`, `ReplayTrial` on the wire). Columns,
 The table rides on `analytics.series` (`RunSeries.trialTable`), computed from the file on each request and
 never cached, like every per-trial series ([DATA.md](../../../docs/DATA.md#caching)). Finalization and
 recovery write the same table into the run's `.json` and `.mat` under snake_case names, stamped with
-`spine.REPLAY_VERSION` ([DATA.md](../../../docs/DATA.md#the-derived-trial-table)). That copy is for scripts
-outside the app: Analytics never reads it. **Bump `REPLAY_VERSION` with any change to what a run's table
-holds**; `test_derived_trials.py` pins it.
+`spine.REPLAY_VERSION`, which moves with any change to what a run's table holds
+([DATA.md](../../../docs/DATA.md#the-derived-trial-table)). That copy is for scripts outside the app:
+Analytics never reads it.
 
 ### Metrics from the trial table
 

@@ -2620,22 +2620,24 @@ One spine run Re-derive rewrote or could not (`DATA.md#re-derive`).
 
 | Field | Type | Notes |
 |---|---|---|
-| `jsonPath` | string |  |
+| `jsonPath` | string | The run's `.json`; its `.mat` is the sibling in the session's mat folder. |
 | `status` | "rewritten" \| "failed" | `rewritten`: its derived block differed from what this build derives, so the `.json` and `.mat` were rewritten with it. A run whose block is current is counted, never listed. |
 | `reason` | string \| null | Why it failed, when it did. |
 
 <a id="shape-rederiveresult"></a>
 #### RederiveResult
 
+What `sessions.rederive` did to a cohort's spine runs (`DATA.md#re-derive`).
+
 | Field | Type | Notes |
 |---|---|---|
 | `scanned` | number | Spine runs found: `.json` files whose own file says a state table ran them. Legacy runs are never derived, so never counted. |
-| `rewritten` | number |  |
+| `rewritten` | number | Runs whose `.json` and `.mat` were rewritten with this build's table. |
 | `current` | number | Runs whose stored block already equals what this build derives: left untouched. |
-| `failed` | number |  |
+| `failed` | number | Runs that could not be replayed or written; each is listed with why. |
 | `entries` | [RederivedRun](#shape-rederivedrun)[] | The rewritten and failed runs. |
-| `cohortId` | string |  |
-| `dataFolder` | string |  |
+| `cohortId` | string | The cohort asked about. |
+| `dataFolder` | string | The cohort's data folder, walked as `analytics.rescan` walks it. |
 | `folderMissing` | boolean | Same distinction as RescanResult's: 'nothing there' vs 'nowhere to look'. |
 
 <a id="shape-replaydivergence"></a>

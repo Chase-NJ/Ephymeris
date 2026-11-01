@@ -1735,7 +1735,7 @@ SHAPES = (
     Shape(
         "RederivedRun",
         obj(
-            f("jsonPath", STR),
+            f("jsonPath", STR, doc="The run's `.json`; its `.mat` is the sibling in the session's mat folder."),
             f(
                 "status",
                 lit("rewritten", "failed"),
@@ -1756,14 +1756,15 @@ SHAPES = (
                 doc="Spine runs found: `.json` files whose own file says a state table ran them. "
                 "Legacy runs are never derived, so never counted.",
             ),
-            f("rewritten", INT),
+            f("rewritten", INT, doc="Runs whose `.json` and `.mat` were rewritten with this build's table."),
             f("current", INT, doc="Runs whose stored block already equals what this build derives: left untouched."),
-            f("failed", INT),
+            f("failed", INT, doc="Runs that could not be replayed or written; each is listed with why."),
             f("entries", ListOf(Ref("RederivedRun")), doc="The rewritten and failed runs."),
-            f("cohortId", STR),
-            f("dataFolder", STR),
+            f("cohortId", STR, doc="The cohort asked about."),
+            f("dataFolder", STR, doc="The cohort's data folder, walked as `analytics.rescan` walks it."),
             f("folderMissing", BOOL, doc="Same distinction as RescanResult's: 'nothing there' vs 'nowhere to look'."),
         ),
+        doc="What `sessions.rederive` did to a cohort's spine runs (`DATA.md#re-derive`).",
     ),
     Shape(
         "TidySession",

@@ -21,7 +21,7 @@ from typing import Any
 
 from ..tasks.profile import DERIVED_KEY
 
-log =logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 
 #: Sibling format folders, so a missing `.json` can be checked against the
 #: write-ahead log that may still hold the data (`DATA.md#layout`).

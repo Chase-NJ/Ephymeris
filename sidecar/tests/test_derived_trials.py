@@ -175,7 +175,10 @@ def test_a_crashed_spine_run_recovers_with_its_trial_table_through_its_last_stro
     assert block["status"] == "ok"
     assert block["trials"] == table_of(recovery.recovered_document(recovery.parse_tsv(tsv)))
     assert block["trials"][-1]["complete"] is False, "the trial the crash cut off"
-    assert mat_trials(mat).shape == (len(block["trials"]), 1)
+    trials = mat_trials(mat)
+    assert trials.shape == (len(block["trials"]), 1)
+    assert [(mat_value(t["index"]), mat_value(t["outcome"]), mat_value(t["complete"])) for t in trials[:, 0]] \
+        == [(r["index"], r["outcome"] or "", r["complete"]) for r in block["trials"]]
 
 
 def test_a_legacy_run_gets_no_derived_table(tmp_path: Path) -> None:
@@ -278,7 +281,7 @@ def test_no_analytics_module_but_the_reader_names_the_derived_key() -> None:
         if source.name == "reader.py":
             continue
         text = source.read_text(encoding="utf-8")
-        assert "DERIVED_KEY" not in text and '"derived"' not in text, source
+        assert "DERIVED_KEY" not in text and not re.search(r"""["']derived["']""", text), source
 
 
 # --- Re-derive ----------------------------------------------------------------
@@ -334,6 +337,30 @@ async def test_rederive_fills_in_a_spine_run_with_no_table_and_skips_a_legacy_ru
     assert (result["scanned"], result["rewritten"]) == (1, 1), "the legacy run is not a spine run"
     assert read_json(json_path)[DERIVED]["trials"] == table_of(bare)
     assert legacy.read_bytes() == legacy_bytes
+
+
+async def test_a_mat_rederive_could_not_write_leaves_the_run_to_try_again(rig, monkeypatch) -> None:  # noqa: ANN001, F811
+    """The two files never disagree: a `.json` rewritten past a failed `.mat`
+    would read as current forever, and the `.mat` would keep the old table."""
+    from ephymeris_sidecar.sessions import matwriter
+
+    _, json_path, _ = run_through_writer(rig.root, recorded_document())
+    stale = read_json(json_path)
+    stale[DERIVED] = {**stale[DERIVED], "replay_version": 0}
+    json_path.write_text(json.dumps(stale, indent=2), encoding="utf-8")
+    real = matwriter.savemat
+
+    def full_disk(*_args):  # noqa: ANN002, ANN202
+        raise OSError("disk full")
+
+    monkeypatch.setattr(matwriter, "savemat", full_disk)
+    result = await rig.archive.rederive(rig.cohort.id)
+    assert result["failed"] == 1 and "disk full" in result["entries"][0]["reason"]
+    assert read_json(json_path) == stale, "the .json is left for the next Re-derive"
+    assert not rig.changes
+
+    monkeypatch.setattr(matwriter, "savemat", real)
+    assert (await rig.archive.rederive(rig.cohort.id))["rewritten"] == 1
 
 
 async def test_rederive_is_refused_while_a_box_is_writing(rig) -> None:  # noqa: ANN001, F811

@@ -504,7 +504,7 @@ A [spine task](TASKS.md#spine-tasks)'s header reads `# interp: 3`, or `2`, a tab
 
 Same field names, written from the same in-memory dict as the JSON — one source serialized twice. `ts_data` becomes an `N×2` double array; `task_profile` becomes a **char array holding JSON** (`jsondecode(task_profile)` in MATLAB), since a profile is a deep ragged tree nobody reads as a struct. `derived` is the exception: a struct, because it is read as a table ([below](#the-derived-trial-table)).
 
-Every number is a `double` and every bool a `logical`; an empty `ts_data` is still `0×2`. `sessions/matwriter.py` writes it with `scipy.io.savemat` (uncompressed Level 5) and owns the conversion from Python values, because `savemat` unaided would keep an int as `int64` and an empty list as `0×0`. `tests/test_matwriter.py` pins each class and shape through `scipy.io.loadmat`.
+Every number is a `double` and every bool a `logical`; an empty `ts_data` is still `0×2`. `sessions/matwriter.py` writes it with `scipy.io.savemat` (uncompressed Level 5) and owns the conversion from Python values, because `savemat` unaided would keep an int as `int64` and an empty list as `0×0`. `tests/test_matwriter.py` pins each class and shape through `scipy.io.loadmat`. The one exception is `derived`, which it hands to `sessions/derived.py` and `tests/test_derived_trials.py` pins ([below](#the-derived-trial-table)): its classes come from the trial table's own field types.
 
 scipy is imported on first use, never at module scope, so a broken install costs the `.mat` and nothing else. The sidecar's entry point pays that first import at startup (`matwriter.preload` in `__main__._run`), **on the main thread, before any other thread exists** — in particular before the parent watch parks a thread in a blocking read of stdin.
 
@@ -620,6 +620,7 @@ The Recover button chains an `analytics.rescan`, so recovered files are adopted 
 **Re-derive** (`sessions.rederive`, in the Analytics header) replays every spine run under a cohort's data folder. Where the [derived trial table](#the-derived-trial-table) in its `.json` differs from what this build derives, it rewrites that table. This covers a `REPLAY_VERSION` change, a block that is missing, or a hand edit. A run whose block is already current is left untouched: it is not written, its mtime is unchanged, its cached summary stays warm, and nothing is queued for backup.
 
 - **Only the table changes.** The `.json` is rewritten with every other key as it was read, and the `.mat` is rebuilt from that one document. Both are written with `write_atomic`. The `.tsv` is never opened, and legacy runs are skipped.
+- **The `.mat` is written first, and it is not best-effort here.** If it fails, the `.json` is left as it was and the run is reported failed, so the next Re-derive tries again. Had the `.json` been rewritten first, the run would read as current from then on, and its `.mat` would keep the old table.
 - **Archive rules:** it is an [archive write](#the-cohort-archive), so it runs under the archive lock, is refused while a box runs (a finishing run writes its own `.json`), and queues what it wrote for backup.
 - **No number in Analytics changes**, since the app never reads the table. A rewritten file's new mtime makes its next summary read it once.
 

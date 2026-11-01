@@ -207,11 +207,13 @@ def rederive_file(json_path: Path) -> dict[str, Any] | None:
     """Re-derive one run's block (`DATA.md#re-derive`), as a `RederivedRun`
     entry, or None for a file that is not a spine run (or does not parse).
 
-    Rewrites the `.json` and its `.mat` only when the stored block differs
-    from what this build derives; every other key is written back as read.
-    The `.tsv` is never opened.
+    Rewrites the `.mat` and then the `.json` only when the stored block
+    differs from what this build derives; every other key is written back as
+    read. A write that fails leaves the run failed, to try again. The `.tsv`
+    is never opened.
     """
-    from .matwriter import savemat
+    # Here, not at the top: both import this module.
+    from . import matwriter
     from .writer import write_atomic
 
     try:
@@ -232,17 +234,22 @@ def rederive_file(json_path: Path) -> dict[str, Any] | None:
         entry["status"] = "current"
         return entry
     rewritten = {**rest, DERIVED_KEY: block}
+    # The `.mat` first: were the `.json` rewritten past a `.mat` that failed,
+    # the run would read as current from then on and the `.mat` keep the old
+    # table. This way a failure leaves both as they were, to try again.
+    mat_path = reader.sibling_mat(reader.sibling_tsv(json_path))
+    try:
+        mat_path.parent.mkdir(parents=True, exist_ok=True)
+        write_atomic(mat_path, lambda part: matwriter.savemat(str(part), rewritten))
+    except Exception as exc:  # noqa: BLE001 - scipy missing, a full disk, a value it can't write
+        log.error("couldn't write %s: %s", mat_path, exc)
+        entry["reason"] = f"couldn't write {mat_path.name}: {exc}"
+        return entry
     try:
         write_atomic(json_path, json.dumps(rewritten, indent=2))
     except OSError as exc:
         entry["reason"] = f"couldn't write {json_path.name}: {exc}"
         return entry
-    mat_path = reader.sibling_mat(reader.sibling_tsv(json_path))
-    try:
-        mat_path.parent.mkdir(parents=True, exist_ok=True)
-        write_atomic(mat_path, lambda part: savemat(str(part), rewritten))
-    except Exception as exc:  # noqa: BLE001 - the .mat is best-effort, as at finalization
-        log.error("couldn't write %s: %s", mat_path, exc)
     entry["status"] = "rewritten"
     return entry
 

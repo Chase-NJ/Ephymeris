@@ -365,7 +365,7 @@ def run_on_host(tmp_path: Path, body: str) -> subprocess.CompletedProcess:
         "static void send(const char *line) { bb_feed(line); ::loop(); }\n"
         "static bool status(const char *token) {\n"
         "  size_t at = bb_output().rfind(\"STATUS \");\n"
-        "  size_t end = bb_output().find('\\n', at);\n"
+        "  size_t end = bb_output().find(\"\\r\\n\", at);  // println's ending, as on an AVR\n"
         "  return at != std::string::npos &&\n"
         "         (\" \" + bb_output().substr(at, end - at) + \" \").find(std::string(\" \") + token + \" \")\n"
         "             != std::string::npos; }\n"

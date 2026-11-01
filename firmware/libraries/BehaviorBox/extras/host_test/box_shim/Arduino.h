@@ -11,7 +11,8 @@
       tone/noTone record each pin's duty and pitch;
     * Serial.read() drains a queued input string, so a test can feed whole
       command lines through the sketch's real CommandReader;
-    * Serial.print/println append to a capture buffer, so STATUS lines and the
+    * Serial.print/println append to a capture buffer (println ends a line
+      "\r\n", as on an AVR), so STATUS lines and the
       self-test's prose confirmations can both be asserted;
     * millis() advances on every delay(), so timed loops terminate instead of
       spinning forever.
@@ -207,7 +208,7 @@ struct _BoxSerialShim
   size_t print(int v) { std::string t = std::to_string(v); return write(t.c_str(), t.size()); }
   size_t println(const char *s) { return print(s) + println(); }
   size_t println(int v) { return print(v) + println(); }
-  size_t println() { return write("\n", 1); }
+  size_t println() { return write("\r\n", 2); } // as an AVR's Print does
 };
 static _BoxSerialShim Serial;
 

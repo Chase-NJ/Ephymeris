@@ -51,7 +51,7 @@ static std::string lastStatusLine()
   const std::string &all = bb_output();
   size_t end = all.rfind("STATUS ");
   if (end == std::string::npos) return "";
-  size_t stop = all.find('\n', end);
+  size_t stop = all.find("\r\n", end); // println's line ending, as on an AVR
   return all.substr(end, stop == std::string::npos ? std::string::npos : stop - end);
 }
 

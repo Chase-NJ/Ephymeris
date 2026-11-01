@@ -11,7 +11,8 @@
   Each scenario runs in its own process (the runner's state is the sketch's
   own, as on a board): run_spine.sh runs `test_spine handshake`, `stream`,
   `stop` and `last`, then, built over spine_drive_fixture.h (-DSPINE_FIXTURE_DRIVES),
-  the driven outputs: `test_spine_drives drives`, `train_held` and `train_refused`.
+  the driven outputs: `test_spine_drives drives`, `train_held`, `train_refused`,
+  and, under the shim's real serial timing, `train_timing` and `train_buffer`.
 
   Usage:  sh run_spine.sh
 */
@@ -53,7 +54,8 @@ static std::vector<std::string> lines()
   while (at < all.size()) {
     size_t nl = all.find('\n', at);
     if (nl == std::string::npos) nl = all.size();
-    out.push_back(all.substr(at, nl - at));
+    size_t end = nl > at && all[nl - 1] == '\r' ? nl - 1 : nl; // println ends a line "\r\n"
+    out.push_back(all.substr(at, end - at));
     at = nl + 1;
   }
   return out;
@@ -327,6 +329,32 @@ static void trainTiming()
   expect("no pulse is HIGH more than 1 ms past its 1 ms width", trainLongest <= 2000);
   expect("and its strobes are the same", bb_output().find("052\t10") != std::string::npos);
 }
+
+/* The same, with the TX buffer FULL when the train starts: a session long
+   enough that every strobe carries a seven-digit timestamp, and the tick
+   before's lines still draining. A print into a full buffer blocks, so the
+   runner must wait for room for each line, stepping the trains, rather than
+   print into it. */
+static void trainBuffer()
+{
+  bb_feed("SET NT=1 T1=100 T3=50 RW=30 RP=1000 TH=100 TW=1 TL=0");
+  bb_feed("START SEED=7");
+  boot();
+  advanceTo(999999);
+  bb_realTiming(115200);
+  bb_onPinWrite = watchTrain;
+  std::string backlog(61, '#');
+  backlog += "\r\n";
+  Serial.write(backlog.c_str(), backlog.size()); // 63 bytes: the buffer is full
+  port(true, 1000000);
+  advanceTo(1000300);
+  std::cout << "  pulses " << trainPulses << ", longest HIGH " << trainLongest << " us, writes blocked "
+            << bb_txBlockedUs << " us\n";
+  expect("the train started with seven-digit strobes", bb_output().find("052\t1000000\r\n") != std::string::npos);
+  expect("the train pulsed through its phase", trainPulses >= 9);
+  expect("no strobe was printed into a full buffer", bb_txBlockedUs == 0);
+  expect("no pulse is HIGH more than 1 ms past its 1 ms width", trainLongest <= 2000);
+}
 #endif
 
 int main(int argc, char **argv)
@@ -338,6 +366,7 @@ int main(int argc, char **argv)
   else if (which == "train_held") trainHeld();
   else if (which == "train_refused") trainRefused();
   else if (which == "train_timing") trainTiming();
+  else if (which == "train_buffer") trainBuffer();
 #else
   if (which == "handshake") handshake();
   else if (which == "stream") stream();

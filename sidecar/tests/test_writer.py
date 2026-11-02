@@ -327,3 +327,57 @@ def test_two_writes_of_one_file_at_once_each_land_whole(tmp_path: Path) -> None:
     assert failures == []
     assert target.read_bytes() in (b"a" * 1024, b"b" * 1024)
     assert [p.name for p in tmp_path.iterdir()] == ["remy1.json"]
+
+
+def test_two_writes_of_one_file_take_turns_at_the_rename(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows refuses a replace onto a name another replace is still landing on
+    (`DATA.md#built-once-at-the-end`), so two writers of one file rename it one at
+    a time. Their `.part`s are still written side by side: both reach the end of
+    the write before either renames. Here `os.replace` behaves as Windows does,
+    holding its window open, so the overlap is certain on any platform."""
+    import os
+    import threading
+
+    real_replace = os.replace
+    landing: set[str] = set()
+    guard = threading.Lock()
+
+    def windows_replace(src, dst) -> None:  # noqa: ANN001
+        with guard:
+            if str(dst) in landing:
+                raise PermissionError(13, "Access is denied")
+            landing.add(str(dst))
+        try:
+            time.sleep(0.2)
+            real_replace(src, dst)
+        finally:
+            with guard:
+                landing.discard(str(dst))
+
+    monkeypatch.setattr(os, "replace", windows_replace)
+    target = tmp_path / "remy1.json"
+    written = threading.Barrier(2, timeout=5)
+    failures: list[BaseException] = []
+
+    def writer(fill: bytes) -> threading.Thread:
+        def write(part: Path) -> None:
+            part.write_bytes(fill * 1024)
+            written.wait()
+
+        def run() -> None:
+            try:
+                write_atomic(target, write)
+            except BaseException as exc:  # noqa: BLE001 - reported below
+                failures.append(exc)
+
+        return threading.Thread(target=run)
+
+    threads = [writer(b"a"), writer(b"b")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert failures == []
+    assert target.read_bytes() in (b"a" * 1024, b"b" * 1024)
+    assert [p.name for p in tmp_path.iterdir()] == ["remy1.json"]

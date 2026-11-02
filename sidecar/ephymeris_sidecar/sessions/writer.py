@@ -34,6 +34,18 @@ class WriteError(Exception):
 #: name ends.
 PART_SUFFIX = ".part"
 
+#: One lock per name `write_atomic` renames onto. Windows refuses a replace onto
+#: a name another replace is still landing on, so two writers of one file take
+#: turns at the rename; their `.part`s are still written side by side.
+_replacing: dict[str, threading.Lock] = {}
+_replacing_guard = threading.Lock()
+
+
+def _replace_lock(path: Path) -> threading.Lock:
+    key = os.path.normcase(os.path.abspath(path))
+    with _replacing_guard:
+        return _replacing.setdefault(key, threading.Lock())
+
 
 def write_atomic(path: Path, data: str | bytes | Callable[[Path], None]) -> None:
     """Write `path` whole or not at all (`DATA.md#built-once-at-the-end`).
@@ -43,7 +55,8 @@ def write_atomic(path: Path, data: str | bytes | Callable[[Path], None]) -> None
     `.part`, which no walk reads, never a torn file under the name every
     reader opens. The `.part` is named for this process and thread, as the
     backup mirror's are, so two writers of one file never share one: each
-    lands whole and the last rename wins. `data` is the text or bytes, or a
+    lands whole and the last rename wins. The renames take turns
+    (`_replace_lock`), as Windows requires. `data` is the text or bytes, or a
     function that writes a file at the path it is given
     (`matwriter.savemat`). Raises what the write raised, with its `.part`
     removed.
@@ -63,7 +76,8 @@ def write_atomic(path: Path, data: str | bytes | Callable[[Path], None]) -> None
                 fh.write(raw)
                 fh.flush()
                 os.fsync(fh.fileno())
-        os.replace(part, path)
+        with _replace_lock(path):
+            os.replace(part, path)
     except Exception:
         part.unlink(missing_ok=True)
         raise

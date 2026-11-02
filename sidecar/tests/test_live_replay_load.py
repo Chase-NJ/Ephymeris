@@ -11,10 +11,11 @@ of an fsync's own spread.
 
 On a small runner the machine's own noise moves either figure by several times
 from one run to the next, which no change here causes. So the two are measured
-in alternating rounds, `ROUNDS` of each, and each is read at its best round: what
-the sidecar does when the machine lets it, with the machine's interference
-taken out of both sides alike. The scorer is checked to run below the sidecar
-in every live round.
+in alternating rounds, `ROUNDS` of each, and each is read at its median round:
+one round the machine disturbed is outvoted on either side, but live scoring
+passes only when most of its rounds stay within the budget, so one lucky round
+cannot hide a real slowdown. The scorer is checked to run below the sidecar in
+every live round.
 
 `EPHYMERIS_LOAD_TRIALS` sets the session length (the review measured 1000);
 the default keeps the suite quick. Every board here is a fake: nothing opens
@@ -124,10 +125,11 @@ async def test_six_boxes_scored_live_write_as_fast_as_six_not(tmp_path: Path) ->
             folder = tmp_path / f"{mode}{r}"
             folder.mkdir()
             rounds[mode].append(summary(await run(folder, document, live=mode == "on")))
-    best = {mode: {k: min(s[k] for s in runs) for k in ("p50", "p99", "max")} for mode, runs in rounds.items()}
-    print(f"\n{BOXES} boxes x {len(document['ts_data'])} strobes ({TRIALS} trials), best of {ROUNDS}: "
-          f"live off {best['off']}, live on {best['on']}; every round: {rounds}")
-    off, on = best["off"], best["on"]
+    median = {mode: {k: statistics.median(s[k] for s in runs) for k in ("p50", "p99", "max")}
+              for mode, runs in rounds.items()}
+    print(f"\n{BOXES} boxes x {len(document['ts_data'])} strobes ({TRIALS} trials), median of {ROUNDS}: "
+          f"live off {median['off']}, live on {median['on']}; every round: {rounds}")
+    off, on = median["off"], median["on"]
     # The floor: an fsync's own spread, which on an idle machine is most of either figure.
     assert on["p99"] <= 2 * off["p99"] + 0.005, (off, on)
     assert on["max"] <= 2 * off["max"] + 0.020, (off, on)

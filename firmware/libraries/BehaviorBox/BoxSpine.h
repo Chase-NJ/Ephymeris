@@ -656,6 +656,11 @@ inline void loop()
   if (checkForStop())
     stopRequested = true;
   uint32_t now = millis();
+  // loop() runs many times a millisecond, but the core steps once a tick, and
+  // sample() reports each edge once: read the inputs only on a new tick, so no
+  // edge is read on a pass that steps nothing and lost.
+  if (now == lastTick)
+    return;
   InterpEdges in = sample(now);
   while (lastTick != now)
   {

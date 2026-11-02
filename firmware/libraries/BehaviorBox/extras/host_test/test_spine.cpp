@@ -10,8 +10,10 @@
 
   Each scenario runs in its own process (the runner's state is the sketch's
   own, as on a board): run_spine.sh runs `test_spine handshake`, `stream`,
-  `stop` and `last`, then, built over spine_drive_fixture.h (-DSPINE_FIXTURE_DRIVES),
-  the driven outputs: `test_spine_drives drives`, `train_held` and `train_refused`.
+  `stop`, `last`, `blocks`, `pairs` and `passes` (several loop() passes in one
+  millisecond, as on a Mega), then, built over spine_drive_fixture.h (-DSPINE_FIXTURE_DRIVES),
+  the driven outputs: `test_spine_drives drives`, `train_held`, `train_refused`,
+  and, under the shim's real serial timing, `train_timing` and `train_buffer`.
 
   Usage:  sh run_spine.sh
 */
@@ -53,7 +55,8 @@ static std::vector<std::string> lines()
   while (at < all.size()) {
     size_t nl = all.find('\n', at);
     if (nl == std::string::npos) nl = all.size();
-    out.push_back(all.substr(at, nl - at));
+    size_t end = nl > at && all[nl - 1] == '\r' ? nl - 1 : nl; // println ends a line "\r\n"
+    out.push_back(all.substr(at, end - at));
     at = nl + 1;
   }
   return out;
@@ -228,6 +231,41 @@ static void blocks()
   expect("neither the trial nor a block is reported at the end", !third);
 }
 
+/* A Mega runs loop() some 27 times a millisecond, so a poke is read on
+   whichever pass sees it, rarely the first of its ms. It must still reach the
+   core: a poke and a release, each read on a later pass, both strobe and both
+   move the trial, within the ms after. */
+static void passes()
+{
+  bb_feed("BEGIN");
+  bb_feed("SET NT=2 T1=100 T3=50 RW=30 RP=1000");
+  bb_feed("START SEED=7");
+  boot();
+  advanceTo(10);
+  ::loop();
+  bb_pinValue[2] = LOW; // the poke, between two passes of ms 10
+  ::loop();
+  ::loop();
+  advanceTo(50);
+  ::loop();
+  bb_pinValue[2] = HIGH; // the release, during the present
+  ::loop();
+  ::loop();
+  advanceTo(120);
+  std::vector<std::pair<int, unsigned long>> got = strobes();
+  auto at = [&](int code) {
+    for (auto &s : got)
+      if (s.first == code) return (long)s.second;
+    return -1L;
+  };
+  long enter = at(BF_PORT_ENTER), leave = at(BF_PORT_EXIT);
+  expect("a poke read on a later pass of its ms strobes", enter == 10 || enter == 11);
+  expect("and starts the present", enter >= 0 && at(BF_SAMPLE_ON) == enter);
+  expect("a release read so aborts it", (leave == 50 || leave == 51) && at(BF_SAMPLE_OFF) == leave);
+  if (enter < 0 || leave < 0)
+    for (auto &s : got) std::cout << "      " << s.first << "\t" << s.second << "\n";
+}
+
 static void pairs()
 {
   bb_feed("BEGIN");
@@ -324,6 +362,67 @@ static void trainHeld()
   if (!offAt110 || offs != 1) dump(got);
   expect("its pin is LOW after", bb_pinValue[11] == LOW);
 }
+
+/* On a board a strobe takes time: its sync pulse and gap (about 0.7 ms), and,
+   once 64 bytes are queued, a print that blocks until the wire drains. The tick
+   a train starts in strobes four other events too. Under the shim's real
+   timing, every pulse of a 100 Hz, 1 ms train must still fall within 1 ms of
+   its width, however long that tick's strobes take. */
+static unsigned long trainRose = 0, trainLongest = 0;
+static bool trainIsHigh = false;
+static int trainPulses = 0;
+
+static void watchTrain(int pin, int value, unsigned long us)
+{
+  if (pin != 11) return;
+  if (value && !trainIsHigh) { trainIsHigh = true; trainRose = us; trainPulses++; }
+  else if (!value && trainIsHigh) {
+    trainIsHigh = false;
+    if (us - trainRose > trainLongest) trainLongest = us - trainRose;
+  }
+}
+
+static void trainTiming()
+{
+  bb_feed("SET NT=1 T1=100 T3=50 RW=30 RP=1000 TH=100 TW=1 TL=0");
+  bb_feed("START SEED=7");
+  boot();
+  bb_realTiming(115200);
+  bb_onPinWrite = watchTrain;
+  port(true, 10);
+  advanceTo(300);
+  std::cout << "  pulses " << trainPulses << ", longest HIGH " << trainLongest << " us, writes blocked "
+            << bb_txBlockedUs << " us\n";
+  expect("the train pulsed through its phase", trainPulses >= 9);
+  expect("no pulse is HIGH more than 1 ms past its 1 ms width", trainLongest <= 2000);
+  expect("and its strobes are the same", bb_output().find("052\t10") != std::string::npos);
+}
+
+/* The same, with the TX buffer FULL when the train starts: a session long
+   enough that every strobe carries a seven-digit timestamp, and the tick
+   before's lines still draining. A print into a full buffer blocks, so the
+   runner must wait for room for each line, stepping the trains, rather than
+   print into it. */
+static void trainBuffer()
+{
+  bb_feed("SET NT=1 T1=100 T3=50 RW=30 RP=1000 TH=100 TW=1 TL=0");
+  bb_feed("START SEED=7");
+  boot();
+  advanceTo(999999);
+  bb_realTiming(115200);
+  bb_onPinWrite = watchTrain;
+  std::string backlog(61, '#');
+  backlog += "\r\n";
+  Serial.write(backlog.c_str(), backlog.size()); // 63 bytes: the buffer is full
+  port(true, 1000000);
+  advanceTo(1000300);
+  std::cout << "  pulses " << trainPulses << ", longest HIGH " << trainLongest << " us, writes blocked "
+            << bb_txBlockedUs << " us\n";
+  expect("the train started with seven-digit strobes", bb_output().find("052\t1000000\r\n") != std::string::npos);
+  expect("the train pulsed through its phase", trainPulses >= 9);
+  expect("no strobe was printed into a full buffer", bb_txBlockedUs == 0);
+  expect("no pulse is HIGH more than 1 ms past its 1 ms width", trainLongest <= 2000);
+}
 #endif
 
 int main(int argc, char **argv)
@@ -334,6 +433,8 @@ int main(int argc, char **argv)
   if (which == "drives") drives();
   else if (which == "train_held") trainHeld();
   else if (which == "train_refused") trainRefused();
+  else if (which == "train_timing") trainTiming();
+  else if (which == "train_buffer") trainBuffer();
 #else
   if (which == "handshake") handshake();
   else if (which == "stream") stream();
@@ -341,6 +442,7 @@ int main(int argc, char **argv)
   else if (which == "last") last();
   else if (which == "blocks") blocks();
   else if (which == "pairs") pairs();
+  else if (which == "passes") passes();
 #endif
   else { std::cout << "  [FAIL] unknown scenario\n"; return 2; }
   return failures == 0 ? 0 : 1;

@@ -2052,7 +2052,8 @@ One row of a `grid` control — a named piece of hardware with its own commands 
 | `state` *(optional)* | string | Telemetry key whose 0/1 value lights this row's indicator. |
 | `toggle` *(optional)* | string | Command that latches this channel. |
 | `pulse` *(optional)* | string | Command that pulses this channel. |
-| `kind` *(optional)* | string | The rig channel kind behind the row (`emitter`, `reward`, `cue`, `vacuum`). Always set by a generated utility profile. |
+| `kind` *(optional)* | string | The rig channel kind behind the row (`emitter`, `reward`, `cue`, `vacuum`): the colour family it is drawn in. Always set by a generated utility profile. |
+| `setting` *(optional)* | [ControlSetting](#shape-controlsetting) | A driven output's one setting. Absent on a level line. |
 
 <a id="shape-controloption"></a>
 #### ControlOption
@@ -2061,6 +2062,17 @@ One row of a `grid` control — a named piece of hardware with its own commands 
 |---|---|---|
 | `label` | string |  |
 | `command` | string |  |
+
+<a id="shape-controlsetting"></a>
+#### ControlSetting
+
+A driven output's one setting in Debug Mode: a PWM line's duty, a tone's pitch, a train's rate (`TASKS.md#the-box-utility`).
+
+| Field | Type | Notes |
+|---|---|---|
+| `label` | string | What the setting is: `Duty`, `Pitch` or `Rate`. |
+| `state` | string | Telemetry key holding the board's current value, e.g. `house.duty`. |
+| `options` | [SettingOption](#shape-settingoption)[] | The values offered, each with its command; never empty. |
 
 <a id="shape-detectedboard"></a>
 #### DetectedBoard
@@ -3121,6 +3133,17 @@ One timestamped log entry (`DATA.md#the-session-log`). A deleted note is never s
 
 "configuring" \| "running" \| "completed" \| "aborted"
 
+<a id="shape-settingoption"></a>
+#### SettingOption
+
+One value a grid row's setting can take.
+
+| Field | Type | Notes |
+|---|---|---|
+| `label` | string | What the operator reads, e.g. `50%` or `2 kHz`. |
+| `value` | string | The value the board reports under the setting's `state` key once this option is in force, so the current one can be shown. |
+| `command` | string | Command that sets it, e.g. `DUTY house 128`. |
+
 <a id="shape-sex"></a>
 #### Sex
 
@@ -3575,7 +3598,7 @@ The whole baseline picture — one snapshot, shared by the command and the event
 | `configured` | boolean | The install's library has a box utility. Not a setting: the app finds it (`TASKS.md#the-box-utility`). |
 | `sketchPath` | string \| null | Where the copy rebuilt for this rig lives — an install-specific fact, informational only. |
 | `sketchName` | string \| null | The box utility's folder name. |
-| `canIdentify` | boolean | The utility's profile declares an `identify` pair (generated on the rig's first cue). False means placement can still run, just without lights. |
+| `canIdentify` | boolean | The utility's profile declares an `identify` pair (generated on the rig's first level cue, never a tone or a train; a rig whose cues are all driven has none). False means placement can still run, just without lights. |
 | `held` | boolean | Restores are suspended because a confirmed session mapping owns the boxes — reflashing then would erase the task sketch. |
 | `message` | string \| null | Why the baseline isn't operating at all (no sketch set, a name not in the bundled library, a non-utility profile). |
 | `boxes` | [UtilityBoxState](#shape-utilityboxstate)[] |  |

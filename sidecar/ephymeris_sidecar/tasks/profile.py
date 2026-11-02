@@ -194,6 +194,32 @@ class ControlOption:
 
 
 @dataclass(frozen=True)
+class SettingOption:
+    """One value a row's setting can take: what it reads as, the value the
+    board reports for it, and the command that sets it."""
+
+    label: str
+    value: str
+    command: str
+
+    def to_json(self) -> dict[str, Any]:
+        return {"label": self.label, "value": self.value, "command": self.command}
+
+
+@dataclass(frozen=True)
+class ControlSetting:
+    """A grid row's one setting (`TASKS.md#utility-controls-and-telemetry`): a
+    driven output's duty or Hz, with the telemetry key it is reported under."""
+
+    label: str
+    state: str
+    options: list[SettingOption]
+
+    def to_json(self) -> dict[str, Any]:
+        return {"label": self.label, "state": self.state, "options": [o.to_json() for o in self.options]}
+
+
+@dataclass(frozen=True)
 class ControlChannel:
     """One row of a ``grid`` control (`TASKS.md#utility-controls-and-telemetry`) — a named output with its own
     commands and its own live state key."""
@@ -206,6 +232,7 @@ class ControlChannel:
     #: profile says — a generated one always does. Lets Debug Mode colour and
     #: find rows by what they ARE rather than by guessing from their names.
     kind: str | None = None
+    setting: ControlSetting | None = None
 
     def to_json(self) -> dict[str, Any]:
         out: dict[str, Any] = {"label": self.label}
@@ -217,6 +244,8 @@ class ControlChannel:
             out["toggle"] = self.toggle
         if self.pulse is not None:
             out["pulse"] = self.pulse
+        if self.setting is not None:
+            out["setting"] = self.setting.to_json()
         return out
 
 
@@ -877,9 +906,33 @@ def _parse_control_channels(control_id: str, raw: Any) -> list[ControlChannel]:
                 toggle=toggle if isinstance(toggle, str) and toggle else None,
                 pulse=pulse if isinstance(pulse, str) and pulse else None,
                 kind=kind if isinstance(kind, str) and kind else None,
+                setting=_parse_setting(control_id, label, entry.get("setting")),
             )
         )
     return channels
+
+
+def _parse_setting(control_id: str, label: str, raw: Any) -> ControlSetting | None:
+    """A row's setting, or None when it declares none. Every part is required:
+    an option without a value could never be shown as the current one."""
+    if raw is None:
+        return None
+    where = f"{control_id} channel {label!r}'s setting"
+
+    def text(entry: Any, key: str) -> str:
+        value = entry.get(key) if isinstance(entry, dict) else None
+        if not isinstance(value, str) or not value:
+            raise TaskProfileError(f"{where} needs a non-empty {key}")
+        return value
+
+    options = raw.get("options") if isinstance(raw, dict) else None
+    if not isinstance(options, list) or not options:
+        raise TaskProfileError(f"{where} needs a non-empty options array")
+    return ControlSetting(
+        label=text(raw, "label"),
+        state=text(raw, "state"),
+        options=[SettingOption(text(o, "label"), text(o, "value"), text(o, "command")) for o in options],
+    )
 
 
 def _parse_control_options(control_id: str, raw: Any) -> list[ControlOption]:

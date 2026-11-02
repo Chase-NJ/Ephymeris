@@ -1,7 +1,7 @@
 """Phase-window rates, read off the trial table (`ANALYTICS.md#phase-window-rates`).
 
-A **window** is a phase that counts an input it never acts on, read off the
-table's own fields (`windows_of`), never a phase kind. Per row and window:
+A **rate window** is a phase that counts an input it never acts on, read off
+the table's own fields (`rate_windows`), never a phase kind. Per row and window:
 each trial's rate over the ticks the trial table attributes its rises to, the
 mean with its t interval over trials, and the paired difference against the
 channel's first window (`window_rates`). The anchor above defines each
@@ -21,11 +21,9 @@ from .trial_table import EXCLUDED, ReplayTrial
 
 
 #: The fewest trials a rate is trusted on, whatever `minCountedTrials` says.
-#: Licks come in bursts, so below this a 95% t interval over trials covers
-#: the true rate well under 95% of the time: a simulated bursty licker
-#: (`test_phase_rates.py`'s `coverage`) is covered 78% of the time at 5
-#: trials, 85% at 10, 89% at 20 and 90% from 30 on. The table is in
-#: `ANALYTICS.md#uncertainty`. A rate on fewer is reported, flagged low confidence.
+#: Licks come in bursts, so a t interval over fewer trials covers the true
+#: rate far less often than it says: `ANALYTICS.md#uncertainty` has how often.
+#: A rate on fewer is reported, flagged low confidence.
 RATE_MIN_TRIALS = 30
 
 
@@ -37,9 +35,9 @@ def low_confidence(n: int, versus_n: int | None, min_counted: int) -> bool:
 
 
 @dataclass(frozen=True, order=True)
-class Window:
+class RateWindow:
     """A phase in which one row counts an input channel and never acts on it.
-    A window is a row's: rows bind their own channels, so one row's window is
+    A rate window is a row's: rows bind their own channels, so one row's is
     never another's."""
 
     row: str
@@ -49,7 +47,7 @@ class Window:
 
 @dataclass(frozen=True)
 class RateEstimate:
-    """A mean over trials, events per second, with its 95% t interval. `mean`
+    """A mean over trials, events per second, with its t interval (nominally 95%). `mean`
     is None with no trials; `low` and `high` are None with fewer than two."""
 
     n: int
@@ -85,13 +83,13 @@ class WindowRate:
                 "lowConfidence": self.low_confidence}
 
 
-def windows_of(
+def rate_windows(
     table: rp.Table,
     phase_of: Sequence[int | None],
     inputs: Sequence[str],
     row_of: Sequence[str | None] | None,
-) -> tuple[Window, ...]:
-    """The windows of a table: each (row, phase, channel) whose bit some state
+) -> tuple[RateWindow, ...]:
+    """The rate windows of a table: each (row, phase, channel) whose bit some state
     of the row's phase watches and none of them has an edge row on.
     `phase_of[s]` is state s's phase, `row_of[s]` its row id, `inputs[i]` input
     bit i's channel. A state of no row (the pick, the shared ends) is no row's
@@ -108,13 +106,13 @@ def windows_of(
         watched[(r, p)] = watched.get((r, p), 0) | state.watch
         for e in table.edges[state.edge_first : state.edge_first + state.edge_count]:
             acted[(r, p)] = acted.get((r, p), 0) | 1 << e.input
-    out = {Window(r, p, inputs[bit] if bit < len(inputs) else f"bit {bit}")
+    out = {RateWindow(r, p, inputs[bit] if bit < len(inputs) else f"bit {bit}")
            for (r, p), mask in watched.items() for bit in range(32)
            if (mask & ~acted.get((r, p), 0)) >> bit & 1}
     return tuple(sorted(out))
 
 
-def _rates(table: Sequence[ReplayTrial], windows: Sequence[Window]) -> list[dict[Window, float]]:
+def _rates(table: Sequence[ReplayTrial], windows: Sequence[RateWindow]) -> list[dict[RateWindow, float]]:
     """Each counted trial's rate in each window it has a span for, by trial."""
     out = []
     for k, t in enumerate(table):
@@ -123,7 +121,7 @@ def _rates(table: Sequence[ReplayTrial], windows: Sequence[Window]) -> list[dict
             continue
         following = table[k + 1].at_ms if k + 1 < len(table) and table[k + 1].index == t.index + 1 else None
         counts = {(c.phase, c.channel): c.count for c in t.input_counts}
-        mine: dict[Window, float] = {}
+        mine: dict[RateWindow, float] = {}
         for w in windows:
             if w.row != t.row:
                 continue
@@ -151,7 +149,7 @@ def _estimate(values: list[float], *, floor: float | None = None) -> RateEstimat
 
 def window_rates(
     table: Sequence[ReplayTrial],
-    windows: Sequence[Window],
+    windows: Sequence[RateWindow],
     *,
     rows: Sequence[tuple[str, str]],
     labels: Sequence[str] = (),
@@ -170,7 +168,7 @@ def window_rates(
         own = [r for t, r in zip(table, per_trial) if t.row == row_id]
         for w in (w for w in windows if w.row == row_id):
             rate = _estimate([r[w] for r in own if w in r], floor=0.0)
-            ref = Window(row_id, reference[(row_id, w.channel)], w.channel)
+            ref = RateWindow(row_id, reference[(row_id, w.channel)], w.channel)
             versus = None
             if ref != w:
                 versus = _estimate([r[w] - r[ref] for r in own if w in r and ref in r])

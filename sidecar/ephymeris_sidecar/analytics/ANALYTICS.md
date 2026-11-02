@@ -236,14 +236,14 @@ session-summary chip drops to an outline. Keeping the value preserves the differ
 after three trials"* and *"never happened"*.
 
 **A rate is not a probability.** A [phase-window rate](#phase-window-rates) is a mean of each trial's rate,
-so it carries a **95% Student-t interval over trials** (`stats.mean_interval`, its quantile from
+so it carries a **Student-t interval over trials**, nominally 95% (`stats.mean_interval`, its quantile from
 `stats.t_quantile_975`). The trial is the unit because licks come in bursts and their rate moves from trial
 to trial far more than a Poisson count does: a Poisson (Garwood) interval on pooled counts would be falsely
 narrow. With one trial there is a mean and no interval.
 
 > [!CAUTION]
-> **Below 30 trials a rate's interval is narrower than it says.** Bursty licking is skewed, and the t
-> interval assumes it is not. Simulated (`test_phase_rates.py`'s `coverage`, seeded): licks in bouts of a
+> **A rate's interval covers the truth less often than the 95% it is built for.** Bursty licking is
+> skewed, and the t interval assumes it is not. Simulated (`test_phase_rates.py`'s `coverage`, seeded): licks in bouts of a
 > geometric number (mean 5), bouts a Poisson stream whose rate each trial scales by a Gamma(1) draw, 2 licks/s
 > at baseline and 6 in the CS over 2 s windows, 6000 rows at each size:
 >
@@ -252,9 +252,11 @@ narrow. With one trial there is a mean and no interval.
 > | the rate's interval covers the truth | 78.4% | 84.7% | 87.7% | 88.9% | 89.7% | 90.4% | 91.7% | 90.8% |
 > | the paired difference's interval covers it | 91.0% | 92.0% | 93.2% | 92.4% | 93.9% | 93.6% | 94.0% | 94.0% |
 >
-> So a rate, or its difference, on fewer than `rates.RATE_MIN_TRIALS` (30) trials is `lowConfidence`
-> whatever `minCountedTrials` says (`rates.low_confidence`): the number is reported, flagged, never trusted
-> as its interval implies. The test pins 30 as the first size whose rate coverage reaches 90%.
+> So a rate's interval is about a 90% interval from 30 trials on, and less below; the paired difference,
+> the anticipatory readout, holds about 91% or better from 5. A rate, or its difference, on fewer than
+> `rates.RATE_MIN_TRIALS` (30) trials is `lowConfidence` whatever `minCountedTrials` says
+> (`rates.low_confidence`): the number is reported, flagged, never trusted as its interval implies. The
+> test pins 30 as the first size whose rate coverage reaches 90%.
 
 ### Rewarded and response accuracy
 
@@ -498,8 +500,8 @@ The tracer's Outcome records `correct` before it draws the reward, so a trial ca
 
 ### Phase-window rates
 
-A **window** is a phase that counts an input it never acts on: a phase's `watch` ([TASKS.md](../../../docs/TASKS.md#pavlovian-conditioning)).
-`rates.windows_of` reads them off the table's own fields, **per row**: (row, phase, channel) where some
+A **rate window** is a phase that counts an input it never acts on: a phase's `watch` ([TASKS.md](../../../docs/TASKS.md#pavlovian-conditioning)).
+`rates.rate_windows` reads them off the table's own fields, **per row**: (row, phase, channel) where some
 state of that row's phase watches the channel's bit and none of them has an edge row on it. So a Pavlovian
 task's baseline, CS, trace and US phases watching the lick sensor are windows, and a Wait's port, a Response
 window's wells, an abort's input and a Counter's lever are not: a 2AFC run has no rates. No phase kind is
@@ -831,8 +833,8 @@ from a half-written archive:
 | `false_starts.classify(facts)` | `stream/false_starts.py` | runs → which are set aside |
 | `spine.replayed(document)` | `stream/spine.py` | a spine run's document → its divergence, or its trial table |
 | `trial_table.trials_of(table, actions, end=…)` | `stream/trial_table.py` | a replay's actions → one `Trial` per trial |
-| `table_metrics.score(trials, rows=…, windows=…)` | `stream/table_metrics.py` | a trial table → `ReplayScore` |
-| `rates.windows_of(table, phase_of, inputs)` | `stream/rates.py` | a state table → its phase windows |
+| `table_metrics.score(trials, rows=…, rate_windows=…)` | `stream/table_metrics.py` | a trial table → `ReplayScore` |
+| `rates.rate_windows(table, phase_of, inputs, row_of)` | `stream/rates.py` | a state table → its rate windows |
 | `rates.window_rates(trials, windows, rows=…)` | `stream/rates.py` | a trial table → each row's phase-window rates |
 | `reader.read_run(path)` | `reader.py` | a path → the document, or `missing`/`unreadable` |
 | `RunScorer.score(runs)` / `decode(run)` | `scoring.py` | runs → cached summaries / one decoded run for a chart |

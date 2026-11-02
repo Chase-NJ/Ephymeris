@@ -509,7 +509,7 @@ class Replayed:
     phases: tuple[str, ...]
     rows: tuple[tuple[str, str], ...]
     #: The phases that count an input they never act on (`ANALYTICS.md#phase-window-rates`).
-    windows: tuple[rt.Window, ...] = ()
+    rate_windows: tuple[rt.RateWindow, ...] = ()
 
 
 def replayed(document: dict[str, Any]) -> Replayed:
@@ -534,13 +534,11 @@ def replayed(document: dict[str, Any]) -> Replayed:
                           windows=record.naming.windows)
     starts = {now: a for now, a in actions if a.flags & rp.ACT_TRIAL_START}
     naming = record.naming
-    # Whose each state is: the snapshot's row map, or the task's only row.
-    row_of = naming.row_of if naming.row_of is not None else (
-        (naming.row,) * len(record.table.states) if naming.row is not None else None)
-    windows = (rt.windows_of(record.table, naming.phase_of, naming.inputs, row_of)
-               if naming.phase_of is not None else ())
+    row_of = tuple(naming.row_at(s) for s in range(len(record.table.states)))
+    rate_windows = (rt.rate_windows(record.table, naming.phase_of, naming.inputs, row_of)
+                    if naming.phase_of is not None else ())
     return Replayed(record.interp, None, tuple(_in_block(record, starts, t) for t in trials),
-                    record.phase_labels, record.rows, windows)
+                    record.phase_labels, record.rows, rate_windows)
 
 
 def _in_block(record: SpineRecord, starts: dict[int, rp.Actions], trial: tt.Trial) -> tt.ReplayTrial:

@@ -29,7 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Sequence
 
-from .rates import Window, WindowRate, window_rates
+from .rates import RateWindow, WindowRate, window_rates
 from .stats import _round, wilson_interval
 from .metric_summary import OVERALL_ID, MetricSummary
 from .legacy.decode import LegacyTable
@@ -134,11 +134,11 @@ def _classes(trials: Sequence[ReplayTrial]) -> tuple[ClassTally, ...]:
 
 def score(
     table: Sequence[ReplayTrial], *, rows: Sequence[tuple[str, str]], interp: int = 0,
-    windows: Sequence[Window] = (), labels: Sequence[str] = (), min_counted: int = 10,
+    rate_windows: Sequence[RateWindow] = (), labels: Sequence[str] = (), min_counted: int = 10,
 ) -> ReplayScore:
     """The tallies of `table`. `rows` are the task's (id, name), in its order;
     trials no row claims are tallied under a row of their own, id None.
-    `windows` are the phases whose rates are read (`rates.windows_of`), and
+    `rate_windows` are the phases whose rates are read (`rates.rate_windows`), and
     `labels` the phases' kinds."""
     done = [t for t in table if t.complete]
     known = [r for r, _ in rows]
@@ -162,7 +162,7 @@ def score(
         rewarded=Proportion(n=sum(1 for t in done if t.rewarded), of=len(done)),
         hits=sum(1 for t in done if t.correct),
         counted=sum(1 for t in done if t.correct is not None),
-        rates=window_rates(table, windows, rows=rows, labels=labels, min_counted=min_counted),
+        rates=window_rates(table, rate_windows, rows=rows, labels=labels, min_counted=min_counted),
     )
 
 

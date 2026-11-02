@@ -25,9 +25,9 @@ TRIAL_MS = 18000
 ROWS = (("cs_plus", "CS+"), ("cs_minus", "CS−"))
 
 
-def windows(*phases: int, channel: str = "lick_spout", rows=ROWS) -> tuple[rates.Window, ...]:  # noqa: ANN001
+def windows(*phases: int, channel: str = "lick_spout", rows=ROWS) -> tuple[rates.RateWindow, ...]:  # noqa: ANN001
     """Every row's window on `channel` in each of `phases`."""
-    return tuple(rates.Window(r, p, channel) for r, _ in rows for p in phases)
+    return tuple(rates.RateWindow(r, p, channel) for r, _ in rows for p in phases)
 
 
 WINDOWS = windows(0, 1, 2, 3)
@@ -163,8 +163,8 @@ def table_of(raw: dict) -> tuple[rp.Table, tuple[int | None, ...], tuple[str, ..
 
 
 def test_a_window_is_a_phase_that_counts_an_input_it_never_acts_on():
-    assert set(rates.windows_of(*table_of(pavlovian.definition()))) == set(windows(0, 1, 2, 3))
-    assert set(rates.windows_of(*table_of(pavlovian.definition(trace=False)))) == set(windows(0, 1, 2))
+    assert set(rates.rate_windows(*table_of(pavlovian.definition()))) == set(windows(0, 1, 2, 3))
+    assert set(rates.rate_windows(*table_of(pavlovian.definition(trace=False)))) == set(windows(0, 1, 2))
 
 
 def test_each_row_has_the_windows_of_its_own_bindings():
@@ -172,7 +172,7 @@ def test_each_row_has_the_windows_of_its_own_bindings():
     second lick sensor, CS+ has no `lick_2` windows and CS− no `lick_spout` ones."""
     raw = pavlovian.definition()
     raw["rows"][1]["bind"]["lick"] = "lick_2"
-    found = set(rates.windows_of(*table_of(raw)))
+    found = set(rates.rate_windows(*table_of(raw)))
     assert found == set(windows(0, 1, 2, 3, rows=ROWS[:1])) | set(windows(0, 1, 2, 3, channel="lick_2",
                                                                            rows=ROWS[1:]))
     table = [trial(0, "cs_plus", {1: 4}), trial(1, "cs_minus", {1: 6})]
@@ -189,15 +189,15 @@ def test_a_phase_one_row_acts_on_is_a_window_only_for_the_others():
     raw["spine"][2]["abortOnEnter"] = "early"
     raw["rows"][0]["bind"]["early"] = "lick_spout"
     raw["rows"][1]["bind"]["early"] = "right_well"
-    found = set(rates.windows_of(*table_of(raw)))
-    assert rates.Window("cs_plus", 2, "lick_spout") not in found
-    assert rates.Window("cs_minus", 2, "lick_spout") in found
+    found = set(rates.rate_windows(*table_of(raw)))
+    assert rates.RateWindow("cs_plus", 2, "lick_spout") not in found
+    assert rates.RateWindow("cs_minus", 2, "lick_spout") in found
     assert {w for w in found if w.channel == "right_well"} == set(), "an abort input is never a window"
 
 
 def test_a_table_that_cannot_say_which_row_a_state_is_has_no_windows():
     table, phase_of, inputs, _ = table_of(pavlovian.definition())
-    assert rates.windows_of(table, phase_of, inputs, None) == ()
+    assert rates.rate_windows(table, phase_of, inputs, None) == ()
 
 
 def test_a_wait_a_window_and_an_abort_are_not_windows():
@@ -207,7 +207,7 @@ def test_a_wait_a_window_and_an_abort_are_not_windows():
 
     raw = fixture.two_afc()
     raw["spine"][1]["abortOnEnter"] = "left"
-    assert rates.windows_of(*table_of(raw)) == ()
+    assert rates.rate_windows(*table_of(raw)) == ()
 
 
 def test_a_cached_rates_low_confidence_is_judged_again_on_every_request():

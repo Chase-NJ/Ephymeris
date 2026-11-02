@@ -1268,8 +1268,8 @@ SHAPES = (
             f("n", INT, doc="Trials the mean is over."),
             f("mean", nullable(FLOAT), doc="Events per second, the mean of each trial's rate; null with no "
               "trials, never 0.0."),
-            f("low", nullable(FLOAT), doc="95% Student-t interval over trials (`ANALYTICS.md#uncertainty`); "
-              "null with fewer than two trials."),
+            f("low", nullable(FLOAT), doc="Student-t interval over trials, nominally 95%; it covers a bursty "
+              "licker's rate less often (`ANALYTICS.md#uncertainty`). Null with fewer than two trials."),
             f("high", nullable(FLOAT)),
         ),
         doc="A mean over trials with its interval.",

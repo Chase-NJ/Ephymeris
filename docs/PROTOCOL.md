@@ -2547,7 +2547,7 @@ A mean over trials with its interval.
 |---|---|---|
 | `n` | number | Trials the mean is over. |
 | `mean` | number \| null | Events per second, the mean of each trial's rate; null with no trials, never 0.0. |
-| `low` | number \| null | 95% Student-t interval over trials (`ANALYTICS.md#uncertainty`); null with fewer than two trials. |
+| `low` | number \| null | Student-t interval over trials, nominally 95%; it covers a bursty licker's rate less often (`ANALYTICS.md#uncertainty`). Null with fewer than two trials. |
 | `high` | number \| null |  |
 
 <a id="shape-recordingbox"></a>

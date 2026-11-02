@@ -154,7 +154,7 @@ def _replay_summary(document: dict[str, Any], base: dict[str, Any], min_counted:
         return RunSummary(status="diverged", detail=result.divergence.detail,
                           divergence=result.divergence, **base)
     score = table_metrics.score(result.trials, rows=result.rows, interp=result.interp,
-                                windows=result.windows, labels=result.phases, min_counted=min_counted)
+                                rate_windows=result.rate_windows, labels=result.phases, min_counted=min_counted)
     return RunSummary(
         status="ok",
         metrics=table_metrics.correct_metrics(score, min_counted=min_counted),

@@ -23,8 +23,10 @@ import {
   removeRow,
   setBinding,
   setMapEntry,
+  setPhase,
   type SpineDefinition,
 } from "./spine";
+import { PHASE_FIELDS, phaseDetail, phaseFields } from "./spineLabels";
 
 /** The go/no-go seed, named and bound — as `taskdef/seeds.py` writes it. */
 function goNoGo(): SpineDefinition {
@@ -141,6 +143,30 @@ describe("phases", () => {
     expect(insertPhase(goNoGo(), 0, "wait").spine[0]!).toEqual({ phase: "wait", on: "port" });
     expect(insertPhase(goNoGo(), 0, "counter").spine[0]!).toEqual({ phase: "counter", on: "port", count: 5 });
     expect(insertPhase(goNoGo(), 0, "response").spine[0]!).toEqual({ phase: "response", responses: [], ms: 3000 });
+  });
+});
+
+describe("a phase's watched inputs", () => {
+  // `watch`: inputs counted while in the phase, which never move it
+  // (`TASKS.md#pavlovian-conditioning`), the counts a rate window reads.
+  it("are a field every phase kind offers, apart from the Response window's Watches", () => {
+    for (const kind of Object.keys(PHASE_FIELDS)) {
+      const watch = phaseFields(kind).find((f) => f.key === "watch");
+      expect(watch, kind).toEqual({ key: "watch", label: "Counts, never acts on", kind: "inputs", optional: true });
+    }
+  });
+
+  it("show in the diagram's caption", () => {
+    expect(phaseDetail({ phase: "delay", ms: 1000, watch: ["lick"] })).toBe("1000 ms · counts lick");
+    expect(phaseDetail({ phase: "delay", ms: 1000, watch: [] })).toBe("1000 ms");
+  });
+
+  it("stay with their phase through an edit to it and a phase inserted before it", () => {
+    const def = goNoGo();
+    const watched = setPhase(def, 1, { ...def.spine[1], watch: ["port"] });
+    const edited = setPhase(watched, 1, { ...watched.spine[1], ms: 750 });
+    expect(edited.spine[1]).toMatchObject({ ms: 750, watch: ["port"] });
+    expect(insertPhase(edited, 0, "delay").spine[2].watch).toEqual(["port"]);
   });
 });
 

@@ -60,7 +60,12 @@ export interface PhaseField {
 
 /** Every phase's fields after its own: what any phase may name. A new plain
  *  field of the palette is one line here. */
-const COMMON: PhaseField[] = [{ key: "outputs", label: "Outputs on", kind: "outputs" }];
+const COMMON: PhaseField[] = [
+  { key: "outputs", label: "Outputs on", kind: "outputs" },
+  // Counted and strobed, never acted on: a rate window's counts. Its label keeps
+  // it apart from the Response window's "Watches", which a response moves.
+  { key: "watch", label: "Counts, never acts on", kind: "inputs", optional: true },
+];
 
 const AFTER_EDGE: PhaseField[] = [
   { key: "abortOnRelease", label: "Abort on release of", kind: "input", optional: true },
@@ -116,5 +121,6 @@ export function phaseDetail(phase: SpinePhase): string {
   if (phase.line) parts.push(`pays ${phase.line}`);
   if (phase.ms !== undefined) parts.push(`${phase.ms} ms`);
   if (phase.timeoutMs !== undefined) parts.push(`≤ ${phase.timeoutMs} ms`);
+  if (phase.watch?.length) parts.push(`counts ${phase.watch.join(" · ")}`);
   return parts.join(" · ");
 }

@@ -43,6 +43,8 @@ export interface SpinePhase {
   countMax?: number;
   ratios?: number[];
   endsSession?: boolean;
+  /** Input slots counted while in the phase, which never move it (`TASKS.md#pavlovian-conditioning`). */
+  watch?: string[];
 }
 
 export interface MapEntry {

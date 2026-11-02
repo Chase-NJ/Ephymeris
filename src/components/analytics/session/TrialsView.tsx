@@ -12,7 +12,16 @@ import { colorForIndex } from "@/lib/analytics/view";
  * and when each phase began. Every value is the sidecar's; nothing here
  * decides an outcome.
  */
-export function TrialsView({ replay, table }: { replay: ReplayScore; table: TrialTable | null }) {
+export function TrialsView({
+  replay,
+  table,
+  rates: showRates = true,
+}: {
+  replay: ReplayScore;
+  table: TrialTable | null;
+  /** False leaves out the phase-window rates, for a run whose counted inputs nothing touched. */
+  rates?: boolean;
+}) {
   const rows = table ? trialRows(table) : [];
   const phases = table?.phases ?? [];
   const showPhases = rows.some((row) => row.phases.length > 0);
@@ -45,7 +54,7 @@ export function TrialsView({ replay, table }: { replay: ReplayScore; table: Tria
         );
       })}
 
-      {rates.length > 0 && (
+      {showRates && rates.length > 0 && (
         <div className="border-t border-halo pt-1.5">
           <table className="w-full font-mono text-[10px] tabular-nums text-static/80">
             <thead className="text-left text-[9px] text-static/60">

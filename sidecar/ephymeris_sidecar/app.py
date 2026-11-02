@@ -1064,7 +1064,8 @@ class Application:
         if not 1 <= limit_ms <= _SIMULATE_LIMIT_MAX_MS:
             raise CommandError(ErrCode.TASK_INVALID, "A simulated session's time limit is 1 ms to 24 h.")
         raw = args["animal"]
-        animal = simulation.Animal(raw["kind"], raw.get("response"), raw.get("permille", 800))
+        animal = simulation.Animal(raw["kind"], raw.get("response"),
+                                   **({"permille": raw["permille"]} if "permille" in raw else {}))
         chosen = seed if seed is not None else task_seed.new_trial_seed()
 
         def run() -> dict[str, Any]:

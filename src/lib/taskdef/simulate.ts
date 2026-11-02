@@ -88,7 +88,7 @@ export function endedLabel(sim: TaskSimulation): string {
       return "ended when the blocks ran out";
     case "lastTrial":
       return "ended at a last-trial state";
-    default:
+    case "timeLimit":
       return `ended at its ${formatMinutes(sim.limitMs)} time limit`;
   }
 }

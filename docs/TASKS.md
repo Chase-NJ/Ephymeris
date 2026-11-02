@@ -258,6 +258,7 @@ Skip reasons, each reported with its path:
 | `sketch folders belong inside a category folder` | A valid sketch at the root |
 | `couldn't be read: <error>` | Permissions or I/O failure |
 | `a rebuilt copy of a sketch this version no longer ships` | A `rig/sketches/` leftover |
+| `a bundled sketch is already called …` | A generated task shadowing a bundled name |
 
 ### Decode-only sketches
 
@@ -268,7 +269,6 @@ A sketch whose `task.json` says `"decodeOnly": true` stays in the library so the
 - the sidecar refuses it with `SKETCH_DECODE_ONLY` on `flash.enqueue`, `port.sendStart` and `sessions.confirmMapping`, whatever a picker offers.
 
 `parse_profile` ignores the key, so marking a sketch leaves its `profile_hash` and its runs' history alone (`test_decode_only.py` pins it). `GRGL_Sim` is the one decode-only sketch the app ships.
-| `a bundled sketch is already called …` | A generated task shadowing a bundled name |
 
 ### Library states
 
@@ -1629,7 +1629,7 @@ The editor's **Simulate** panel (`SimulatePanel`) runs the unsaved definition ag
 
 - **Levels stay physical.** The animal never raises a line that is up, and lets go of one as soon as the state in force stops watching it, which the board never strobes.
 - **It acts 200–600 ms after a state is entered**, drawn from its own RNG and always before the state's timer, and presses a Counter's line N times at that pace.
-- **An input the task only counts** (a Pavlovian task's licks) is never touched, so its phase-window rates read zero, and the panel says so.
+- **An input the task only counts** (a Pavlovian task's licks) is never touched, so the panel leaves its phase-window rates out and says so.
 - **One seed repeats a run.** It is the run's `trial_seed` and also seeds the animal's own `random.Random`, never the session RNG, so the animal cannot move the board's draws. A blank seed field draws a fresh one, shown with the result.
 
 **Where it ends** is the board's rule, as replay reads it: the trial cap, the blocks running out, a last-trial state, or the first trial start after the panel's time limit (60 min by default), as the runner's auto-STOP ends a session. A session with no trial start within 10 minutes after the limit is cut off there, like a crashed file.

@@ -1,39 +1,15 @@
 """A spine task run against a simulated animal (`TASKS.md#simulating-a-spine-task`).
 
-Simulate checks a task before anything is compiled or flashed
-(`0003-phase-spine-task-model.md#ui`). It steps replay's own core with an
-animal in the loop, then writes the run document a board running that table
-with that animal would have produced:
+That section says what the animals do and where a session ends; this file is
+how. It steps replay's own core with the animal in the loop and writes the run
+document a board running that table with that animal would have produced:
 
     result = simulate(snapshot, Animal("correct"), seed)
     summarize(result.document, profile)   # scored as Analytics scores a run
 
-So Simulate's numbers are Analytics' by construction, and the replay check
-runs on every simulation: a simulated run that diverged would be a bug here.
-
-**The animal reads the table, never a phase's name.** In the state the core
-rests in, it can wait for the timer or make one of the state's watched edges.
-It ranks each by the outcome classes the trial can still end in from there
-(`_rank`): a hit class first, then no class, then a miss. An engaged animal
-takes the best everywhere: it pokes at a Wait, sits through a Hold and leaves
-at a Wait for exit. At a trial's first response (`replay.RESPONSE`, while the
-core has none), its kind decides:
-
-    correct   the best, as everywhere: on a no-go row that is withholding
-    random    uniformly, among the state's edges and its timeout
-    biased    its `response` slot with `permille`/1000, else as random
-    silent    nothing, anywhere: no edge at all
-
-Its levels stay physical: it never raises a line that is up, and it lets a
-line go as soon as the state in force stops watching it, which the board
-never strobes. It acts `REACTION_MS` after a state is entered, always before
-the state's timer, and presses a Counter's line N times at that pace. An input
-counted but never acted on (a Pavlovian task's licks) is never touched.
-
-**Where it ends** is BoxSpine.h's rule, as `spine._session` reads it: the trial
-cap NT, the blocks running out, a last-trial state, or the first trial start
-after `limit_ms`, the runner's auto-STOP. A session no trial start ends within
-`GRACE_MS` after the limit is cut off there, like a crashed file.
+The animal ranks each option in a state by the outcome classes the trial can
+still end in from there (`_Animal._rank`), reading the table and never a
+phase's name.
 
 **Pure**, like the rest of `stream/`: the animal's randomness is its own
 seeded `random.Random`, never the session RNG, so it cannot move the board's
@@ -101,6 +77,8 @@ def simulate(snapshot: dict[str, Any], animal: Animal, seed: int, *,
         document["ts_data"] = _cut(record, edges, limit_ms + GRACE_MS)
         document["stop_reason"] = "simulated session cut off past its time limit"
     else:
+        # The input strobes and END_SESSION are all the board's file needs for
+        # replay to predict the rest; the stream it would have sent is that prediction.
         document["ts_data"] = _strobes(record, edges) + [[record.session_end, end]]
         document["ts_data"] = [list(s) for s in spine.expected_stream(spine.decode(document))]
     document["n_events"] = len(document["ts_data"])
@@ -275,11 +253,11 @@ class _Animal:
         if not options:
             return _WAIT
         responding = bool(s.flags & rp.RESPONSE) and core.response == rp.NONE
-        if responding and self.animal.kind in ("random", "biased"):
+        if responding and self.animal.kind == "biased":
             favoured = [o for o in options if o is not _WAIT and self.favoured >> o.input & 1]
-            if favoured and self.rng.randrange(rp.PERMILLE) < self.animal.permille \
-                    and self.animal.kind == "biased":
+            if favoured and self.rng.randrange(rp.PERMILLE) < self.animal.permille:
                 return self.rng.choice(favoured)
+        if responding and self.animal.kind in ("random", "biased"):
             return self.rng.choice(options)
         ranked = [(self._rank(s.on_timeout if o is _WAIT else o.next, core.outcome), o) for o in options]
         best = max(r for r, _ in ranked)

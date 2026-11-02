@@ -12,6 +12,7 @@ import pytest
 
 from ephymeris_sidecar.discovery import LIBRARY_ENV, discover
 from ephymeris_sidecar.rig import registry
+from ephymeris_sidecar.sketch_library import SketchLibrary
 from ephymeris_sidecar.tasks import profile as task_profile
 from tests.fixtures import spine as fixture
 from tests.live_sidecar import Refused
@@ -61,6 +62,20 @@ def test_the_mark_leaves_the_profile_hash_alone():
     assert raw.pop("decodeOnly") is True
     assert task_profile.profile_hash(task_profile.load_profile(str(GRGL_SIM))) == \
         task_profile.profile_hash(task_profile.parse_profile(raw, vocabulary=registry.vocabulary()))
+
+
+async def test_a_run_a_decode_only_sketch_recorded_still_finds_its_profile(tmp_path, monkeypatch):
+    # A run's file names its sketch; Analytics resolves it against the library
+    # (`DATA.md#orphan-adoption`), decode-only or not.
+    monkeypatch.setenv(LIBRARY_ENV, str(FIRMWARE))
+
+    async def announce() -> None:
+        return None
+
+    library = SketchLibrary(tmp_path / "tasks", tmp_path / "pinned", on_rescan=announce)
+    path = library.path_for_name("GRGL_Sim")
+    assert path is not None and library.find(path).decode_only
+    assert task_profile.load_profile(path) is not None
 
 
 @pytest.fixture

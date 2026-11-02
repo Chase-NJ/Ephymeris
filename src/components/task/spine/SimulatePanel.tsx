@@ -143,10 +143,10 @@ function SimulationResult({ sim, stale }: { sim: TaskSimulation; stale: boolean 
           {switchLabels(sim).join(" → ")}
         </p>
       )}
-      {sim.replay && <TrialsView replay={sim.replay} table={sim.trialTable} />}
+      {sim.replay && <TrialsView replay={sim.replay} table={sim.trialTable} rates={false} />}
       {sim.replay && sim.replay.rates.length > 0 && (
         <p className="text-[10px] leading-relaxed text-static/80">
-          The simulated animal never touches an input the task only counts, such as licks, so those rates read zero.
+          Phase-window rates are not simulated: the animal never touches an input the task only counts, such as licks.
         </p>
       )}
       {curves.length > 0 && (

@@ -163,10 +163,10 @@ describe("a phase's watched inputs", () => {
 
   it("stay with their phase through an edit to it and a phase inserted before it", () => {
     const def = goNoGo();
-    const watched = setPhase(def, 1, { ...def.spine[1], watch: ["port"] });
-    const edited = setPhase(watched, 1, { ...watched.spine[1], ms: 750 });
+    const watched = setPhase(def, 1, { ...def.spine[1]!, watch: ["port"] });
+    const edited = setPhase(watched, 1, { ...watched.spine[1]!, ms: 750 });
     expect(edited.spine[1]).toMatchObject({ ms: 750, watch: ["port"] });
-    expect(insertPhase(edited, 0, "delay").spine[2].watch).toEqual(["port"]);
+    expect(insertPhase(edited, 0, "delay").spine[2]!.watch).toEqual(["port"]);
   });
 });
 

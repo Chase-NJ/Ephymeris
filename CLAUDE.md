@@ -25,7 +25,7 @@ that are easy to break). For scoring, trials or `.mat`/`.json` files, load `beha
 npm run tauri:dev                                   # full app
 npm run check                                       # protocol freshness + tsc + vitest (src/lib)
 npm run gen:protocol                                # after editing protocol/schema.py
-cd sidecar && .venv/bin/python -m pytest            # sidecar suite (CI adds -n 4)
+cd sidecar && .venv/bin/python -m pytest            # sidecar suite (CI adds -n 4, then runs -m load alone)
 cd sidecar && .venv/bin/python -m pytest tests/test_x.py -k name
 cd src-tauri && cargo test
 sh firmware/libraries/BehaviorBox/extras/host_test/run.sh   # also run_box/run_interp/run_spine/run_diff.sh

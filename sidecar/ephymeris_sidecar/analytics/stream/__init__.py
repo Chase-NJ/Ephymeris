@@ -20,6 +20,7 @@ table: a spine run's by replay, a legacy run's by the legacy decoder.
 | `summary` | One run's whole result (`summarize`), and its trial table for the wire |
 | `curves` | The run trial by trial: learning curves and the strategy walk |
 | `false_starts` | Which restarted runs to set aside |
+| `live` | A spine run replayed as it runs: where its board is, and its numbers so far |
 | `stats`, `document`, `metric_summary` | The Wilson interval; reading `ts_data` out of a file's document; the metric shape |
 
 Cached summaries are versioned by `scoring.current_version`, which moves by

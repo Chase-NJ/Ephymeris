@@ -529,8 +529,9 @@ under the session controls: click **Resolve** once you have dealt with it.
 - **The state chip** shows the box's state. `IN_SESSION` (green) means running. `IDLE` means not running.
   `FLASHING` and `RESETTING` are brief. `ERROR` (red) means something went wrong; hover over it to read why.
 - **Live metrics** show how the animal is doing, such as the rolling chance of a correct answer for each
-  odor, with a small trend line. They fill in as trials complete. A spine task has none yet, and its tile
-  says so; every event is still recorded.
+  odor, with a small trend line. They fill in as trials complete. A spine task shows the chance of a
+  correct trial for each trial type, and overall, counted the same way Analytics will count the finished
+  run.
 - **Finished — …** replaces the metrics when the box's run is over, with the reason. *Finished —
   BF_END_SESSION received* means the box ended on its own; *Finished — board disconnected* means it lost
   its connection (see below).
@@ -539,6 +540,12 @@ Click a tile, or a star, to see that box's full panel: its **Rolling accuracy**,
 diagram with the state the box is in right now, a chart of each odor's answers over time, the
 **Outcome mix**, the **Live metrics** and the **Recent strobes** (the latest events from the board).
 **Back to overview** (or Esc) returns.
+
+A spine task's panel shows its phases left to right instead (Wait, Present, Response window and so on),
+with the box's current phase lit, its trial type and trial number underneath, a count of how its trials
+ended, and the same live metrics. If the panel says **Diverged**, the box did something its task does not
+do: it still records every event, but the run will not be scored, and its numbers disappear. Note which
+box and tell whoever looks after the rig.
 
 ![A box's full panel for remy1: Back to overview at the top left, Start/Stop/Reset and Rolling accuracy 0.70 at the top right, the Trial flow diagram with the current state lit, the P(right | odor) chart, the Outcome mix, Live metrics and Recent strobes](images/box-panel.webp)
 

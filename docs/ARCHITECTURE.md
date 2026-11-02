@@ -104,7 +104,9 @@ flowchart LR
     boards["Up to 6 × Mega2560"]
     store[("ephymeris.db<br/>session files")]
     rhx["Intan RHX<br/>(recordings only)"]
+    scorer["Live scorer<br/>(Python child, spine runs only)"]
     shell -->|"spawns, holds stdin open,<br/>kills on exit"| sidecar
+    sidecar -->|"spawns on the first spine run,<br/>pipes, kills on exit"| scorer
     shell -->|"serves"| webview
     webview <-->|"WebSocket on 127.0.0.1<br/>commands, replies, events"| sidecar
     sidecar -->|"serial, arduino-cli"| boards
@@ -117,6 +119,7 @@ flowchart LR
 | **Sidecar** (`sidecar/ephymeris_sidecar/`) | Everything stateful: serial ports, `arduino-cli`, SQLite, session files, Intan RHX, the port state machine | Own settings — it receives them |
 | **Shell** (`src-tauri/`) | Spawning the sidecar, settings persistence, OS dialogs and windows | Hardware or session logic |
 | **Webview** (`src/`) | Rendering what the sidecar reports; editing settings | Touch serial ports or `arduino-cli`; predict a state transition |
+| **Live scorer** (`sessions/scorer.py`), a child of the sidecar | Scoring every box's running spine run, from the strobes the sidecar sends it | Hold state the sidecar needs; touch a port, a file or the database ([The live scorer](#the-live-scorer)) |
 
 ### Rules that explain most decisions
 
@@ -125,8 +128,9 @@ flowchart LR
 2. **A serial port has exactly one owner.** This is why the [port state machine](#port-state-machine) exists.
 3. **Box number 1–6 is the key, never a port address.** Windows renumbers COM ports across reboots; the
    sidecar resolves `box → hardware_id → current address` internally ([Box bindings](#box-bindings)).
-4. **Nothing slow or optional may stall a session.** The backup mirror ([DATA.md](DATA.md#backup-mirroring))
-   and Intan RHX ([RECORDING.md](RECORDING.md#the-rule)) may be slow, absent or dead.
+4. **Nothing slow or optional may stall a session.** The backup mirror ([DATA.md](DATA.md#backup-mirroring)),
+   Intan RHX ([RECORDING.md](RECORDING.md#the-rule)) and the [live scorer](#the-live-scorer) may be slow,
+   absent or dead.
 5. **Data is written as it happens.** Every strobe is fsync'd to the animal's `.tsv` on arrival
    ([DATA.md](DATA.md#crash-safety)).
 
@@ -190,6 +194,45 @@ With no shell (a plain-browser dev preview), `src/lib/ws/client.ts` reads a manu
 If the sidecar dies, `sidecar://down` is surfaced and the user restarts the app. A silent respawn would
 resurrect the process without the port ownership or session state it had. For the same reason a group is
 never resumed mid-run after a restart; continuing *between* groups is supported ([Group step](#group-step)).
+
+### The live scorer
+
+A running spine run's live numbers are a whole replay of its stream so far
+([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#live-scoring)): tens of milliseconds
+at a thousand trials. On any thread of the sidecar that work holds the GIL every session thread needs to
+write and fsync its next strobe ([DATA.md](DATA.md#written-live)); six boxes so scored put a strobe's
+write most of a second behind. So it runs in **one child process for every box**, `sessions/scorer.py`,
+which can hold nothing the sidecar needs.
+
+> [!IMPORTANT]
+> **The scorer dies with the sidecar, is never respawned, and is never waited on.**
+> - It is a `multiprocessing` child started with `spawn` on every platform, from a sender thread, never the
+>   session thread or the loop. It starts when a mapping holding a spine run is confirmed
+>   (`SessionRunner.configure`), so the interpreter it starts is paid for during set-up, not while a box
+>   strobes.
+> - **It yields the CPU.** It runs below the sidecar: `os.setpriority`, `NICENESS` lower, set by the sidecar
+>   the moment it starts and by the child itself; on Windows the child sets `BELOW_NORMAL_PRIORITY_CLASS`.
+>   It scores one run at most once per `SCORE_INTERVAL_S` and rests after each score as long as the score
+>   took, so it uses at most about half a core. On a machine with fewer free cores than busy threads the
+>   session threads run first.
+> - It exits when its request pipe closes, which a dead sidecar's does, or when its parent changes; the
+>   sidecar kills it on the way out (`Application.stop`), without joining it. A child seen dead is reaped on
+>   the scorer's own reader thread, so it never lingers as a zombie.
+> - In the frozen build it is the sidecar's own executable started again: `packaging/entry.py` calls
+>   `multiprocessing.freeze_support()` before anything parses arguments, which is where that run turns into
+>   the child instead of a second sidecar. Remove it and the frozen sidecar starts a copy of itself.
+> - If it cannot start or dies, it is down for the rest of the sidecar's life: every box's live numbers
+>   say `unavailable` (`LiveReplay.unavailable`), and the token, the strobes, the files and the session are
+>   untouched. Analytics scores the run afterwards as ever.
+
+- **Fed deltas.** A box sends a run's header once, then only the strobes since its last request. The
+  session thread only appends to the live replay ([Live session views](#live-session-views)); requests are
+  made on the loop, handed to the sender thread, and written to the pipe there, so nothing on the session
+  path waits on the child.
+- **Coalesced.** Each run has one request out at a time. Requests waiting to be sent merge, and the child
+  drains every request before it scores, then scores each run once at its latest count. A slow score drops
+  the stale requests behind it; nothing queues.
+- **Answers** come back on a reader thread and are handed to the loop, which broadcasts `session.replay`.
 
 ### Which sidecar runs
 
@@ -327,7 +370,8 @@ After `auth`, the server sends every registered **snapshot** to that client alon
 (`Application.register`): one `port.state` per box (with `prev` equal to `state`, reason
 `"initial state"`), one `port.telemetry` per hand-started Debug run (`debug_run.py`), then
 `boards.presence`, `sketches.updated`, `tasks.updated`, `cohorts.updated`, `prefixes.updated`,
-`flash.queue`, `utility.updated`, `backup.status` and `intan.status`. Events are otherwise sent only on
+`flash.queue`, `utility.updated`, `backup.status`, `intan.status`, and one `session.replay` per box whose
+latest run is a spine run (`sessions/live_replay.py`). Events are otherwise sent only on
 change, so without it a client connecting in a quiet period, or a webview that reloaded, would have to
 guess. A snapshot that raises is logged and skipped rather than dropping the connection.
 
@@ -336,7 +380,8 @@ broadcasts the same provider's payload, so what a client that reconnects is told
 one that stayed was told. State an event carries belongs in a snapshot; an event that reports a change
 (`port.output`, a `port.state` transition) is broadcast as it happens.
 
-**Live session state is not replayed.** A reconnecting client asks: `sessions.active` to discover what is
+**Live session state is not replayed**, except a spine run's live replay, whose token a reloaded Mission
+Control must land on mid-trial ([Live session views](#live-session-views)). A reconnecting client asks: `sessions.active` to discover what is
 running with no prior ids, or `sessions.status` for a session it knows. The runner is the authority on the
 confirmed mapping, and asking beats a snapshot that may be stale on arrival; `session.lifecycle`
 broadcasts keep the answer current afterwards. A broadcast that lands while `sessions.active` is in
@@ -1482,6 +1527,37 @@ Mission Control's star panel and Debug Mode's live tile share `MetricStrip` and 
 > which is capped and trimmed oldest-first. A real session emits thousands of strobes; deriving from the
 > ring would silently drop the early trials — the part of a learning curve you most want.
 
+**A spine task's panel is the sidecar's live replay, and only that.** The runner replays a spine run as
+its strobes arrive ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#live-scoring)) and
+reports `session.replay`: the state and phase the board is in, the open and last trial rows, and P(correct
+| row) so far. The star panel draws the spine's phases from the profile snapshot (`lib/tasks/spineGraph.ts`,
+`LiveSpine`) with the token on the reported `phase`, and the tile and panel strips show the reported
+metrics (`lib/sessions/liveReplay.ts`). For a profile with a `spine`, `StarPanel` never mounts the legacy
+panels (`useLiveTrials`, `useLiveNode`, `LivePanels`), which decode strobe names; a test greps the spine
+path for them. A `diverged` run shows its divergence in the warning colour, with no token and no numbers.
+
+- **One step per tick, on the board's evidence.** An input edge is held until its tick is closed, then
+  stepped with every edge of that tick: the board strobes a tick's inputs before anything else.
+- **Between strobes, the board's clock.** A state the board leaves without strobing (a Wait timing out) is
+  reported when its timer runs out on the board, estimated from the last strobe's tick and the host's
+  monotonic clock, 30 ms late so an edge on its way still wins. The payload marks it `provisional` until a
+  strobe confirms it. One loop timer per box; the board is never polled, and a later strobe replaces the
+  estimate.
+- **Off the strobe's path.** The feed runs on the port's session thread after the strobe's fsync: a median
+  of 44–67 µs and at most 0.9 ms, measured on a running sidecar. Strobes that arrive within one loop turn
+  are handed to the loop once. The check and the numbers (`live.scored`, a whole replay) run in [the live
+  scorer](#the-live-scorer), a process of their own, one request out at a time per box;
+  `test_live_replay_load.py` holds six boxes' write-and-fsync latency with live scoring on to twice the
+  figure with it off, plus a 5 ms floor (an fsync's own spread), and checks the scorer runs below the
+  sidecar. It runs alone, after CI's parallel suite: beside other tests, their file traffic stalls an fsync
+  far more than live scoring does. A box keeps its last payload after its run ends, until it starts again or a new
+  mapping is confirmed, and `session.replay` is replayed on connect.
+- **Unavailable, never wrong.** With the scorer down, the payload's `unavailable` says why and the numbers
+  go, while the token carries on. A feed that fails makes the whole replay `unavailable` for the rest of
+  the run: it no longer describes the run, so it never ends with numbers.
+- **The star.** A spine star's temperature is the replay's pooled P(correct) (`spineAccuracy`), never the
+  legacy name fold `useBoxAccuracies` runs for other tasks.
+
 **The session store forgets a run when the sidecar reports the next one began**, never on a click, so a
 refused start leaves the last run on screen. A port entering `IN_SESSION` (a real transition, not the
 connect replay) clears that box. Debug Mode's `port.telemetry` going from not running to running, which
@@ -1647,6 +1723,7 @@ own chunk, costs nothing until the first export, and a failure to load it loses 
 | `boards/` | `BoardTool`, the gRPC and subprocess backends, generated `rpc/` stubs | [Flashing](#flashing) |
 | `utility.py` | The utility baseline and `identify` | [Hardware utility baseline](#hardware-utility-baseline) |
 | `debug_run.py` | Live scoring for a task started from Debug Mode | [Running a task from Debug Mode](#running-a-task-from-debug-mode) |
+| `sessions/live_replay.py` | A running spine run's live replay, reported as `session.replay` | [Live session views](#live-session-views) |
 | `sessions/` | `lifecycle.py` (the held session and its ordering), `runner.py`, `writer.py` (write-ahead `.tsv`), `matwriter.py`, `models.py`, `repository.py`, `paths.py` (`parse_name_date`), `recovery.py`, `tidy.py` | [Session lifecycle](#session-lifecycle), [DATA.md](DATA.md#per-animal-files) |
 | `cohorts/` | `db.py` (SQLite, schema, migrations), `models.py`, `repository.py`, `folders.py`, `grouping.py`, `members.py` (former members), `move.py` / `move_apply.py` (moving animals between cohorts: plan, then journal, copy, commit, clean up), `relocate.py` (moving a data folder with its records' paths) | [DATA.md](DATA.md#cohorts-animals-and-groups), [DATA.md](DATA.md#moving-animals-between-cohorts) |
 | `tasks/` | `profile.py` (`task.json`, hashes), `start_command.py`, `seed.py` | [TASKS.md](TASKS.md#task-profile) |

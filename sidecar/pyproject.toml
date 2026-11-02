@@ -72,3 +72,6 @@ include = ["ephymeris_sidecar*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "load: times writes against each other, so CI runs it alone, after the parallel suite",
+]

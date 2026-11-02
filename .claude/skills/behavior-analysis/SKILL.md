@@ -22,7 +22,7 @@ Codes mean nothing without the per-machine strobe vocabulary and the run's task 
 | Run kind | Path | Read |
 |---|---|---|
 | Legacy (GRGL trial runner) | `stream/legacy/decode.py` `table_of` → trial table; `legacy/trials.py` `MetricAccumulator.offer(code)` classifies hit / miss / excluded one strobe at a time (Mission Control scores live with it too) | `ANALYTICS.md#how-a-legacy-run-becomes-a-trial-table`, `ANALYTICS.md#trials-hits-misses-and-exclusions` |
-| Spine (state-table interpreter) | `stream/replay.py` re-runs the firmware's interpreter from table + params + seed + input edges; `stream/spine.py` `replayed(document)` compares and returns the divergence or the trial table; `stream/trial_table.py` builds the rows | `ANALYTICS.md#how-a-spine-run-is-scored`, `ANALYTICS.md#diverged-and-unreplayable-runs` |
+| Spine (state-table interpreter) | `stream/replay.py` re-runs the firmware's interpreter from table + params + seed + input edges; `stream/spine.py` `replayed(document)` compares and returns the divergence or the trial table; `stream/trial_table.py` builds the rows. Live, `stream/live.py` follows the board strobe by strobe for Mission Control's token, and the stream so far is scored in a child process (`sessions/scorer.py`) | `ANALYTICS.md#how-a-spine-run-is-scored`, `ANALYTICS.md#diverged-and-unreplayable-runs`, `ANALYTICS.md#live-scoring`, `ARCHITECTURE.md#the-live-scorer` |
 
 Trial boundaries always come from `boundaries_for(profile)` (`ANALYTICS.md#boundary-codes`). No profile:
 `legacy/infer.py` `infer_profile(codes)`; which profile wins is the ladder in `ANALYTICS.md#which-profile-decodes-a-run`.
@@ -60,6 +60,6 @@ version: see the canary rule in `DATA.md#caching` and `test_the_score_version_pi
 ## Tests
 
 `sidecar/tests/test_analytics_*.py`, `test_legacy_*.py`, `test_replay_trial_table.py`, `test_spine_analytics.py`,
-`test_phase_rates.py`, `test_pavlovian.py`, `test_matwriter.py`, `test_derived_trials.py`. `test_analytics_stream_is_pure.py` keeps `stream/` free of
+`test_phase_rates.py`, `test_pavlovian.py`, `test_live_replay*.py`, `test_live_scorer.py`, `test_matwriter.py`, `test_derived_trials.py`. `test_analytics_stream_is_pure.py` keeps `stream/` free of
 files, database and clock. Never open `fixtures/legacy_pin.json` or `legacy_corpus.json`; to inspect a case,
 load it in Python and print only the fields you need.

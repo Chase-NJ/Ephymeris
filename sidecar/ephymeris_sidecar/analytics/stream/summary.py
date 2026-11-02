@@ -17,7 +17,7 @@ from typing import Any
 from ...tasks.profile import TaskProfile
 from .document import _duration_ms, codes_of
 from . import legacy, rates, table_metrics
-from .spine import Divergence, SpineDecodeError, is_spine_run, replayed
+from .spine import Divergence, Replayed, SpineDecodeError, is_spine_run, replayed
 from .spine import trial_table as spine_table
 from .engagement import TrialEngagement, tally_engagement
 from .outcomes import ConditionOutcomes, TrialOutcomes, tally_conditions, tally_outcomes
@@ -144,6 +144,13 @@ def summarize(
     )
 
 
+def replay_score(result: Replayed, min_counted: int) -> table_metrics.ReplayScore:
+    """A replayed spine run's tallies and rates: the one call Analytics
+    (`summarize`) and live scoring (`live.scored`) both make, so they agree."""
+    return table_metrics.score(result.trials, rows=result.rows, interp=result.interp,
+                               rate_windows=result.rate_windows, labels=result.phases, min_counted=min_counted)
+
+
 def _replay_summary(document: dict[str, Any], base: dict[str, Any], min_counted: int) -> RunSummary:
     """A spine run: `ok` with its trial-table metrics, `diverged`, or `unreplayable`."""
     try:
@@ -153,8 +160,7 @@ def _replay_summary(document: dict[str, Any], base: dict[str, Any], min_counted:
     if result.divergence is not None:
         return RunSummary(status="diverged", detail=result.divergence.detail,
                           divergence=result.divergence, **base)
-    score = table_metrics.score(result.trials, rows=result.rows, interp=result.interp,
-                                rate_windows=result.rate_windows, labels=result.phases, min_counted=min_counted)
+    score = replay_score(result, min_counted)
     return RunSummary(
         status="ok",
         metrics=table_metrics.correct_metrics(score, min_counted=min_counted),

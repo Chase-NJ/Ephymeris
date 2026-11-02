@@ -45,6 +45,7 @@ The [worked example](#a-worked-example) shows all of it on thirty strobes.
 | [`stream/spine.py`](stream/spine.py) | What must a spine run's board have sent, and did it? Reads the table, parameters, seed and input edges out of the run's own document ([TASKS.md](../../../docs/TASKS.md#the-snapshot)), predicts every strobe from the inputs alone, a train running out included, and compares; and every pulse each train fired ([TASKS.md](../../../docs/TASKS.md#driven-outputs)) | a spine run's document → its divergence, or its trial table; its pulses |
 | [`stream/trial_table.py`](stream/trial_table.py) | What happened in each trial? ([the trial table](#the-trial-table)), the row both kinds of run share | state table + replayed actions → one row per trial |
 | [`stream/table_metrics.py`](stream/table_metrics.py) | A run's numbers ([metrics](#metrics-from-the-trial-table)) | trial table → outcome tallies, P(correct \| row), P(hit) per condition, rewarded |
+| [`stream/live.py`](stream/live.py) | Where is a running spine run's board, and what are its numbers so far? ([live scoring](#live-scoring)) | header + strobes so far → the state at a tick; the trial table and metrics |
 | [`stream/rates.py`](stream/rates.py) | How often did the animal lick in each phase, and more than at baseline? ([phase-window rates](#phase-window-rates)) | trial table + the phases that count an input → each row's rates and differences |
 | [`stream/stats.py`](stream/stats.py), [`stream/document.py`](stream/document.py), [`stream/metric_summary.py`](stream/metric_summary.py) | The Wilson interval and the t interval; reading `ts_data` out of a file; the one metric shape both scorers build | |
 
@@ -413,6 +414,30 @@ the label from the profile (`useTaskProfiles`, `metricLabels`), or a row reads `
 The within-session curves (`stream/curves.py`) replay the stream the same way; the panels that draw them
 are [learning curves](../../../docs/DATA.md#learning-curves) and the [strategy
 plane](../../../docs/DATA.md#strategy-plane).
+
+**A [spine run](#how-a-spine-run-is-scored) is scored live by the same replay** (`stream/live.py`),
+which `sessions/live_replay.py` feeds each strobe after it is fsync'd, and reports as `session.replay`:
+
+- **Where the board is.** `LiveReplay.feed` steps `replay.begin`/`replay.step` with the recorded input
+  edges. An edge is held until its tick is closed (a later tick's strobe, or a strobe at that tick that is
+  not an input's, since the board strobes inputs first), then the timers due before it run and the tick
+  is stepped once with all its edges. So the state it commits equals offline replay's at every tick
+  (`test_live_replay.py`). Between strobes, `at(tick)` runs only the core's timers, with the board's
+  tick estimated from the last strobe's and the host clock, so a state the board leaves silently (a
+  Wait timing out, an outcome's timeout into the ITI) is reported on time. That view is never committed,
+  and is reported `provisional` until a strobe confirms it.
+- **The numbers.** `live.scored` runs `spine.replayed` over the stream so far, then the `table_metrics`
+  calls `summary.summarize` makes. A stream cut mid-run reads as a crashed run: its open trial is in the
+  table, incomplete, and out of the metrics. So at `END_SESSION` the live figures are Analytics', by
+  construction; it runs at each trial start and at each recorded `TRIAL_START` or `END_SESSION`, in the
+  [live scorer](../../../docs/ARCHITECTURE.md#the-live-scorer), a process of its own, one at a time per
+  box. With the scorer down the live numbers are unavailable, never stale.
+- **Divergence** is that same check: the first strobe replay does not predict makes the box `diverged`
+  live, with no token and no numbers, as Analytics will not score it.
+
+Nothing in it reads a code's name, and `test_live_replay.py` replays a snapshot whose every name is
+changed to prove it. A spine task declares no `liveMetrics`, so its `MetricSet` scores nothing; Debug
+Mode runs no live replay.
 
 ## How a spine run is scored
 

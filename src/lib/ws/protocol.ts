@@ -147,6 +147,7 @@ export const EVT = {
   COHORTS_UPDATED: "cohorts.updated",
   PREFIXES_UPDATED: "prefixes.updated",
   SESSION_TELEMETRY: "session.telemetry",
+  SESSION_REPLAY: "session.replay",
   SESSION_ANIMAL_ENDED: "session.animalEnded",
   LOGBOOK_UPDATED: "logbook.updated",
   SESSION_LIFECYCLE: "session.lifecycle",
@@ -979,6 +980,76 @@ export interface AnimalEnded {
   /** One of the stop reasons in `ARCHITECTURE.md#session-lifecycle`. */
   stopReason: string;
   filePath: string | null;
+}
+
+/**
+ * Where a running spine run's live replay stands (`ANALYTICS.md#live-scoring`). `replaying`:
+ * every strobe so far is what replay predicts, and `phase` is where the board is. `diverged`: a
+ * strobe is not, so the run has no token and no numbers, as Analytics will not score it.
+ * `unreplayable`: replay cannot run this run at all. `unavailable`: the live replay failed to
+ * take a strobe, so it no longer describes the run; the run itself is unaffected. `ended`: the
+ * run is over, and its numbers, when it has them, are Analytics'.
+ */
+export type LiveReplayStatus = "replaying" | "diverged" | "unreplayable" | "unavailable" | "ended";
+
+/**
+ * A running spine run as its live replay reads it (`ANALYTICS.md#live-scoring`): where the board
+ * is and the numbers so far. Sent whole on every change.
+ */
+export interface LiveReplay {
+  box: number;
+  animalId: string;
+  status: LiveReplayStatus;
+  /** Why, when `diverged` or `unreplayable`. */
+  detail: string | null;
+  /** The table state the board is in, by replay; null unless `replaying`. */
+  state: number | null;
+  /**
+   * That state's phase, an index into the profile snapshot's `spine.spine` (its `table.phases`).
+   * What the live token sits on: never read from a strobe's name. Null unless `replaying`, or for
+   * a state in no phase.
+   */
+  phase: number | null;
+  /**
+   * The row id the state belongs to; null for a state the rows share (the pick, an early exit's
+   * end) or unless `replaying`.
+   */
+  row: string | null;
+  /**
+   * The board entered this state after its latest strobe, by a timer alone: the sidecar's
+   * estimate on the host clock of what the board does when nothing happens (a Wait timing out, an
+   * outcome running into the ITI), which no strobe has confirmed yet. False whenever the strobes
+   * so far put the board there, and unless `replaying`.
+   */
+  provisional: boolean;
+  /**
+   * Why the live numbers are unavailable while the token carries on: the live scorer process
+   * could not start or stopped (`ARCHITECTURE.md#the-live-scorer`). The run, its strobes and its
+   * file are unaffected; Analytics scores it as ever. Null while the scorer is up, and unless
+   * `replaying` or `ended`.
+   */
+  unavailable: string | null;
+  /** Complete trials so far, as the live trial table counts them. */
+  trials: number;
+  /**
+   * The trial in progress, as the table reads it so far (`complete: false`); null between trials
+   * and unless `replaying`.
+   */
+  current: ReplayTrial | null;
+  /** The latest complete trial. */
+  last: ReplayTrial | null;
+  /**
+   * P(correct | row) over the complete trials so far, from the functions Analytics scores the
+   * finished run with, so at `ended` they are Analytics'. Empty when `diverged` or
+   * `unreplayable`.
+   */
+  metrics: MetricSummary[];
+  /** P(correct) pooled over every row. */
+  overall: MetricSummary | null;
+  /** The outcome-class tallies so far. */
+  replay: ReplayScore | null;
+  /** Where, when `diverged`. */
+  divergence: ReplayDivergence | null;
 }
 
 /** The runner-held session — the same shape a sessions.status reply carries. */
@@ -2959,6 +3030,7 @@ export interface EventDataMap {
   "cohorts.updated": CohortsUpdatedData;
   "prefixes.updated": PrefixesUpdatedData;
   "session.telemetry": BoxTelemetry;
+  "session.replay": LiveReplay;
   "session.animalEnded": AnimalEnded;
   "logbook.updated": LogbookUpdated;
   "session.lifecycle": ActiveSessions;

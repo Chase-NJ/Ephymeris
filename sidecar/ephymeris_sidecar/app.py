@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .analytics import AnalyticsService, CohortArchive
+from .analytics import AnalyticsService, CohortArchive, simulation
 from .analytics.archive import ArchiveChange
 from .analytics.repository import AnalyticsRepository
 from .backup import BackupManager
@@ -49,6 +49,7 @@ from .taskdef import transfer as task_transfer
 from .taskdef.model import TaskDefinition, folder_key
 from .taskdef.validate import validate as validate_task
 from .tasks import profile as task_profile
+from .tasks import seed as task_seed
 from .tasks.start_command import build_start_command
 from .debug_run import DebugRuns
 from .ports.flashing import FlashJob, FlashQueue, Origin
@@ -63,6 +64,9 @@ from .utility import UtilityBaseline
 from .wire_errors import ERRORS
 
 log = logging.getLogger(__name__)
+
+#: The longest session `tasks.simulate` runs (`TASKS.md#simulating-a-spine-task`).
+_SIMULATE_LIMIT_MAX_MS = 24 * 60 * 60_000
 
 
 class _LifecycleRig:
@@ -223,6 +227,7 @@ class Application:
         self.server.register(Cmd.TASKS_LIST, self._tasks_list)
         self.server.register(Cmd.TASKS_GET, self._tasks_get)
         self.server.register(Cmd.TASKS_PREVIEW, self._tasks_preview)
+        self.server.register(Cmd.TASKS_SIMULATE, self._tasks_simulate)
         self.server.register(Cmd.TASKS_SAVE, self._tasks_save)
         self.server.register(Cmd.TASKS_SPINE_PALETTE, self._tasks_spine_palette)
         self.server.register(Cmd.TASKS_DELETE, self._tasks_delete)
@@ -695,6 +700,7 @@ class Application:
                     "flash it again.",
                     {"sketchPath": path},
                 )
+            _refuse_decode_only(self.sketches, path)
             try:
                 profile = await asyncio.to_thread(task_profile.load_profile, sketch.path)
             except task_profile.TaskProfileError:
@@ -759,6 +765,7 @@ class Application:
                 "refresh the list and pick again.",
                 {"sketchPath": path},
             )
+        _refuse_decode_only(self.sketches, path)
         # With a baud the box ends in a console, whichever state it started
         # in: someone who has just put a sketch on a board wants to talk to it,
         # and a flash from IDLE would otherwise land with nothing on screen.
@@ -1039,6 +1046,43 @@ class Application:
             # What the spine editor draws beside the profile (TASKS.md#the-spine-editor).
             "spine": spine_task.editor_view(definition) if definition.spine is not None else None,
         }
+
+    async def _tasks_simulate(self, args: Args) -> dict[str, Any]:
+        """One simulated session of an unsaved spine task (`TASKS.md#simulating-a-spine-task`).
+
+        Refused while the definition has any diagnostic, the bar a flash holds
+        it to: a simulation of a task that cannot run says nothing true about it.
+        """
+        definition = self._definition_arg(args)
+        if definition.spine is None:
+            raise CommandError(ErrCode.TASK_INVALID, "Only a spine task can be simulated.")
+        seed = args.get("seed")
+        if seed is not None and not task_seed.SEED_MIN <= seed <= task_seed.SEED_MAX:
+            raise CommandError(ErrCode.TASK_INVALID,
+                               f"A seed is {task_seed.SEED_MIN} to {task_seed.SEED_MAX}, not {seed}.")
+        limit_ms = args.get("limitMs", simulation.DEFAULT_LIMIT_MS)
+        if not 1 <= limit_ms <= _SIMULATE_LIMIT_MAX_MS:
+            raise CommandError(ErrCode.TASK_INVALID, "A simulated session's time limit is 1 ms to 24 h.")
+        raw = args["animal"]
+        animal = simulation.Animal(raw["kind"], raw.get("response"),
+                                   **({"permille": raw["permille"]} if "permille" in raw else {}))
+        chosen = seed if seed is not None else task_seed.new_trial_seed()
+
+        def run() -> dict[str, Any]:
+            problems = validate_task(definition)
+            if problems:
+                raise CommandError(
+                    ErrCode.TASK_INVALID,
+                    f"Fix the task's {len(problems)} problem{'s' if len(problems) != 1 else ''} first.",
+                    {"diagnostics": [d.to_json() for d in problems]},
+                )
+            try:
+                return simulation.payload(definition, animal, chosen, limit_ms=limit_ms)
+            except ValueError as exc:  # an animal it cannot be
+                raise CommandError(ErrCode.TASK_INVALID, str(exc)) from exc
+
+        async with self._preview_gate:
+            return await asyncio.to_thread(run)
 
     async def _tasks_spine_palette(self, _args: Args) -> dict[str, Any]:
         """The seeds and the palette's lists, from the model's own (TASKS.md#the-spine-editor)."""
@@ -1531,6 +1575,8 @@ class Application:
             )
             for entry in args["boxes"]
         ]
+        for entry in entries:
+            _refuse_decode_only(self.sketches, entry.sketch_path, entry.box)
         await self._require_lifecycle().confirm_mapping(session_id, group_id, entries)
         return {"ok": True}
 
@@ -1724,6 +1770,20 @@ def _filename_token(text: str) -> str:
     token of a `set` command) and nothing a filesystem objects to."""
     cleaned = "".join(c if c.isalnum() or c in "-." else "-" for c in str(text).strip())
     return cleaned.strip("-") or "x"
+
+
+def _refuse_decode_only(sketches: SketchLibrary, path: object, box: int | None = None) -> None:
+    """`SKETCH_DECODE_ONLY` for a sketch bundled only to decode its runs
+    (`TASKS.md#decode-only-sketches`): enforced here, not just by the pickers
+    leaving it out."""
+    sketch = sketches.find(path)
+    if sketch is not None and sketch.decode_only:
+        raise CommandError(
+            ErrCode.SKETCH_DECODE_ONLY,
+            f"{sketch.name} is kept only to decode the runs it recorded; it is no longer "
+            "flashed or started.",
+            {"sketchPath": path, **({"box": box} if box is not None else {})},
+        )
 
 
 def _str_arg(args: Args, key: str) -> str:

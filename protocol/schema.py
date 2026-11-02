@@ -124,6 +124,13 @@ SHAPES = (
                 "change; `bundled` otherwise, including a bundled sketch rebuilt "
                 "against this rig's wiring (`TASKS.md#library-roots`).",
             ),
+            f(
+                "decodeOnly",
+                BOOL,
+                doc="Kept so the runs it recorded still decode, but never offered at "
+                "mapping or in Debug Mode, and refused with `SKETCH_DECODE_ONLY` if named "
+                "(`TASKS.md#decode-only-sketches`). Its `task.json` says `decodeOnly`.",
+            ),
         ),
     ),
     Shape(
@@ -2730,6 +2737,61 @@ SHAPES = (
         doc="A pure compile of an unsaved definition. Writes nothing.",
     ),
     Shape(
+        "SimulatedAnimal",
+        obj(
+            f("kind", lit("correct", "random", "biased", "silent"),
+              doc="Always correct, random, biased toward one response, or never responds "
+              "(`TASKS.md#simulating-a-spine-task`)."),
+            f("response", STR, optional=True,
+              doc="A biased animal's favoured response: one slot a Response window lists."),
+            f("permille", INT, optional=True,
+              doc="How often a biased animal takes its response when it can, 0 to 1000. Default 800."),
+        ),
+        doc="The animal a simulation runs against.",
+    ),
+    Shape(
+        "BlockSwitch",
+        obj(
+            f("index", INT, doc="The trial's `index` in the trial table."),
+            f("block", nullable(STR), doc="The block that trial runs in."),
+        ),
+        doc="A simulated trial that runs in another block than the one before it; the first trial included.",
+    ),
+    Shape(
+        "AbsentRow",
+        obj(
+            f("rowId", STR),
+            f("name", STR),
+            f("blocks", ListOf(STR), doc="The blocks that list the row; empty when none does."),
+        ),
+        doc="A row of the definition that no simulated trial drew.",
+    ),
+    Shape(
+        "TaskSimulation",
+        obj(
+            f("seed", INT, doc="The run's trial seed, which also seeds the animal: the one number "
+              "that repeats this simulation."),
+            f("limitMs", INT, doc="The session time limit it ran under."),
+            f("endedBy", lit("trials", "blocks", "lastTrial", "timeLimit"),
+              doc="The trial cap, the blocks running out, a last-trial state, or the time "
+              "limit (or a session cut off past it)."),
+            f("status", Ref("RunStatus"), doc="As Analytics scores the run: `ok` unless the simulated "
+              "run did not replay, which is a bug."),
+            f("detail", nullable(STR)),
+            f("metrics", ListOf(Ref("MetricSummary")), doc="P(correct | row), as `RunSummary.metrics`."),
+            f("overall", nullable(Ref("MetricSummary")), doc="As `RunSummary.overall`."),
+            f("replay", nullable(Ref("ReplayScore")), doc="Each row's outcome classes and the phase-window "
+              "rates, as `RunSummary.replay`."),
+            f("series", ListOf(Ref("MetricSeries")), doc="The learning curves, as `RunSeries.metrics`."),
+            f("trialTable", nullable(Ref("TrialTable")),
+              doc="Null only if the simulated run did not replay, which is a bug."),
+            f("switches", ListOf(Ref("BlockSwitch"))),
+            f("absent", ListOf(Ref("AbsentRow"))),
+        ),
+        doc="One simulated session of an unsaved spine definition (`TASKS.md#simulating-a-spine-task`). "
+        "Writes nothing.",
+    ),
+    Shape(
         "TasksUpdatedData",
         obj(f("tasks", ListOf(Ref("TaskEntry")))),
     ),
@@ -4092,6 +4154,21 @@ COMMANDS = (
         "when the document is not a definition.",
     ),
     Command(
+        "tasks.simulate",
+        args=obj(
+            f("definition", ANY),
+            f("animal", Ref("SimulatedAnimal")),
+            f("seed", INT, optional=True, doc="Omitted: a fresh seed, reported in the result."),
+            f("limitMs", INT, optional=True, doc="The session time limit, 1 ms to 24 h. Default 60 min."),
+        ),
+        result=Ref("TaskSimulation"),
+        doc="Run an unsaved spine definition through replay against a simulated animal "
+        "and score it as Analytics scores a run (`TASKS.md#simulating-a-spine-task`). "
+        "Nothing is compiled, flashed or written. `TASK_INVALID` for a trial-table task, "
+        "a definition with any diagnostic (the bar a flash holds it to), a seed outside "
+        "the trial seed's range, a limit outside its range, or an animal it cannot be.",
+    ),
+    Command(
         "tasks.spinePalette",
         result=obj(
             f("seeds", ListOf(Ref("TaskSeed")), doc="The seed spines, in the order the chooser offers them."),
@@ -4832,6 +4909,12 @@ ERRORS = (
         "`flash.enqueue` or `port.sendStart` named a path outside the current "
         "discovery result. The bundled library and saved task profiles are the "
         "only flashable sketches, enforced here and not just by the picker.",
+    ),
+    ErrorCode(
+        "SKETCH_DECODE_ONLY",
+        "`flash.enqueue`, `port.sendStart` or `sessions.confirmMapping` named a decode-only "
+        "sketch (`TASKS.md#decode-only-sketches`): it is bundled so its runs decode, and is "
+        "never flashed or started. A mapping's refusal names the box.",
     ),
     ErrorCode("COHORT_NOT_FOUND", "No cohort with that id."),
     ErrorCode(

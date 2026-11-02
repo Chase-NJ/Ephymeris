@@ -112,6 +112,7 @@ class FakeSketch:
     def __init__(self, path: str, name: str) -> None:
         self.path = path
         self.name = name
+        self.decode_only = False
 
 
 class FakeDiscovery:

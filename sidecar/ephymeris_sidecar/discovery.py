@@ -51,6 +51,7 @@ directly contains it.
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -93,6 +94,13 @@ class Sketch:
     #: on this machine, so it is regenerated on every save and every wiring
     #: change — and editing the folder by hand is pointless.
     source: SketchSource = "bundled"
+    #: Kept for decoding the runs it recorded, never flashed or started
+    #: (`TASKS.md#decode-only-sketches`): its `task.json` says `decodeOnly`.
+    decode_only: bool = False
+
+    def to_json(self) -> dict[str, Any]:
+        return {"category": self.category, "name": self.name, "path": self.path, "source": self.source,
+                "decodeOnly": self.decode_only}
 
 
 @dataclass(frozen=True)
@@ -123,7 +131,7 @@ class SketchDiscovery:
     def to_json(self) -> dict[str, Any]:
         return {
             "library": self.library.to_json(),
-            "sketches": [asdict(s) for s in self.sketches],
+            "sketches": [s.to_json() for s in self.sketches],
             "skipped": [asdict(s) for s in self.skipped],
             "skippedCount": len(self.skipped),
             "libraries": self.libraries,
@@ -216,7 +224,7 @@ def _apply_pinned(
             )
             continue
         sketches[index] = Sketch(
-            folder.parent.name, folder.name, str(folder), "bundled"
+            folder.parent.name, folder.name, str(folder), "bundled", _decode_only(folder)
         )
 
 
@@ -289,6 +297,16 @@ def library_status() -> SketchLibraryStatus:
     return SketchLibraryStatus("ok", str(root), None, source)
 
 
+def _decode_only(folder: Path) -> bool:
+    """Whether the sketch's `task.json` marks it decode-only. A missing or
+    unreadable profile marks nothing: the profile's own loader reports it."""
+    try:
+        raw = json.loads((folder / "task.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(raw, dict) and raw.get("decodeOnly") is True
+
+
 def _is_valid_sketch(folder: Path) -> bool:
     """The folder-name-matches-`.ino` rule (`TASKS.md#folder-rules`)."""
     return (folder / f"{folder.name}.ino").is_file()
@@ -351,7 +369,7 @@ def _scan(
 
         if _is_valid_sketch(child):
             sketches.append(
-                Sketch(folder.name, child.name, str(child), source)
+                Sketch(folder.name, child.name, str(child), source, _decode_only(child))
             )
             # Don't descend into a sketch: `src/`, `extras/` and the like are
             # its own business, not more categories.

@@ -1,6 +1,7 @@
 {
   "taskName": "GRGL 2-Odor (Simulator)",
   "kind": "behavior",
+  "decodeOnly": true,
   "config": [
     {
       "metadataKey": "error_delay",

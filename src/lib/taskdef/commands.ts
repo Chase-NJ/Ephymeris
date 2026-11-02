@@ -1,6 +1,7 @@
 import { CMD } from "@/lib/ws/protocol";
 import type { SidecarPort } from "@/lib/ws/port";
 
+import type { SimulateArgs } from "./simulate";
 import type { TaskDocument } from "./types";
 
 /**
@@ -31,6 +32,12 @@ export async function previewTask(client: SidecarPort, definition: TaskDocument)
 
 export async function saveTask(client: SidecarPort, definition: TaskDocument) {
   return client.call(CMD.TASKS_SAVE, { definition });
+}
+
+/** One simulated session of an unsaved spine task against a simulated animal
+ *  (`TASKS.md#simulating-a-spine-task`). Compiles, flashes and writes nothing. */
+export async function simulateTask(client: SidecarPort, definition: TaskDocument, args: SimulateArgs) {
+  return client.call(CMD.TASKS_SIMULATE, { definition, ...args });
 }
 
 /** The seed spines a new task starts from, and the palette's phases, outcome

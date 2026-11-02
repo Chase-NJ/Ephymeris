@@ -29,6 +29,11 @@ _Avoid_: unconfirmed wiring, pending wiring
 The one session that holds the rig, from its mapping's confirmation (or a resume) until it ends or is abandoned. It stays held between groups, and it may still read `configuring`.
 _Avoid_: running session, active session
 
+<a id="decode-only-sketch"></a>
+**Decode-only sketch**:
+A sketch kept in the bundle so the runs it recorded still decode, but never offered at mapping or in Debug Mode, and never flashed or started. Its `task.json` says `decodeOnly`.
+_Avoid_: retired sketch, hidden sketch
+
 <a id="cohort-archive"></a>
 **Cohort archive**:
 A cohort's sessions and runs as one whole: those this machine recorded, and the recovered runs filed under the sessions they belong to.

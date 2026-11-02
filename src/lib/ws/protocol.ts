@@ -89,6 +89,7 @@ export const CMD = {
   TASKS_LIST: "tasks.list",
   TASKS_GET: "tasks.get",
   TASKS_PREVIEW: "tasks.preview",
+  TASKS_SIMULATE: "tasks.simulate",
   TASKS_SPINE_PALETTE: "tasks.spinePalette",
   TASKS_SAVE: "tasks.save",
   TASKS_DELETE: "tasks.delete",
@@ -178,6 +179,7 @@ export const ERR = {
   PORT_NOT_BOUND: "PORT_NOT_BOUND",
   PORT_OPEN_FAILED: "PORT_OPEN_FAILED",
   SKETCH_UNKNOWN: "SKETCH_UNKNOWN",
+  SKETCH_DECODE_ONLY: "SKETCH_DECODE_ONLY",
   COHORT_NOT_FOUND: "COHORT_NOT_FOUND",
   COHORT_NAME_TAKEN: "COHORT_NAME_TAKEN",
   COHORT_INVALID: "COHORT_INVALID",
@@ -283,6 +285,12 @@ export interface SketchEntry {
    * rebuilt against this rig's wiring (`TASKS.md#library-roots`).
    */
   source: "bundled" | "rig";
+  /**
+   * Kept so the runs it recorded still decode, but never offered at mapping or in Debug Mode, and
+   * refused with `SKETCH_DECODE_ONLY` if named (`TASKS.md#decode-only-sketches`). Its `task.json`
+   * says `decodeOnly`.
+   */
+  decodeOnly: boolean;
 }
 
 /** Carried in full so a missing sketch is inspectable, not silent. */
@@ -2549,6 +2557,69 @@ export interface TaskPreview {
   catalogueDefaults: Record<string, unknown>;
 }
 
+/** The animal a simulation runs against. */
+export interface SimulatedAnimal {
+  /**
+   * Always correct, random, biased toward one response, or never responds
+   * (`TASKS.md#simulating-a-spine-task`).
+   */
+  kind: "correct" | "random" | "biased" | "silent";
+  /** A biased animal's favoured response: one slot a Response window lists. */
+  response?: string;
+  /** How often a biased animal takes its response when it can, 0 to 1000. Default 800. */
+  permille?: number;
+}
+
+/** A simulated trial that runs in another block than the one before it; the first trial included. */
+export interface BlockSwitch {
+  /** The trial's `index` in the trial table. */
+  index: number;
+  /** The block that trial runs in. */
+  block: string | null;
+}
+
+/** A row of the definition that no simulated trial drew. */
+export interface AbsentRow {
+  rowId: string;
+  name: string;
+  /** The blocks that list the row; empty when none does. */
+  blocks: string[];
+}
+
+/**
+ * One simulated session of an unsaved spine definition (`TASKS.md#simulating-a-spine-task`).
+ * Writes nothing.
+ */
+export interface TaskSimulation {
+  /**
+   * The run's trial seed, which also seeds the animal: the one number that repeats this
+   * simulation.
+   */
+  seed: number;
+  /** The session time limit it ran under. */
+  limitMs: number;
+  /**
+   * The trial cap, the blocks running out, a last-trial state, or the time limit (or a session
+   * cut off past it).
+   */
+  endedBy: "trials" | "blocks" | "lastTrial" | "timeLimit";
+  /** As Analytics scores the run: `ok` unless the simulated run did not replay, which is a bug. */
+  status: RunStatus;
+  detail: string | null;
+  /** P(correct | row), as `RunSummary.metrics`. */
+  metrics: MetricSummary[];
+  /** As `RunSummary.overall`. */
+  overall: MetricSummary | null;
+  /** Each row's outcome classes and the phase-window rates, as `RunSummary.replay`. */
+  replay: ReplayScore | null;
+  /** The learning curves, as `RunSeries.metrics`. */
+  series: MetricSeries[];
+  /** Null only if the simulated run did not replay, which is a bug. */
+  trialTable: TrialTable | null;
+  switches: BlockSwitch[];
+  absent: AbsentRow[];
+}
+
 export interface TasksUpdatedData {
   tasks: TaskEntry[];
 }
@@ -3019,6 +3090,7 @@ export interface CommandArgsMap {
   "tasks.list": Record<string, never>;
   "tasks.get": { taskId: string };
   "tasks.preview": { definition: unknown };
+  "tasks.simulate": { definition: unknown; animal: SimulatedAnimal; seed?: number; limitMs?: number };
   "tasks.spinePalette": Record<string, never>;
   "tasks.save": { definition: unknown };
   "tasks.delete": { taskId: string };
@@ -3115,6 +3187,7 @@ export interface CommandResultMap {
   "tasks.list": { tasks: TaskEntry[] };
   "tasks.get": { definition: unknown; diagnostics: TaskDiagnostic[] };
   "tasks.preview": TaskPreview;
+  "tasks.simulate": TaskSimulation;
   "tasks.spinePalette": { seeds: TaskSeed[]; phases: string[]; outcomeClasses: string[]; selections: string[]; timedPhases: string[]; weightedSelections: string[] };
   "tasks.save": TaskSaved;
   "tasks.delete": { deleted: boolean };

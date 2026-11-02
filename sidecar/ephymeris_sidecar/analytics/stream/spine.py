@@ -285,6 +285,13 @@ def _expected(record: SpineRecord, actions: list[tuple[int, rp.Actions]],
     return out
 
 
+def predicted_through(record: SpineRecord, actions: list[tuple[int, rp.Actions]]) -> list[tuple[int, int]]:
+    """Every strobe a board sends for replay's `actions`, in a run that has not
+    ended: through `record.last_tick`, with no END_SESSION. What a simulated
+    session cut off past its time limit holds (`simulate.py`)."""
+    return _stream(record, actions, None)
+
+
 def pulses(record: SpineRecord) -> list[tuple[int, int, int]]:
     """Every pulse every train fired, as (output bit, rise tick, fall tick), by rise.
 

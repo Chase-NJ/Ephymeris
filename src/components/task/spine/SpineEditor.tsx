@@ -20,6 +20,7 @@ import { BlockTimeline } from "./BlockTimeline";
 import { PhasePanel } from "./PhasePanel";
 import { RamMeter } from "./RamMeter";
 import { RowsTable } from "./RowsTable";
+import { SimulatePanel } from "./SimulatePanel";
 import { SpineDiagram } from "./SpineDiagram";
 import { ProblemLines } from "./bits";
 
@@ -37,8 +38,8 @@ interface Palette {
 /**
  * A phase-spine task, open (`TASKS.md#the-spine-editor`): the spine drawn left
  * to right in time with the selected phase's fields under it, the RAM meter
- * beside it, the rows table with each row's contingency map, and the block
- * timeline.
+ * beside it, the rows table with each row's contingency map, the block
+ * timeline, and Simulate.
  *
  * EVERY REDRAW COMES FROM `tasks.preview`. This holds the unsaved document
  * and applies the operator's edits to it (`lib/taskdef/spine.ts`); the diagram,
@@ -233,6 +234,12 @@ export function SpineEditor({ shared, definition }: { shared: EditorShared; defi
               onChange={setDefinition}
               onClearStored={clearStored}
             />
+          </Panel>
+        </motion.div>
+
+        <motion.div variants={RISE}>
+          <Panel id="simulate" name="Simulate" note="a session against a simulated animal, before anything is flashed">
+            <SimulatePanel definition={definition} diagnostics={diagnostics} />
           </Panel>
         </motion.div>
       </motion.div>

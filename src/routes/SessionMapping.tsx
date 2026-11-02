@@ -36,6 +36,7 @@ import {
 } from "@/lib/hardware/context";
 import { springPanel, springSnappy } from "@/lib/motion";
 import { useSettings } from "@/lib/settings/context";
+import { offeredSketches } from "@/lib/settings/schema";
 import {
   abandonSession,
   confirmMapping,
@@ -149,7 +150,7 @@ export function SessionMapping() {
   const [light, setLight] = useState<Light | null>(null);
 
   const connected = status === "connected";
-  const sketches = discovery.sketches;
+  const sketches = offeredSketches(discovery);
   const portStates = useAllPortStatuses();
   const utility = useUtilityStatus();
 

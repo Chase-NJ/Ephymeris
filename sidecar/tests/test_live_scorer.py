@@ -193,16 +193,12 @@ def test_stopping_never_waits_on_a_busy_scorer() -> None:
 
 def test_the_scorer_exits_when_the_sidecar_goes_away() -> None:
     """Its request pipe closing is the sidecar gone: the child exits on its own,
-    as the sidecar exits on stdin EOF (`ARCHITECTURE.md#process-lifecycle`).
-
-    It exits once it runs. It runs niced, so on a runner whose every core is busy
-    with the suite that can take many seconds: the wait is generous, and only a
-    child that never exits fails."""
+    as the sidecar exits on stdin EOF (`ARCHITECTURE.md#process-lifecycle`)."""
     made = scorer_module.LiveScorer()
     got = Results()
     made.submit("k1", {"x": 1}, [], 0, on_result=got.on_result, on_down=got.on_down)
     made.wait_started_for_test()
     made.close_pipe_for_test()
     began = time.monotonic()
-    exited = made.process_exited_for_test(timeout=60)
+    exited = made.process_exited_for_test(timeout=5)
     assert exited, f"still running {time.monotonic() - began:.1f} s after its pipe closed"

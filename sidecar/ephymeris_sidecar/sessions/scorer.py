@@ -39,6 +39,7 @@ from __future__ import annotations
 import atexit
 import logging
 import multiprocessing
+import multiprocessing.connection
 import multiprocessing.util  # its atexit reaper first, so ours (below) runs before it
 import os
 import threading
@@ -271,9 +272,12 @@ class LiveScorer:
         return self._process._popen.returncode if self._process._popen is not None else None  # noqa: SLF001
 
     def process_exited_for_test(self, timeout: float) -> bool:
+        """Whether the child exits within `timeout`, read from its sentinel, never
+        by reaping it here: the scorer's own reaper may be collecting it at the
+        same moment, and a second `waitpid` would find nothing and read a dead
+        child as alive."""
         assert self._process is not None
-        self._process.join(timeout)
-        return not self._process.is_alive()
+        return bool(multiprocessing.connection.wait([self._process.sentinel], timeout))
 
 
 def _call(fn: Callable[..., None], *args: Any) -> None:

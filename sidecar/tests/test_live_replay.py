@@ -17,6 +17,7 @@ import pytest
 from ephymeris_sidecar.analytics.stream import live
 from ephymeris_sidecar.analytics.stream import replay as rp
 from ephymeris_sidecar.analytics.stream import spine as spine_stream
+from ephymeris_sidecar.analytics import scoring
 from ephymeris_sidecar.analytics.stream.summary import summarize
 from ephymeris_sidecar.tasks import profile as task_profile
 from tests.fixtures import spine as fixture
@@ -69,6 +70,8 @@ DOCUMENTS = {
     "aborts": lambda: simulated_document(fixture.tracer(), quitting_animal, trials=5),
     # Blocks, a criterion, a correction trial and a block switch (#155).
     "reversal": lambda: simulated_document(fixture.reversal(), two_afc_animal, trials=40, ticks=2_000_000),
+    # Trace conditioning's phase-window rates (#116): live must read them as Analytics does.
+    "trace": lambda: scoring._trace_canary(),
 }
 
 

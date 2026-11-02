@@ -43,7 +43,7 @@ from . import replay as rp
 from . import spine
 from . import table_metrics
 from .metric_summary import MetricSummary
-from .summary import DEFAULT_MIN_COUNTED
+from .summary import DEFAULT_MIN_COUNTED, replay_score
 from .trial_table import ReplayTrial
 
 _RISE, _FALL = 0, 1
@@ -231,8 +231,8 @@ class LiveScore:
 def scored(document: dict[str, Any], *, min_counted: int = DEFAULT_MIN_COUNTED) -> LiveScore:
     """The trial table and metrics of a spine run's stream so far.
 
-    Replays the whole stream once (`spine.replayed`) and scores it with the
-    calls `summary.summarize` makes for a spine run, so a stream that has ended
+    Replays the whole stream once (`spine.replayed`) and scores it with
+    `summary.replay_score`, the call `summary.summarize` makes, so a stream that has ended
     scores exactly as Analytics scores its file. A stream cut mid-run is read as
     a crashed run is: its open trial is in the table, incomplete, and out of the
     metrics."""
@@ -242,7 +242,7 @@ def scored(document: dict[str, Any], *, min_counted: int = DEFAULT_MIN_COUNTED) 
         return LiveScore(status="unreplayable", detail=f"replay cannot run this spine run: {exc}")
     if result.divergence is not None:
         return LiveScore(status="diverged", detail=result.divergence.detail, divergence=result.divergence)
-    score = table_metrics.score(result.trials, rows=result.rows, interp=result.interp)
+    score = replay_score(result, min_counted)
     return LiveScore(
         status="ok",
         trials=result.trials,

@@ -46,7 +46,8 @@ The [worked example](#a-worked-example) shows all of it on thirty strobes.
 | [`stream/trial_table.py`](stream/trial_table.py) | What happened in each trial? ([the trial table](#the-trial-table)), the row both kinds of run share | state table + replayed actions → one row per trial |
 | [`stream/table_metrics.py`](stream/table_metrics.py) | A run's numbers ([metrics](#metrics-from-the-trial-table)) | trial table → outcome tallies, P(correct \| row), P(hit) per condition, rewarded |
 | [`stream/live.py`](stream/live.py) | Where is a running spine run's board, and what are its numbers so far? ([live scoring](#live-scoring)) | header + strobes so far → the state at a tick; the trial table and metrics |
-| [`stream/stats.py`](stream/stats.py), [`stream/document.py`](stream/document.py), [`stream/metric_summary.py`](stream/metric_summary.py) | The Wilson interval; reading `ts_data` out of a file; the one metric shape both scorers build | |
+| [`stream/rates.py`](stream/rates.py) | How often did the animal lick in each phase, and more than at baseline? ([phase-window rates](#phase-window-rates)) | trial table + the phases that count an input → each row's rates and differences |
+| [`stream/stats.py`](stream/stats.py), [`stream/document.py`](stream/document.py), [`stream/metric_summary.py`](stream/metric_summary.py) | The Wilson interval and the t interval; reading `ts_data` out of a file; the one metric shape both scorers build | |
 
 **The plumbing**: files, cache and commands. You need these only to change how runs are found or stored.
 
@@ -234,6 +235,29 @@ policy](../../../docs/ARCHITECTURE.md#dependency-policy)).
 made in the app: a learning curve draws a widening band, a strategy point draws hollow and smaller, and a
 session-summary chip drops to an outline. Keeping the value preserves the difference between *"cut short
 after three trials"* and *"never happened"*.
+
+**A rate is not a probability.** A [phase-window rate](#phase-window-rates) is a mean of each trial's rate,
+so it carries a **Student-t interval over trials**, nominally 95% (`stats.mean_interval`, its quantile from
+`stats.t_quantile_975`). The trial is the unit because licks come in bursts and their rate moves from trial
+to trial far more than a Poisson count does: a Poisson (Garwood) interval on pooled counts would be falsely
+narrow. With one trial there is a mean and no interval.
+
+> [!CAUTION]
+> **A rate's interval covers the truth less often than the 95% it is built for.** Bursty licking is
+> skewed, and the t interval assumes it is not. Simulated (`test_phase_rates.py`'s `coverage`, seeded): licks in bouts of a
+> geometric number (mean 5), bouts a Poisson stream whose rate each trial scales by a Gamma(1) draw, 2 licks/s
+> at baseline and 6 in the CS over 2 s windows, 6000 rows at each size:
+>
+> | Trials | 5 | 10 | 15 | 20 | 25 | 30 | 35 | 40 |
+> |---|---|---|---|---|---|---|---|---|
+> | the rate's interval covers the truth | 78.4% | 84.7% | 87.7% | 88.9% | 89.7% | 90.4% | 91.7% | 90.8% |
+> | the paired difference's interval covers it | 91.0% | 92.0% | 93.2% | 92.4% | 93.9% | 93.6% | 94.0% | 94.0% |
+>
+> So a rate's interval is about a 90% interval from 30 trials on, and less below; the paired difference,
+> the anticipatory readout, holds about 91% or better from 5. A rate, or its difference, on fewer than
+> `rates.RATE_MIN_TRIALS` (30) trials is `lowConfidence` whatever `minCountedTrials` says
+> (`rates.low_confidence`): the number is reported, flagged, never trusted as its interval implies. The
+> test pins 30 as the first size whose rate coverage reaches 90%.
 
 ### Rewarded and response accuracy
 
@@ -483,6 +507,7 @@ interval](#uncertainty):
 | `replay.rewarded` | Trials whose reward line opened / trials |
 | `metrics` | One per row, **P(correct \| row)**, read off each trial's `correct`: hits are its trials whose class is in `table_metrics.HITS`, `correct` or `withheld`; counted are its other classified ones; its unclassified ones and its aborts (`table_metrics.EXCLUDED`, `abort_before_stimulus` and `abort_during_sampling`) are excluded, as an unanswered or abandoned trial is on a legacy run ([trials](#trials-hits-misses-and-exclusions)). The aborts still count in `replay.classes` |
 | `overall` | P(correct) pooled over every row, by summing counts ([pooled accuracy](#pooled-accuracy)) |
+| `replay.rates` | Each row's [phase-window rates](#phase-window-rates): empty for a task with no phase that counts an input it never acts on |
 
 > [!CAUTION]
 > **A withhold is a hit.** It is a no-go row's correct answer, so counting only `correct` would score a
@@ -497,6 +522,40 @@ first leaves out trials with no class, the second keeps them in the denominator.
 
 The tracer's Outcome records `correct` before it draws the reward, so a trial can be `correct` and not
 `rewarded` when the reward probability is below 1000‰.
+
+### Phase-window rates
+
+A **rate window** is a phase that counts an input it never acts on: a phase's `watch` ([TASKS.md](../../../docs/TASKS.md#pavlovian-conditioning)).
+`rates.rate_windows` reads them off the table's own fields, **per row**: (row, phase, channel) where some
+state of that row's phase watches the channel's bit and none of them has an edge row on it. So a Pavlovian
+task's baseline, CS, trace and US phases watching the lick sensor are windows, and a Wait's port, a Response
+window's wells, an abort's input and a Counter's lever are not: a 2AFC run has no rates. No phase kind is
+read. Rows bind their own channels, so a row is scored only on its own windows: with CS− on a second lick
+sensor, CS+ has no rate on it, and a phase one row acts on stays a window of the rows that do not. A table
+that cannot say which row a state is (no `table.rows`, several rows) has none.
+
+For each row of the task, and each window (`rates.window_rates`, over the trial table):
+
+| Figure | Definition |
+|---|---|
+| a trial's rate | its `inputCounts` for the window × 1000 / the window's span, events per second. The span runs from the phase's `phaseEntries` tick to the next phase entered, or to the next trial's `atMs` for its last phase: exactly the ticks its rises are attributed to |
+| `rate` | the mean of the row's trial rates, with its [t interval](#uncertainty), clamped at 0 |
+| `reference` | the row's first window on the channel in the spine, a Pavlovian task's baseline; null on that window |
+| `versus` | each trial's rate minus its own reference rate, paired within the trial, then the mean and its t interval: a Pavlovian task's **anticipatory** licking in the CS and the trace |
+| `lowConfidence` | the smaller of `rate.n` and `versus.n` is below `minCountedTrials` or `rates.RATE_MIN_TRIALS` ([why](#uncertainty)), judged on every request like a metric's |
+
+**The trials** are those P(correct) counts: complete, with an outcome class that is not an abort
+(`EXCLUDED`). A trial's window counts only when it was entered and its span is known and above zero: the
+last trial's last phase has no next trial to end it.
+
+> [!CAUTION]
+> **A window's span is read from the table, not from its parameter.** A block's `phaseMs`, a per-box
+> override and an Outcome that pays (its reward time is inside the window) each change it, so dividing
+> by the phase's configured `ms` would misstate the rate with no error.
+
+The rates are a function of the trial table and the state table alone, so a live score must read
+them with this same function. Mission Control scores no spine run live yet
+([TASKS.md](../../../docs/TASKS.md#spine-tasks)).
 
 ### Diverged and unreplayable runs
 
@@ -799,7 +858,9 @@ from a half-written archive:
 | `false_starts.classify(facts)` | `stream/false_starts.py` | runs → which are set aside |
 | `spine.replayed(document)` | `stream/spine.py` | a spine run's document → its divergence, or its trial table |
 | `trial_table.trials_of(table, actions, end=…)` | `stream/trial_table.py` | a replay's actions → one `Trial` per trial |
-| `table_metrics.score(trials, rows=…)` | `stream/table_metrics.py` | a trial table → `ReplayScore` |
+| `table_metrics.score(trials, rows=…, rate_windows=…)` | `stream/table_metrics.py` | a trial table → `ReplayScore` |
+| `rates.rate_windows(table, phase_of, inputs, row_of)` | `stream/rates.py` | a state table → its rate windows |
+| `rates.window_rates(trials, windows, rows=…)` | `stream/rates.py` | a trial table → each row's phase-window rates |
 | `reader.read_run(path)` | `reader.py` | a path → the document, or `missing`/`unreadable` |
 | `RunScorer.score(runs)` / `decode(run)` | `scoring.py` | runs → cached summaries / one decoded run for a chart |
 
@@ -839,6 +900,10 @@ print(summary.to_json())
   - `test_replay_trial_table.py`: every trial-table column read off the table's own fields, including an
     outcome class no task has used, and the metrics as functions of the table.
   - `test_spine_analytics.py`: a spine run scored, diverged and unreplayable through `analytics.summary`.
+  - `test_phase_rates.py`: phase-window rates and their t intervals, worked by hand and from a lick stream
+    of known rates, and which phases are windows.
+  - `test_pavlovian.py`: a trace and a delay conditioning session run on the host, replayed, their lick
+    counts per phase checked against the strobes and their rates read.
   - `test_legacy_trial_table.py`: what a legacy run's rows say, and the curves of both kinds.
   - `test_legacy_pin.py`, `test_legacy_corpus.py`: the legacy adapter reports what the strobe scorer
     before it did ([how](#how-a-legacy-run-becomes-a-trial-table)). Their fixtures were captured from the

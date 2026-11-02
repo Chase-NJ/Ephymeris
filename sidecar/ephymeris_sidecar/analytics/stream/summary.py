@@ -16,7 +16,7 @@ from typing import Any
 
 from ...tasks.profile import TaskProfile
 from .document import _duration_ms, codes_of
-from . import legacy, table_metrics
+from . import legacy, rates, table_metrics
 from .spine import Divergence, SpineDecodeError, is_spine_run, replayed
 from .spine import trial_table as spine_table
 from .engagement import TrialEngagement, tally_engagement
@@ -153,7 +153,8 @@ def _replay_summary(document: dict[str, Any], base: dict[str, Any], min_counted:
     if result.divergence is not None:
         return RunSummary(status="diverged", detail=result.divergence.detail,
                           divergence=result.divergence, **base)
-    score = table_metrics.score(result.trials, rows=result.rows, interp=result.interp)
+    score = table_metrics.score(result.trials, rows=result.rows, interp=result.interp,
+                                rate_windows=result.rate_windows, labels=result.phases, min_counted=min_counted)
     return RunSummary(
         status="ok",
         metrics=table_metrics.correct_metrics(score, min_counted=min_counted),
@@ -167,7 +168,9 @@ def with_threshold(payload: dict[str, Any], min_counted: int) -> dict[str, Any]:
     """A summary payload judged against `min_counted`, as a copy.
 
     `lowConfidence` is the only part of a summary the threshold touches, and it
-    is `counted < min_counted` for each metric and the pooled figure. The
+    is `counted < min_counted` for each metric and the pooled figure, and
+    `rates.low_confidence` for each phase-window rate, which never trusts one
+    on fewer than `rates.RATE_MIN_TRIALS` trials. The
     threshold is a per-request argument (`analytics.summary`'s
     `minCountedTrials`) while the payload is cached, so the flag is re-judged on
     every row served rather than kept from whichever request computed it
@@ -178,11 +181,22 @@ def with_threshold(payload: dict[str, Any], min_counted: int) -> dict[str, Any]:
             return metric
         return {**metric, "lowConfidence": metric["counted"] < min_counted}
 
+    def judged_rate(window: Any) -> Any:
+        rate = window.get("rate") if isinstance(window, dict) else None
+        if not isinstance(rate, dict) or not isinstance(rate.get("n"), int):
+            return window
+        versus = window.get("versus")
+        versus_n = versus.get("n") if isinstance(versus, dict) and isinstance(versus.get("n"), int) else None
+        return {**window, "lowConfidence": rates.low_confidence(rate["n"], versus_n, min_counted)}
+
     out = dict(payload)
     if isinstance(out.get("metrics"), list):
         out["metrics"] = [judged(metric) for metric in out["metrics"]]
     if out.get("overall") is not None:
         out["overall"] = judged(out["overall"])
+    replay = out.get("replay")
+    if isinstance(replay, dict) and isinstance(replay.get("rates"), list):
+        out["replay"] = {**replay, "rates": [judged_rate(w) for w in replay["rates"]]}
     return out
 
 

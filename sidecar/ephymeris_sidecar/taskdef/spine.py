@@ -318,6 +318,10 @@ def _shape_problems(spine: Spine, slot_type: dict[str, str], lines: set[str], pr
             for key, slot in (("abortOnRelease", p.abort_on_release), ("abortOnEnter", p.abort_on_enter)):
                 if slot is not None and slot_type.get(slot) != "digital_in":
                     bad(f"{at}.{key}", f"an abort is an edge of an input slot; {slot!r} is not one")
+        if p.watch and (len(set(p.watch)) != len(p.watch)
+                        or any(slot_type.get(s) != "digital_in" for s in p.watch)):
+            bad(f"{at}.watch", "a phase watches input slots, each named once: their edges are counted "
+                "and move nothing")
         if p.phase == "counter":
             _counter_problems(at, p, bad)
         if p.phase == "response":

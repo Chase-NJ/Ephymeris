@@ -1328,9 +1328,43 @@ SHAPES = (
               "they partition `trials`."),
             f("rows", ListOf(Ref("RowOutcomes")), doc="In the task's row order."),
             f("rewarded", Ref("Proportion"), doc="Trials whose reward line opened, of `trials`."),
+            f("rates", ListOf(Ref("WindowRate")), doc="Each row's rate in each phase that counts an input "
+              "it never acts on, row by row in the task's order, then by phase. Empty for a task with "
+              "no such phase (`ANALYTICS.md#phase-window-rates`)."),
         ),
         doc="A replayed spine run's tallies, each a function of its trial table "
         "(`ANALYTICS.md#metrics-from-the-trial-table`).",
+    ),
+    Shape(
+        "RateEstimate",
+        obj(
+            f("n", INT, doc="Trials the mean is over."),
+            f("mean", nullable(FLOAT), doc="Events per second, the mean of each trial's rate; null with no "
+              "trials, never 0.0."),
+            f("low", nullable(FLOAT), doc="Student-t interval over trials, nominally 95%; it covers a bursty "
+              "licker's rate less often (`ANALYTICS.md#uncertainty`). Null with fewer than two trials."),
+            f("high", nullable(FLOAT)),
+        ),
+        doc="A mean over trials with its interval.",
+    ),
+    Shape(
+        "WindowRate",
+        obj(
+            f("rowId", STR, doc="The row's stable id."),
+            f("name", STR, doc="The row's name."),
+            f("phase", INT, doc="The phase's index in the spine."),
+            f("label", STR, doc="The phase's kind, for a person: nothing is scored by it."),
+            f("channel", STR, doc="The input channel counted."),
+            f("rate", Ref("RateEstimate"), doc="Its rises per second in the phase, clamped at 0."),
+            f("reference", nullable(INT), doc="This row's first phase counting the channel, which `versus` "
+              "is against; null on that phase itself."),
+            f("versus", nullable(Ref("RateEstimate")), doc="This phase's rate minus the reference's, "
+              "paired within each trial: in a Pavlovian task's CS and trace, its anticipatory licking. Null on the "
+              "reference."),
+            f("lowConfidence", BOOL, doc="The smaller of `rate.n` and `versus.n` is below `minCountedTrials` "
+              "or `rates.RATE_MIN_TRIALS` (`ANALYTICS.md#uncertainty`), re-judged on every request."),
+        ),
+        doc="One row's rate in one of its own phase-windows (`ANALYTICS.md#phase-window-rates`).",
     ),
     Shape(
         "ReplayDivergence",

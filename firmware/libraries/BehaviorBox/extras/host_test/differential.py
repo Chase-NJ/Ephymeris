@@ -306,6 +306,9 @@ def generated_table(rng: random.Random, n_params: int):  # noqa: ANN201
                 p["endsSession"] = rng.random() < 0.5
         elif kind == "outcome":
             p["line"] = rng.choice(outputs)
+        if rng.random() < 0.3:
+            # Counted while in the phase, with no edge row: strobed, never an exit.
+            p["watch"] = rng.sample(inputs, rng.randint(1, len(inputs)))
         return p
 
     phases = []
@@ -324,7 +327,8 @@ def generated_table(rng: random.Random, n_params: int):  # noqa: ANN201
         post = [plain_phase(("present", "delay")) for _ in range(rng.choice((0, 0, 1, 2)))]
         post.insert(rng.randint(0, len(post)), {"phase": "outcome", "ms": 1, "outputs": some_outputs()})
         phases.extend(post)
-    phases.append({"phase": "iti", "outputs": some_outputs() if rng.random() < 0.2 else []})
+    phases.append({"phase": "iti", "outputs": some_outputs() if rng.random() < 0.2 else [],
+                   "watch": rng.sample(inputs, 1) if rng.random() < 0.2 else []})
 
     rows = []
     for r in range(n_rows):

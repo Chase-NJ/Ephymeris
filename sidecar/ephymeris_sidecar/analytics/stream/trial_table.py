@@ -338,6 +338,13 @@ class Naming:
     rows: dict[str, tuple[str, float | None]] = field(default_factory=dict)
     block: str | None = None
 
+    def row_at(self, state: int) -> str | None:
+        """The row state `state` belongs to: the snapshot's map, or the run's
+        only row; None for a state of no row (a pick, a shared end)."""
+        if self.row_of is None:
+            return self.row
+        return self.row_of[state] if state < len(self.row_of) else None
+
 
 @dataclass(frozen=True)
 class ReplayTrial:
@@ -437,10 +444,7 @@ def name(trial: Trial, naming: Naming) -> ReplayTrial:
     def channel(names: tuple[str, ...], bit: int) -> str:
         return names[bit] if bit < len(names) else f"bit {bit}"
 
-    row = naming.row
-    if naming.row_of is not None:
-        tagged = [naming.row_of[s] for s in trial.entries if s < len(naming.row_of) and naming.row_of[s]]
-        row = tagged[0] if tagged else None
+    row = next((r for s in trial.entries if (r := naming.row_at(s))), None)
     row_name, level = naming.rows.get(row, (None, None)) if row is not None else (None, None)
 
     entries: tuple[int | None, ...] = ()

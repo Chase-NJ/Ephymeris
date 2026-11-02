@@ -193,6 +193,15 @@ A task built from a seed shows everything about it on one screen:
   - Click a block to choose its rows, how it draws them, and when it ends: after a number of trials,
     or once the animal gets enough right.
   - **Session cap** limits the whole session to a number of trials.
+- **Simulate** at the very bottom runs a whole session against a pretend animal, before anything is
+  sent to a box. Nothing is saved or flashed.
+  - Choose the animal: **Always correct**, **Random**, **Biased** (it mostly picks one answer you
+    choose) or **Never responds**. Then click **Run**.
+  - It shows the seed it used (type it in the **Seed** box to run the same session again), what ended the
+    session, every row that was **never presented**, the trial where each block began, how each row's
+    trials ended, every trial, and the share correct as the session went on.
+  - It runs on the task as it is now. After you change anything, the result fades until you run it again.
+  - It will not run while the task has a problem.
 
 Each problem shows where it is: on its step, under its row, on its block, or under the memory bar.
 **Problems** at the top lists them all; click one to go to it. A value marked **Stored** comes from an
@@ -776,10 +785,6 @@ READY received*. During animal placement the app lights each box for you.
 
 ![The Rig tab after pressing Test on box 1: its Handshake column reads "speaks Ephymeris — READY received" while the other boxes say not tested](images/rig-test.webp)
 
-> [!WARNING]
-> **`GRGL_Sim` really opens the fluid lines.** It runs a whole session with no animal in the box. Run it
-> dry (no water in the reservoirs) unless you mean to dispense.
-
 ### Commanding every box
 
 **Command all boxes**, at the foot of the Dashboard's **Boxes** list, opens Debug Mode for the whole rig.
@@ -1086,7 +1091,6 @@ into the folder. The boxes do not use it, and saving does not remove it. Remove 
 - **After moving animals, do the same move on the other lab machine before rescanning there.**
 - **Never edit a `.tsv` file.** It is the original record of the run, and Recover rebuilds the other
   files from it.
-- **`GRGL_Sim` really opens the fluid lines.** Run it dry unless you mean to dispense.
 - **Close Ephymeris normally**, with its own close button, and only after ending the session. Closing it
   during a session stops every box's recording.
 - **Run only one copy of Ephymeris per computer.** Two copies fight over the boxes' connections and the

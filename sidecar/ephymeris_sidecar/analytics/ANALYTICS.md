@@ -458,6 +458,10 @@ trial runner's `1`. Never by a task name, and never by inference, which its edge
 A legacy run (`interp` absent or `1`) is [read into the same table](#how-a-legacy-run-becomes-a-trial-table)
 by the legacy decoder, and scored exactly as the rest of this file describes.
 
+The editor's [Simulate](../../../docs/TASKS.md#simulating-a-spine-task) builds the document a board would
+have written for a simulated animal and scores it through these same calls, so a simulated run is checked
+and read exactly as a recorded one.
+
 > [!CAUTION]
 > **Read a trial off the table's own fields, never a phase kind or a code name.** The one exception is
 > finding the Response window a response is read from. A phase or an outcome class added later must score

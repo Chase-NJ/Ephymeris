@@ -204,8 +204,9 @@ high, spending the pulse width on work that had to happen anyway; hold out the r
 > gap is enforced in firmware and pinned by the host tests (`libraries/BehaviorBox/extras/host_test/`),
 > whose shim logs every pin write with its `micros()`.
 
-`GRGL_Sim` prints its own strobes and pulses through the same helpers (`syncGap`/`syncRise`/`syncFall`),
-so the sync line and controller input can be proven **with no animal**. `shutdownHardware()` (called by
+Every sketch's strobes pulse through these helpers (`syncGap`/`syncRise`/`syncFall`, from
+`emitStrobeAt`), so the sync line and controller input can be proven **with no animal**: start a task on an
+empty box from Debug Mode and its timeouts strobe. `shutdownHardware()` (called by
 `initBoxHardware()`) holds the line LOW, because a floating controller input reads as noise, i.e. events.
 Firmware structure in general: [TASKS.md](TASKS.md#firmware).
 

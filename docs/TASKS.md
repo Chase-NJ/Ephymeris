@@ -134,7 +134,7 @@ The dividing line is what a capped `SET` line can carry ([`SET_LINE_MAX`](#the-l
 |---|---|---|
 | **GRGL** | `Olfactory Behavior/GRGL/` | The one behavioural sketch. Covers discrimination, shaping and eased variants of either; every generated task is a copy of it with new headers. Its shipped `TaskPins.h`/`TaskTrials.h` are defaults, so a bare checkout runs the lab's historical 2-odor task. |
 | **BOX_Utility** | `Utility/BOX_Utility/` | The resting baseline every idle box is returned to ([ARCHITECTURE.md](ARCHITECTURE.md#hardware-utility-baseline)). |
-| **GRGL_Sim** | `Utility/GRGL_Sim/` | Drives a real box through a full session with no animal in it — valves, light, vacuum and fluid on this rig's pins. **Its fluid lines really open**: run it dry or with a catch vessel unless you mean to dispense. |
+| **GRGL_Sim** | `Utility/GRGL_Sim/` | GRGL with a simulated animal. [Decode-only](#decode-only-sketches): bundled so the runs it recorded still decode, never flashed. A spine task is checked with [Simulate](#simulating-a-spine-task) instead. |
 
 ## Firmware
 
@@ -258,6 +258,16 @@ Skip reasons, each reported with its path:
 | `sketch folders belong inside a category folder` | A valid sketch at the root |
 | `couldn't be read: <error>` | Permissions or I/O failure |
 | `a rebuilt copy of a sketch this version no longer ships` | A `rig/sketches/` leftover |
+
+### Decode-only sketches
+
+A sketch whose `task.json` says `"decodeOnly": true` stays in the library so the runs it recorded still decode, and is never run again:
+
+- discovery reports it with `decodeOnly` (`SketchEntry.decodeOnly`, read straight from the file by `discovery._decode_only`);
+- the session mapping step and Debug Mode's flash dialogs leave it out (`offeredSketches` in `lib/settings/schema.ts`);
+- the sidecar refuses it with `SKETCH_DECODE_ONLY` on `flash.enqueue`, `port.sendStart` and `sessions.confirmMapping`, whatever a picker offers.
+
+`parse_profile` ignores the key, so marking a sketch leaves its `profile_hash` and its runs' history alone (`test_decode_only.py` pins it). `GRGL_Sim` is the one decode-only sketch the app ships.
 | `a bundled sketch is already called …` | A generated task shadowing a bundled name |
 
 ### Library states
@@ -1581,6 +1591,7 @@ The frontend holds no wiring and no budget. A preview refused as `TASK_INVALID` 
 | RAM (`RamMeter`) | `SpineView.ram`: the task's bytes out of the 5000 B budget, by the parts `spine.ram_parts` counts. `task_ram_bytes` is their sum, so the meter is the budget's own arithmetic. Past the budget the bar stretches, with the overflow in the error colour and SPN105 under it |
 | Rows (`RowsTable`) | The slots, which can be added (id and type) and removed. Then one row per trial type: its name, one binding per slot, its reward time and, with no window before the Outcome, its reward probability. Each binding picker offers exactly `SpineView.slots[].channels`: the channels of the slot's type and mode, never the sync line. Under each row are its contingency map (each watched response and `timeout`, with its class, line, probability and hold) and its driven-output values. **Add a row** (`addRow`) takes the next free neutral id and no name, copies the last row's bindings and map, and joins every block that draws that row |
 | Blocks (`BlockTimeline`) | The blocks in order, each with its selection and end rule, then what follows it: `SpineView.blocks[].next` drawn as an arrow, an arc back (`↺`) or the end. Then the session cap, said against `SpineView.sessionEnds`, and the selected block's fields: rows and weights, selection, trials, criterion, `next`, correction and the classes it repeats after, bias window, and phase durations, for the phases `SpineView.overridable` lists |
+| Simulate (`SimulatePanel`) | A session against a simulated animal ([Simulating a spine task](#simulating-a-spine-task)) |
 
 **Each problem is shown at its target** (`TaskDiagnostic.target`, read off `location` by `validate.locate`):
 
@@ -1598,6 +1609,38 @@ A stored parameter's diagnostic targets the phase, row or block that owns its sl
 
 > [!CAUTION]
 > **A value stored in `params` wins over the field it tunes**, so an edit to that field changes nothing the board runs. A key that carries a phase index would also tune whichever phase takes that index after an insert or a remove, which is why those are folded into their fields first. `SpineView.stored` lists each one with its target, and the editor shows it beside the field it shadows, with **Use the value here** to remove the stored key. A definition the editor builds stores none. One comes from an older build, an import, or a hand edit.
+
+### Simulating a spine task
+
+The editor's **Simulate** panel (`SimulatePanel`) runs the unsaved definition against a simulated animal and shows what Analytics would show for that run, before anything is compiled or flashed (`tasks.simulate`, `analytics/simulation.py`):
+
+1. The definition is built into its profile and snapshot, as `tasks.preview` builds it.
+2. `stream/simulate.py` steps replay's own core (`replay.begin`, `replay.step`) with the animal in the loop, and writes the run document a board running that table with that animal would have produced: the snapshot, `interp`, `trial_seed`, each parameter's default, and every strobe `spine.expected_stream` predicts.
+3. That document is scored by Analytics' own calls (`summarize`, `series`, `trial_table_of`). So Simulate's numbers are Analytics' by construction, and every simulated run passes the [replay check](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#how-a-spine-run-is-scored): one that diverged would be a simulator bug.
+
+**The animal reads the table, never a phase's name.** In the state the core rests in, it can wait for the timer or make one of the state's watched edges. It ranks each by the outcome classes the trial can still end in from there: a hit class, then no class, then a miss. An engaged animal takes the best everywhere: it pokes at a Wait, sits through a Hold and leaves at a Wait for exit. At a trial's first response (a state flagged `RESPONSE`, while the core has none), its kind decides:
+
+| Animal | At a trial's first response | Elsewhere |
+|---|---|---|
+| Always correct | The best, as everywhere. On a no-go row that is withholding | Engaged |
+| Random | Uniformly among the state's edges and its timeout | Engaged |
+| Biased | Its response slot, `permille` of the time when it can; else as Random | Engaged |
+| Never responds | Nothing | Nothing at all: every Wait times out, or the session runs to its limit |
+
+- **Levels stay physical.** The animal never raises a line that is up, and lets go of one as soon as the state in force stops watching it, which the board never strobes.
+- **It acts 200–600 ms after a state is entered**, drawn from its own RNG and always before the state's timer, and presses a Counter's line N times at that pace.
+- **An input the task only counts** (a Pavlovian task's licks) is never touched, so its phase-window rates read zero, and the panel says so.
+- **One seed repeats a run.** It is the run's `trial_seed` and also seeds the animal's own `random.Random`, never the session RNG, so the animal cannot move the board's draws. A blank seed field draws a fresh one, shown with the result.
+
+**Where it ends** is the board's rule, as replay reads it: the trial cap, the blocks running out, a last-trial state, or the first trial start after the panel's time limit (60 min by default), as the runner's auto-STOP ends a session. A session with no trial start within 10 minutes after the limit is cut off there, like a crashed file.
+
+**The result** names the seed and what ended the session, then:
+- **Never presented**: each row no trial drew, with the blocks that list it (`TaskSimulation.absent`);
+- **Blocks**: each trial that runs in another block than the one before (`TaskSimulation.switches`);
+- each row's outcome classes and the trial table, drawn by Analytics' `TrialsView`;
+- the cumulative P(correct | row) curve.
+
+It runs on demand only. Once the document changes, the last result is dimmed until it is run again. It is refused while the definition has any diagnostic, the bar a flash holds it to.
 
 ## Writing a new sketch
 
@@ -1618,7 +1661,7 @@ For a firmware author adding a sketch to the bundle with its own hand-written `t
 1. Pick the sketch on a session's mapping step. A malformed `task.json` surfaces its parse error there, naming the rule (Debug Mode silently treats a broken profile as profile-less).
 2. `cd sidecar && pytest tests/test_task_profiles.py tests/test_taskdef.py tests/test_discovery.py`.
 3. Compile with `--warnings all` and run the host tests ([Compiling and the host tests](#compiling-and-the-host-tests)).
-4. Flash a box (or run `GRGL_Sim` dry) and watch the live token; if it sticks, check that state's entry names are declared.
+4. Flash a box and watch the live token; if it sticks, check that state's entry names are declared.
 
 ### Troubleshooting
 

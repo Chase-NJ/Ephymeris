@@ -936,6 +936,22 @@ Compile an unsaved definition and say what is wrong with it, writing nothing. Th
 
 **Result:** [TaskPreview](#shape-taskpreview)
 
+<a id="cmd-tasks.simulate"></a>
+#### `tasks.simulate`
+
+Run an unsaved spine definition through replay against a simulated animal and score it as Analytics scores a run (`TASKS.md#simulating-a-spine-task`). Nothing is compiled, flashed or written. `TASK_INVALID` for a trial-table task, a definition with any diagnostic (the bar a flash holds it to), a seed outside the trial seed's range, a limit outside its range, or an animal it cannot be.
+
+**Args**
+
+| Field | Type | Notes |
+|---|---|---|
+| `definition` | unknown |  |
+| `animal` | [SimulatedAnimal](#shape-simulatedanimal) |  |
+| `seed` *(optional)* | number | Omitted: a fresh seed, reported in the result. |
+| `limitMs` *(optional)* | number | The session time limit, 1 ms to 24 h. Default 60 min. |
+
+**Result:** [TaskSimulation](#shape-tasksimulation)
+
 <a id="cmd-tasks.spinepalette"></a>
 #### `tasks.spinePalette`
 
@@ -1647,6 +1663,7 @@ One live view's payload, only while that scope is open (`RECORDING.md#live-windo
 | `PORT_NOT_BOUND` | No board is bound to that box number. An unbound box still exists on the wire and reports `IDLE`. |
 | `PORT_OPEN_FAILED` | Serial open failed — board absent, port busy, or permissions. |
 | `SKETCH_UNKNOWN` | `flash.enqueue` or `port.sendStart` named a path outside the current discovery result. The bundled library and saved task profiles are the only flashable sketches, enforced here and not just by the picker. |
+| `SKETCH_DECODE_ONLY` | `flash.enqueue`, `port.sendStart` or `sessions.confirmMapping` named a decode-only sketch (`TASKS.md#decode-only-sketches`): it is bundled so its runs decode, and is never flashed or started. A mapping's refusal names the box. |
 | `COHORT_NOT_FOUND` | No cohort with that id. |
 | `COHORT_NAME_TAKEN` | Name already used by an **active** cohort. Archived cohorts don't reserve names, so this can also reject a `cohorts.restore`. |
 | `COHORT_INVALID` | A cohort validation failure (`DATA.md#cohorts-animals-and-groups`). `detail` carries per-field errors so the editor can show them inline. |
@@ -1688,6 +1705,17 @@ One live view's payload, only while that scope is open (`RECORDING.md#live-windo
 | `INTERNAL` | Unhandled sidecar exception, or a subsystem that isn't running. Also the code `sidecar.error` carries for a mid-session write failure. Every other refusal has its own code (`ARCHITECTURE.md#dispatch`). |
 
 ## Payload shapes
+
+<a id="shape-absentrow"></a>
+#### AbsentRow
+
+A row of the definition that no simulated trial drew.
+
+| Field | Type | Notes |
+|---|---|---|
+| `rowId` | string |  |
+| `name` | string |  |
+| `blocks` | string[] | The blocks that list the row; empty when none does. |
 
 <a id="shape-activesessions"></a>
 #### ActiveSessions
@@ -1876,6 +1904,16 @@ The kind of answer a condition rewards. `port` is a rig whose response ports car
 | `lastError` | string \| null |  |
 | `syncing` | boolean | A backup.syncNow walk is running. |
 | `intervalSeconds` | number |  |
+
+<a id="shape-blockswitch"></a>
+#### BlockSwitch
+
+A simulated trial that runs in another block than the one before it; the first trial included.
+
+| Field | Type | Notes |
+|---|---|---|
+| `index` | number | The trial's `index` in the trial table. |
+| `block` | string \| null | The block that trial runs in. |
 
 <a id="shape-boardspresencedata"></a>
 #### BoardsPresenceData
@@ -3189,6 +3227,17 @@ Failures with no command to attribute them to.
 | `message` | string |  |
 | `detail` | unknown |  |
 
+<a id="shape-simulatedanimal"></a>
+#### SimulatedAnimal
+
+The animal a simulation runs against.
+
+| Field | Type | Notes |
+|---|---|---|
+| `kind` | "correct" \| "random" \| "biased" \| "silent" | Always correct, random, biased toward one response, or never responds (`TASKS.md#simulating-a-spine-task`). |
+| `response` *(optional)* | string | A biased animal's favoured response: one slot a Response window lists. |
+| `permille` *(optional)* | number | How often a biased animal takes its response when it can, 0 to 1000. Default 800. |
+
 <a id="shape-sketchdiscovery"></a>
 #### SketchDiscovery
 
@@ -3212,6 +3261,7 @@ The full result of a library scan (`TASKS.md#sketch-library`): the bundled sketc
 | `name` | string |  |
 | `path` | string |  |
 | `source` | "bundled" \| "rig" | `rig` when the app generated the folder from one of this rig's saved task definitions, so it is rebuilt on every save and wiring change; `bundled` otherwise, including a bundled sketch rebuilt against this rig's wiring (`TASKS.md#library-roots`). |
+| `decodeOnly` | boolean | Kept so the runs it recorded still decode, but never offered at mapping or in Debug Mode, and refused with `SKETCH_DECODE_ONLY` if named (`TASKS.md#decode-only-sketches`). Its `task.json` says `decodeOnly`. |
 
 <a id="shape-sketchlibrarystatus"></a>
 #### SketchLibraryStatus
@@ -3536,6 +3586,26 @@ A seed spine a new task starts from (`taskdef/seeds.py`).
 | `label` | string | What the chooser calls it. |
 | `summary` | string | One sentence on the spine's shape. |
 | `definition` | unknown | A whole spine-task definition, opened unsaved. Its rows carry no names and bind no channels: the operator names and binds them. |
+
+<a id="shape-tasksimulation"></a>
+#### TaskSimulation
+
+One simulated session of an unsaved spine definition (`TASKS.md#simulating-a-spine-task`). Writes nothing.
+
+| Field | Type | Notes |
+|---|---|---|
+| `seed` | number | The run's trial seed, which also seeds the animal: the one number that repeats this simulation. |
+| `limitMs` | number | The session time limit it ran under. |
+| `endedBy` | "trials" \| "blocks" \| "lastTrial" \| "timeLimit" | The trial cap, the blocks running out, a last-trial state, or the time limit (or a session cut off past it). |
+| `status` | [RunStatus](#shape-runstatus) | As Analytics scores the run: `ok` unless the simulated run did not replay, which is a bug. |
+| `detail` | string \| null |  |
+| `metrics` | [MetricSummary](#shape-metricsummary)[] | P(correct \| row), as `RunSummary.metrics`. |
+| `overall` | [MetricSummary](#shape-metricsummary) \| null | As `RunSummary.overall`. |
+| `replay` | [ReplayScore](#shape-replayscore) \| null | Each row's outcome classes and the phase-window rates, as `RunSummary.replay`. |
+| `series` | [MetricSeries](#shape-metricseries)[] | The learning curves, as `RunSeries.metrics`. |
+| `trialTable` | [TrialTable](#shape-trialtable) \| null | Null only if the simulated run did not replay, which is a bug. |
+| `switches` | [BlockSwitch](#shape-blockswitch)[] |  |
+| `absent` | [AbsentRow](#shape-absentrow)[] |  |
 
 <a id="shape-tasksupdateddata"></a>
 #### TasksUpdatedData

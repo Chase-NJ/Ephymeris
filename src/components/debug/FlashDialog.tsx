@@ -7,6 +7,7 @@ import { errorMessage } from "@/lib/cohorts/commands";
 import { enqueueFlash } from "@/lib/hardware/commands";
 import { useBoxFlash } from "@/lib/hardware/context";
 import { useSettings } from "@/lib/settings/context";
+import { offeredSketches } from "@/lib/settings/schema";
 import { useSidecar } from "@/lib/ws/context";
 import { EVT } from "@/lib/ws/protocol";
 
@@ -103,13 +104,13 @@ export function FlashDialog({
 
   const byCategory = useMemo(() => {
     const groups = new Map<string, typeof discovery.sketches>();
-    for (const sketch of discovery.sketches) {
+    for (const sketch of offeredSketches(discovery)) {
       const list = groups.get(sketch.category) ?? [];
       list.push(sketch);
       groups.set(sketch.category, list);
     }
     return [...groups.entries()];
-  }, [discovery.sketches]);
+  }, [discovery]);
 
   async function flash() {
     if (!selected) return;

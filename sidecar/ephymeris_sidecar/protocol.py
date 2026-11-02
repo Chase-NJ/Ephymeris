@@ -101,6 +101,7 @@ class Cmd:
     TASKS_LIST: Final = "tasks.list"
     TASKS_GET: Final = "tasks.get"
     TASKS_PREVIEW: Final = "tasks.preview"
+    TASKS_SIMULATE: Final = "tasks.simulate"
     TASKS_SPINE_PALETTE: Final = "tasks.spinePalette"
     TASKS_SAVE: Final = "tasks.save"
     TASKS_DELETE: Final = "tasks.delete"
@@ -196,6 +197,7 @@ class ErrCode:
     PORT_NOT_BOUND: Final = "PORT_NOT_BOUND"
     PORT_OPEN_FAILED: Final = "PORT_OPEN_FAILED"
     SKETCH_UNKNOWN: Final = "SKETCH_UNKNOWN"
+    SKETCH_DECODE_ONLY: Final = "SKETCH_DECODE_ONLY"
     COHORT_NOT_FOUND: Final = "COHORT_NOT_FOUND"
     COHORT_NAME_TAKEN: Final = "COHORT_NAME_TAKEN"
     COHORT_INVALID: Final = "COHORT_INVALID"
@@ -255,7 +257,7 @@ SHAPES: Final[dict[str, Any]] = {
     "DetectedBoard": ('obj', (('hardwareId', 'str', False), ('address', 'str', False), ('fqbn', ('union', ('str', 'null')), False), ('boxId', ('union', ('int', 'null')), False))),
     "LibraryState": ('lit', ('ok', 'empty', 'damaged')),
     "SketchLibraryStatus": ('obj', (('state', ('ref', 'LibraryState'), False), ('path', ('union', ('str', 'null')), False), ('message', ('union', ('str', 'null')), False), ('source', ('lit', ('bundled', 'override')), False))),
-    "SketchEntry": ('obj', (('category', 'str', False), ('name', 'str', False), ('path', 'str', False), ('source', ('lit', ('bundled', 'rig')), False))),
+    "SketchEntry": ('obj', (('category', 'str', False), ('name', 'str', False), ('path', 'str', False), ('source', ('lit', ('bundled', 'rig')), False), ('decodeOnly', 'bool', False))),
     "SkippedEntry": ('obj', (('path', 'str', False), ('reason', 'str', False))),
     "SketchDiscovery": ('obj', (('library', ('ref', 'SketchLibraryStatus'), False), ('sketches', ('list', ('ref', 'SketchEntry')), False), ('skipped', ('list', ('ref', 'SkippedEntry')), False), ('skippedCount', 'int', False), ('libraries', ('list', 'str'), False), ('librariesPath', ('union', ('str', 'null')), False))),
     "BoxBinding": ('obj', (('box', 'int', False), ('hardwareId', ('union', ('str', 'null')), False), ('label', 'str', False), ('intanDigitalIn', ('union', ('int', 'null')), True))),
@@ -391,6 +393,10 @@ SHAPES: Final[dict[str, Any]] = {
     "TaskEntry": ('obj', (('id', 'str', False), ('name', 'str', False), ('unreadable', ('union', ('str', 'null')), False), ('category', 'str', False), ('path', 'str', False), ('label', 'str', False), ('editedAt', ('union', ('str', 'null')), False), ('problems', 'int', False), ('trials', 'int', False), ('stages', 'int', False), ('selectionMode', ('union', (('lit', ('antibias', 'pool', 'weighted')), 'null')), False), ('spine', 'bool', False))),
     "TaskSaved": ('obj', (('entry', ('ref', 'TaskEntry'), False), ('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False), ('sketchPath', ('union', ('str', 'null')), False))),
     "TaskPreview": ('obj', (('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False), ('profile', ('ref', 'TaskProfile'), False), ('spine', ('union', (('ref', 'SpineView'), 'null')), False), ('catalogueDefaults', ('map', 'any'), False))),
+    "SimulatedAnimal": ('obj', (('kind', ('lit', ('correct', 'random', 'biased', 'silent')), False), ('response', 'str', True), ('permille', 'int', True))),
+    "BlockSwitch": ('obj', (('index', 'int', False), ('block', ('union', ('str', 'null')), False))),
+    "AbsentRow": ('obj', (('rowId', 'str', False), ('name', 'str', False), ('blocks', ('list', 'str'), False))),
+    "TaskSimulation": ('obj', (('seed', 'int', False), ('limitMs', 'int', False), ('endedBy', ('lit', ('trials', 'blocks', 'lastTrial', 'timeLimit')), False), ('status', ('ref', 'RunStatus'), False), ('detail', ('union', ('str', 'null')), False), ('metrics', ('list', ('ref', 'MetricSummary')), False), ('overall', ('union', (('ref', 'MetricSummary'), 'null')), False), ('replay', ('union', (('ref', 'ReplayScore'), 'null')), False), ('series', ('list', ('ref', 'MetricSeries')), False), ('trialTable', ('union', (('ref', 'TrialTable'), 'null')), False), ('switches', ('list', ('ref', 'BlockSwitch')), False), ('absent', ('list', ('ref', 'AbsentRow')), False))),
     "TasksUpdatedData": ('obj', (('tasks', ('list', ('ref', 'TaskEntry')), False),)),
     "StrobeCode": ('obj', (('name', 'str', False), ('code', 'int', False), ('origin', 'str', False), ('emittedOn', 'str', True), ('rationale', 'str', True), ('portSlot', 'int', True))),
     "RetiredStrobe": ('obj', (('name', 'str', False), ('code', 'int', False), ('rationale', 'str', True), ('seenIn', 'str', True), ('retiredAt', 'str', True))),
@@ -483,6 +489,7 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "tasks.list": ('obj', ()),
     "tasks.get": ('obj', (('taskId', 'str', False),)),
     "tasks.preview": ('obj', (('definition', 'any', False),)),
+    "tasks.simulate": ('obj', (('definition', 'any', False), ('animal', ('ref', 'SimulatedAnimal'), False), ('seed', 'int', True), ('limitMs', 'int', True))),
     "tasks.spinePalette": ('obj', ()),
     "tasks.save": ('obj', (('definition', 'any', False),)),
     "tasks.delete": ('obj', (('taskId', 'str', False),)),
@@ -578,6 +585,7 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "tasks.list": ('obj', (('tasks', ('list', ('ref', 'TaskEntry')), False),)),
     "tasks.get": ('obj', (('definition', 'any', False), ('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False))),
     "tasks.preview": ('ref', 'TaskPreview'),
+    "tasks.simulate": ('ref', 'TaskSimulation'),
     "tasks.spinePalette": ('obj', (('seeds', ('list', ('ref', 'TaskSeed')), False), ('phases', ('list', 'str'), False), ('outcomeClasses', ('list', 'str'), False), ('selections', ('list', 'str'), False), ('timedPhases', ('list', 'str'), False), ('weightedSelections', ('list', 'str'), False))),
     "tasks.save": ('ref', 'TaskSaved'),
     "tasks.delete": ('obj', (('deleted', 'bool', False),)),

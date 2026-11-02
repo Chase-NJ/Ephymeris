@@ -15,7 +15,7 @@ firmware/
 │   └── GRGL/            the behavior task, and the template every saved task is built from
 ├── Utility/
 │   ├── BOX_Utility/     resting firmware + Debug Mode control panel, generated per rig
-│   └── GRGL_Sim/        a dry run of GRGL with a simulated animal
+│   └── GRGL_Sim/        GRGL with a simulated animal, decode-only
 └── libraries/
     └── BehaviorBox/     the shared library every sketch includes
         ├── BehaviorBox.h    serial protocol, START parser, trial primitives, the trial runner
@@ -89,7 +89,7 @@ of the app would write ([TASKS.md › Rebuilt bundled sketches](../docs/TASKS.md
 |:-:|---|---|---|
 | 🟣 | **GRGL** | The olfactory discrimination task. Every task saved in the app is built from a copy of `GRGL.ino`, with its own trial table and parameters | Bundled copy: `TaskPins.h`. A saved task: `TaskPins.h`, `TaskTrials.h`, `task.json` |
 | 🟢 | **BOX_Utility** | The resting firmware on every idle box (the utility baseline) and Debug Mode's control panel: latch, pulse and prime outputs, identify a box, run the hardware self-test | `TaskPins.h`, `UtilityChannels.h`, `task.json` (merged) |
-| 🟠 | **GRGL_Sim** | GRGL with a simulated animal, for checking a box, the app and analysis without a rat. **It really opens the fluid lines**: run it dry unless you mean to dispense | `TaskPins.h` |
+| 🟠 | **GRGL_Sim** | GRGL with a simulated animal. [Decode-only](../docs/TASKS.md#decode-only-sketches): bundled so the runs it recorded still decode, and never flashed. A spine task is checked with [Simulate](../docs/TASKS.md#simulating-a-spine-task) instead | `TaskPins.h` |
 
 ## The box, as the firmware sees it
 

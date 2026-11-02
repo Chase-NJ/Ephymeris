@@ -8,6 +8,7 @@ import { useFlashQueue } from "@/lib/hardware/context";
 import type { FlashJobStatus } from "@/lib/hardware/store";
 import { cancelFlashes, enqueueFlash } from "@/lib/hardware/commands";
 import { useSettings } from "@/lib/settings/context";
+import { offeredSketches } from "@/lib/settings/schema";
 import { useSidecar } from "@/lib/ws/context";
 import { EVT } from "@/lib/ws/protocol";
 
@@ -78,11 +79,11 @@ export function FlashAllDialog({
 
   const byCategory = useMemo(() => {
     const groups = new Map<string, typeof discovery.sketches>();
-    for (const sketch of discovery.sketches) {
+    for (const sketch of offeredSketches(discovery)) {
       groups.set(sketch.category, [...(groups.get(sketch.category) ?? []), sketch]);
     }
     return [...groups.entries()];
-  }, [discovery.sketches]);
+  }, [discovery]);
 
   async function flashAll() {
     if (!selected) return;

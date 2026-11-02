@@ -19,6 +19,7 @@ import type {
   EphymerisSettings,
   IntanSettings,
   SketchDiscovery,
+  SketchEntry,
 } from "@/lib/ws/protocol";
 
 export type {
@@ -246,3 +247,12 @@ export const EMPTY_DISCOVERY: SketchDiscovery = {
   libraries: [],
   librariesPath: null,
 };
+
+/**
+ * The sketches a picker offers: every discovered one but the decode-only, which
+ * stay bundled only so their runs decode (`TASKS.md#decode-only-sketches`). The
+ * sidecar refuses them anyway; this keeps them out of the list.
+ */
+export function offeredSketches(discovery: SketchDiscovery): SketchEntry[] {
+  return discovery.sketches.filter((sketch) => !sketch.decodeOnly);
+}

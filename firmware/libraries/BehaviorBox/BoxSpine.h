@@ -73,7 +73,9 @@
     the tick's watched input edges, then the off code of every output still
     HIGH, then END_SESSION, and nothing else: no BLOCK_START or TRIAL_START,
     and the new trial's outputs are not driven.
-  So STOP never cuts a trial short, as with the trial runner.
+  So STOP never cuts a trial short, as with the trial runner. An aborted trial
+  the core repeats uncounted (INTERP_ACT_UNCOUNTED, BoxInterp.h's GRGL RULES)
+  does not count toward NT: its repeat takes its place.
 
 
   TICKS. One tick per millisecond of millis(). AVR millis() skips a value
@@ -106,8 +108,9 @@
 #error "TaskSpine.h names no counter (SPINE_COUNT_MIN, SPINE_RATIOS): save the task again."
 #endif
 #if !defined(SPINE_NUM_BLOCKS) || !defined(SPINE_TRIALS_SLOT) || !defined(SPINE_NUM_PAIRS) \
-    || !defined(SPINE_BLOCK_SKIPPED) || !defined(SPINE_BLOCK_HITS)
-#error "TaskSpine.h names no blocks (SPINE_NUM_BLOCKS, SPINE_TRIALS_SLOT, SPINE_NUM_PAIRS, SPINE_BLOCK_SKIPPED, SPINE_BLOCK_HITS): save the task again."
+    || !defined(SPINE_BLOCK_SKIPPED) || !defined(SPINE_BLOCK_HITS) || !defined(SPINE_REPEAT_ABORTS) \
+    || !defined(SPINE_LAZY_STEP) || !defined(SPINE_LAZY_MAX)
+#error "TaskSpine.h names no blocks (SPINE_NUM_BLOCKS, SPINE_TRIALS_SLOT, SPINE_NUM_PAIRS, SPINE_BLOCK_SKIPPED, SPINE_BLOCK_HITS, SPINE_REPEAT_ABORTS, SPINE_LAZY_STEP, SPINE_LAZY_MAX): save the task again."
 #endif
 
 /* The generator holds a task's RAM to a budget at save, counting these rows and
@@ -261,6 +264,9 @@ inline SpineTick spine_step(SpineRun &r, InterpEdges edges, uint32_t now, uint32
     r.last = true;
   if (t.actions.flags & INTERP_ACT_TRIAL_START)
   {
+    // An aborted trial that repeats (INTERP_ACT_UNCOUNTED) was counted when it
+    // started; it does not count, so its repeat takes its place.
+    if ((t.actions.flags & INTERP_ACT_UNCOUNTED) && r.trials) r.trials--;
     if (stop || r.last || r.trials >= maxTrials || (t.actions.flags & INTERP_ACT_DONE))
     {
       t.ends = true;
@@ -302,7 +308,8 @@ static const uint8_t kPairs[][2] = SPINE_PAIRS;
 #endif
 static const InterpBlocks kBlocks = {kBlockRows, BOX_SPINE_ENTRIES, BOX_SPINE_OVERRIDES,
                                      SPINE_NUM_BLOCKS, SPINE_NUM_ENTRIES, SPINE_NUM_OVERRIDES,
-                                     SPINE_BLOCK_SKIPPED, SPINE_BLOCK_HITS};
+                                     SPINE_BLOCK_SKIPPED, SPINE_BLOCK_HITS, SPINE_REPEAT_ABORTS,
+                                     SPINE_LAZY_STEP, SPINE_LAZY_MAX};
 static const InterpTable kTable = {kStates, kEdges, &kCounter, &kBlocks};
 
 /* The run's parameter block, filled from the table's defaults and the SET lines. */

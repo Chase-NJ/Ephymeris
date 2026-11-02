@@ -188,11 +188,10 @@ class LiveReplay:
 
 
 def _due(core: rp.Core, now: int) -> int | None:
-    """The tick the resting state's timer runs out at, never before `now + 1`
-    (a tick is stepped once)."""
-    if core.table.states[core.state].timer_min == rp.NONE:
-        return None
-    return max(core.entered_at + core.duration, now + 1)
+    """The tick the resting state moves at with no edge (`replay.due_in`),
+    never before `now + 1` (a tick is stepped once)."""
+    due = rp.due_in(core, now)
+    return None if due is None else now + due
 
 
 def _timers(core: rp.Core, now: int, until: int) -> tuple[rp.Core, int, list[rp.Actions]]:

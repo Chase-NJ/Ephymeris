@@ -250,6 +250,18 @@ The legacy adapter flags two gaps rather than filling them:
 - **Legacy no-go runs:** their strobes cannot tell a withhold from a false alarm.
 - **Legacy per-phase counts:** these columns are empty, not zero.
 
+The spine keeps the GRGL rules the odor 2AFC depends on (`INTERP` 7, [TASKS.md](../TASKS.md#grgls-rules-on-the-spine)):
+- per-exit penalties in place of the ITI;
+- the lazy penalty's escalation;
+- aborts that repeat uncounted;
+- the wait for the well's exit;
+- a block's well hold;
+- GRGL's anti-bias shape and run cap.
+
+Two differences from GRGL remain, accepted:
+- **Per-side leading correction budgets** (`CL`/`CR`) have no equivalent; a block's `correction` stands in for them.
+- **The lazy penalty escalates from the session's start**, with no `lazyEscalationStage` gate.
+
 ## Considered options
 
 - **A fixed runner per paradigm family** (2AFC, Pavlovian, operant). Each is easier to trust on its own, but each family is new C++, which is the special case per paradigm this decision exists to remove.

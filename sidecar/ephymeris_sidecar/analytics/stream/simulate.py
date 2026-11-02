@@ -130,6 +130,8 @@ def _session(record: spine.SpineRecord, walk: _Animal,
         last = last or bool(a.flags & rp.ACT_LAST_TRIAL)
         if not a.flags & rp.ACT_TRIAL_START:
             return None
+        if a.flags & rp.ACT_UNCOUNTED and started:
+            started -= 1  # an aborted trial that repeats: its repeat takes its place
         if now > 0:
             if max_trials is not None and started >= max_trials:
                 return "trials"
@@ -172,10 +174,9 @@ def _session(record: spine.SpineRecord, walk: _Animal,
 
 
 def _due(core: rp.Core, now: int) -> int | None:
-    """The tick the resting state's timer runs out, as `replay.replay` steps to it."""
-    if core.table.states[core.state].timer_min == rp.NONE:
-        return None
-    return now + max(1, core.duration - (now - core.entered_at))
+    """The tick the resting state moves at with no edge, as `replay.replay` steps to it."""
+    due = rp.due_in(core, now)
+    return None if due is None else now + due
 
 
 def _strobes(record: spine.SpineRecord, edges: list[tuple[int, rp.Edges]]) -> list[list[int]]:

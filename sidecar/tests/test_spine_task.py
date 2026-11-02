@@ -94,9 +94,9 @@ def test_the_profile_carries_everything_replay_needs():
                               "phases": [0, 1, 2, 3, 3, 3, 4, 4], "rows": [0] * 7 + [None],
                               "counter": None, "blocks": [list(b) for b in low.blocks], "entries": [],
                               "overrides": [], "skipped": 0b11000000,
-                              "hits": 0b10001}
+                              "hits": 0b10001, "repeatAborts": False, "lazy": None}
     #                             first count select n_min n_max k    n    window correct next errors
-    assert spine["table"]["blocks"] == [[0, 1, 0, 6, 6, 255, 255, 255, 255, 255, 0]]
+    assert spine["table"]["blocks"] == [[0, 1, 0, 6, 6, 255, 255, 255, 255, 255, 0, 255, 255, 255, 255]]
     assert spine["params"] == list(low.params)
     assert spine["inputs"] == [{"slot": "port", "channel": "odor_port",
                                 "rise": "ODOR_PORT_ENTER", "fall": "ODOR_PORT_EXIT"}]
@@ -156,7 +156,7 @@ def test_a_task_with_a_window_and_rows_round_trips_and_is_clean(make):
 def test_the_go_no_go_snapshot_names_each_bit_and_annotates_each_state():
     definition = TaskDefinition.from_json(fixture.go_no_go())
     spine = generate.build_profile(definition).spine
-    assert spine["interp"] == lowering.INTERP_VERSION == 6
+    assert spine["interp"] == lowering.INTERP_VERSION == 7
     # One bit per channel: `sample` is two odor lines, one per row.
     assert [(o["slot"], o["channel"]) for o in spine["outputs"]] == [
         ("cue", "trial_light"), ("sample", "odor_line_1"), ("sample", "odor_line_2"), ("reward", "fluid_2")]
@@ -197,7 +197,7 @@ def test_the_tracer_s_reward_keys_name_its_row():
 
 def test_a_go_no_go_folder_carries_its_table():
     header = generate.task_spine_h(TaskDefinition.from_json(fixture.go_no_go()))
-    assert "#define SPINE_INTERP 6" in header and "#error" not in header
+    assert "#define SPINE_INTERP 7" in header and "#error" not in header
     assert "#define SPINE_NUM_STATES 15" in header and "#define SPINE_NUM_OUTPUTS 4" in header
 
 
@@ -396,7 +396,8 @@ def test_the_ram_budget_is_what_an_avr_build_adds_for_the_task(tmp_path):
     assert refused(every_entry_pays(largest + 1)), "one row past the edge is refused"
     assert not refused(two_afc_rows(18)) and refused(two_afc_rows(19))
     # The held trial has three inputs and three outputs, so nothing folds and its
-    # build is the sum to the byte. A task of one input or two outputs comes in
+    # build is the sum to within a byte: the linker pads `.data`, where the
+    # constant tables sit, to an even size. A task of one input or two outputs comes in
     # under it: the compiler folds a small constant channel array away (the PR
     # task, by 19 B).
     # Blocks with entries, an override and two pairs pin those rows' sizes too.
@@ -414,10 +415,10 @@ def test_the_ram_budget_is_what_an_avr_build_adds_for_the_task(tmp_path):
         globals_ = _avr_globals(store.sketch_dir(definition))
         counted = spine_module.RUNNER_RAM_BYTES + spine_module.task_ram_bytes(low)
         if raw["id"] == "spine_held":
-            assert counted == globals_, (globals_, counted)
+            assert 0 <= counted - globals_ <= 1, (globals_, counted)
         assert 0 <= counted - globals_ <= 24, (raw["id"], globals_, counted)
     assert globals_ <= spine_module.RUNNER_RAM_BYTES + spine_module.TASK_RAM_MAX
-    assert 8192 - (spine_module.RUNNER_RAM_BYTES + spine_module.TASK_RAM_MAX) == 2728
+    assert 8192 - (spine_module.RUNNER_RAM_BYTES + spine_module.TASK_RAM_MAX) == 2718
 
     # Driven outputs (TASKS.md#driven-outputs), with a tone and without one: the
     # drives and tone()'s own globals are counted too. So are Pavlovian trace and
@@ -533,7 +534,7 @@ def test_the_snapshot_and_the_folder_carry_the_counter():
     table = generate.build_profile(pr).spine["table"]
     assert table["counter"] == {"min": lowering.NONE, "max": lowering.NONE, "ratios": fixture.RICHARDSON_ROBERTS}
     header = generate.task_spine_h(pr)
-    assert "#define SPINE_INTERP 6" in header and "#error" not in header
+    assert "#define SPINE_INTERP 7" in header and "#error" not in header
     assert "#define SPINE_NUM_RATIOS 10" in header and "1, 2, 4, 6, 9, 12, 15, 20, 25, 32" in header
     fr = generate.build_profile(TaskDefinition.from_json(fixture.fixed_ratio()))
     assert fr.spine["table"]["counter"] == {"min": 0, "max": 0, "ratios": []}, "slot 0: no session cap"
@@ -703,7 +704,7 @@ def test_the_ram_budget_counts_blocks_entries_overrides_and_pairs():
     added = (2 * lowering.ENTRY_BYTES + lowering.OVERRIDE_BYTES + spine_module.PAIR_BYTES
              + sum(spine_module.PARAM_BYTES + len(k) + 1 for k in ("BNX1", "W1_1", "W1_2", "B1T4")))
     assert spine_module.task_ram_bytes(low) - spine_module.task_ram_bytes(plain) == added
-    assert lowering.BLOCK_BYTES == 12 and spine_module.task_ram_bytes(plain) == (
+    assert lowering.BLOCK_BYTES == 16 and spine_module.task_ram_bytes(plain) == (
         lowering.table_bytes(len(plain.states), len(plain.edges), 1)
         + sum(spine_module.PARAM_BYTES + len(k) + 1 for k in plain.params)
         + 3 * spine_module.INPUT_BYTES + 5 * spine_module.OUTPUT_BYTES + spine_module.RATIO_BYTES)

@@ -45,6 +45,15 @@ export interface SpinePhase {
   endsSession?: boolean;
   /** Input slots counted while in the phase, which never move it (`TASKS.md#pavlovian-conditioning`). */
   watch?: string[];
+  /** GRGL's rules (`TASKS.md#grgls-rules-on-the-spine`): an early exit's penalty, in place of the ITI. */
+  penaltyMs?: number;
+  /** A Wait's escalating penalty: its step per lazy trial, and its cap. */
+  escalateMs?: number;
+  escalateMaxMs?: number;
+  /** A Response window's broken hold's penalty. */
+  brokenPenaltyMs?: number;
+  /** An Outcome after a window waits for the paid well's release. */
+  awaitExit?: boolean;
 }
 
 export interface MapEntry {
@@ -52,6 +61,8 @@ export interface MapEntry {
   line?: string;
   rewardPermille?: number;
   hold?: boolean;
+  /** The penalty in place of the ITI after this entry (`TASKS.md#grgls-rules-on-the-spine`). */
+  penaltyMs?: number;
 }
 
 export interface SpineRow {
@@ -81,6 +92,13 @@ export interface SpineBlock {
   biasWindow?: number;
   /** Phase index → ms while the block runs. */
   phaseMs?: Record<string, number>;
+  /** Response window index → its hold while the block runs. */
+  holdMs?: Record<string, number>;
+  /** GRGL's anti-bias: strength and clamp in permille, and the same-side run cap. */
+  biasStrength?: number;
+  biasMin?: number;
+  biasMax?: number;
+  maxRun?: number;
 }
 
 export interface SpineDefinition {
@@ -92,6 +110,8 @@ export interface SpineDefinition {
   rows: SpineRow[];
   blocks: SpineBlock[];
   sessionTrials?: number;
+  /** An aborted trial repeats its row and counts toward no N (`TASKS.md#grgls-rules-on-the-spine`). */
+  repeatAborts?: boolean;
   params: Record<string, unknown>;
   legacyNames: string[];
   notes: string;

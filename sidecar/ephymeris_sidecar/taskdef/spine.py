@@ -86,10 +86,10 @@ TONE_RAM_BYTES = 32
 #: BehaviorBox.h and the Arduino core, measured by that same test. A build can
 #: come in some bytes under the sum (the compiler folds a small constant channel
 #: array away), never over it.
-RUNNER_RAM_BYTES = 464
+RUNNER_RAM_BYTES = 474
 #: The most RAM a task's data (`task_ram_bytes`) may take, out of a Mega's 8192 B.
-#: With the runner's own, globals stay at most 5464 B (67%), leaving the stack
-#: and the serial buffers at least 2728 B (`TASKS.md#spine-diagnostics`). An
+#: With the runner's own, globals stay at most 5474 B (67%), leaving the stack
+#: and the serial buffers at least 2718 B (`TASKS.md#spine-diagnostics`). An
 #: 18-row 2AFC fits.
 TASK_RAM_MAX = 5000
 
@@ -265,7 +265,8 @@ def _resolve(definition: TaskDefinition) -> _Resolved:
         try:
             out.lowered = lowering.lower([p.to_json() for p in spine.phases], inputs=inputs, outputs=outputs,
                                          rows=rows, drives=drives, blocks=[b.to_json() for b in spine.blocks],
-                                         session_cap=spine.trials is not None)
+                                         session_cap=spine.trials is not None,
+                                         repeat_aborts=spine.repeat_aborts)
         except lowering.LoweringError as exc:  # too many states, or two responses on one channel
             problem("spine", "SPN105", str(exc))
     if out.lowered is not None:
@@ -352,7 +353,38 @@ def _shape_problems(spine: Spine, slot_type: dict[str, str], lines: set[str], pr
         for key, value in (("ms", p.ms), ("timeoutMs", p.timeout_ms), ("holdMs", p.hold_ms)):
             if value is not None and not 0 <= value <= _MS_MAX:
                 bad(f"{at}.{key}", f"a duration is 0 to {_MS_MAX} ms")
+        _penalty_problems(at, i, p, window, bad)
+    escalating = [i for i, p in enumerate(phases) if p.escalate_ms is not None]
+    if len(escalating) > 1:
+        bad(f"spine[{escalating[1]}].escalateMs", "at most one Wait's penalty escalates: the board keeps one "
+            "count of lazy trials")
     return ok
+
+
+def _penalty_problems(at: str, i: int, p, window: int | None, bad) -> None:  # noqa: ANN001
+    """GRGL's penalties, the escalating one and the awaited exit, on phase i (SPN105,
+    `TASKS.md#grgls-rules-on-the-spine`)."""
+    for key, value in (("penaltyMs", p.penalty_ms), ("escalateMs", p.escalate_ms),
+                       ("escalateMaxMs", p.escalate_max_ms), ("brokenPenaltyMs", p.broken_penalty_ms)):
+        if value is not None and not 0 <= value <= _MS_MAX:
+            bad(f"{at}.{key}", f"a duration is 0 to {_MS_MAX} ms")
+    if p.penalty_ms is not None:
+        if p.phase not in lowering.PENALISED:
+            bad(f"{at}.penaltyMs", f"a penalty follows an early exit, which a {p.phase} has none of; a "
+                f"contingency map's entry carries its own")
+        elif p.phase in ("wait", "counter") and p.timeout_ms is None:
+            bad(f"{at}.penaltyMs", f"a {p.phase}'s penalty follows its timeout; give it timeoutMs")
+    if p.escalate_ms is not None or p.escalate_max_ms is not None:
+        if p.phase != "wait":
+            bad(f"{at}.escalateMs", "only a Wait's timeout penalty escalates")
+        elif p.penalty_ms is None or p.escalate_ms is None:
+            bad(f"{at}.escalateMs", "an escalating penalty grows from the Wait's penaltyMs by escalateMs")
+        elif p.escalate_max_ms is None:
+            bad(f"{at}.escalateMaxMs", "an escalating penalty grows up to escalateMaxMs; give it one")
+    if p.broken_penalty_ms is not None and (p.phase != "response" or p.hold_ms is None):
+        bad(f"{at}.brokenPenaltyMs", "a broken hold's penalty belongs to a Response window with holdMs")
+    if p.await_exit and (p.phase != "outcome" or window is None or i < window):
+        bad(f"{at}.awaitExit", "an Outcome after a Response window waits for the paid well's release")
 
 
 def _counter_problems(at: str, p, bad) -> None:  # noqa: ANN001
@@ -507,6 +539,13 @@ def _block_problems(spine: Spine, problem) -> bool:  # noqa: ANN001, C901
                 bad(f"{at}.phaseMs.{key}", "an override names a phase that lasts a set time, by its index")
             elif not 0 <= ms <= _MS_MAX:
                 bad(f"{at}.phaseMs.{key}", f"a duration is 0 to {_MS_MAX} ms", blocks=False)
+        held = {str(i) for i, p in enumerate(spine.phases) if p.phase == "response" and p.hold_ms is not None}
+        for key, ms in block.hold_ms.items():
+            if key not in held:
+                bad(f"{at}.holdMs.{key}", "a hold override names a Response window with holdMs, by its index")
+            elif not 0 <= ms <= _MS_MAX:
+                bad(f"{at}.holdMs.{key}", f"a duration is 0 to {_MS_MAX} ms", blocks=False)
+        _bias_problems(at, block, bad)
     for r, row in enumerate(spine.rows):
         if not any(row.id in b.rows for b in spine.blocks):
             problem(f"rows[{r}].id", "SPN106", f"no block draws row {row.id!r}")
@@ -514,6 +553,23 @@ def _block_problems(spine: Spine, problem) -> bool:  # noqa: ANN001, C901
         problem("sessionTrials", "SPN106", "nothing but End Session ends this session: its blocks loop, or one never "
                 "ends. Give the session sessionTrials, or every block an end rule and the last no next")
     return ok
+
+
+def _bias_problems(at: str, block, bad) -> None:  # noqa: ANN001
+    """GRGL's anti-bias on a block: its strength, clamp and run cap (SPN106)."""
+    fields = (("biasStrength", block.bias_strength), ("biasMin", block.bias_min), ("biasMax", block.bias_max),
+              ("maxRun", block.max_run))
+    for key, value in fields:
+        if value is None:
+            continue
+        if block.select != "antibias":
+            bad(f"{at}.{key}", f"{key} shapes anti-bias, and this block draws {block.select}", blocks=False)
+        elif key == "maxRun" and not 1 <= value <= _TRIALS_MAX:
+            bad(f"{at}.{key}", f"a run cap is 1 to {_TRIALS_MAX} draws", blocks=False)
+        elif key != "maxRun" and not 0 <= value <= 1000:
+            bad(f"{at}.{key}", "anti-bias's strength and clamp are 0 to 1000 permille", blocks=False)
+    if block.bias_min is not None and block.bias_max is not None and block.bias_min > block.bias_max:
+        bad(f"{at}.biasMin", "anti-bias's least chance is at most its most", blocks=False)
 
 
 def _weight_max(block) -> int:  # noqa: ANN001
@@ -585,6 +641,8 @@ def _map_problems(spine: Spine, lines: set[str], problem) -> bool:  # noqa: ANN0
                 bad(f"{at}.{key}.hold", "the window running out is no response to hold")
             elif entry.hold and window.hold_ms is None:
                 bad(f"{at}.{key}.hold", "a hold lasts the window's holdMs, and the window gives none")
+            if entry.penalty_ms is not None and not 0 <= entry.penalty_ms <= _MS_MAX:
+                bad(f"{at}.{key}.penaltyMs", f"a penalty is 0 to {_MS_MAX} ms")
     return ok
 
 
@@ -734,10 +792,15 @@ def _overridden(spine: Spine, s: lowering.ParamSlot) -> str | None:
         return None
     if s.role == "block_timer" and s.block is not None:
         return f"blocks[{s.block}].phaseMs.{s.phase}"
+    if s.role == "block_hold" and s.block is not None:
+        return f"blocks[{s.block}].holdMs.{s.phase}"
     if s.role == "timer":
         limited = spine.phases[s.phase].phase in ("wait", "counter")
         return f"spine[{s.phase}].{'timeoutMs' if limited else 'ms'}"
-    field_ = {"hold": "holdMs", "count": "count", "count_max": "countMax"}.get(s.role)
+    if s.role == "penalty" and s.row is None:
+        return f"spine[{s.phase}].{'brokenPenaltyMs' if s.entry == 'hold' else 'penaltyMs'}"
+    field_ = {"hold": "holdMs", "count": "count", "count_max": "countMax", "escalate_step": "escalateMs",
+              "escalate_max": "escalateMaxMs"}.get(s.role)
     return f"spine[{s.phase}].{field_}" if field_ else None
 
 
@@ -789,7 +852,11 @@ def profile_json(definition: TaskDefinition) -> dict[str, Any]:
                    "overrides": [list(o) for o in low.overrides],
                    # InterpBlocks.skipped and .hits: the classes a criterion
                    # passes over, and those it counts as correct.
-                   "skipped": low.skipped, "hits": low.hits}
+                   "skipped": low.skipped, "hits": low.hits,
+                   # InterpBlocks.repeat_aborts and its escalation's (step,
+                   # cap) slots, null for none.
+                   "repeatAborts": low.repeat_aborts,
+                   "lazy": list(low.lazy) if low.lazy is not None else None}
                   if low else None),
         "structural": dict(STRUCTURAL),
     }
@@ -864,6 +931,33 @@ def _param_fields(spine: Spine, low: lowering.Lowered | None) -> list[dict[str, 
                                   spine.phases[i].hold_ms or 0, "Phases", "ms", 0, _MS_MAX,
                                   "How long a response whose map entry holds must be held; letting go "
                                   "sooner is hold broken."))
+        elif s.role == "penalty" and s.row is None:
+            i = s.phase
+            p = spine.phases[i]
+            if s.entry == "hold":
+                out.append(_int_field(f"response_{i}_broken_penalty_ms", s.key,
+                                      f"Broken hold penalty (phase {i + 1})", p.broken_penalty_ms or 0,
+                                      "Penalties", "ms", 0, _MS_MAX,
+                                      "How long a broken response hold waits before the next trial, in place "
+                                      "of the ITI."))
+            else:
+                out.append(_int_field(f"{p.phase}_{i}_penalty_ms", s.key, f"{_EXIT_LABEL[p.phase]} penalty "
+                                      f"(phase {i + 1})", p.penalty_ms or 0, "Penalties", "ms", 0, _MS_MAX,
+                                      f"How long the trial waits after its {_EXIT_LABEL[p.phase].lower()} before "
+                                      "the next trial, in place of the ITI."
+                                      + (" Grows with each lazy trial since the last correct one."
+                                         if p.escalate_ms is not None else "")))
+        elif s.role in ("escalate_step", "escalate_max"):
+            i = s.phase
+            p = spine.phases[i]
+            step = s.role == "escalate_step"
+            out.append(_int_field(f"wait_{i}_escalate{'' if step else '_max'}_ms", s.key,
+                                  f"Lazy penalty {'step' if step else 'cap'} (phase {i + 1})",
+                                  (p.escalate_ms if step else p.escalate_max_ms) or 0, "Penalties", "ms", 0,
+                                  _MS_MAX,
+                                  "How much longer the timeout's penalty is for each lazy trial in a row since "
+                                  "the last correct one." if step else
+                                  "The longest the timeout's penalty grows to."))
         else:
             row = spine.rows[s.row]
             if s.slot is not None:  # a driven output's value
@@ -874,6 +968,10 @@ def _param_fields(spine: Spine, low: lowering.Lowered | None) -> list[dict[str, 
                 out.append(_int_field(f"{prefix}_{row.id}_{s.slot}", s.key, f"{label} — {row.name}, {s.slot}",
                                       value if isinstance(value, int) and lo <= value <= hi else lo,
                                       "Outputs", unit, lo, hi, _DRIVE_HELP[s.role]))
+            elif s.role == "penalty":
+                out.append(_int_field(f"penalty_ms_{row.id}_{s.entry}", s.key, f"Penalty — {row.name}, {s.entry}",
+                                      row.map[s.entry].penalty_ms or 0, "Penalties", "ms", 0, _MS_MAX,
+                                      f"How long {s.entry} waits before the next trial, in place of the ITI."))
             elif s.role == "reward_ms":
                 out.append(_int_field(f"reward_ms_{row.id}", s.key, f"Reward — {row.name}", row.reward_ms,
                                       "Reward volume", "ms", 0, _REWARD_MS_MAX,
@@ -939,11 +1037,38 @@ def _block_field(spine: Spine, s: lowering.ParamSlot) -> dict[str, Any]:
                           group, None, 0, _weight_max(block),
                           "How many tokens of this row the bag holds." if block.select == "bag"
                           else "How often this row is drawn, against the block's other rows.")
+    if s.role == "block_hold":
+        assert s.phase is not None
+        return _int_field(f"{name}_response_{s.phase}_hold_ms", s.key, f"{label}: response hold (phase {s.phase + 1})",
+                          block.hold_ms.get(str(s.phase), 0), group, "ms", 0, _MS_MAX,
+                          "How long a held response must be held while the block runs.")
+    if s.role in _BIAS_FIELDS:
+        attr, metadata, title, lo, hi, unit, help_text = _BIAS_FIELDS[s.role]
+        value = getattr(block, attr)
+        return _int_field(f"{name}_{metadata}", s.key, f"{label}: {title}", lo if value is None else value, group,
+                          unit, lo, hi, help_text)
     assert s.role == "block_timer" and s.phase is not None
     p = spine.phases[s.phase]
     return _int_field(f"{name}_{_timer_metadata(p, s.phase)}", s.key,
                       f"{label}: {p.phase} (phase {s.phase + 1})", block.phase_ms.get(str(s.phase), 0), group, "ms",
                       0, _MS_MAX, "How long this phase lasts while the block runs.")
+#: Each anti-bias field GRGL's shape adds: its block attribute, metadata key,
+#: label, range, unit and help.
+_BIAS_FIELDS = {
+    "bias_strength": ("bias_strength", "bias_strength", "anti-bias strength", 0, 1000, "‰",
+                      "How hard anti-bias pushes against the side the animal has favoured: 500 is GRGL's."),
+    "bias_min": ("bias_min", "bias_min", "anti-bias least chance", 0, 1000, "‰",
+                 "The least chance anti-bias gives any side."),
+    "bias_max": ("bias_max", "bias_max", "anti-bias most chance", 0, 1000, "‰",
+                 "The most chance anti-bias gives any side."),
+    "max_run": ("max_run", "max_run", "most draws in a row on one side", 1, _TRIALS_MAX, "trials",
+                "A side drawn this many times in a row sits out the next draw."),
+}
+
+#: What a phase's early exit is called, for its penalty's label.
+_EXIT_LABEL = {"wait": "Timeout", "hold": "Broken hold", "present": "Abort", "delay": "Abort",
+               "counter": "Time limit"}
+
 _DRIVE_HELP = {
     "pwm_duty": "The PWM duty this row drives the line at while a phase holds it on: 0 is off, 255 fully on.",
     "tone_hz": "The tone this row plays while a phase holds it on.",
@@ -1072,13 +1197,18 @@ def task_spine_h(definition: TaskDefinition, banner: str) -> str:
         f"#define SPINE_TRIALS_SLOT {low.params.index(lowering.TRIALS_KEY) if lowering.TRIALS_KEY in low.params else lowering.NONE}",
         "",
         "/*  The blocks (BoxInterp.h, InterpBlocks): {first, count, select, n_min, n_max,",
-        "    k, n, window, correct, next, errors}; an entry per branch of the pick,",
-        "    {side, weight}; overrides, {block, slot, with}. An empty array is left out.",
-        "    SPINE_BLOCK_SKIPPED and SPINE_BLOCK_HITS: the classes a criterion passes over",
-        "    and those it counts as correct, bit c-1 for class c. */",
+        "    k, n, window, correct, next, errors, strength, p_min, p_max, max_run}; an",
+        "    entry per branch of the pick, {side, weight}; overrides, {block, slot, with}.",
+        "    An empty array is left out. SPINE_BLOCK_SKIPPED and SPINE_BLOCK_HITS: the",
+        "    classes a criterion passes over and those it counts as correct, bit c-1 for",
+        "    class c. SPINE_REPEAT_ABORTS: an aborted trial repeats uncounted;",
+        "    SPINE_LAZY_STEP and SPINE_LAZY_MAX: the escalating penalty's slots, or 255. */",
         f"#define SPINE_NUM_BLOCKS {len(low.blocks)}",
         f"#define SPINE_BLOCK_SKIPPED {low.skipped}",
         f"#define SPINE_BLOCK_HITS {low.hits}",
+        f"#define SPINE_REPEAT_ABORTS {int(low.repeat_aborts)}",
+        f"#define SPINE_LAZY_STEP {low.lazy[0] if low.lazy else lowering.NONE}",
+        f"#define SPINE_LAZY_MAX {low.lazy[1] if low.lazy else lowering.NONE}",
         f"#define SPINE_BLOCKS {initialiser(['{' + ', '.join(map(str, b)) + '}' for b in low.blocks])}",
         f"#define SPINE_NUM_ENTRIES {len(low.entries)}",
         *([f"#define SPINE_ENTRIES {initialiser(['{' + ', '.join(map(str, e)) + '}' for e in low.entries])}"]

@@ -70,17 +70,19 @@ def raw_table(rng: random.Random, n_params: int) -> rp.Table:
     """Any valid table: every field, ties between up to four exits, chance states,
     pick states of one to four branches (state 0 often one, as a block of
     several rows lowers), counter states over a fixed, drawn or progressive N,
-    and last-trial states."""
+    last-trial states, await-low states, and escalating timers."""
     n = rng.randint(3, 8)
     kind = ["pick" if rng.random() < (0.5 if i == 0 else 0.15) else
             "chance" if i > 0 and rng.random() < 0.2 else
-            "count" if rng.random() < 0.25 else "plain" for i in range(n)]
+            "count" if rng.random() < 0.25 else
+            "await" if i > 0 and rng.random() < 0.15 else "plain" for i in range(n)]
     blocked = rng.random() < 0.6  # blocks, drawn by state 0, a trial-starting pick
+    lazy = blocked and rng.random() < 0.5  # an escalation, which some timers read
     if blocked:
         kind[0] = "pick"
     if kind.count("plain") < 2:
         kind[-2:] = ["plain", "plain"]
-    plain = [i for i in range(n) if kind[i] in ("plain", "count")]
+    plain = [i for i in range(n) if kind[i] in ("plain", "count", "await")]
     inputs = [0, 1, 2, 3] + ([31] if rng.random() < 0.2 else [])
     states, edges = [], []
     for i in range(n):
@@ -116,6 +118,19 @@ def raw_table(rng: random.Random, n_params: int) -> rp.Table:
                 outcome=rng.randrange(8),
             ))
             continue
+        if kind[i] == "await":
+            # One FALL row on an input it watches, no timer: left once that input is down.
+            c = rng.choice(inputs)
+            first = len(edges)
+            edges.append(rp.EdgeRow(c, FALL, rng.randrange(n)))
+            states.append(rp.StateRow(
+                outputs=rng.getrandbits(6),
+                watch=1 << c | (1 << rng.choice(inputs) if rng.random() < 0.4 else 0),
+                edge_first=first, edge_count=1,
+                flags=rp.AWAIT_LOW | rng.choice((0, 0, rp.STARTS_TRIAL, rp.LAST_TRIAL)),
+                outcome=rng.randrange(8),
+            ))
+            continue
         watch_list = [c for c in inputs if rng.random() < 0.6]
         exits = [(c, e) for c in watch_list for e in (RISE, FALL) if rng.random() < 0.5]
         rng.shuffle(exits)
@@ -131,7 +146,8 @@ def raw_table(rng: random.Random, n_params: int) -> rp.Table:
             on_timeout=rng.randrange(n) if timed else NONE,
             edge_first=first if exits else 0,
             edge_count=len(exits),
-            flags=rng.choice((0, 0, rp.STARTS_TRIAL, rp.LAST_TRIAL)) | (rp.RESPONSE if rng.random() < 0.5 else 0),
+            flags=rng.choice((0, 0, rp.STARTS_TRIAL, rp.LAST_TRIAL)) | (rp.RESPONSE if rng.random() < 0.5 else 0)
+                  | (rp.ESCALATE if lazy and timed and rng.random() < 0.4 else 0),
             outcome=rng.randrange(8),
         ))
     counter = None
@@ -142,14 +158,16 @@ def raw_table(rng: random.Random, n_params: int) -> rp.Table:
         else:
             lo = rng.randrange(n_params)
             counter = rp.Counter(count_min=lo, count_max=lo if source == "fixed" else rng.randrange(n_params))
-    blocks = raw_blocks(rng, n_params, states) if blocked else None
+    blocks = raw_blocks(rng, n_params, states, lazy) if blocked else None
     return rp.Table(states=tuple(states), edges=tuple(edges), counter=counter, blocks=blocks)
 
 
-def raw_blocks(rng: random.Random, n_params: int, states: list[rp.StateRow]) -> rp.Blocks:
+def raw_blocks(rng: random.Random, n_params: int, states: list[rp.StateRow], lazy: bool) -> rp.Blocks:
     """One to three blocks over the trial-starting picks' branches: every selection,
     an N fixed or drawn, a criterion, both or neither, a next that goes on, loops
-    back or ends, a correction limit, entries on input sides, overrides."""
+    back or ends, a correction limit, entries on input sides, overrides; GRGL's
+    anti-bias strength, clamp and run cap, aborts that repeat, and `lazy`'s
+    escalation slots."""
     room = min(s.edge_count for s in states if s.is_pick and s.flags & rp.STARTS_TRIAL)
     n_blocks = rng.randint(1, 3)
 
@@ -172,14 +190,20 @@ def raw_blocks(rng: random.Random, n_params: int, states: list[rp.StateRow]) -> 
             correct=rng.randrange(n_params) if rng.random() < 0.5 else NONE,
             next=rng.choice((NONE, *range(n_blocks))),
             # Classes 1-8 are what the raw states mark; now and then one past them.
-            errors=rng.getrandbits(9) if rng.random() < 0.9 else rng.getrandbits(16)))
+            errors=rng.getrandbits(9) if rng.random() < 0.9 else rng.getrandbits(16),
+            strength=rng.randrange(n_params) if rng.random() < 0.25 else NONE,
+            p_min=rng.randrange(n_params) if rng.random() < 0.5 else NONE,
+            p_max=rng.randrange(n_params) if rng.random() < 0.5 else NONE,
+            max_run=rng.randrange(n_params) if rng.random() < 0.35 else NONE))
     entries = [rp.Entry(side=rng.choice((0, 1, 2, 3, NONE)),
                         weight=rng.randrange(n_params) if rng.random() < 0.8 else NONE)
                for _ in range(room)] if rng.random() < 0.85 else []
     overrides = [rp.Override(rng.randrange(n_blocks), rng.randrange(n_params), rng.randrange(n_params))
                  for _ in range(rng.choice((0, 0, 1, 2)))]
     return rp.Blocks(rows=tuple(rows), entries=tuple(entries), overrides=tuple(overrides),
-                     skipped=rng.getrandbits(9), hits=rng.getrandbits(9))
+                     skipped=rng.getrandbits(9), hits=rng.getrandbits(9), repeat_aborts=rng.random() < 0.25,
+                     lazy_step=rng.randrange(n_params) if lazy else NONE,
+                     lazy_max=rng.randrange(n_params) if lazy else NONE)
 
 
 PORT, LEFT, RIGHT = 0, 1, 2       # inputs
@@ -272,6 +296,7 @@ def generated_table(rng: random.Random, n_params: int):  # noqa: ANN201
         return rng.sample(outputs, rng.randint(0, min(3, len(outputs))))
 
     counted = [False]  # a spine has at most one Counter
+    escalated = [False]  # and at most one escalating Wait
 
     def plain_phase(kinds):
         kind = rng.choice(kinds)
@@ -284,6 +309,9 @@ def generated_table(rng: random.Random, n_params: int):  # noqa: ANN201
                 p["edge"] = "exit"
             if rng.random() < 0.5:
                 p["timeoutMs"] = 1
+                if not escalated[0] and rng.random() < 0.5:
+                    escalated[0] = True  # a table holds one escalation
+                    p.update(penaltyMs=1, escalateMs=1, escalateMaxMs=1)
         elif kind == "hold":
             p["on"] = rng.choice(inputs)
         elif kind in ("present", "delay"):
@@ -306,6 +334,8 @@ def generated_table(rng: random.Random, n_params: int):  # noqa: ANN201
                 p["endsSession"] = rng.random() < 0.5
         elif kind == "outcome":
             p["line"] = rng.choice(outputs)
+        if kind in lowering.PENALISED and "penaltyMs" not in p and rng.random() < 0.3:
+            p["penaltyMs"] = 1
         if rng.random() < 0.3:
             # Counted while in the phase, with no edge row: strobed, never an exit.
             p["watch"] = rng.sample(inputs, rng.randint(1, len(inputs)))
@@ -323,9 +353,12 @@ def generated_table(rng: random.Random, n_params: int):  # noqa: ANN201
                   "ms": 1, "outputs": some_outputs()}
         if rng.random() < 0.6:
             window["holdMs"] = 1
+            if rng.random() < 0.4:
+                window["brokenPenaltyMs"] = 1
         phases.append(window)
         post = [plain_phase(("present", "delay")) for _ in range(rng.choice((0, 0, 1, 2)))]
-        post.insert(rng.randint(0, len(post)), {"phase": "outcome", "ms": 1, "outputs": some_outputs()})
+        post.insert(rng.randint(0, len(post)), {"phase": "outcome", "ms": 1, "outputs": some_outputs(),
+                                                **({"awaitExit": True} if rng.random() < 0.5 else {})})
         phases.extend(post)
     phases.append({"phase": "iti", "outputs": some_outputs() if rng.random() < 0.2 else [],
                    "watch": rng.sample(inputs, 1) if rng.random() < 0.2 else []})
@@ -342,6 +375,8 @@ def generated_table(rng: random.Random, n_params: int):  # noqa: ANN201
                     entry["line"] = rng.choice(outputs)
                 if key != lowering.TIMEOUT and "holdMs" in window and rng.random() < 0.5:
                     entry["hold"] = True
+                if rng.random() < 0.3:
+                    entry["penaltyMs"] = 1
                 entries[key] = entry
             row["map"] = entries
         rows.append(row)
@@ -370,28 +405,39 @@ def generated_table(rng: random.Random, n_params: int):  # noqa: ANN201
                 block["correctionAfter"] = rng.sample(classes[1:], rng.randint(1, 3))
         if timed and rng.random() < 0.3:
             block["phaseMs"] = {str(rng.choice(timed)): 1}
+        if window is not None and "holdMs" in window and rng.random() < 0.3:
+            block["holdMs"] = {str(phases.index(window)): 1}
+        if block["select"] == "antibias" and rng.random() < 0.6:
+            block.update(biasStrength=1, biasMin=1, biasMax=1)
+        if block["select"] == "antibias" and rng.random() < 0.5:
+            block["maxRun"] = 1
         blocks.append(block)
     # Some outputs driven (PWM, tone, a train): a bit per row rather than per channel.
     drives = {o: rng.choice(tuple(lowering.DRIVE_PARAMS)) for o in outputs if rng.random() < 0.3}
-    return _lowered(phases, inputs, outputs, rows, blocks, rng.random() < 0.5, drives), {}, None
+    return (_lowered(phases, inputs, outputs, rows, blocks, rng.random() < 0.5, drives, rng.random() < 0.2),
+            {}, None)
 
 
-def _lowered(phases, inputs, outputs, rows, blocks, cap, drives=None):  # noqa: ANN001, ANN202
+def _lowered(phases, inputs, outputs, rows, blocks, cap, drives=None, repeat_aborts=False):  # noqa: ANN001, ANN202
     low = lowering.lower(phases, inputs=inputs, outputs=outputs, rows=rows, blocks=blocks, session_cap=cap,
-                         drives=drives)
+                         drives=drives, repeat_aborts=repeat_aborts)
     table = rp.Table(states=[rp.StateRow(*s) for s in low.states], edges=[rp.EdgeRow(*e) for e in low.edges],
                      counter=rp.Counter(*low.counter) if low.counter is not None else None,
                      blocks=rp.Blocks(rows=[rp.Block(*b) for b in low.blocks],
                                       entries=[rp.Entry(*e) for e in low.entries],
                                       overrides=[rp.Override(*o) for o in low.overrides],
-                                      skipped=low.skipped, hits=low.hits))
+                                      skipped=low.skipped, hits=low.hits, repeat_aborts=low.repeat_aborts,
+                                      lazy_step=low.lazy[0] if low.lazy else NONE,
+                                      lazy_max=low.lazy[1] if low.lazy else NONE))
     return table, low
 
 
-#: Four tasks the ADR names, lowered by the generator and run at their own
-#: settings: a reversal on 8 correct of 10, a bandit looping between blocks of
-#: 40-60 trials, a shuffle bag, and anti-bias.
-NAMED = ("reversal", "bandit", "bag", "antibias")
+#: Five tasks, lowered by the generator and run at their own settings: the
+#: ADR's reversal on 8 correct of 10, a bandit looping between blocks of 40-60
+#: trials, a shuffle bag and anti-bias, and a GRGL-shaped 2AFC (#166): GRGL's
+#: anti-bias with a run cap of 2, an escalating lazy penalty, a wrong well's
+#: penalty, the well's exit awaited after a reward, and aborts that repeat.
+NAMED = ("reversal", "bandit", "bag", "antibias", "grgl")
 
 
 def named_table(rng: random.Random, name: str):  # noqa: ANN201
@@ -428,13 +474,25 @@ def named_table(rng: random.Random, name: str):  # noqa: ANN201
                   {"id": "b", "rows": ["go_right", "go_left"], "select": "bag", "weights": [1, 1], "next": "a",
                    "trials": 7}]
         settings = {"W1_1": 3, "W1_2": 1, "BN1": 20, "W2_1": 1, "W2_2": 1, "BN2": 7}
+    elif name == "grgl":
+        phases[0].update(penaltyMs=1, escalateMs=1, escalateMaxMs=1)
+        phases[2]["awaitExit"] = True
+        for r in rows:
+            for entry in r["map"].values():
+                if entry["outcome"] != "correct":
+                    entry["penaltyMs"] = 1
+        blocks = [{"id": "a", "rows": ["go_right", "go_left"], "select": "antibias", "biasWindow": 10,
+                   "biasStrength": 500, "biasMin": 20, "biasMax": 980, "maxRun": 2}]
+        settings = {"BA1": 10, "W1_1": 1, "W1_2": 1, "BS1": 500, "BL1": 20, "BH1": 980, "BR1": 2,
+                    "LS0": 3, "LM0": 12}
     else:
         blocks = [{"id": "a", "rows": ["go_right", "go_left"], "select": "antibias", "biasWindow": 10,
                    "correction": 1}]
         settings = {"BA1": 10, "W1_1": 1, "W1_2": 1, "BC1": 1}
-    table, low = _lowered(phases, ["port", "left", "right"], ["reward"], rows, blocks, False)
+    table, low = _lowered(phases, ["port", "left", "right"], ["reward"], rows, blocks, False,
+                          repeat_aborts=name == "grgl")
     # Short trials, so a run holds enough of them for its blocks to switch.
-    fixed = {n: rng.randint(1, 30) for n, s in enumerate(low.slots) if s.role in ("timer", "reward_ms")}
+    fixed = {n: rng.randint(1, 30) for n, s in enumerate(low.slots) if s.role in ("timer", "reward_ms", "penalty")}
     return (table, low), fixed | {low.params.index(k): v for k, v in settings.items()}, name
 
 
@@ -552,11 +610,13 @@ def encode(cases: list[dict]) -> str:
         lines.append("0 255 255 0" if k is None else
                      " ".join(map(str, (1, k.count_min, k.count_max, len(k.ratios), *k.ratios))))
         b = t.blocks
-        lines.append("0 0 0 0 0" if b is None else
-                     f"{len(b.rows)} {len(b.entries)} {len(b.overrides)} {b.skipped} {b.hits}")
+        lines.append("0 0 0 0 0 0 255 255" if b is None else
+                     f"{len(b.rows)} {len(b.entries)} {len(b.overrides)} {b.skipped} {b.hits} "
+                     f"{int(b.repeat_aborts)} {b.lazy_step} {b.lazy_max}")
         if b is not None:
             lines.extend(" ".join(map(str, (k.first, k.count, k.select, k.n_min, k.n_max, k.k, k.n, k.window,
-                                            k.correct, k.next, k.errors))) for k in b.rows)
+                                            k.correct, k.next, k.errors, k.strength, k.p_min, k.p_max,
+                                            k.max_run))) for k in b.rows)
             lines.extend(f"{e.side} {e.weight}" for e in b.entries)
             lines.extend(f"{o.block} {o.slot} {o.with_}" for o in b.overrides)
         lines.extend(f"{o} {r} {f}" for o, r, f in c["log"])
@@ -605,7 +665,8 @@ def _mutants() -> list[tuple[str, str, object]]:
     exactly as the honest one does, so only the rule's own choice differs."""
     honest = {name: getattr(rp, name) for name in (
         "_uniform", "_by_weight", "_from_bag", "_side_weight", "_block_ends", "_start_block", "_next_block",
-        "_repeats", "_param", "_is_error", "_skips", "_hit")}
+        "_repeats", "_param", "_is_error", "_skips", "_hit", "antibias_weights", "_at_cap", "_escalated",
+        "_released", "_repeats_abort")}
 
     def uniform(c, k):
         return k.first + k.count - 1 - (honest["_uniform"](c, k) - k.first)
@@ -671,7 +732,15 @@ def _mutants() -> list[tuple[str, str, object]]:
             ("an override ignored", "_param", no_override),
             ("a correction after any class not correct, its error set ignored", "_is_error", any_error),
             ("a criterion that counts aborts", "_skips", no_skip),
-            ("a criterion that counts only `correct`, not every hit", "_hit", correct_only)]
+            ("a criterion that counts only `correct`, not every hit", "_hit", correct_only),
+            ("GRGL's weights unclamped", "antibias_weights",
+             lambda counts, length, strength, p_min, p_max: honest["antibias_weights"](counts, length, strength,
+                                                                                     0, rp.PERMILLE)),
+            ("a run cap one over", "_at_cap",
+             lambda c, k: k.max_run != NONE and c.side_run > c.params[k.max_run]),
+            ("a penalty that never escalates", "_escalated", lambda c, duration: duration),
+            ("an await-low state that waits for its edge only", "_released", lambda levels, bit: False),
+            ("aborts that count", "_repeats_abort", lambda c, last_outcome: False)]
 
 
 def blocks_caught(c_runs, cases) -> str | None:

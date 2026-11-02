@@ -719,10 +719,12 @@ A session runs its blocks in order, starting with the first. Each block draws it
 | `weights` | One per row, in `rows` order, read by `weighted`, `bag` and `antibias`; 1 each when left out |
 | `trials`, `trialsMax` | The block ends after N trials: `trials`, or N drawn uniformly from `trials` to `trialsMax` each time the block starts |
 | `criterion` | `{correct: k, of: n}`: the block ends once k of its last n trials (n at most 32) were **hits**: marked `correct` or `withheld`, the same classes the scorer's P(correct) counts right, from one list (`lowering.HIT_CLASSES`, which `trial_table.HITS` reads). So a no-go block ends on its withholds. The window passes over aborted trials (`abort_before_stimulus`, `abort_during_sampling`), as P(correct) excludes them: one set, `lowering.EXCLUDED_CLASSES`, which `trial_table.EXCLUDED` reads too; every other trial is in it, a correction included. With both an N and a criterion, whichever comes first ends it. With neither, the block never ends |
-| `trials` and aborts | Every trial counts toward N, an abort and a correction included |
+| `trials` and aborts | Every trial counts toward N, an abort and a correction included, unless the task sets `repeatAborts` ([GRGL's rules](#grgls-rules-on-the-spine)) |
 | `next` | The block that follows, by id: a block before it loops back. Left out, the block in the list after it; after the last block the session ends |
 | `correction`, `correctionAfter` | After an **error**, the same row repeats, up to `correction` times in a row. The errors are a set of outcome classes compiled into the table: `correctionAfter`, or by default `wrong_response` and `false_alarm` (`lowering.ERROR_CLASSES`). So a correct withhold, an omission or an abort repeats nothing unless the block names its class. A correction trial is drawn from no RNG and is marked `correction` in the trial table |
 | `phaseMs` | `{"<phase index>": ms}`: a phase's timer while this block runs: a timed phase's duration, or a Wait's or Counter's limit (`lowering.has_timer`) |
+| `holdMs` | `{"<phase index>": ms}`: a Response window's hold while this block runs, so an eased ramp carries its well hold |
+| `biasStrength`, `biasMin`, `biasMax`, `maxRun` | GRGL's anti-bias on an `antibias` block, and its same-side run cap ([GRGL's rules](#grgls-rules-on-the-spine)) |
 
 The session ends at the first of: the trial start where its last block ends, `sessionTrials` trials, `STOP`, or a Counter's `endsSession` ([the runner](#the-runner)). A spine whose blocks loop, or include one that never ends, with no `sessionTrials`, ends only at End Session, and `SPN106` says so.
 
@@ -740,6 +742,25 @@ A reversal and a looping bandit (the rows' maps differ; [ADR 0003](adr/0003-phas
 ```
 
 Selection and every end rule run in the interpreter's core, `BoxInterp.h`, so the [differential test](#compiling-and-the-host-tests) holds them to replay tick by tick. The trial table's `block` and `correction` columns are read off what the core reports at each trial's start, never off a phase's name ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#the-trial-table)).
+
+### GRGL's rules on the spine
+
+The rules GRGL's trial runner has and the odor 2AFC depends on (`BehaviorBox.h`'s `runTrial`, `AntiBiasSelector`, `AbstentionPenalty`; #166). A task that uses none of them lowers, runs and replays as it did before.
+
+| Field | What it does |
+|---|---|
+| `penaltyMs` on a Wait, Hold, Present, Delay or Counter | Its early exit (a timeout, a broken hold, an abort, a time limit) waits this long before the next trial, **in place of the ITI**. Each exit carries its own: GRGL's lazy no-poke and an early release before the odor end in one class, `abort_before_stimulus`, with different penalties |
+| `escalateMs`, `escalateMaxMs` on a Wait | The timeout's penalty grows: `penaltyMs + lazy × escalateMs`, at most `escalateMaxMs`, where `lazy` counts these penalties since the last hit. Only a hit resets it, as GRGL's `AbstentionPenalty`. At most one Wait escalates |
+| `penaltyMs` on a contingency-map entry | That response, or the window's timeout, waits this long before the next trial in place of the ITI: GRGL's `ERR` |
+| `brokenPenaltyMs` on a Response window | A broken hold waits this long before the next trial in place of the ITI: GRGL's `NPH` |
+| `awaitExit` on an Outcome after a window | After a paid response, the trial waits for that well's release before its class timeout and the ITI. An animal that left during the reward goes straight on |
+| `repeatAborts` on the task | An aborted trial (`abort_before_stimulus`, `abort_during_sampling`) repeats its row and counts toward neither a block's N nor `sessionTrials`, as GRGL's `BF_INVALID_TRIAL`. The repeat is marked `correction` in the trial table and does not use the block's correction limit |
+| `biasStrength`, `biasMin`, `biasMax` on an `antibias` block | Each of k sides weighs `1000/k + biasStrength × (L − k × count) / L` permille, clamped to `[biasMin, biasMax]`: for two sides GRGL's `pRight = 0.5 − strength × bias`. An aborted trial's side counts as a response, as GRGL's abstentions do. Integer arithmetic only |
+| `maxRun` on an `antibias` block | A side drawn this many times in a row (fresh draws, not repeats) sits out the next draw: for two sides GRGL's flip at `MCS` |
+
+Every value is a parameter slot (`P<i>`, `LS<i>`, `LM<i>`, `PB<i>`, `PE<r>_<k>`, `B<b>H<i>`, `BS<b>`, `BL<b>`, `BH<b>`, `BR<b>`; [Lowering](#lowering)). The rules that are not just states, the escalation, the await, the uncounted repeat and the anti-bias shape, are BoxInterp.h's GRGL RULES, from `INTERP` 7, held to replay by the [differential test](#compiling-and-the-host-tests).
+
+**Differences that remain from GRGL**, recorded in [the ADR](adr/0003-phase-spine-task-model.md#migration): GRGL's per-side leading correction budgets (`CL`/`CR`) have no equivalent, and a block's `correction` stands in for them; and the lazy penalty escalates from the session's start, with no `lazyEscalationStage` gate.
 
 ### Lowering
 
@@ -815,7 +836,7 @@ Selection and every end rule run in the interpreter's core, `BoxInterp.h`, so th
 - **Ticks.** The core is stepped once per millisecond of `millis()`, including each value AVR `millis()` skips.
 - **Outputs and strobes.** The runner drives each tick's outputs, then strobes the tick's actions, each stamped with the tick.
 - **The handshake.** It is the one in [Confirming the parameters](#confirming-the-parameters), over the table's parameter slots. A value is held only when it is a whole number within its slot's declared range, and the high end of a pair only when it is at least the low end already taken: a Counter's drawn N (`N<i>`, `NX<i>`), a block's drawn N (`BN<b>`, `BNX<b>`) and a criterion's k and n (`BK<b>`, `BKN<b>`), listed in `TaskSpine.h` as `SPINE_PAIRS`. Otherwise the board answers `CLAMPED` and the start is refused.
-- **The announcement.** The runner announces `INTERP=6`, `BoxInterp.h`'s `INTERP_VERSION`. Replay also runs `5`, the same table format without [blocks](#blocks) and the response state, `4`, without [driven outputs](#driven-outputs) either, `3`, without the counter and last-trial states either, and `2`, without the pick state either. It refuses a table that holds what its version lacks, and a snapshot before 5 that drives an output. `replay.INTERP_VERSIONS` is the one list of the versions it runs.
+- **The announcement.** The runner announces `INTERP=7`, `BoxInterp.h`'s `INTERP_VERSION`. Replay also runs `6`, the same table format without [GRGL's rules](#grgls-rules-on-the-spine), `5`, without [blocks](#blocks) and the response state either, `4`, without [driven outputs](#driven-outputs) either, `3`, without the counter and last-trial states either, and `2`, without the pick state either. It refuses a table that holds what its version lacks, and a snapshot before 5 that drives an output. `replay.INTERP_VERSIONS` is the one list of the versions it runs.
 
 **The stream** holds only what the board observed and what it did. Within a tick it runs in this order:
 
@@ -907,7 +928,7 @@ The profile's `spine` key is everything replay needs that the run's own header d
 - each parameter slot's wire key;
 - the structural code names.
 
-It rides in the `# task_profile:` header line of every run's `.tsv` ([DATA.md](DATA.md#the-tsv-log)), beside the parameter values, the seed and `# interp: 6`, so a crashed run's `.tsv` alone replays. Code numbers come from the snapshot's own `strobes` map, which is the vocabulary when the run started. `analytics/stream/spine.py` reads a run's document back into the table, parameters, seed and input edges, and predicts every strobe the board must have sent ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#the-folder-at-a-glance)).
+It rides in the `# task_profile:` header line of every run's `.tsv` ([DATA.md](DATA.md#the-tsv-log)), beside the parameter values, the seed and `# interp: 7`, so a crashed run's `.tsv` alone replays. Code numbers come from the snapshot's own `strobes` map, which is the vocabulary when the run started. `analytics/stream/spine.py` reads a run's document back into the table, parameters, seed and input edges, and predicts every strobe the board must have sent ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#the-folder-at-a-glance)).
 
 `profile_hash` hashes the snapshot for its behaviour only: row names and the profile's other words for a person are left out of the hash, never out of the snapshot ([A spine task's hash covers behaviour only](#a-spine-tasks-hash-covers-behaviour-only)).
 
@@ -939,10 +960,10 @@ It rides in the `# task_profile:` header line of every run's `.tsv` ([DATA.md](D
 > - 12 B per block (`InterpBlock`), 2 B per branch entry (`InterpEntry`) when any block selects by weight or side, 3 B per override (`InterpOverride`) and 2 B per pair of slots held in order; an empty array of these is left out (`lowering.BLOCK_BYTES`, `ENTRY_BYTES`, `OVERRIDE_BYTES`, `spine.PAIR_BYTES`, pinned as the rows are);
 > - for a task with [driven outputs](#driven-outputs), 13 B (`spine.DRIVE_RUN_BYTES`) and 8 B per driven bit (`DRIVE_BYTES`), and 32 B for `tone()`'s own when it plays one (`TONE_RAM_BYTES`). A task with none compiles none of it.
 >
-> The rest of a spine sketch's globals is at most 464 B (`spine.RUNNER_RAM_BYTES`): the core's block state, with its ring of 32 responses for anti-bias, is about 60 B of it. A test compiles generated tasks for the Mega, up to the largest under the budget, and holds each build's globals at or under that sum, within 24 B: a task of three inputs and three outputs is the sum to the byte, and a smaller one comes in under it where the compiler folds a small constant channel array away. It skips without `arduino-cli`, except in CI's firmware compile job, which sets `REQUIRE_ARDUINO_CLI=1` so a changed row or array fails there. So a task within the budget compiles to at most 5464 B of globals (67% of a Mega's 8192 B). An 18-row 2AFC of one block (4978 B) fits; 19 rows (5242 B) do not. A task compiles at any size up to 254 states, so past the budget a board would run short of stack mid-session with no error at all.
+> The rest of a spine sketch's globals is at most 474 B (`spine.RUNNER_RAM_BYTES`): the core's block state, with its ring of 32 responses for anti-bias, is about 70 B of it. A test compiles generated tasks for the Mega, up to the largest under the budget, and holds each build's globals at or under that sum, within 24 B: a task of three inputs and three outputs is the sum to within a byte (the linker pads its constant tables, `.data`, to an even size), and a smaller one comes in under it where the compiler folds a small constant channel array away. It skips without `arduino-cli`, except in CI's firmware compile job, which sets `REQUIRE_ARDUINO_CLI=1` so a changed row or array fails there. So a task within the budget compiles to at most 5474 B of globals (67% of a Mega's 8192 B). An 18-row 2AFC of one block (4982 B) fits; 19 rows (5246 B) do not. A task compiles at any size up to 254 states, so past the budget a board would run short of stack mid-session with no error at all.
 >
 > Two free-RAM figures, which differ:
-> - **The compiler's, at compile time**: 8192 B less the globals, which `arduino-cli` prints as what is left for local variables. The budget guarantees at least **2728 B** of it, and that guarantee is the one the budget makes.
+> - **The compiler's, at compile time**: 8192 B less the globals, which `arduino-cli` prints as what is left for local variables. The budget guarantees at least **2718 B** of it, and that guarantee is the one the budget makes.
 > - **The board's `FREE_RAM`, at run time**: announced from `setup()` ([Confirming the parameters](#confirming-the-parameters)), so it is measured with the stack frame it is called from already in use. That frame is `box_spine::setup()` with `awaitStart()` inlined into it, about 230 B. A Mega reads **139–217 B** under the compiler's figure: 217 B for every task with an input or a driven output, and 139 B for a task with neither, which the compiler inlines differently. This is where the board measures, not RAM it has lost: the deepest stack while it waits for `START` is that same frame. In this build the 18-row 2AFC compiles to 5441 B of globals, 2751 B free by the compiler, so it should announce about 2534 B, and a task at the full budget about 2511 B.
 
 ## Rig wiring
@@ -1303,7 +1324,7 @@ Before a run starts, the board proves it holds exactly what the host meant it to
 sequenceDiagram
     participant Host as Sidecar
     participant Board as Mega2560
-    Board-->>Host: INTERP=1 (a spine task: INTERP=6)
+    Board-->>Host: INTERP=1 (a spine task: INTERP=7)
     Board-->>Host: FREE_RAM=n
     Board-->>Host: READY
     Host->>Board: BEGIN

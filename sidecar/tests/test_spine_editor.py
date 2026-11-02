@@ -252,10 +252,10 @@ def _afc_rows(n: int) -> dict:
 
 
 def test_the_meter_of_the_largest_2afc_matches_the_documented_figure():
-    """TASKS.md#spine-diagnostics: an 18-row 2AFC of one block is 4978 B; 19 rows are 5242 B, over."""
-    assert view(_afc_rows(18))["ram"]["bytes"] == 4978
+    """TASKS.md#spine-diagnostics: an 18-row 2AFC of one block is 4982 B; 19 rows are 5246 B, over."""
+    assert view(_afc_rows(18))["ram"]["bytes"] == 4982
     over = view(_afc_rows(19))["ram"]
-    assert over["bytes"] == 5242 and over["bytes"] > over["budget"]
+    assert over["bytes"] == 5246 and over["bytes"] > over["budget"]
 
 
 def test_a_spine_that_cannot_be_lowered_has_no_bytes_to_meter():

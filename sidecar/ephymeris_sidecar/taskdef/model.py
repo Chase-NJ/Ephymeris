@@ -232,6 +232,11 @@ class SpinePhase:
     ratios: tuple[int, ...] = ()       # counter: a progressive N, one per completion
     ends_session: bool = False         # counter: its time limit is the session's last trial
     watch: tuple[str, ...] = ()        # any phase: input slots counted while in it, which move nothing
+    penalty_ms: int | None = None      # wait, hold, present, delay, counter: the early exit's penalty, in place of the ITI
+    escalate_ms: int | None = None     # wait: its penalty grows by this per lazy trial since the last hit
+    escalate_max_ms: int | None = None  # wait: up to this
+    broken_penalty_ms: int | None = None  # response: a broken hold's penalty, in place of the ITI
+    await_exit: bool = False           # outcome: after a paid response, wait for its well's release
 
     def to_json(self) -> dict[str, Any]:
         out: dict[str, Any] = {"phase": self.phase}
@@ -242,7 +247,9 @@ class SpinePhase:
                            ("responses", list(self.responses) or None), ("holdMs", self.hold_ms),
                            ("count", self.count), ("countMax", self.count_max),
                            ("ratios", list(self.ratios) or None), ("endsSession", self.ends_session or None),
-                           ("watch", list(self.watch) or None)):
+                           ("watch", list(self.watch) or None), ("penaltyMs", self.penalty_ms),
+                           ("escalateMs", self.escalate_ms), ("escalateMaxMs", self.escalate_max_ms),
+                           ("brokenPenaltyMs", self.broken_penalty_ms), ("awaitExit", self.await_exit or None)):
             if value is not None:
                 out[key] = value
         return out
@@ -262,6 +269,8 @@ class MapEntry:
     line: str | None = None
     reward_permille: int = 1000
     hold: bool = False
+    #: The penalty that runs in place of the ITI after this entry, None for the ITI.
+    penalty_ms: int | None = None
 
     def to_json(self) -> dict[str, Any]:
         out: dict[str, Any] = {"outcome": self.outcome}
@@ -271,6 +280,8 @@ class MapEntry:
             out["rewardPermille"] = self.reward_permille
         if self.hold:
             out["hold"] = True
+        if self.penalty_ms is not None:
+            out["penaltyMs"] = self.penalty_ms
         return out
 
 
@@ -333,6 +344,14 @@ class SpineBlock:
     correction_after: tuple[str, ...] = ()
     bias_window: int | None = None
     phase_ms: dict[str, int] = field(default_factory=dict)
+    #: A Response window's hold while the block runs, by phase index.
+    hold_ms: dict[str, int] = field(default_factory=dict)
+    #: Anti-bias as GRGL's: its strength and clamp in permille, and the
+    #: same-side run cap (`TASKS.md#grgls-rules-on-the-spine`).
+    bias_strength: int | None = None
+    bias_min: int | None = None
+    bias_max: int | None = None
+    max_run: int | None = None
 
     def weight(self, e: int) -> int:
         return self.weights[e] if e < len(self.weights) else 1
@@ -347,7 +366,9 @@ class SpineBlock:
                             if self.criterion is not None else None),
                            ("next", self.next), ("correction", self.correction),
                            ("correctionAfter", list(self.correction_after) or None),
-                           ("biasWindow", self.bias_window), ("phaseMs", dict(self.phase_ms) or None)):
+                           ("biasWindow", self.bias_window), ("phaseMs", dict(self.phase_ms) or None),
+                           ("holdMs", dict(self.hold_ms) or None), ("biasStrength", self.bias_strength),
+                           ("biasMin", self.bias_min), ("biasMax", self.bias_max), ("maxRun", self.max_run)):
             if value is not None:
                 out[key] = value
         return out
@@ -369,6 +390,9 @@ class Spine:
     blocks: tuple[SpineBlock, ...]
     #: The session's trial cap (`NT`), None for none: the blocks end the session.
     trials: int | None = None
+    #: An aborted trial repeats its row and counts toward neither a block's N
+    #: nor the trial cap, as GRGL's invalid trial (`TASKS.md#grgls-rules-on-the-spine`).
+    repeat_aborts: bool = False
 
     def to_json(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -379,6 +403,8 @@ class Spine:
         }
         if self.trials is not None:
             out["sessionTrials"] = self.trials
+        if self.repeat_aborts:
+            out["repeatAborts"] = True
         return out
 
     @staticmethod
@@ -424,6 +450,11 @@ class Spine:
                 ratios=ints(p.get("ratios"), "a counter's ratios"),
                 ends_session=_bool(p.get("endsSession", False), "endsSession"),
                 watch=strings(p.get("watch"), "a phase's watch"),
+                penalty_ms=opt_int(p.get("penaltyMs"), "penaltyMs"),
+                escalate_ms=opt_int(p.get("escalateMs"), "escalateMs"),
+                escalate_max_ms=opt_int(p.get("escalateMaxMs"), "escalateMaxMs"),
+                broken_penalty_ms=opt_int(p.get("brokenPenaltyMs"), "brokenPenaltyMs"),
+                await_exit=_bool(p.get("awaitExit", False), "awaitExit"),
             )
             for p in objects("spine")
         )
@@ -449,6 +480,7 @@ class Spine:
             rows=tuple(rows),
             blocks=tuple(_block(b, strings, opt_int, ints) for b in objects("blocks")),
             trials=opt_int(raw.get("sessionTrials"), "sessionTrials"),
+            repeat_aborts=_bool(raw.get("repeatAborts", False), "repeatAborts"),
         )
 
 
@@ -460,6 +492,9 @@ def _block(b: dict, strings, opt_int, ints) -> SpineBlock:  # noqa: ANN001
     phase_ms = b.get("phaseMs") or {}
     if not isinstance(phase_ms, dict):
         raise TaskDefinitionError("a block's phaseMs maps a phase index to ms")
+    hold_ms = b.get("holdMs") or {}
+    if not isinstance(hold_ms, dict):
+        raise TaskDefinitionError("a block's holdMs maps a phase index to ms")
     return SpineBlock(
         id=str(b.get("id", "")),
         rows=strings(b.get("rows"), "a block's rows"),
@@ -474,6 +509,11 @@ def _block(b: dict, strings, opt_int, ints) -> SpineBlock:  # noqa: ANN001
         correction_after=strings(b.get("correctionAfter"), "a block's correctionAfter"),
         bias_window=opt_int(b.get("biasWindow"), "biasWindow"),
         phase_ms={str(k): _int(v, "a phase's ms") for k, v in phase_ms.items()},
+        hold_ms={str(k): _int(v, "a hold's ms") for k, v in hold_ms.items()},
+        bias_strength=opt_int(b.get("biasStrength"), "biasStrength"),
+        bias_min=opt_int(b.get("biasMin"), "biasMin"),
+        bias_max=opt_int(b.get("biasMax"), "biasMax"),
+        max_run=opt_int(b.get("maxRun"), "maxRun"),
     )
 
 
@@ -670,6 +710,7 @@ def _contingency_map(raw: Any) -> dict[str, MapEntry]:
             line=_opt_str(entry.get("line")),
             reward_permille=_int(entry.get("rewardPermille", 1000), "rewardPermille"),
             hold=hold,
+            penalty_ms=None if entry.get("penaltyMs") is None else _int(entry["penaltyMs"], "penaltyMs"),
         )
     return out
 

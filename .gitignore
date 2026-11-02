@@ -1,12 +1,14 @@
 .DS_Store
 
-# Claude Code: agent instructions, settings and local memory stay on this machine,
-# except the shared settings.json and the Review II run brief.
-CLAUDE.md
+# Claude Code: CLAUDE.md, shared settings, skills, agents and hooks are tracked so every
+# worktree session loads them; personal settings and local memory stay on this machine.
 CLAUDE.local.md
 .claude/*
 !.claude/settings.json
 !.claude/review-ii-run.md
+!.claude/skills/
+!.claude/agents/
+!.claude/hooks/
 .mcp.json
 
 # Frontend

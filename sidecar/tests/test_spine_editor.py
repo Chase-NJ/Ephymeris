@@ -45,7 +45,7 @@ BINDINGS = {
               "non_match": "right_well", "reward_l": "fluid_1", "reward_r": "fluid_2"}
              for sample, test in (("odor_line_1", "odor_line_3"), ("odor_line_2", "odor_line_4"),
                                   ("odor_line_1", "odor_line_4"), ("odor_line_2", "odor_line_3"))],
-    "trace": [{"cs": line, "reward": "fluid_2"} for line in ("odor_line_1", "odor_line_2")],
+    "trace": [{"lick": "left_well", "cs": line, "us": "fluid_2"} for line in ("odor_line_1", "odor_line_2")],
     "ratio": [{"lever": "right_well", "light": "trial_light", "reward": "fluid_2"}],
 }
 
@@ -76,6 +76,17 @@ def test_a_seed_carries_phases_and_no_names(seed):
     problems = validate(TaskDefinition.from_json(document))
     assert {d.code for d in problems} == {"SPN101", "SPN108"}
     assert {d.target["kind"] for d in problems} == {"row"}
+
+
+def test_the_trace_seed_counts_licks_in_every_phase_before_the_iti():
+    """Built from trace conditioning's own phases (`taskdef/pavlovian.py`): its
+    baseline, CS, trace and US count a lick input they never act on, so a task
+    made from it reads rate windows (`ANALYTICS.md#phase-window-rates`)."""
+    from ephymeris_sidecar.analytics.stream import rates
+    from tests.test_phase_rates import table_of
+
+    found = rates.rate_windows(*table_of(built("trace")))
+    assert {(w.row, w.phase) for w in found} == {(r, p) for r in ("row_1", "row_2") for p in (0, 1, 2, 3)}
 
 
 @pytest.mark.parametrize("seed_id", list(BINDINGS))

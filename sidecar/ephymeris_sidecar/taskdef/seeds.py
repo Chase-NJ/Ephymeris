@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from . import pavlovian
+
 _PORT_WAIT = [
     {"phase": "wait", "on": "port", "outputs": ["cue"]},
     {"phase": "hold", "on": "port", "outputs": ["cue"], "ms": 200},
@@ -50,6 +52,9 @@ def _document(slots: list[tuple[str, str]], spine: list[dict], rows: list[dict],
 
 
 _IN, _OUT = "digital_in", "digital_out"
+
+#: Trace conditioning's own slots and phases, with a level CS each row binds.
+_TRACE = pavlovian.phases(trace=True, tone=False)
 
 #: In the order the editor offers them.
 SEEDS: list[dict[str, Any]] = [
@@ -113,15 +118,11 @@ SEEDS: list[dict[str, Any]] = [
     {
         "id": "trace",
         "label": "Trace",
-        "summary": "A baseline, a cue, a trace interval, then an outcome with no response asked: "
-                   "one row pays, the other does not.",
+        "summary": "A baseline, a cue, a trace interval, then an outcome with no response asked, "
+                   "licks counted in each: one row pays, the other does not.",
         "definition": _document(
-            [("cs", _OUT), ("reward", _OUT)],
-            [{"phase": "delay", "ms": 2000},
-             {"phase": "present", "outputs": ["cs"], "ms": 1000},
-             {"phase": "delay", "ms": 1000},
-             {"phase": "outcome", "line": "reward", "ms": 0},
-             {"phase": "iti", "ms": 10000}],
+            [(slot["id"], slot["type"]) for slot in _TRACE["slots"]],
+            _TRACE["spine"],
             [_row(1), _row(2, rewardPermille=0)],
             trials=100,
         ),

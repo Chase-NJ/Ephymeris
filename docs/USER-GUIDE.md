@@ -156,8 +156,8 @@ task, the import replaces it, and the dialog asks first.
 
 ![The Task tab: a + New task row, then three saved tasks — 4-Odor Discrimination (weighted, 4 conditions, no ramp), Shaping - Both Sides (pool, 5 stages) and 2-Odor Discrimination (anti-bias, 5 stages) — each marked ready, with the Strobes door below](images/task-landing.webp)
 
-**+ New task** starts a task from a **seed**: 2AFC, go/no-go, DNMS, trace, or FR/PR (a lever-press
-ratio). A seed brings the steps of a trial, where each answer goes and one block of trials. It names
+**+ New task** starts a task from a **seed**: 2AFC, go/no-go, DNMS, trace (which counts licks in each
+step before the inter-trial interval), or FR/PR (a lever-press ratio). A seed brings the steps of a trial, where each answer goes and one block of trials. It names
 nothing and picks no channels, so a new task opens with a problem on every row:
 
 1. Name each row (trial type).

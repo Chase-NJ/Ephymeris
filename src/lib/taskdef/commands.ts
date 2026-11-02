@@ -1,7 +1,7 @@
 import { CMD } from "@/lib/ws/protocol";
 import type { SidecarPort } from "@/lib/ws/port";
 
-import type { TaskDefinition } from "./types";
+import type { TaskDocument } from "./types";
 
 /**
  * The `tasks.*` calls. The strobe vocabulary has its own (`lib/strobes`).
@@ -25,12 +25,18 @@ export async function getTask(client: SidecarPort, taskId: string) {
   return client.call(CMD.TASKS_GET, { taskId });
 }
 
-export async function previewTask(client: SidecarPort, definition: TaskDefinition) {
+export async function previewTask(client: SidecarPort, definition: TaskDocument) {
   return client.call(CMD.TASKS_PREVIEW, { definition });
 }
 
-export async function saveTask(client: SidecarPort, definition: TaskDefinition) {
+export async function saveTask(client: SidecarPort, definition: TaskDocument) {
   return client.call(CMD.TASKS_SAVE, { definition });
+}
+
+/** The seed spines a new task starts from, and the palette's phases, outcome
+ *  classes and selections — the model's own lists (`TASKS.md#the-spine-editor`). */
+export async function spinePalette(client: SidecarPort) {
+  return client.call(CMD.TASKS_SPINE_PALETTE, {});
 }
 
 export async function deleteTask(client: SidecarPort, taskId: string) {

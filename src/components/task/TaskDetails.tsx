@@ -2,7 +2,7 @@ import { Plus, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { TextInput } from "@/components/common/controls";
-import type { TaskDefinition } from "@/lib/taskdef/types";
+import type { TaskBase } from "@/lib/taskdef/types";
 
 /**
  * The three things about a task that are not its trials, its ramp or its
@@ -26,16 +26,16 @@ import type { TaskDefinition } from "@/lib/taskdef/types";
  * opened once on a new task because the category decides where the sketch
  * folder is written (`TASKS.md#editor`).
  */
-export function TaskDetailsBody({
+export function TaskDetailsBody<T extends TaskBase>({
   definition,
   categories,
   onChange,
 }: {
-  definition: TaskDefinition;
+  definition: T;
   /** Categories already in use on this rig, offered as a hint rather than as a
    *  closed list — a category is a folder name, and inventing one is allowed. */
   categories: readonly string[];
-  onChange: (next: TaskDefinition) => void;
+  onChange: (next: T) => void;
 }) {
   const [draftLegacy, setDraftLegacy] = useState("");
 
@@ -143,7 +143,7 @@ export function TaskDetailsBody({
 }
 
 /** The Details button's one-line label: the category, and the legacy count. */
-export function detailsSummary(definition: TaskDefinition): string {
+export function detailsSummary(definition: TaskBase): string {
   const n = definition.legacyNames.length;
   return n > 0 ? `${definition.category} · ${n} legacy name${n === 1 ? "" : "s"}` : definition.category;
 }

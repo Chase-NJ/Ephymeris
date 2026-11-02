@@ -56,7 +56,7 @@ export function NewTaskRow({ onClick }: { onClick: () => void }) {
       <span className="min-w-0 flex-1">
         <span className="block text-[13px] font-medium text-starlight">+ New task</span>
         <span className="mt-0.5 block font-mono text-[9px] uppercase tracking-wide text-static/70">
-          from scratch — or duplicate one below
+          from a seed spine — or duplicate one below
         </span>
       </span>
     </button>

@@ -70,7 +70,7 @@ export function TaskRow({
             </span>
           ) : (
             <span className="mt-0.5 block truncate font-mono text-[9px] uppercase tracking-wide text-static/70">
-              {task.category} · {modeLabel(task.selectionMode)}
+              {task.category} · {task.spine ? "phase spine" : modeLabel(task.selectionMode)}
             </span>
           )}
         </span>
@@ -92,8 +92,9 @@ export function TaskRow({
         </span>
 
         <span className="w-36 shrink-0 truncate font-mono text-[10px] text-static">
-          {task.trials} condition{task.trials === 1 ? "" : "s"} ·{" "}
-          {task.stages === 1 ? "no ramp" : `${task.stages} stages`}
+          {task.trials} {task.spine ? "row" : "condition"}
+          {task.trials === 1 ? "" : "s"}
+          {task.spine ? "" : ` · ${task.stages === 1 ? "no ramp" : `${task.stages} stages`}`}
         </span>
 
         <span className="w-14 shrink-0">

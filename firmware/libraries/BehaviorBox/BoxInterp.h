@@ -296,7 +296,13 @@
                               outcome = the class); reward: the phase's outputs
                               and r, timer ms -> class timeout; class timeout: the
                               phase's outputs, timer -> next. A phase's outputs are
-                              HIGH in every state it rests in.
+                              HIGH in every state it rests in. Awaiting the exit
+                              of response c: the reward watches c, and an
+                              INTERP_AWAIT_LOW state, edge (c, FALL), sits
+                              between it and the class timeout.
+    An early exit with a penalty goes to an end whose timer is the penalty
+    (INTERP_ESCALATE for a Wait's that escalates); a map entry's penalty ends
+    its branch in a copy of the row's ITI whose timer is that penalty.
     ITI(t)                    timer t -> the trial's first state, which carries
                               INTERP_STARTS_TRIAL.
     any phase's watch w       w in the watch of every state the phase rests in,

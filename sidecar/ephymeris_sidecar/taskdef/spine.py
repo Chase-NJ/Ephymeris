@@ -107,18 +107,20 @@ _CORRECTION_MAX = 100
 _RUN_MAX = 255
 _BIAS_WINDOW_DEFAULT = 10
 #: A pair's (low, high) roles: the board refuses a high end below its low end.
-_PAIRS = (("count", "count_max"), ("block_trials", "block_trials_max"), ("criterion_correct", "criterion_of"))
+_PAIRS = (("count", "count_max"), ("block_trials", "block_trials_max"), ("criterion_correct", "criterion_of"),
+          ("penalty", "escalate_max"))
 
 
 def pairs(low: lowering.Lowered) -> list[tuple[int, int]]:
     """The (low, high) parameter slots the board holds in order (`SPINE_PAIRS`):
-    a drawn N's ends, a block's drawn N, a criterion's k and n."""
+    a drawn N's ends, a block's drawn N, a criterion's k and n, and an
+    escalating penalty's base and cap."""
     out = []
     for lo_role, hi_role in _PAIRS:
         for hi, s in enumerate(low.slots):
             if s.role == hi_role:
                 lo = next(n for n, t in enumerate(low.slots)
-                          if t.role == lo_role and t.phase == s.phase and t.block == s.block)
+                          if t.role == lo_role and t.phase == s.phase and t.block == s.block and t.row == s.row)
                 out.append((lo, hi))
     return out
 
@@ -730,7 +732,7 @@ def _table_problems(definition: TaskDefinition, out: _Resolved, problem) -> None
         lo_key, hi_key = fields[lo]["metadataKey"], fields[hi]["metadataKey"]
         if value[lo] > value[hi] and (lo_key in definition.params or hi_key in definition.params):
             at = hi_key if hi_key in definition.params else lo_key
-            code = "SPN105" if low.slots[hi].role == "count_max" else "SPN106"
+            code = "SPN105" if low.slots[hi].role in ("count_max", "escalate_max") else "SPN106"
             problem(f"params.{at}", code, f"the stored {lo_key} ({value[lo]}) is above {hi_key} ({value[hi]}): "
                     "the high end is below the low end, so the board would refuse the start", owner_of(low.slots[hi]))
             out.blockers.append(f"the stored {lo_key} and {hi_key} are inverted")

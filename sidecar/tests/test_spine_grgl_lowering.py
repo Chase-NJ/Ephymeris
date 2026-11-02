@@ -287,3 +287,22 @@ def test_an_escalation_s_cap_is_at_least_its_base():
     found = [d.location for d in spine_task.diagnostics(TaskDefinition.from_json(
         with_phase(0, penaltyMs=40000, escalateMaxMs=30000)))]
     assert "spine[0].escalateMaxMs" in found
+
+
+def test_a_stored_escalation_cap_below_its_base_is_refused():
+    # Held as a pair, as a drawn N's ends are: in the editor, and by the board at SET.
+    doc = grgl_2afc()
+    doc["params"] = {"wait_0_escalate_max_ms": 1}
+    definition = TaskDefinition.from_json(doc)
+    assert "params.wait_0_escalate_max_ms" in [d.location for d in spine_task.diagnostics(definition)]
+    low = spine_task._resolve(definition).lowered
+    assert (low.params.index("P0"), low.params.index("LM0")) in spine_task.pairs(low)
+
+
+def test_the_awaited_well_is_watched_only_up_to_the_await():
+    low = lowered(grgl_2afc())
+    for i, s in enumerate(low.states):
+        if s[10] & lowering.AWAIT_LOW:
+            bit = low.edges[s[8]][0]
+            after = low.states[low.edges[s[8]][2]]
+            assert not after[1] >> bit & 1, "the class timeout after the await does not watch the well"

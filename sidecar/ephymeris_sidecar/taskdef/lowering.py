@@ -625,6 +625,7 @@ def lower(
         state(i, r, mask | output_mask(r, i, [line]), watch, reward_ms_key(r), at + 2)
         if await_bit is not None:
             state(i, r, mask, watch, exits=[(await_bit, FALL, timeout_at)], flags=AWAIT_LOW)
+            awaited[0] = 0  # past the await, the well is no longer the trial's business
         state(i, r, mask, 0, timer_key(i), nxt)
 
     ends: dict[tuple[int, int, int, int, str], _Ref] = {}

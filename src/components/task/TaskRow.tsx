@@ -70,7 +70,7 @@ export function TaskRow({
             </span>
           ) : (
             <span className="mt-0.5 block truncate font-mono text-[9px] uppercase tracking-wide text-static/70">
-              {task.category} · {task.spine ? "phase spine" : modeLabel(task.selectionMode)}
+              {task.category} · {task.spine || task.selectionMode === null ? "phase spine" : modeLabel(task.selectionMode)}
             </span>
           )}
         </span>
@@ -164,7 +164,7 @@ export function TaskRow({
   );
 }
 
-function modeLabel(mode: TaskEntry["selectionMode"]): string {
+function modeLabel(mode: NonNullable<TaskEntry["selectionMode"]>): string {
   return mode === "pool" ? "pool" : mode === "weighted" ? "weighted" : "anti-bias";
 }
 

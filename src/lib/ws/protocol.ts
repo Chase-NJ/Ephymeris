@@ -2395,6 +2395,11 @@ export interface SpineView {
    * `sessionTrials` or End Session ends the session (SPN106).
    */
   sessionEnds: boolean;
+  /**
+   * The indices of the phases a block's `phaseMs` can override: those with a timer, a timed phase
+   * or a Wait's or Counter's limit (`lowering.has_timer`).
+   */
+  overridable: number[];
   /** Each stored `params` value a parameter reads. A key none reads is SPN110 instead. */
   stored: SpineStoredValue[];
 }

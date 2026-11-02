@@ -444,8 +444,7 @@ def _block_problems(spine: Spine, problem) -> bool:  # noqa: ANN001, C901
         bad("blocks", f"a spine task has at most {lowering.NONE - 1} blocks")
     row_ids = {row.id for row in spine.rows}
     ids = [b.id for b in spine.blocks]
-    timed = {i for i, p in enumerate(spine.phases)
-             if p.phase in lowering.TIMED or (p.phase in ("wait", "counter") and p.timeout_ms is not None)}
+    timed = {i for i, p in enumerate(spine.phases) if lowering.has_timer(p.phase, p.timeout_ms)}
     window = next((p for p in spine.phases if p.phase == "response"), None)
     for b, block in enumerate(spine.blocks):
         at = f"blocks[{b}]"
@@ -689,6 +688,8 @@ def editor_view(definition: TaskDefinition) -> dict[str, Any]:
         blocks       each block's id and the index of the block that follows it,
                      None after the last
         sessionEnds  whether the blocks run out by themselves (as SPN106 judges)
+        overridable  the indices of the phases a block's `phaseMs` can override
+                     (`lowering.has_timer`)
         stored       each stored `params` value a parameter reads, with the
                      phase, row or block it tunes and, for a key that carries
                      a phase index, the field it overrides (`_overridden`)
@@ -718,6 +719,7 @@ def editor_view(definition: TaskDefinition) -> dict[str, Any]:
                 "parts": [{"label": label, "bytes": n} for label, n in ram_parts(low)] if low is not None else []},
         "blocks": blocks,
         "sessionEnds": bool(spine.blocks) and _sequence_ends(spine),
+        "overridable": [i for i, p in enumerate(spine.phases) if lowering.has_timer(p.phase, p.timeout_ms)],
         "stored": stored,
     }
 

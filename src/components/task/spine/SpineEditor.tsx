@@ -224,7 +224,6 @@ export function SpineEditor({ shared, definition }: { shared: EditorShared; defi
               def={definition}
               view={view}
               selections={palette?.selections ?? []}
-              timedPhases={palette?.timedPhases ?? []}
               weightedSelections={palette?.weightedSelections ?? []}
               outcomeClasses={palette?.outcomeClasses ?? []}
               diagnostics={diagnostics}

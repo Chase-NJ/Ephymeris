@@ -34,7 +34,8 @@ export async function saveTask(client: SidecarPort, definition: TaskDocument) {
 }
 
 /** The seed spines a new task starts from, and the palette's phases, outcome
- *  classes and selections — the model's own lists (`TASKS.md#the-spine-editor`). */
+ *  classes, selections, timed phases and weighted selections — the model's own
+ *  lists (`TASKS.md#the-spine-editor`). */
 export async function spinePalette(client: SidecarPort) {
   return client.call(CMD.TASKS_SPINE_PALETTE, {});
 }

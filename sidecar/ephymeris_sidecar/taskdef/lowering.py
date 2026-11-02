@@ -154,6 +154,13 @@ _FLAGS = 10
 PHASES = ("wait", "hold", "present", "delay", "response", "counter", "outcome", "iti")
 #: The phases that last a set time, and so take `ms`.
 TIMED = ("hold", "present", "delay", "response", "outcome", "iti")
+
+
+def has_timer(kind: str, timeout_ms: int | None) -> bool:
+    """A phase with a timer parameter (`T<i>`), which a block's `phaseMs` can
+    override: a timed phase, or a Wait's or Counter's limit."""
+    return kind in TIMED or (kind in ("wait", "counter") and timeout_ms is not None)
+
 #: An input edge, by the name of the channel code it strobes.
 EDGES = {"enter": RISE, "exit": FALL}
 
@@ -460,9 +467,7 @@ def lower(
     # rewards, then each block's.
     slots: list[ParamSlot] = [ParamSlot(TRIALS_KEY, "trials")] if session_cap else []
     for i, p in enumerate(phases):
-        if p["phase"] in TIMED or (p["phase"] == "wait" and p.get("timeoutMs") is not None):
-            slots.append(ParamSlot(timer_key(i), "timer", phase=i))
-        if p["phase"] == "counter" and p.get("timeoutMs") is not None:
+        if has_timer(p["phase"], p.get("timeoutMs")):
             slots.append(ParamSlot(timer_key(i), "timer", phase=i))
         if p["phase"] == "response" and p.get("holdMs") is not None:
             slots.append(ParamSlot(hold_key(i), "hold", phase=i))

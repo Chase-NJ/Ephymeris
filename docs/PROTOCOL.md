@@ -3301,6 +3301,7 @@ What the spine editor draws beside the profile, all computed by the sidecar (`sp
 | `ram` | [SpineRam](#shape-spineram) | The RAM meter. |
 | `blocks` | [SpineBlockView](#shape-spineblockview)[] | The blocks, in order, each with what follows it. |
 | `sessionEnds` | boolean | The blocks run out by themselves. False when they loop or one never ends: then only `sessionTrials` or End Session ends the session (SPN106). |
+| `overridable` | number[] | The indices of the phases a block's `phaseMs` can override: those with a timer, a timed phase or a Wait's or Counter's limit (`lowering.has_timer`). |
 | `stored` | [SpineStoredValue](#shape-spinestoredvalue)[] | Each stored `params` value a parameter reads. A key none reads is SPN110 instead. |
 
 <a id="shape-strategypoint"></a>

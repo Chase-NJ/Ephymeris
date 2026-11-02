@@ -36,7 +36,6 @@ export function BlockTimeline({
   def,
   view,
   selections,
-  timedPhases,
   weightedSelections,
   outcomeClasses,
   diagnostics,
@@ -49,8 +48,6 @@ export function BlockTimeline({
   def: SpineDefinition;
   view: SpineView | null;
   selections: readonly string[];
-  /** The phases that last a set time (`lowering.TIMED`), from the palette. */
-  timedPhases: readonly string[];
   /** The selections that read each row's weight (`lowering.WEIGHTED`), from the palette. */
   weightedSelections: readonly string[];
   outcomeClasses: readonly string[];
@@ -140,7 +137,7 @@ export function BlockTimeline({
           def={def}
           at={selected}
           selections={selections}
-          timedPhases={timedPhases}
+          overridable={view?.overridable ?? []}
           weightedSelections={weightedSelections}
           outcomeClasses={outcomeClasses}
           diagnostics={diagnostics}
@@ -158,7 +155,7 @@ function BlockPanel({
   def,
   at,
   selections,
-  timedPhases,
+  overridable,
   weightedSelections,
   outcomeClasses,
   diagnostics,
@@ -169,7 +166,8 @@ function BlockPanel({
   def: SpineDefinition;
   at: number;
   selections: readonly string[];
-  timedPhases: readonly string[];
+  /** The phases a block can override (`SpineView.overridable`, from the preview). */
+  overridable: readonly number[];
   weightedSelections: readonly string[];
   outcomeClasses: readonly string[];
   diagnostics: readonly TaskDiagnostic[];
@@ -314,7 +312,7 @@ function BlockPanel({
       <Field label="Phase durations in this block">
         <span className="flex flex-wrap gap-x-4 gap-y-1">
           {def.spine.map((p, i) =>
-            timedPhases.includes(p.phase) || p.timeoutMs !== undefined ? (
+            overridable.includes(i) ? (
               <span key={i} className="flex items-center gap-1.5 text-[11px] text-static">
                 {i + 1}. {PHASE_LABEL[p.phase] ?? p.phase}
                 <OptionalNumber

@@ -2534,6 +2534,12 @@ SHAPES = (
                 "ends: then only `sessionTrials` or End Session ends the session (SPN106).",
             ),
             f(
+                "overridable",
+                ListOf(INT),
+                doc="The indices of the phases a block's `phaseMs` can override: those with a "
+                "timer, a timed phase or a Wait's or Counter's limit (`lowering.has_timer`).",
+            ),
+            f(
                 "stored",
                 ListOf(Ref("SpineStoredValue")),
                 doc="Each stored `params` value a parameter reads. A key none reads is SPN110 instead.",

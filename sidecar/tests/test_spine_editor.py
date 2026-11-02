@@ -89,6 +89,23 @@ def test_the_trace_seed_counts_licks_in_every_phase_before_the_iti():
     assert {(w.row, w.phase) for w in found} == {(r, p) for r in ("row_1", "row_2") for p in (0, 1, 2, 3)}
 
 
+def test_the_preview_says_which_phases_a_block_can_override():
+    """A block's `phaseMs` overrides a phase's timer: a timed phase's, or a Wait's
+    or Counter's limit (`lowering.has_timer`). The editor offers exactly these."""
+    def overridable(document: dict) -> list[int]:
+        return spine_module.editor_view(TaskDefinition.from_json(document))["overridable"]
+
+    ratio = built("ratio")
+    assert overridable(ratio) == [1, 2], "a Counter with no limit has no timer"
+    ratio["spine"][0]["timeoutMs"] = 10000
+    assert overridable(ratio) == [0, 1, 2]
+    afc = built("two_afc")
+    assert overridable(afc) == [1, 2, 3, 4, 5], "a Wait with no timeout has no timer"
+    afc["spine"][0]["timeoutMs"] = 5000
+    afc["spine"][2]["timeoutMs"] = 5000  # not a Wait or Counter: no second timer
+    assert overridable(afc) == [0, 1, 2, 3, 4, 5]
+
+
 @pytest.mark.parametrize("seed_id", list(BINDINGS))
 def test_a_seed_named_and_bound_on_this_rig_is_clean(seed_id):
     assert validate(TaskDefinition.from_json(built(seed_id))) == []

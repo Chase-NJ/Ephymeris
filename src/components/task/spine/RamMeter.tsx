@@ -24,8 +24,8 @@ export function RamMeter({ ram, diagnostics }: { ram: SpineRam | null; diagnosti
   if (!meter) {
     return (
       <p className="text-[11px] leading-relaxed text-static">
-        Nothing to measure: this spine cannot be written as a table yet. The problems on its phases
-        say why.
+        Nothing to measure: this spine cannot be written as a table yet. The problems above the
+        diagram and on its phases and rows say why.
       </p>
     );
   }

@@ -152,7 +152,8 @@ _FLAGS = 10
 
 #: The phase palette (0003-phase-spine-task-model.md#phase-palette).
 PHASES = ("wait", "hold", "present", "delay", "response", "counter", "outcome", "iti")
-_TIMED = ("hold", "present", "delay", "response", "outcome", "iti")
+#: The phases that last a set time, and so take `ms`.
+TIMED = ("hold", "present", "delay", "response", "outcome", "iti")
 #: An input edge, by the name of the channel code it strobes.
 EDGES = {"enter": RISE, "exit": FALL}
 
@@ -459,7 +460,7 @@ def lower(
     # rewards, then each block's.
     slots: list[ParamSlot] = [ParamSlot(TRIALS_KEY, "trials")] if session_cap else []
     for i, p in enumerate(phases):
-        if p["phase"] in _TIMED or (p["phase"] == "wait" and p.get("timeoutMs") is not None):
+        if p["phase"] in TIMED or (p["phase"] == "wait" and p.get("timeoutMs") is not None):
             slots.append(ParamSlot(timer_key(i), "timer", phase=i))
         if p["phase"] == "counter" and p.get("timeoutMs") is not None:
             slots.append(ParamSlot(timer_key(i), "timer", phase=i))

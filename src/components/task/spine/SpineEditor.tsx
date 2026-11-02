@@ -30,6 +30,8 @@ interface Palette {
   phases: string[];
   outcomeClasses: string[];
   selections: string[];
+  timedPhases: string[];
+  weightedSelections: string[];
 }
 
 /**
@@ -68,7 +70,15 @@ export function SpineEditor({ shared, definition }: { shared: EditorShared; defi
   useEffect(() => {
     if (status !== "connected") return;
     void spinePalette(client)
-      .then((reply) => setPalette({ phases: reply.phases, outcomeClasses: reply.outcomeClasses, selections: reply.selections }))
+      .then((reply) =>
+        setPalette({
+          phases: reply.phases,
+          outcomeClasses: reply.outcomeClasses,
+          selections: reply.selections,
+          timedPhases: reply.timedPhases,
+          weightedSelections: reply.weightedSelections,
+        }),
+      )
       .catch((err) => setPaletteError(errorMessage(err)));
   }, [client, status]);
 
@@ -162,7 +172,7 @@ export function SpineEditor({ shared, definition }: { shared: EditorShared; defi
                 onInsert={(at, kind) => {
                   // A stored value keyed by a phase index folds into its field
                   // first, so it moves with its phase (`foldStored`).
-                  setDefinition(insertPhase(foldStored(definition, stored), at, kind));
+                  setDefinition(insertPhase(foldStored(definition, stored), at, kind, palette?.timedPhases ?? []));
                   setSelectedPhase(at);
                 }}
               />
@@ -214,6 +224,8 @@ export function SpineEditor({ shared, definition }: { shared: EditorShared; defi
               def={definition}
               view={view}
               selections={palette?.selections ?? []}
+              timedPhases={palette?.timedPhases ?? []}
+              weightedSelections={palette?.weightedSelections ?? []}
               outcomeClasses={palette?.outcomeClasses ?? []}
               diagnostics={diagnostics}
               stored={stored}

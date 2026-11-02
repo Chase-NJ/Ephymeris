@@ -1570,7 +1570,7 @@ The frontend holds no wiring and no budget. A preview refused as `TASK_INVALID` 
 - `/task/new` is `SeedChooser`, which offers the five seeds `tasks.spinePalette` serves from `taskdef/seeds.py`: 2AFC, go/no-go, DNMS, trace and FR/PR. The trace seed is [Pavlovian conditioning](#pavlovian-conditioning)'s `phases()` with a level CS, so it counts licks.
 - A seed carries phases and no names: its slots, phases, maps and one block are written out, its rows' ids are neutral (`row_1`, …), and every row's `name` and `bind` is empty. So it opens with SPN108 and SPN101 on each row, until the operator names the row and binds it on this rig.
 - Picking a seed opens it unsaved, as Duplicate does.
-- The same reply carries the palette's phase kinds, outcome classes and selections, from `lowering.py`'s own tuples.
+- The same reply carries the palette's phase kinds, outcome classes and selections, the phases that last a set time and the selections that read a row's weight, from `lowering.py`'s own tuples. The editor keeps no copy of any of them.
 - A trial-table task is not created new. A saved or imported one still opens, edits and saves.
 
 **The panels:**

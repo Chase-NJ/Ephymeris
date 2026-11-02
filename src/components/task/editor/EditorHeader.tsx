@@ -253,9 +253,9 @@ function ProblemsList({
 /** What the task glyph draws, from the definition on screen. */
 function glyphTask(definition: TaskDocument, problems: number) {
   // A spine task's conditions are its rows; it has no ramp and no
-  // trial-table selection mode, so it draws as one stage under anti-bias.
+  // trial-table selection mode, so it draws as one stage with none.
   if (isSpine(definition)) {
-    return { id: definition.id, trials: definition.rows.length, stages: 1, selectionMode: "antibias" as const, problems };
+    return { id: definition.id, trials: definition.rows.length, stages: 1, selectionMode: null, problems };
   }
   return {
     id: definition.id,

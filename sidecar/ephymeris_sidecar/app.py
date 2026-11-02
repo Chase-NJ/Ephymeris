@@ -1047,6 +1047,8 @@ class Application:
             "phases": list(task_lowering.PHASES),
             "outcomeClasses": list(task_lowering.OUTCOME_CLASSES),
             "selections": list(task_lowering.SELECTIONS),
+            "timedPhases": list(task_lowering.TIMED),
+            "weightedSelections": list(task_lowering.WEIGHTED),
         }
 
     async def _tasks_save(self, args: Args) -> dict[str, Any]:

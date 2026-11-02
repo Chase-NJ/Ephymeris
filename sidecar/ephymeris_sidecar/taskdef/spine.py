@@ -445,7 +445,7 @@ def _block_problems(spine: Spine, problem) -> bool:  # noqa: ANN001, C901
     row_ids = {row.id for row in spine.rows}
     ids = [b.id for b in spine.blocks]
     timed = {i for i, p in enumerate(spine.phases)
-             if p.phase in lowering._TIMED or (p.phase in ("wait", "counter") and p.timeout_ms is not None)}
+             if p.phase in lowering.TIMED or (p.phase in ("wait", "counter") and p.timeout_ms is not None)}
     window = next((p for p in spine.phases if p.phase == "response"), None)
     for b, block in enumerate(spine.blocks):
         at = f"blocks[{b}]"

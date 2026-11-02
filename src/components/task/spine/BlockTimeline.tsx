@@ -16,11 +16,6 @@ import type { SpineStoredValue, SpineView, TaskDiagnostic } from "@/lib/ws/proto
 
 import { Field, OptionalNumber, ProblemLines, SlotSet, StoredValues, problemTitle } from "./bits";
 
-/** The selections that read each row's weight (`lowering.WEIGHTED`). */
-const WEIGHTED = new Set(["weighted", "bag", "antibias"]);
-/** The phases a block can override (`lowering._TIMED`, and a Wait's or Counter's limit). */
-const TIMED = new Set(["hold", "present", "delay", "response", "outcome", "iti"]);
-
 /** A block's end rule in words. */
 function endRule(block: SpineBlock): string {
   const parts: string[] = [];
@@ -41,6 +36,8 @@ export function BlockTimeline({
   def,
   view,
   selections,
+  timedPhases,
+  weightedSelections,
   outcomeClasses,
   diagnostics,
   stored,
@@ -52,6 +49,10 @@ export function BlockTimeline({
   def: SpineDefinition;
   view: SpineView | null;
   selections: readonly string[];
+  /** The phases that last a set time (`lowering.TIMED`), from the palette. */
+  timedPhases: readonly string[];
+  /** The selections that read each row's weight (`lowering.WEIGHTED`), from the palette. */
+  weightedSelections: readonly string[];
   outcomeClasses: readonly string[];
   diagnostics: readonly TaskDiagnostic[];
   stored: readonly SpineStoredValue[];
@@ -139,6 +140,8 @@ export function BlockTimeline({
           def={def}
           at={selected}
           selections={selections}
+          timedPhases={timedPhases}
+          weightedSelections={weightedSelections}
           outcomeClasses={outcomeClasses}
           diagnostics={diagnostics}
           stored={stored}
@@ -155,6 +158,8 @@ function BlockPanel({
   def,
   at,
   selections,
+  timedPhases,
+  weightedSelections,
   outcomeClasses,
   diagnostics,
   stored,
@@ -164,6 +169,8 @@ function BlockPanel({
   def: SpineDefinition;
   at: number;
   selections: readonly string[];
+  timedPhases: readonly string[];
+  weightedSelections: readonly string[];
   outcomeClasses: readonly string[];
   diagnostics: readonly TaskDiagnostic[];
   stored: readonly SpineStoredValue[];
@@ -179,7 +186,7 @@ function BlockPanel({
     onChange(setBlock(def, at, next as unknown as SpineBlock));
   };
   const select = block.select ?? "uniform";
-  const weighted = WEIGHTED.has(select);
+  const weighted = weightedSelections.includes(select);
 
   const toggleRow = (id: string) => {
     const e = block.rows.indexOf(id);
@@ -252,7 +259,7 @@ function BlockPanel({
             label="Selection"
             tone={field("select").length ? "error" : "normal"}
             options={selections.map((s) => ({ value: s, label: s }))}
-            onChange={(s) => update({ select: s === "uniform" ? undefined : s, weights: WEIGHTED.has(s) ? block.weights : undefined })}
+            onChange={(s) => update({ select: s === "uniform" ? undefined : s, weights: weightedSelections.includes(s) ? block.weights : undefined })}
           />
         </Field>
         <Field label="Trials (or fewest)">
@@ -307,7 +314,7 @@ function BlockPanel({
       <Field label="Phase durations in this block">
         <span className="flex flex-wrap gap-x-4 gap-y-1">
           {def.spine.map((p, i) =>
-            TIMED.has(p.phase) || p.timeoutMs !== undefined ? (
+            timedPhases.includes(p.phase) || p.timeoutMs !== undefined ? (
               <span key={i} className="flex items-center gap-1.5 text-[11px] text-static">
                 {i + 1}. {PHASE_LABEL[p.phase] ?? p.phase}
                 <OptionalNumber

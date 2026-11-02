@@ -66,12 +66,13 @@ class TaskEntry:
     #: would cost a round trip each.
     trials: int
     stages: int
-    selection_mode: str
+    #: None on a spine task, whose blocks draw its rows.
+    selection_mode: str | None
     #: Why the stored file will not read as a definition, or None. Such a task
     #: is listed rather than dropped, so it never vanishes without a word.
     unreadable: str | None = None
     #: A phase-spine task: `trials` counts its rows, and it has no ramp or
-    #: trial-table selection mode (`stages` is 1, `selection_mode` unread).
+    #: trial-table selection mode (`stages` is 1, `selection_mode` None).
     spine: bool = False
 
     def to_json(self) -> dict[str, Any]:
@@ -237,7 +238,7 @@ class TaskStore:
                     problems=len(validate(definition)),
                     trials=definition.trial_count,
                     stages=definition.stage_count,
-                    selection_mode=definition.selection_mode,
+                    selection_mode=None if definition.spine is not None else definition.selection_mode,
                     spine=definition.spine is not None,
                     # `label` is what the impact check renders; the name is it.
                 ).to_json()

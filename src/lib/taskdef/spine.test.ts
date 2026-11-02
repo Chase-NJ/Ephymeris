@@ -28,6 +28,9 @@ import {
 } from "./spine";
 import { PHASE_FIELDS, phaseDetail, phaseFields } from "./spineLabels";
 
+/** The timed phase kinds, as `tasks.spinePalette` serves them (`lowering.TIMED`). */
+const TIMED = ["hold", "present", "delay", "response", "outcome", "iti"];
+
 /** The go/no-go seed, named and bound — as `taskdef/seeds.py` writes it. */
 function goNoGo(): SpineDefinition {
   return {
@@ -127,7 +130,7 @@ describe("rows", () => {
 
 describe("phases", () => {
   it("inserts a phase from the palette and moves each block's overrides with the phases after it", () => {
-    const next = insertPhase(goNoGo(), 2, "delay");
+    const next = insertPhase(goNoGo(), 2, "delay", TIMED);
     expect(next.spine.map((p) => p.phase)).toEqual(["wait", "hold", "delay", "present", "response", "outcome", "iti"]);
     expect(next.spine[2]!).toEqual({ phase: "delay", ms: 1000 });
     expect(next.blocks[0]!.phaseMs).toEqual({ "6": 4000, "3": 800 });
@@ -140,9 +143,9 @@ describe("phases", () => {
   });
 
   it("gives a new phase the fields its kind needs, from the slots the spine has", () => {
-    expect(insertPhase(goNoGo(), 0, "wait").spine[0]!).toEqual({ phase: "wait", on: "port" });
-    expect(insertPhase(goNoGo(), 0, "counter").spine[0]!).toEqual({ phase: "counter", on: "port", count: 5 });
-    expect(insertPhase(goNoGo(), 0, "response").spine[0]!).toEqual({ phase: "response", responses: [], ms: 3000 });
+    expect(insertPhase(goNoGo(), 0, "wait", TIMED).spine[0]!).toEqual({ phase: "wait", on: "port" });
+    expect(insertPhase(goNoGo(), 0, "counter", TIMED).spine[0]!).toEqual({ phase: "counter", on: "port", count: 5 });
+    expect(insertPhase(goNoGo(), 0, "response", TIMED).spine[0]!).toEqual({ phase: "response", responses: [], ms: 3000 });
   });
 });
 
@@ -166,7 +169,7 @@ describe("a phase's watched inputs", () => {
     const watched = setPhase(def, 1, { ...def.spine[1]!, watch: ["port"] });
     const edited = setPhase(watched, 1, { ...watched.spine[1]!, ms: 750 });
     expect(edited.spine[1]).toMatchObject({ ms: 750, watch: ["port"] });
-    expect(insertPhase(edited, 0, "delay").spine[2]!.watch).toEqual(["port"]);
+    expect(insertPhase(edited, 0, "delay", TIMED).spine[2]!.watch).toEqual(["port"]);
   });
 });
 
@@ -189,7 +192,7 @@ describe("values stored over a phase", () => {
   });
 
   it("then travel with their phase when one is inserted before it", () => {
-    const next = insertPhase(foldStored(tuned(), stored), 0, "delay");
+    const next = insertPhase(foldStored(tuned(), stored), 0, "delay", TIMED);
     expect(next.spine[3]).toMatchObject({ phase: "present", ms: 700 });
     expect(next.blocks[0]!.phaseMs).toEqual({ "6": 4500, "3": 800 });
     expect(next.params).toEqual({ reward_ms_row_1: 80 });

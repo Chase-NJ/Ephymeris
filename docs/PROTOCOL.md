@@ -939,7 +939,7 @@ Compile an unsaved definition and say what is wrong with it, writing nothing. Th
 <a id="cmd-tasks.spinepalette"></a>
 #### `tasks.spinePalette`
 
-What the spine editor builds from: the seeds a new task starts from and the palette's phases, outcome classes and selections, from the model's own lists (`TASKS.md#the-spine-editor`). Static; reads no state.
+What the spine editor builds from: the seeds a new task starts from and the palette's phases, outcome classes, selections, timed phases and weighted selections, from the model's own lists (`TASKS.md#the-spine-editor`). Static; reads no state.
 
 **Result**
 
@@ -949,6 +949,8 @@ What the spine editor builds from: the seeds a new task starts from and the pale
 | `phases` | string[] | The phase kinds of the palette (`lowering.PHASES`). |
 | `outcomeClasses` | string[] | The outcome classes a map entry can name (`lowering.OUTCOME_CLASSES`). |
 | `selections` | string[] | How a block can draw its rows (`lowering.SELECTIONS`). |
+| `timedPhases` | string[] | The phase kinds that last a set time, and so take `ms` (`lowering.TIMED`). |
+| `weightedSelections` | string[] | The selections that read each row's weight (`lowering.WEIGHTED`). |
 
 <a id="cmd-tasks.save"></a>
 #### `tasks.save`
@@ -3449,8 +3451,8 @@ A row in the profile list, and everything a task card states before the definiti
 | `problems` | number | How many diagnostics it currently trips. A COUNT, not the list: this reply is drawn on every route mount and would otherwise grow with the library. |
 | `trials` | number | Rows in the trial table — how many conditions it presents. |
 | `stages` | number | Rows in the shaping ramp. 1 means no ramp. |
-| `selectionMode` | "antibias" \| "pool" \| "weighted" | How the next trial is drawn: a side against recent bias then a type uniformly; a block-shuffled weighted pool; or the side draw with a weighted pick within it. Not read on a spine task. |
-| `spine` | boolean | A phase-spine task (`TASKS.md#spine-tasks`): `trials` counts its rows, `stages` is 1 and `selectionMode` means nothing, since its blocks draw its rows. |
+| `selectionMode` | "antibias" \| "pool" \| "weighted" \| null | How the next trial is drawn: a side against recent bias then a type uniformly; a block-shuffled weighted pool; or the side draw with a weighted pick within it. Null on a spine task, whose blocks draw its rows. |
+| `spine` | boolean | A phase-spine task (`TASKS.md#spine-tasks`): `trials` counts its rows, `stages` is 1 and `selectionMode` is null, since its blocks draw its rows. |
 
 <a id="shape-taskimportconflict"></a>
 #### TaskImportConflict

@@ -139,7 +139,8 @@ def test_the_task_list_says_which_tasks_are_spines(tmp_path):
     store.save(TaskDefinition.from_json({"id": "plain", "name": "Plain"}))
     entries = {e["id"]: e for e in store.list_entries()}
     assert entries["seed_dnms"]["spine"] is True and entries["seed_dnms"]["trials"] == 4
-    assert entries["plain"]["spine"] is False
+    assert entries["seed_dnms"]["selectionMode"] is None, "its blocks draw its rows: no trial-table mode"
+    assert entries["plain"]["spine"] is False and entries["plain"]["selectionMode"] == "antibias"
 
 
 # --------------------------------------------------------------------------- #
@@ -318,6 +319,8 @@ async def test_the_palette_serves_the_seeds_and_the_model_s_own_lists(tmp_path):
     assert palette["phases"] == list(lowering.PHASES)
     assert palette["outcomeClasses"] == list(lowering.OUTCOME_CLASSES)
     assert palette["selections"] == list(lowering.SELECTIONS)
+    assert palette["timedPhases"] == list(lowering.TIMED)
+    assert palette["weightedSelections"] == list(lowering.WEIGHTED)
 
 
 async def test_a_preview_of_a_seed_carries_the_spine_view_and_located_problems(tmp_path):

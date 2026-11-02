@@ -102,13 +102,12 @@ export function isSpine(doc: TaskDocument): doc is SpineDefinition {
   return Array.isArray((doc as { spine?: unknown }).spine);
 }
 
-/** The phases that last a set time, and so take `ms` (`lowering._TIMED`). */
-const TIMED = new Set(["hold", "present", "delay", "response", "outcome", "iti"]);
-
 /** What a newly inserted phase carries: the fields its kind cannot do without,
  *  watching the spine's first input slot where it watches one. The operator
- *  sets the rest; a wrong guess is a diagnostic on the phase, never silent. */
-function freshPhase(def: SpineDefinition, kind: string): SpinePhase {
+ *  sets the rest; a wrong guess is a diagnostic on the phase, never silent.
+ *  `timed` are the phase kinds that last a set time (`tasks.spinePalette`'s
+ *  `timedPhases`, `lowering.TIMED`). */
+function freshPhase(def: SpineDefinition, kind: string, timed: readonly string[]): SpinePhase {
   const input = def.slots.find((s) => s.type === "digital_in")?.id;
   switch (kind) {
     case "wait":
@@ -122,7 +121,7 @@ function freshPhase(def: SpineDefinition, kind: string): SpinePhase {
     case "outcome":
       return { phase: kind, ms: 0 };
     default:
-      return TIMED.has(kind) ? { phase: kind, ms: 1000 } : { phase: kind };
+      return timed.includes(kind) ? { phase: kind, ms: 1000 } : { phase: kind };
   }
 }
 
@@ -170,9 +169,9 @@ export function foldStored(def: SpineDefinition, stored: readonly SpineStoredVal
   return next;
 }
 
-export function insertPhase(def: SpineDefinition, at: number, kind: string): SpineDefinition {
+export function insertPhase(def: SpineDefinition, at: number, kind: string, timed: readonly string[]): SpineDefinition {
   const spine = [...def.spine];
-  spine.splice(at, 0, freshPhase(def, kind));
+  spine.splice(at, 0, freshPhase(def, kind, timed));
   return { ...def, spine, blocks: moveOverrides(def, (i) => (i >= at ? i + 1 : i)) };
 }
 

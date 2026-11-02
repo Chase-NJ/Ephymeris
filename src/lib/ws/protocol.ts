@@ -2506,13 +2506,13 @@ export interface TaskEntry {
   stages: number;
   /**
    * How the next trial is drawn: a side against recent bias then a type uniformly; a
-   * block-shuffled weighted pool; or the side draw with a weighted pick within it. Not read on a
-   * spine task.
+   * block-shuffled weighted pool; or the side draw with a weighted pick within it. Null on a
+   * spine task, whose blocks draw its rows.
    */
-  selectionMode: "antibias" | "pool" | "weighted";
+  selectionMode: "antibias" | "pool" | "weighted" | null;
   /**
    * A phase-spine task (`TASKS.md#spine-tasks`): `trials` counts its rows, `stages` is 1 and
-   * `selectionMode` means nothing, since its blocks draw its rows.
+   * `selectionMode` is null, since its blocks draw its rows.
    */
   spine: boolean;
 }
@@ -3110,7 +3110,7 @@ export interface CommandResultMap {
   "tasks.list": { tasks: TaskEntry[] };
   "tasks.get": { definition: unknown; diagnostics: TaskDiagnostic[] };
   "tasks.preview": TaskPreview;
-  "tasks.spinePalette": { seeds: TaskSeed[]; phases: string[]; outcomeClasses: string[]; selections: string[] };
+  "tasks.spinePalette": { seeds: TaskSeed[]; phases: string[]; outcomeClasses: string[]; selections: string[]; timedPhases: string[]; weightedSelections: string[] };
   "tasks.save": TaskSaved;
   "tasks.delete": { deleted: boolean };
   "tasks.export": { document: unknown; filename: string };

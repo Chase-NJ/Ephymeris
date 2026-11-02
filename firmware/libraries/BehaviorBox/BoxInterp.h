@@ -235,8 +235,9 @@
       end, first + count, is at most 255, its N's and its criterion's slots are
       both set or both NONE, its next is a block or NONE, and its errors fit a
       uint16_t; every pick that starts a trial has a branch for each
-      block's slice, and so has `entries` when it is not NULL; an override
-      names a block and two slots.
+      block's slice, and so has `entries` when it is not NULL; an entry's
+      side is an input bit below 32 or NONE (anti-bias holds INTERP_SIDES
+      on the stack); an override names a block and two slots.
     So a tick enters at most two states.
 
 

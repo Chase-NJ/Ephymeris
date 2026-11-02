@@ -309,6 +309,16 @@ def penalty_key(phase_index: int) -> str:
     return f"P{phase_index}"
 
 
+def broken_penalty_key(phase_index: int) -> str:
+    """`PB<i>`: a Response window's broken hold's penalty."""
+    return f"PB{phase_index}"
+
+
+def escalate_keys(phase_index: int) -> tuple[str, str]:
+    """`LS<i>`, `LM<i>`: a Wait's escalating penalty's step and cap."""
+    return f"LS{phase_index}", f"LM{phase_index}"
+
+
 def entry_penalty_key(row_index: int, entry: int) -> str:
     """`PE<r>_<k>`: the penalty of row r's map entry k (from 1, in branch order)."""
     return f"PE{row_index + 1}_{entry}"
@@ -514,10 +524,11 @@ def lower(
         if p["phase"] in PENALISED and p.get("penaltyMs") is not None:
             slots.append(ParamSlot(penalty_key(i), "penalty", phase=i))
             if p["phase"] == "wait" and p.get("escalateMs") is not None:
-                slots.append(ParamSlot(f"LS{i}", "escalate_step", phase=i))
-                slots.append(ParamSlot(f"LM{i}", "escalate_max", phase=i))
+                step, cap = escalate_keys(i)
+                slots.append(ParamSlot(step, "escalate_step", phase=i))
+                slots.append(ParamSlot(cap, "escalate_max", phase=i))
         if p["phase"] == "response" and p.get("brokenPenaltyMs") is not None:
-            slots.append(ParamSlot(f"PB{i}", "penalty", phase=i, entry="hold"))
+            slots.append(ParamSlot(broken_penalty_key(i), "penalty", phase=i, entry="hold"))
     plain_outcome = any(kind == "outcome" and (w is None or i < w) for i, kind in enumerate(kinds))
     for r in range(len(rows)):
         lines = ([(k, key) for k, key in enumerate(_entries(phases[w]), 1) if maps[r][key].get("line")]
@@ -585,8 +596,9 @@ def lower(
               outcome: int = 0) -> int:
         t = slot[timer] if timer is not None else NONE
         if phase is not None and row is not None and chance is None:
-            # A phase's watched slots, in every state it writes but its draw.
-            watch |= watch_mask(row, phase)
+            # A phase's watched slots, in every state it writes but its draw,
+            # and a well whose release an Outcome will await.
+            watch |= watch_mask(row, phase) | awaited[0]
         edge_first = len(edges) if exits else 0
         edges.extend([list(e) for e in exits])
         states.append([outputs_mask, watch, t, t, on_timeout if timer is not None else NONE,
@@ -693,6 +705,10 @@ def lower(
 
     row_first: list[_Ref] = []
     penalties: dict[str, _Ref] = {}
+    #: The input bit a branch's Outcome will await the release of, watched in
+    #: every state from the response to the await, so its level is known there.
+    awaited = [0]
+    awaits_exit = any(p["phase"] == "outcome" and p.get("awaitExit") for p in phases)
 
     def penalised(key: str, iti_ref: _Ref) -> _Ref:
         """Where a branch with penalty `key` ends: an ITI copy reading it, or
@@ -730,10 +746,14 @@ def lower(
                     state(w, r, win_mask, 1 << bit, hold_key(w), len(states) + 1, exits=[(bit, FALL, broken)])
                 cls = OUTCOME_CLASSES.index(entry["outcome"]) + 1
                 end = penalised(entry_penalty_key(r, k), iti_ref)
+                if awaits_exit and entry.get("line") is not None and key != TIMEOUT:
+                    awaited[0] = 1 << input_bit(r, w, key)
                 run(r, post, end, iti_ref, branch=(cls, entry.get("line"), k, key))
+                awaited[0] = 0
             if any(rmap[key].get("hold") for key in keys):
                 broken.at = len(states)
-                run(r, post, penalised(f"PB{w}", iti_ref), iti_ref, branch=(OUTCOME_HOLD_BROKEN, None, None, None))
+                run(r, post, penalised(broken_penalty_key(w), iti_ref), iti_ref,
+                    branch=(OUTCOME_HOLD_BROKEN, None, None, None))
         iti_ref.at = len(states)
         iti_mask = output_mask(r, iti, phases[iti].get("outputs"))
         state(iti, r, iti_mask, 0, timer_key(iti), 0)
@@ -802,7 +822,10 @@ def lower(
     escalating = [s.phase for s in slots if s.role == "escalate_step"]
     if len(escalating) > 1:
         raise LoweringError("at most one Wait's penalty escalates: the table holds one escalation")
-    lazy = (slot[f"LS{escalating[0]}"], slot[f"LM{escalating[0]}"]) if escalating else None
+    lazy = None
+    if escalating:
+        step, cap = escalate_keys(escalating[0])
+        lazy = (slot[step], slot[cap])
 
     if len(states) >= NONE or len(edges) >= NONE or len(branches) >= NONE:
         raise LoweringError(f"the table has {len(states)} states and {len(edges)} edge rows; "

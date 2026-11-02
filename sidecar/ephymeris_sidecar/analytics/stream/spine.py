@@ -166,6 +166,7 @@ def _decode(document: dict[str, Any]) -> SpineRecord:
         raise SpineDecodeError("the snapshot carries no state table: the task could not be lowered")
     try:
         counter = table_doc.get("counter")
+        lazy = table_doc.get("lazy") or [rp.NONE, rp.NONE]
         table = rp.Table(
             states=[rp.StateRow(*row) for row in table_doc["states"]],
             edges=[rp.EdgeRow(*row) for row in table_doc["edges"]],
@@ -177,8 +178,7 @@ def _decode(document: dict[str, Any]) -> SpineRecord:
                               skipped=int(table_doc.get("skipped") or 0),
                               hits=int(table_doc.get("hits") or 0),
                               repeat_aborts=bool(table_doc.get("repeatAborts")),
-                              lazy_step=int((table_doc.get("lazy") or [rp.NONE, rp.NONE])[0]),
-                              lazy_max=int((table_doc.get("lazy") or [rp.NONE, rp.NONE])[1]))
+                              lazy_step=int(lazy[0]), lazy_max=int(lazy[1]))
                     if table_doc.get("blocks") else None),
         )
     except (KeyError, TypeError, ValueError) as exc:

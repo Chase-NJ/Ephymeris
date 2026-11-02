@@ -252,3 +252,38 @@ def test_two_escalating_waits_are_one_too_many():
 
 def test_the_grgl_2afc_itself_is_clean():
     assert spine_task.diagnostics(TaskDefinition.from_json(grgl_2afc(repeatAborts=True))) == []
+
+
+def test_an_awaited_well_stays_watched_through_phases_before_the_outcome():
+    # A Delay between the window and the Outcome: a release there must be seen,
+    # or the await would wait for one that already happened.
+    doc = grgl_2afc()
+    doc["spine"].insert(3, {"phase": "delay", "ms": 500})
+    low = lowered(doc)
+    for r, row in enumerate(doc["rows"]):
+        correct = next(k for k, e in row["map"].items() if e["outcome"] == "correct")
+        bit = next(i for i, (slot, channel) in enumerate(low.inputs) if slot == correct)
+        delays = [s for s, p, rr in zip(low.states, low.phases, low.rows) if p == 3 and rr == r and s[1] >> bit & 1]
+        assert delays, f"row {r}'s delay after {correct!r} watches that well"
+
+
+def test_a_release_during_a_delay_before_the_outcome_does_not_hang_the_trial():
+    doc = grgl_2afc()
+    doc["spine"].insert(3, {"phase": "delay", "ms": 500})
+    result = sim.simulate(snapshot(doc), sim.Animal("correct"), 9, limit_ms=5 * 60_000)
+    table = spine_stream.trial_table(result.document)
+    assert result.ended_by == "blocks", "every trial of the block finished"
+    assert len(table["trials"]) == 20 and {t["outcome"] for t in table["trials"]} == {"correct"}
+
+
+def test_a_run_cap_fits_the_core_s_count():
+    # The core counts a run in a byte, saturating at 255: a cap past it never fires.
+    found = [d.location for d in spine_task.diagnostics(TaskDefinition.from_json(
+        with_block(select="antibias", maxRun=256)))]
+    assert "blocks[0].maxRun" in found
+
+
+def test_an_escalation_s_cap_is_at_least_its_base():
+    found = [d.location for d in spine_task.diagnostics(TaskDefinition.from_json(
+        with_phase(0, penaltyMs=40000, escalateMaxMs=30000)))]
+    assert "spine[0].escalateMaxMs" in found

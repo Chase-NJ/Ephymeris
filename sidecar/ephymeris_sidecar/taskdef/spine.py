@@ -103,6 +103,8 @@ PAIR_BYTES = 2
 #: at most `lowering.HISTORY` trials or responses, and a bag holds that many tokens.
 _WEIGHT_MAX = 1000
 _CORRECTION_MAX = 100
+#: The longest same-side run cap: the core counts a run in a uint8_t, saturating.
+_RUN_MAX = 255
 _BIAS_WINDOW_DEFAULT = 10
 #: A pair's (low, high) roles: the board refuses a high end below its low end.
 _PAIRS = (("count", "count_max"), ("block_trials", "block_trials_max"), ("criterion_correct", "criterion_of"))
@@ -381,6 +383,9 @@ def _penalty_problems(at: str, i: int, p, window: int | None, bad) -> None:  # n
             bad(f"{at}.escalateMs", "an escalating penalty grows from the Wait's penaltyMs by escalateMs")
         elif p.escalate_max_ms is None:
             bad(f"{at}.escalateMaxMs", "an escalating penalty grows up to escalateMaxMs; give it one")
+        elif p.escalate_max_ms < p.penalty_ms:
+            bad(f"{at}.escalateMaxMs", "an escalating penalty's cap is at least its penaltyMs, or it would "
+                "shorten the first penalty too")
     if p.broken_penalty_ms is not None and (p.phase != "response" or p.hold_ms is None):
         bad(f"{at}.brokenPenaltyMs", "a broken hold's penalty belongs to a Response window with holdMs")
     if p.await_exit and (p.phase != "outcome" or window is None or i < window):
@@ -564,8 +569,9 @@ def _bias_problems(at: str, block, bad) -> None:  # noqa: ANN001
             continue
         if block.select != "antibias":
             bad(f"{at}.{key}", f"{key} shapes anti-bias, and this block draws {block.select}", blocks=False)
-        elif key == "maxRun" and not 1 <= value <= _TRIALS_MAX:
-            bad(f"{at}.{key}", f"a run cap is 1 to {_TRIALS_MAX} draws", blocks=False)
+        elif key == "maxRun" and not 1 <= value <= _RUN_MAX:
+            bad(f"{at}.{key}", f"a run cap is 1 to {_RUN_MAX} draws: the board counts a run in a byte",
+                blocks=False)
         elif key != "maxRun" and not 0 <= value <= 1000:
             bad(f"{at}.{key}", "anti-bias's strength and clamp are 0 to 1000 permille", blocks=False)
     if block.bias_min is not None and block.bias_max is not None and block.bias_min > block.bias_max:
@@ -1061,7 +1067,7 @@ _BIAS_FIELDS = {
                  "The least chance anti-bias gives any side."),
     "bias_max": ("bias_max", "bias_max", "anti-bias most chance", 0, 1000, "‰",
                  "The most chance anti-bias gives any side."),
-    "max_run": ("max_run", "max_run", "most draws in a row on one side", 1, _TRIALS_MAX, "trials",
+    "max_run": ("max_run", "max_run", "most draws in a row on one side", 1, _RUN_MAX, "trials",
                 "A side drawn this many times in a row sits out the next draw."),
 }
 

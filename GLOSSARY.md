@@ -29,6 +29,11 @@ _Avoid_: unconfirmed wiring, pending wiring
 The one session that holds the rig, from its mapping's confirmation (or a resume) until it ends or is abandoned. It stays held between groups, and it may still read `configuring`.
 _Avoid_: running session, active session
 
+<a id="penalty"></a>
+**Penalty**:
+How long a spine trial that ended a given way waits before the next trial, in place of the inter-trial interval: set on the exit that ends it (a Wait's timeout, a broken hold, an abort) or on a contingency-map entry.
+_Avoid_: timeout (a phase's own duration), punishment
+
 <a id="decode-only-sketch"></a>
 **Decode-only sketch**:
 A sketch kept in the bundle so the runs it recorded still decode, but never offered at mapping or in Debug Mode, and never flashed or started. Its `task.json` says `decodeOnly`.

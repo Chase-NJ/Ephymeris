@@ -756,7 +756,7 @@ The rules GRGL's trial runner has and the odor 2AFC depends on (`BehaviorBox.h`'
 | `awaitExit` on an Outcome after a window | After a paid response, the trial waits for that well's release before its class timeout and the ITI. An animal that left during the reward goes straight on |
 | `repeatAborts` on the task | An aborted trial (`abort_before_stimulus`, `abort_during_sampling`) repeats its row and counts toward neither a block's N nor `sessionTrials`, as GRGL's `BF_INVALID_TRIAL`. The repeat is marked `correction` in the trial table and does not use the block's correction limit |
 | `biasStrength`, `biasMin`, `biasMax` on an `antibias` block | Each of k sides weighs `1000/k + biasStrength × (L − k × count) / L` permille, clamped to `[biasMin, biasMax]`: for two sides GRGL's `pRight = 0.5 − strength × bias`. An aborted trial's side counts as a response, as GRGL's abstentions do. Integer arithmetic only |
-| `maxRun` on an `antibias` block | A side drawn this many times in a row (fresh draws, not repeats) sits out the next draw: for two sides GRGL's flip at `MCS` |
+| `maxRun` on an `antibias` block | A side drawn this many times in a row (fresh draws, not repeats) sits out the next draw: for two sides GRGL's flip at `MCS`. 1 to 255: the core counts a run in a byte. Anti-bias works out its sides on the stack, about 100 B at a trial start, inside the [budget's](#spine-diagnostics) guaranteed free RAM |
 
 Every value is a parameter slot (`P<i>`, `LS<i>`, `LM<i>`, `PB<i>`, `PE<r>_<k>`, `B<b>H<i>`, `BS<b>`, `BL<b>`, `BH<b>`, `BR<b>`; [Lowering](#lowering)). The rules that are not just states, the escalation, the await, the uncounted repeat and the anti-bias shape, are BoxInterp.h's GRGL RULES, from `INTERP` 7, held to replay by the [differential test](#compiling-and-the-host-tests).
 
@@ -776,9 +776,13 @@ Every value is a parameter slot (`P<i>`, `LS<i>`, `LM<i>`, `PB<i>`, `PE<r>_<k>`,
 | | `H<i>` | `response_<i>_hold_ms` | The window's hold, straight after its `T<i>`, when it gives `holdMs` |
 | | `N<i>` | `counter_<i>_count` | A Counter's N, or the lowest N it draws, 1 to 10000; none when it reads `ratios`, which are compiled into the table |
 | | `NX<i>` | `counter_<i>_count_max` | The highest N a Counter draws, when it gives `countMax` |
+| | `P<i>` | `<phase>_<i>_penalty_ms` | Phase i's early exit's penalty, in place of the ITI, when it gives `penaltyMs` |
+| | `LS<i>`, `LM<i>` | `wait_<i>_escalate_ms`, `wait_<i>_escalate_max_ms` | A Wait's escalating penalty's step and cap |
+| | `PB<i>` | `response_<i>_broken_penalty_ms` | The window's broken hold's penalty, when it gives `brokenPenaltyMs` |
 | then, per row r from 1 | `RW<r>` | `reward_ms_<row id>` | The row's reward time, when it can pay |
 | | `RP<r>` | `reward_permille_<row id>` | Its reward probability, for an Outcome with no window before it |
 | | `RP<r>_<k>` | `reward_permille_<row id>_<slot or timeout>` | The probability of map entry k, numbered from 1 in branch order (the window's responses, then `timeout`), for each entry with a line |
+| | `PE<r>_<k>` | `penalty_ms_<row id>_<slot or timeout>` | Map entry k's penalty, in place of the ITI, for each entry with `penaltyMs` |
 | | `PD<r>_<s>` | `pwm_duty_<row id>_<slot>` | A PWM slot's duty, 0–255. s numbers the slot among the output slots, from 1 |
 | | `TF<r>_<s>` | `tone_hz_<row id>_<slot>` | A tone slot's frequency, 31–65535 Hz |
 | | `TH<r>_<s>`, `TW<r>_<s>`, `TL<r>_<s>` | `train_hz_…`, `train_width_ms_…`, `train_ms_<row id>_<slot>` | A train slot's rate (1–100 Hz), pulse width (1–999 ms) and length (0–3600000 ms), in three consecutive slots |
@@ -789,6 +793,9 @@ Every value is a parameter slot (`P<i>`, `LS<i>`, `LM<i>`, `PB<i>`, `PE<r>_<k>`,
 | | `BA<b>` | `block_<block id>_bias_window` | An anti-bias block's window, 1 to 32 responses |
 | | `W<b>_<e>` | `block_<block id>_weight_<row id>` | The weight of the block's e-th row, for `weighted`, `bag` and `antibias`: 0 to 1000, or to 32 ÷ the block's rows in a bag |
 | | `B<b>T<i>` | `block_<block id>_<phase>_<i>_ms` (or `_timeout_ms`) | Phase i's duration while the block runs, for each `phaseMs` entry |
+| | `B<b>H<i>` | `block_<block id>_response_<i>_hold_ms` | Window i's hold while the block runs, for each `holdMs` entry |
+| | `BS<b>`, `BL<b>`, `BH<b>` | `block_<block id>_bias_strength`, `_bias_min`, `_bias_max` | An anti-bias block's GRGL strength and clamp, 0 to 1000 permille |
+| | `BR<b>` | `block_<block id>_max_run` | An anti-bias block's same-side run cap, 1 to 255 |
 
 - **A one-block spine's stored trial count.** A stored `block_trials` in a spine of exactly one block is read as that block's `block_<block id>_trials`, and a save stores it there.
 - **One row's stored reward keys.** In a spine of exactly one row, a stored `reward_ms` or `reward_permille` in `params` is read as that row's `reward_ms_<row id>` or `reward_permille_<row id>`, and a save stores it under that key. Any other stored key no parameter reads is `SPN110`.

@@ -211,3 +211,14 @@ def test_a_version_6_table_runs_as_before():
     rp.check_interp(plain, 6)
     actions = run(plain, [200, 1000], [(10, rp.Edges(rose=1)), (100, rp.Edges(fell=1))], ticks=1500)
     assert entries_of(actions, 3) == [], "a plain Wait for a release already past never ends"
+
+
+def test_a_side_is_an_input_bit_or_none():
+    # The C core holds at most 33 sides (an input bit, or NONE) on its stack.
+    with pytest.raises(ValueError, match="side"):
+        rp.Blocks(rows=[rp.Block(first=0, count=1, select=rp.ANTIBIAS)], entries=[rp.Entry(side=40)])
+        rp.Table(states=[rp.StateRow(edge_first=0, edge_count=1, flags=rp.STARTS_TRIAL | rp.PICK),
+                         rp.StateRow(timer_min=0, timer_max=0, on_timeout=0)],
+                 edges=[rp.EdgeRow(0, 0, 1)],
+                 blocks=rp.Blocks(rows=[rp.Block(first=0, count=1, select=rp.ANTIBIAS)],
+                                  entries=[rp.Entry(side=40)]))

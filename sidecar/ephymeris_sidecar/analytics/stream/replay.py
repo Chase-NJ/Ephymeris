@@ -340,7 +340,8 @@ def _check_blocks(table: Table, b: Blocks) -> None:
     if (b.lazy_step == NONE) != (b.lazy_max == NONE):
         raise ValueError("the escalation's step and cap are both slots, or both NONE")
     for e in b.entries:
-        byte(e.side, "an entry's side")
+        if not (0 <= e.side < _CHANNELS or e.side == NONE):
+            raise ValueError(f"an entry's side {e.side} is an input bit or NONE: the core holds 33 sides")
         byte(e.weight, "an entry's weight")
     for o in b.overrides:
         for name in ("block", "slot", "with_"):

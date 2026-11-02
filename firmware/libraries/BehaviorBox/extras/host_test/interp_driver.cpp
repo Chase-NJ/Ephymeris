@@ -11,8 +11,10 @@
       n_edges  x  input edge next
       n_params x  value
       has_counter count_min count_max n_ratios   then n_ratios x ratio
-      n_blocks n_entries n_overrides skipped hits   (0 0 0 0 0: no blocks), then
+      n_blocks n_entries n_overrides skipped hits repeat_aborts lazy_step lazy_max
+                                       (0 0 0 0 0 0 255 255: no blocks), then
         n_blocks x first count select n_min n_max k n window correct next errors
+                   strength p_min p_max max_run
         n_entries x side weight;  n_overrides x block slot with
       n_events x  offset rose fell        (offset: ticks after start, increasing)
     Out: "INTERP <version>" once, then per case
@@ -91,12 +93,14 @@ int main()
     for (uint32_t i = 0; i < counter.ratio_count; ++i) ratios[i] = (uint16_t)num();
     counter.ratios = ratios.data();
     uint32_t n_blocks = num(), n_entries = num(), n_overrides = num(), skipped = num(), hits = num();
+    uint8_t repeat_aborts = byte(), lazy_step = byte(), lazy_max = byte();
     std::vector<InterpBlock> block_rows(n_blocks + 1);
     for (uint32_t i = 0; i < n_blocks; ++i) {
       InterpBlock &b = block_rows[i];
       b.first = byte(); b.count = byte(); b.select = byte(); b.n_min = byte(); b.n_max = byte();
       b.k = byte(); b.n = byte(); b.window = byte(); b.correct = byte(); b.next = byte();
       b.errors = (uint16_t)num();
+      b.strength = byte(); b.p_min = byte(); b.p_max = byte(); b.max_run = byte();
     }
     std::vector<InterpEntry> entries(n_entries + 1);
     for (uint32_t i = 0; i < n_entries; ++i) { entries[i].side = byte(); entries[i].weight = byte(); }
@@ -107,7 +111,7 @@ int main()
     InterpBlocks blocks = {block_rows.data(), n_entries ? entries.data() : NULL,
                            n_overrides ? overrides.data() : NULL,
                            (uint8_t)n_blocks, (uint8_t)n_entries, (uint8_t)n_overrides,
-                           (uint16_t)skipped, (uint16_t)hits};
+                           (uint16_t)skipped, (uint16_t)hits, repeat_aborts, lazy_step, lazy_max};
     std::vector<uint32_t> at(n_events), rose(n_events), fell(n_events);
     for (uint32_t i = 0; i < n_events; ++i) { at[i] = num(); rose[i] = num(); fell[i] = num(); }
 

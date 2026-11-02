@@ -282,7 +282,7 @@ def test_a_task_driving_all_three_is_clean_and_its_snapshot_names_each_drive(dri
     definition = stimulus()
     assert spn(definition) == []
     snapshot = generate.build_profile(definition).spine
-    assert snapshot["interp"] == lowering.INTERP_VERSION == 6
+    assert snapshot["interp"] == lowering.INTERP_VERSION == 7
     laser = [o for o in snapshot["outputs"] if o["slot"] == "laser"]
     assert laser == [
         {"slot": "laser", "channel": "laser", "on": "LASER_TRAIN_ON", "off": "LASER_TRAIN_OFF",

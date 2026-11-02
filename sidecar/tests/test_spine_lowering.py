@@ -520,7 +520,7 @@ def test_without_a_session_cap_no_slot_is_nt_and_one_block_draws_every_row():
     low = lowering.lower(TWO_AFC, **AFC_SLOTS, rows=REVERSAL_ROWS)
     assert "NT" not in low.params
     #                 first count select n_min n_max k  n  window correct next errors
-    assert low.blocks == ((0, 2, 0, N, N, N, N, N, N, N, 0),)
+    assert low.blocks == ((0, 2, 0, N, N, N, N, N, N, N, 0, N, N, N, N),)
     assert low.skipped == lowering.class_mask(["abort_before_stimulus", "abort_during_sampling"])
     assert low.entries == () and low.overrides == ()
     assert [low.edges[e][2] for e in range(2)] == [1, low.rows.index(1)], "the pick's branches are the rows"
@@ -535,8 +535,8 @@ def test_a_reversal_is_two_blocks_one_ending_on_a_criterion():
     assert low.params[-4:] == ("BK1", "BKN1", "BN2", "BC2")
     bk, bkn, bn, bc = (low.params.index(k) for k in ("BK1", "BKN1", "BN2", "BC2"))
     errors = lowering.class_mask(["wrong_response", "false_alarm"])  # the default error set
-    assert low.blocks == ((0, 2, 0, N, N, bk, bkn, N, N, 1, 0),
-                          (2, 2, 0, bn, bn, N, N, N, bc, N, errors))
+    assert low.blocks == ((0, 2, 0, N, N, bk, bkn, N, N, 1, 0, N, N, N, N),
+                          (2, 2, 0, bn, bn, N, N, N, bc, N, errors, N, N, N, N))
     go_right, go_left = low.rows.index(0), low.rows.index(1)
     assert [low.edges[e][2] for e in range(4)] == [go_right, go_left, go_left, go_right]
     assert low.states[0][9] == 4, "one branch per row of each block"
@@ -548,8 +548,8 @@ def test_a_looping_bandit_draws_each_block_s_length_and_loops_back():
               {"id": "b", "rows": ["go_left"], "trials": 40, "trialsMax": 60, "next": "a"}]
     low = lowering.lower(TWO_AFC, **AFC_SLOTS, rows=REVERSAL_ROWS, blocks=blocks)
     slot = {k: low.params.index(k) for k in ("BN1", "BNX1", "BN2", "BNX2")}
-    assert low.blocks == ((0, 1, 0, slot["BN1"], slot["BNX1"], N, N, N, N, 1, 0),
-                          (1, 1, 0, slot["BN2"], slot["BNX2"], N, N, N, N, 0, 0))
+    assert low.blocks == ((0, 1, 0, slot["BN1"], slot["BNX1"], N, N, N, N, 1, 0, N, N, N, N),
+                          (1, 1, 0, slot["BN2"], slot["BNX2"], N, N, N, N, 0, 0, N, N, N, N))
 
 
 def test_a_selection_by_weight_or_side_gives_each_branch_an_entry():

@@ -33,7 +33,11 @@ timeout, a Counter's time limit) goes to an END: a copy of the ITI state that
 also carries the exit's outcome class. One end per (class, ITI outputs,
 ITI watch, last-trial flag) serves every row, after all the rows' states. Past
 the Outcome the trial is already marked: an early exit there goes to the row's
-own ITI, or to an unmarked end when a Counter's limit ends the session.
+own ITI, or to an unmarked end when a Counter's limit ends the session. An
+exit whose phase has a penalty ends in an end whose timer reads that penalty
+instead of the ITI's, escalating for a Wait's that escalates; a map entry's or
+a broken hold's penalty ends its branch in a copy of the row's ITI reading it
+(`TASKS.md#grgls-rules-on-the-spine`).
 
 WATCHED INPUTS (`TASKS.md#what-a-spine-task-holds`). A phase's `watch` slots
 are ORed into the watch of every state the phase writes, with no edge row, so
@@ -49,6 +53,9 @@ PARAMETER SLOTS, in order (`ParamSlot`):
             N<i>      a Counter's N (or the low end of a drawn N), straight after
                       its T<i>, unless it reads a compiled sequence (`ratios`);
             NX<i>     the high end of a drawn N
+            P<i>      the penalty of phase i's early exit, in place of the ITI
+            LS<i>, LM<i>  a Wait's escalating penalty's step and cap
+            PB<i>     a Response window's broken hold's penalty
     then, per row r from 1:
             RW<r>     the row's reward ms, when the row can pay
             RP<r>     its reward probability in permille, for an Outcome with no
@@ -56,6 +63,7 @@ PARAMETER SLOTS, in order (`ParamSlot`):
             RP<r>_<k> the probability of map entry k, numbered from 1 in branch
                       order (the window's responses, then the timeout), for each
                       entry with a line
+            PE<r>_<k> map entry k's penalty, in place of the ITI
             then, per DRIVEN output slot s (numbered from 1 among the output
             slots), the row's values for it:
             PD<r>_<s>  a PWM duty, 0-255
@@ -70,6 +78,10 @@ PARAMETER SLOTS, in order (`ParamSlot`):
             BA<b>     an anti-bias block's window
             W<b>_<e>  the weight of its e-th row, for a selection that reads weights
             B<b>T<i>  phase i's duration while it runs
+            B<b>H<i>  Response window i's hold while it runs
+            BS<b>, BL<b>, BH<b>, BR<b>
+                      an anti-bias block's strength, least and most chance in
+                      permille, and its same-side run cap
 
 DRIVEN OUTPUTS (`TASKS.md#driven-outputs`). An output slot the definition
 drives as `pwm`, `tone` or `train` gets one bit PER ROW rather than per
@@ -87,7 +99,7 @@ from typing import Any, Sequence
 #: which the spine runner announces as `INTERP=<n>`. A run's snapshot records
 #: it beside the table, and replay refuses one it does not know. 1 is the trial
 #: runner's, in the same numbering space (`analytics/stream/replay.py`).
-INTERP_VERSION = 6
+INTERP_VERSION = 7
 
 #: BoxInterp.h's constants (`INTERP_NONE`, `INTERP_RISE`, ...), mirrored.
 NONE = 0xFF
@@ -98,6 +110,8 @@ PICK = 0x02
 COUNT = 0x04
 LAST_TRIAL = 0x08
 RESPONSE = 0x10
+ESCALATE = 0x20
+AWAIT_LOW = 0x40
 
 #: A block's selection, by its `select` name: `InterpBlock.select`.
 SELECTIONS = {"uniform": 0, "weighted": 1, "bag": 2, "antibias": 3}
@@ -186,7 +200,7 @@ DRIVE_PARAMS: dict[str, tuple[tuple[str, str], ...]] = {
 STATE_ROW_BYTES = 18
 EDGE_ROW_BYTES = 3
 #: `InterpBlock`, `InterpEntry` and `InterpOverride`, likewise pinned.
-BLOCK_BYTES = 12
+BLOCK_BYTES = 16
 ENTRY_BYTES = 2
 OVERRIDE_BYTES = 3
 
@@ -263,13 +277,19 @@ class Lowered:
     overrides: tuple[tuple[int, int, int], ...] = ()
     skipped: int = 0
     hits: int = 0
+    #: An aborted trial repeats its row and counts toward no N (`InterpBlocks.repeat_aborts`).
+    repeat_aborts: bool = False
+    #: The escalating penalty's (step, cap) slots, None for no escalation.
+    lazy: tuple[int, int] | None = None
 
 
 def block_key(kind: str, block_index: int, extra: str = "") -> str:
     """A block's wire key: `BN<b>`, `BNX<b>`, `BK<b>`, `BKN<b>`, `BC<b>`, `BA<b>`,
     `W<b>_<e>` or `B<b>T<i>`, b from 1."""
     b = block_index + 1
-    return f"W{b}_{extra}" if kind == "W" else f"B{b}T{extra}" if kind == "T" else f"{kind}{b}"
+    if kind in ("T", "H"):
+        return f"B{b}{kind}{extra}"
+    return f"W{b}_{extra}" if kind == "W" else f"{kind}{b}"
 
 
 def timer_key(phase_index: int) -> str:
@@ -278,6 +298,30 @@ def timer_key(phase_index: int) -> str:
 
 def hold_key(phase_index: int) -> str:
     return f"H{phase_index}"
+
+
+#: The phases whose early exit can carry a penalty that replaces the ITI.
+PENALISED = ("wait", "hold", "present", "delay", "counter")
+
+
+def penalty_key(phase_index: int) -> str:
+    """`P<i>`: the penalty of phase i's early exit."""
+    return f"P{phase_index}"
+
+
+def broken_penalty_key(phase_index: int) -> str:
+    """`PB<i>`: a Response window's broken hold's penalty."""
+    return f"PB{phase_index}"
+
+
+def escalate_keys(phase_index: int) -> tuple[str, str]:
+    """`LS<i>`, `LM<i>`: a Wait's escalating penalty's step and cap."""
+    return f"LS{phase_index}", f"LM{phase_index}"
+
+
+def entry_penalty_key(row_index: int, entry: int) -> str:
+    """`PE<r>_<k>`: the penalty of row r's map entry k (from 1, in branch order)."""
+    return f"PE{row_index + 1}_{entry}"
 
 
 def count_key(phase_index: int) -> str:
@@ -345,6 +389,7 @@ def lower(
     drives: dict[str, str] | None = None,
     blocks: Sequence[dict[str, Any]] | None = None,
     session_cap: bool = False,
+    repeat_aborts: bool = False,
 ) -> Lowered:
     """The state table for `phases` over `rows`, drawn by `blocks`.
 
@@ -355,7 +400,8 @@ def lower(
     one row binds each slot to a channel of its own name; without `blocks`, one
     block draws every row uniformly and never ends. `drives` maps each driven
     output slot to its kind (`DRIVE_PARAMS`). `session_cap` gives the session's
-    trial cap its slot, `NT`.
+    trial cap its slot, `NT`; `repeat_aborts` makes an aborted trial repeat
+    uncounted (`TASKS.md#grgls-rules-on-the-spine`).
     """
     drives = dict(drives or {})
     for slot, kind in drives.items():
@@ -475,6 +521,14 @@ def lower(
             slots.append(ParamSlot(count_key(i), "count", phase=i))
             if p.get("countMax") is not None:
                 slots.append(ParamSlot(count_max_key(i), "count_max", phase=i))
+        if p["phase"] in PENALISED and p.get("penaltyMs") is not None:
+            slots.append(ParamSlot(penalty_key(i), "penalty", phase=i))
+            if p["phase"] == "wait" and p.get("escalateMs") is not None:
+                step, cap = escalate_keys(i)
+                slots.append(ParamSlot(step, "escalate_step", phase=i))
+                slots.append(ParamSlot(cap, "escalate_max", phase=i))
+        if p["phase"] == "response" and p.get("brokenPenaltyMs") is not None:
+            slots.append(ParamSlot(broken_penalty_key(i), "penalty", phase=i, entry="hold"))
     plain_outcome = any(kind == "outcome" and (w is None or i < w) for i, kind in enumerate(kinds))
     for r in range(len(rows)):
         lines = ([(k, key) for k, key in enumerate(_entries(phases[w]), 1) if maps[r][key].get("line")]
@@ -485,6 +539,10 @@ def lower(
             slots.append(ParamSlot(reward_permille_key(r), "reward_permille", row=r))
         for k, key in lines:
             slots.append(ParamSlot(reward_permille_key(r, k), "reward_permille", row=r, entry=key))
+        if w is not None:
+            for k, key in enumerate(_entries(phases[w]), 1):
+                if maps[r][key].get("penaltyMs") is not None:
+                    slots.append(ParamSlot(entry_penalty_key(r, k), "penalty", row=r, entry=key))
         for number, out_slot in enumerate(outputs, 1):
             if out_slot in drives:
                 kind = drives[out_slot]
@@ -504,6 +562,10 @@ def lower(
         select = spec.get("select", "uniform")
         if select == "antibias":
             slots.append(ParamSlot(block_key("BA", b), "bias_window", block=b))
+            for field_, kind, role in (("biasStrength", "BS", "bias_strength"), ("biasMin", "BL", "bias_min"),
+                                       ("biasMax", "BH", "bias_max"), ("maxRun", "BR", "max_run")):
+                if spec.get(field_) is not None:
+                    slots.append(ParamSlot(block_key(kind, b), role, block=b))
         if select in WEIGHTED:
             for e, r in enumerate(block_rows[b], 1):
                 slots.append(ParamSlot(block_key("W", b, str(e)), "weight", row=r, block=b))
@@ -511,6 +573,11 @@ def lower(
             if phase not in timed:
                 raise LoweringError(f"block {b}: phase {phase} has no duration to override")
             slots.append(ParamSlot(block_key("T", b, str(phase)), "block_timer", phase=phase, block=b))
+        holds = {s.phase for s in slots if s.role == "hold"}
+        for phase in sorted(int(i) for i in (spec.get("holdMs") or {})):
+            if phase not in holds:
+                raise LoweringError(f"block {b}: phase {phase} has no response hold to override")
+            slots.append(ParamSlot(block_key("H", b, str(phase)), "block_hold", phase=phase, block=b))
     slot = {s.key: n for n, s in enumerate(slots)}
     number_of = {s: n for n, s in enumerate(outputs, 1)}
     drive_bits = tuple(sorted(
@@ -529,8 +596,9 @@ def lower(
               outcome: int = 0) -> int:
         t = slot[timer] if timer is not None else NONE
         if phase is not None and row is not None and chance is None:
-            # A phase's watched slots, in every state it writes but its draw.
-            watch |= watch_mask(row, phase)
+            # A phase's watched slots, in every state it writes but its draw,
+            # and a well whose release an Outcome will await.
+            watch |= watch_mask(row, phase) | awaited[0]
         edge_first = len(edges) if exits else 0
         edges.extend([list(e) for e in exits])
         states.append([outputs_mask, watch, t, t, on_timeout if timer is not None else NONE,
@@ -541,29 +609,43 @@ def lower(
         return len(states) - 1
 
     def outcome_states(r: int, i: int, mask: int, nxt: Any, cls: int, line: str | None,
-                       chance: str | None) -> None:
+                       chance: str | None, await_bit: int | None = None) -> None:
         """An Outcome: with a line, a chance state marked with the class, the
         reward, then the class timeout; without one, the class timeout alone,
-        marked. The phase's own outputs stay HIGH through all of it."""
+        marked. The phase's own outputs stay HIGH through all of it. With
+        `await_bit`, the reward watches that response's input and an await-low
+        state waits for its release before the class timeout."""
         if line is None:
             state(i, r, mask, 0, timer_key(i), nxt, outcome=cls)
             return
         at = len(states)
-        state(i, r, chance=chance, on_hit=at + 1, on_miss=at + 2, outcome=cls)
-        state(i, r, mask | output_mask(r, i, [line]), 0, reward_ms_key(r), at + 2)
+        timeout_at = at + 2 + (await_bit is not None)
+        state(i, r, chance=chance, on_hit=at + 1, on_miss=timeout_at, outcome=cls)
+        watch = 1 << await_bit if await_bit is not None else 0
+        state(i, r, mask | output_mask(r, i, [line]), watch, reward_ms_key(r), at + 2)
+        if await_bit is not None:
+            state(i, r, mask, watch, exits=[(await_bit, FALL, timeout_at)], flags=AWAIT_LOW)
+            awaited[0] = 0  # past the await, the well is no longer the trial's business
         state(i, r, mask, 0, timer_key(i), nxt)
 
-    ends: dict[tuple[int, int, int, int], _Ref] = {}
+    ends: dict[tuple[int, int, int, int, str], _Ref] = {}
 
     def early(r: int, i: int, cls: int, iti_ref: _Ref, flags: int = 0) -> _Ref:
         """Where an early exit of row r from phase i goes: an end, its ITI marked
-        with `cls`. Past the Outcome the trial is already marked, so it goes to
-        the row's own ITI, or to an unmarked end when it ends the session."""
+        with `cls`, which runs the phase's penalty instead of the ITI when it has
+        one (escalating, for a Wait's). Past the Outcome the trial is already
+        marked, so it goes to the row's own ITI, or to an unmarked end when it
+        ends the session."""
         if i > decided:
             if not flags:
                 return iti_ref
             cls = 0
-        key = (cls, output_mask(r, iti, phases[iti].get("outputs")), watch_mask(r, iti), flags)
+        timer = timer_key(iti)
+        if penalty_key(i) in slot:
+            timer = penalty_key(i)
+            if phases[i]["phase"] == "wait" and phases[i].get("escalateMs") is not None:
+                flags |= ESCALATE
+        key = (cls, output_mask(r, iti, phases[iti].get("outputs")), watch_mask(r, iti), flags, timer)
         return ends.setdefault(key, _Ref())
 
     def aborts(r: int, i: int, p: dict[str, Any], iti_ref: _Ref) -> tuple[int, list[tuple[int, int, Any]]]:
@@ -578,9 +660,9 @@ def lower(
         return watch, exits
 
     def run(r: int, indices: Sequence[int], end: Any, iti_ref: _Ref,
-            branch: tuple[int, str | None, int | None] | None = None) -> None:
+            branch: tuple[int, str | None, int | None, str | None] | None = None) -> None:
         """Phases `indices` in order, the last going on to `end`. `branch` is
-        the (class, line, entry) of the map entry these phases follow."""
+        the (class, line, entry, map key) of the map entry these phases follow."""
         for n, i in enumerate(indices):
             nxt: Any = end
             if n + 1 < len(indices):
@@ -614,13 +696,25 @@ def lower(
                 if branch is None:
                     outcome_states(r, i, mask, nxt, OUTCOME_CORRECT, p.get("line"), reward_permille_key(r))
                 else:
-                    cls, line, k = branch
+                    cls, line, k, key = branch
+                    awaits = p.get("awaitExit") and line is not None and key not in (None, TIMEOUT)
                     outcome_states(r, i, mask, nxt, cls, line,
-                                   reward_permille_key(r, k) if line is not None else None)
+                                   reward_permille_key(r, k) if line is not None else None,
+                                   input_bit(r, w, key) if awaits else None)
             if isinstance(nxt, _Ref):
                 nxt.at = len(states)
 
     row_first: list[_Ref] = []
+    penalties: dict[str, _Ref] = {}
+    #: The input bit a branch's Outcome will await the release of, watched in
+    #: every state from the response to the await, so its level is known there.
+    awaited = [0]
+    awaits_exit = any(p["phase"] == "outcome" and p.get("awaitExit") for p in phases)
+
+    def penalised(key: str, iti_ref: _Ref) -> _Ref:
+        """Where a branch with penalty `key` ends: an ITI copy reading it, or
+        the row's own ITI when the definition sets none."""
+        return penalties.setdefault(key, _Ref()) if key in slot else iti_ref
 
     def emit_row(r: int) -> None:
         first, iti_ref = _Ref(), _Ref()
@@ -652,12 +746,23 @@ def lower(
                     bit = input_bit(r, w, key)
                     state(w, r, win_mask, 1 << bit, hold_key(w), len(states) + 1, exits=[(bit, FALL, broken)])
                 cls = OUTCOME_CLASSES.index(entry["outcome"]) + 1
-                run(r, post, iti_ref, iti_ref, branch=(cls, entry.get("line"), k))
+                end = penalised(entry_penalty_key(r, k), iti_ref)
+                if awaits_exit and entry.get("line") is not None and key != TIMEOUT:
+                    awaited[0] = 1 << input_bit(r, w, key)
+                run(r, post, end, iti_ref, branch=(cls, entry.get("line"), k, key))
+                awaited[0] = 0
             if any(rmap[key].get("hold") for key in keys):
                 broken.at = len(states)
-                run(r, post, iti_ref, iti_ref, branch=(OUTCOME_HOLD_BROKEN, None, None))
+                run(r, post, penalised(broken_penalty_key(w), iti_ref), iti_ref,
+                    branch=(OUTCOME_HOLD_BROKEN, None, None, None))
         iti_ref.at = len(states)
-        state(iti, r, output_mask(r, iti, phases[iti].get("outputs")), 0, timer_key(iti), 0)
+        iti_mask = output_mask(r, iti, phases[iti].get("outputs"))
+        state(iti, r, iti_mask, 0, timer_key(iti), 0)
+        # The row's ITI copies that run a map entry's or a broken hold's penalty instead.
+        for key, ref in penalties.items():
+            ref.at = len(states)
+            state(iti, r, iti_mask, 0, key, 0)
+        penalties.clear()
 
     branches = [r for drawn in block_rows for r in drawn]
     if len(rows) > 1:
@@ -671,9 +776,9 @@ def lower(
     else:
         emit_row(0)
         states[0][_FLAGS] |= STARTS_TRIAL
-    for (cls, mask, watch, flags), ref in ends.items():
+    for (cls, mask, watch, flags, timer), ref in ends.items():
         ref.at = len(states)
-        state(iti, None, mask, watch, timer_key(iti), 0, flags=flags, outcome=cls)
+        state(iti, None, mask, watch, timer, 0, flags=flags, outcome=cls)
 
     counter = None
     if counter_phase is not None:
@@ -705,13 +810,23 @@ def lower(
                   if spec.get("correction") is not None else 0)
         block_table.append((first, len(block_rows[b]), SELECTIONS[spec.get("select", "uniform")],
                             n_min, slot.get(block_key("BNX", b), n_min), k, slot_or_none(block_key("BKN", b)),
-                            slot_or_none(block_key("BA", b)), slot_or_none(block_key("BC", b)), nxt, errors))
+                            slot_or_none(block_key("BA", b)), slot_or_none(block_key("BC", b)), nxt, errors,
+                            slot_or_none(block_key("BS", b)), slot_or_none(block_key("BL", b)),
+                            slot_or_none(block_key("BH", b)), slot_or_none(block_key("BR", b))))
         if reads_entries:
             entries += [(side(r), slot[block_key("W", b, str(e))] if reads_weights else NONE)
                         for e, r in enumerate(block_rows[b], 1)]
-        overrides += [(b, slot[timer_key(s.phase)], n) for n, s in enumerate(slots)  # type: ignore[arg-type]
-                      if s.role == "block_timer" and s.block == b]
+        overrides += [(b, slot[timer_key(s.phase) if s.role == "block_timer" else hold_key(s.phase)], n)  # type: ignore[arg-type]
+                      for n, s in enumerate(slots) if s.role in ("block_timer", "block_hold") and s.block == b]
         first += len(block_rows[b])
+
+    escalating = [s.phase for s in slots if s.role == "escalate_step"]
+    if len(escalating) > 1:
+        raise LoweringError("at most one Wait's penalty escalates: the table holds one escalation")
+    lazy = None
+    if escalating:
+        step, cap = escalate_keys(escalating[0])
+        lazy = (slot[step], slot[cap])
 
     if len(states) >= NONE or len(edges) >= NONE or len(branches) >= NONE:
         raise LoweringError(f"the table has {len(states)} states and {len(edges)} edge rows; "
@@ -736,4 +851,6 @@ def lower(
         overrides=tuple(overrides),
         skipped=class_mask(EXCLUDED_CLASSES),
         hits=class_mask(HIT_CLASSES),
+        repeat_aborts=repeat_aborts,
+        lazy=lazy,
     )

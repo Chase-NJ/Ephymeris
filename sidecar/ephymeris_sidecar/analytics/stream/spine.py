@@ -166,6 +166,7 @@ def _decode(document: dict[str, Any]) -> SpineRecord:
         raise SpineDecodeError("the snapshot carries no state table: the task could not be lowered")
     try:
         counter = table_doc.get("counter")
+        lazy = table_doc.get("lazy") or [rp.NONE, rp.NONE]
         table = rp.Table(
             states=[rp.StateRow(*row) for row in table_doc["states"]],
             edges=[rp.EdgeRow(*row) for row in table_doc["edges"]],
@@ -175,7 +176,9 @@ def _decode(document: dict[str, Any]) -> SpineRecord:
                               entries=[rp.Entry(*e) for e in table_doc.get("entries") or []],
                               overrides=[rp.Override(*o) for o in table_doc.get("overrides") or []],
                               skipped=int(table_doc.get("skipped") or 0),
-                              hits=int(table_doc.get("hits") or 0))
+                              hits=int(table_doc.get("hits") or 0),
+                              repeat_aborts=bool(table_doc.get("repeatAborts")),
+                              lazy_step=int(lazy[0]), lazy_max=int(lazy[1]))
                     if table_doc.get("blocks") else None),
         )
     except (KeyError, TypeError, ValueError) as exc:
@@ -328,6 +331,8 @@ def _session(record: SpineRecord) -> tuple[list[tuple[int, rp.Actions]], int | N
     for k, (now, a) in enumerate(actions):
         last = last or bool(a.flags & rp.ACT_LAST_TRIAL)
         starts = bool(a.flags & rp.ACT_TRIAL_START)
+        if starts and a.flags & rp.ACT_UNCOUNTED and trials:
+            trials -= 1  # an aborted trial that repeats: its repeat takes its place
         capped = max_trials is not None and trials >= max_trials
         if starts and now > 0 and (capped or last or a.flags & rp.ACT_DONE or now == record.end_tick):
             return actions[: k + 1], now

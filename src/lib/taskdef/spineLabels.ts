@@ -77,17 +77,30 @@ export const PHASE_FIELDS: Record<string, PhaseField[]> = {
     { key: "on", label: "Waits on", kind: "input" },
     { key: "edge", label: "Edge", kind: "edge", optional: true },
     { key: "timeoutMs", label: "Timeout", kind: "ms", optional: true },
+    { key: "penaltyMs", label: "Penalty after the timeout", kind: "ms", optional: true },
+    { key: "escalateMs", label: "Penalty grows per lazy trial", kind: "ms", optional: true },
+    { key: "escalateMaxMs", label: "Penalty at most", kind: "ms", optional: true },
   ],
   hold: [
     { key: "on", label: "Holds", kind: "input" },
     { key: "ms", label: "For", kind: "ms" },
+    { key: "penaltyMs", label: "Penalty if broken", kind: "ms", optional: true },
   ],
-  present: [{ key: "ms", label: "Lasts", kind: "ms" }, ...AFTER_EDGE],
-  delay: [{ key: "ms", label: "Lasts", kind: "ms" }, ...AFTER_EDGE],
+  present: [
+    { key: "ms", label: "Lasts", kind: "ms" },
+    ...AFTER_EDGE,
+    { key: "penaltyMs", label: "Penalty after an abort", kind: "ms", optional: true },
+  ],
+  delay: [
+    { key: "ms", label: "Lasts", kind: "ms" },
+    ...AFTER_EDGE,
+    { key: "penaltyMs", label: "Penalty after an abort", kind: "ms", optional: true },
+  ],
   response: [
     { key: "responses", label: "Watches", kind: "inputs" },
     { key: "ms", label: "Window", kind: "ms" },
     { key: "holdMs", label: "Hold a response for", kind: "ms", optional: true },
+    { key: "brokenPenaltyMs", label: "Penalty if a hold breaks", kind: "ms", optional: true },
   ],
   counter: [
     { key: "on", label: "Counts", kind: "input" },
@@ -96,10 +109,12 @@ export const PHASE_FIELDS: Record<string, PhaseField[]> = {
     { key: "ratios", label: "Progressive ratios", kind: "ints", optional: true },
     { key: "timeoutMs", label: "Time limit", kind: "ms", optional: true },
     { key: "endsSession", label: "Limit ends the session", kind: "bool", optional: true },
+    { key: "penaltyMs", label: "Penalty after the limit", kind: "ms", optional: true },
   ],
   outcome: [
     { key: "line", label: "Reward line", kind: "line", optional: true },
     { key: "ms", label: "Then waits", kind: "ms" },
+    { key: "awaitExit", label: "Wait for the paid well's release", kind: "bool", optional: true },
   ],
   iti: [{ key: "ms", label: "Lasts", kind: "ms" }],
 };

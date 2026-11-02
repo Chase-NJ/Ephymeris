@@ -193,6 +193,15 @@ A task built from a seed shows everything about it on one screen:
   - Click a block to choose its rows, how it draws them, and when it ends: after a number of trials,
     or once the animal gets enough right.
   - **Session cap** limits the whole session to a number of trials.
+  - **aborts repeat, uncounted**: a trial the animal abandons is run again and does not count toward any
+    trial number, as the old GRGL task did.
+  - A block that draws by anti-bias can also take GRGL's **bias strength**, the **least** and **most chance**
+    of a side, and **most in a row** on one side.
+- **Penalties.** A step that can end a trial early (a wait running out, a hold broken, an abort) can take a
+  **penalty**: how long the box waits before the next trial, in place of the inter-trial interval. So can
+  each answer in a row's outcomes ("then … ms"). A wait's penalty can **grow** with each trial in a row the
+  animal does not poke, up to a limit, until it gets one right. An Outcome can **wait for the paid well's
+  release** before the inter-trial interval starts.
 - **Simulate** at the very bottom runs a whole session against a pretend animal, before anything is
   sent to a box. Nothing is saved or flashed.
   - Choose the animal: **Always correct**, **Random**, **Biased** (it mostly picks one answer you

@@ -31,13 +31,18 @@ from typing import Iterable, Sequence
 #: table runs under the same rules here, and only what its version lacks is
 #: refused in it (`check_interp`). 5 changes no table and no rule here: it adds
 #: driven outputs, whose pulse trains are `train_pulses` and whose strobes
-#: `stream/spine.py` predicts. 6 adds blocks and the response state.
-INTERP_VERSIONS = frozenset({2, 3, 4, 5, 6})
-INTERP_VERSION = 6
+#: `stream/spine.py` predicts. 6 adds blocks and the response state. 7 adds
+#: GRGL's rules (BoxInterp.h's GRGL RULES): the escalating penalty, the
+#: await-low state, aborts that repeat uncounted, and anti-bias's strength,
+#: clamp and run cap; a table that uses none of them runs as under 6.
+INTERP_VERSIONS = frozenset({2, 3, 4, 5, 6, 7})
+INTERP_VERSION = 7
 #: The first version whose outputs can be driven (PWM, tone, a pulse train).
 DRIVES_SINCE = 5
 #: The first version with blocks and the response state.
 BLOCKS_SINCE = 6
+#: The first version with GRGL's rules.
+GRGL_SINCE = 7
 
 NONE = 0xFF
 PERMILLE = 1000
@@ -48,12 +53,15 @@ PICK = 0x02
 COUNT = 0x04
 LAST_TRIAL = 0x08
 RESPONSE = 0x10
+ESCALATE = 0x20
+AWAIT_LOW = 0x40
 ACT_SESSION_START = 0x01
 ACT_TRIAL_START = 0x02
 ACT_LAST_TRIAL = 0x04
 ACT_BLOCK_START = 0x08
 ACT_DONE = 0x10
 ACT_CORRECTION = 0x20
+ACT_UNCOUNTED = 0x40
 #: `InterpBlock.select`.
 UNIFORM, WEIGHTED, BAG, ANTIBIAS = 0, 1, 2, 3
 #: The outcome class `correct` (`lowering.OUTCOME_CLASSES[0]`). The core reads
@@ -193,10 +201,21 @@ class Block:
     next: int = NONE
     #: The classes a correction repeats after: bit c-1 for class c.
     errors: int = 0
+    #: Anti-bias's strength, pMin and pMax in permille, and the same-side run
+    #: cap (GRGL_SINCE). NONE strength: the 1 + L - count rule.
+    strength: int = NONE
+    p_min: int = NONE
+    p_max: int = NONE
+    max_run: int = NONE
 
     @property
     def slots(self) -> tuple[int, ...]:
-        return tuple(s for s in (self.n_min, self.n_max, self.k, self.n, self.window, self.correct) if s != NONE)
+        return tuple(s for s in (self.n_min, self.n_max, self.k, self.n, self.window, self.correct,
+                                 self.strength, self.p_min, self.p_max, self.max_run) if s != NONE)
+
+    @property
+    def grgl(self) -> bool:
+        return any(s != NONE for s in (self.strength, self.p_min, self.p_max, self.max_run))
 
 
 @dataclass(frozen=True)
@@ -227,14 +246,26 @@ class Blocks:
     skipped: int = 0
     #: The classes a criterion counts as correct (the scorer's hits).
     hits: int = 0
+    #: An aborted trial (a class in `skipped`) repeats its row and counts toward
+    #: no N (GRGL_SINCE).
+    repeat_aborts: bool = False
+    #: The escalating penalty's step and cap slots (GRGL_SINCE), NONE for none.
+    lazy_step: int = NONE
+    lazy_max: int = NONE
 
     def __post_init__(self) -> None:
         for name in ("rows", "entries", "overrides"):
             object.__setattr__(self, name, tuple(getattr(self, name)))
+        object.__setattr__(self, "repeat_aborts", bool(self.repeat_aborts))
+
+    @property
+    def grgl(self) -> bool:
+        return self.repeat_aborts or self.lazy_step != NONE or any(k.grgl for k in self.rows)
 
     @property
     def slots(self) -> tuple[int, ...]:
         return (*(x for b in self.rows for x in b.slots),
+                *(x for x in (self.lazy_step, self.lazy_max) if x != NONE),
                 *(e.weight for e in self.entries if e.weight != NONE),
                 *(x for o in self.overrides for x in (o.slot, o.with_)))
 
@@ -284,7 +315,8 @@ def _check_blocks(table: Table, b: Blocks) -> None:
     if len(b.entries) >= NONE or len(b.overrides) >= NONE:
         raise ValueError(f"a table has at most {NONE - 1} entries and {NONE - 1} overrides")
     for i, k in enumerate(b.rows):
-        for name in ("first", "count", "select", "n_min", "n_max", "k", "n", "window", "correct", "next"):
+        for name in ("first", "count", "select", "n_min", "n_max", "k", "n", "window", "correct", "next",
+                     "strength", "p_min", "p_max", "max_run"):
             byte(getattr(k, name), f"block {i}'s {name}")
         if k.count < 1 or k.first + k.count > NONE:
             raise ValueError(f"block {i} draws one or more branches, each below {NONE}")
@@ -303,8 +335,13 @@ def _check_blocks(table: Table, b: Blocks) -> None:
                 raise ValueError(f"block {i}'s branches run past a trial-starting pick's")
     if not 0 <= b.skipped <= 0xFFFF or not 0 <= b.hits <= 0xFFFF:
         raise ValueError("the blocks' skipped and hit classes each fit a uint16_t")
+    byte(b.lazy_step, "the escalation's step")
+    byte(b.lazy_max, "the escalation's cap")
+    if (b.lazy_step == NONE) != (b.lazy_max == NONE):
+        raise ValueError("the escalation's step and cap are both slots, or both NONE")
     for e in b.entries:
-        byte(e.side, "an entry's side")
+        if not (0 <= e.side < _CHANNELS or e.side == NONE):
+            raise ValueError(f"an entry's side {e.side} is an input bit or NONE: the core holds 33 sides")
         byte(e.weight, "an entry's weight")
     for o in b.overrides:
         for name in ("block", "slot", "with_"):
@@ -343,8 +380,14 @@ def _check_state(table: Table, i: int, s: StateRow) -> None:
                  "edge_first", "edge_count", "flags", "outcome"):
         if not 0 <= getattr(s, name) <= 0xFF:
             fail(f"{name} does not fit a uint8_t")
-    if s.flags & ~(STARTS_TRIAL | PICK | COUNT | LAST_TRIAL | RESPONSE):
+    if s.flags & ~(STARTS_TRIAL | PICK | COUNT | LAST_TRIAL | RESPONSE | ESCALATE | AWAIT_LOW):
         fail(f"unknown flags {s.flags:#x}")
+    if s.flags & ESCALATE and (s.timer_min == NONE or s.branches or table.blocks is None
+                               or table.blocks.lazy_step == NONE):
+        fail("an escalating state has a timer and its table an escalation's step and cap")
+    if s.flags & AWAIT_LOW and (s.branches or s.is_count or s.timer_min != NONE or s.edge_count != 1
+                                or (s.edge_first < len(table.edges) and table.edges[s.edge_first].edge != FALL)):
+        fail("an await-low state has no timer and exactly one edge row, a FALL")
     if s.flags & LAST_TRIAL and (s.branches or s.flags & STARTS_TRIAL):
         fail("a last-trial state neither branches nor starts a trial")
     if s.is_count:
@@ -464,6 +507,13 @@ class Core:
     entry: int = NONE
     repeats: int = 0
     correcting: bool = False
+    #: Each input's level, as the watched edges have left it (GRGL_SINCE).
+    levels: int = 0
+    #: Escalating penalties since the last hit, saturating at 255.
+    lazy: int = 0
+    #: The side anti-bias drew last, and how many fresh draws in a row it has been.
+    last_side: int = NONE
+    side_run: int = 0
     hist: tuple[int, ...] = (NONE,) * HISTORY
     hist_len: int = 0
     hist_at: int = 0
@@ -566,6 +616,28 @@ def _next_block(k: Block) -> int:
     return k.next
 
 
+def _repeats_abort(c: _Run, last_outcome: int) -> bool:
+    """GRGL's invalid trial: under `repeat_aborts`, an aborted trial repeats uncounted."""
+    return c.table.blocks.repeat_aborts and _skips(c, last_outcome)  # type: ignore[union-attr]
+
+
+def _at_cap(c: _Run, k: Block) -> bool:
+    """The side anti-bias drew last has run `max_run` fresh draws in a row."""
+    return k.max_run != NONE and c.side_run >= c.params[k.max_run]
+
+
+def _escalated(c: _Run, duration: int) -> int:
+    """An escalating state's duration: base + lazy * step, at most the cap."""
+    b = c.table.blocks
+    assert b is not None
+    return min((duration + c.lazy * _param(c, b.lazy_step)) & _U32, _param(c, b.lazy_max))
+
+
+def _released(levels: int, bit: int) -> bool:
+    """An await-low state's input is down as the tick begins."""
+    return not levels >> bit & 1
+
+
 def _repeats(c: _Run, k: Block, last_outcome: int) -> bool:
     """The correction rule: the last trial, marked and not correct, repeats while under its limit."""
     return k.correct != NONE and _is_error(k, last_outcome) and c.repeats < c.params[k.correct]
@@ -578,14 +650,29 @@ def _trial(c: _Run, a: _Tick) -> None:
     if c.block == NONE:
         _start_block(c, 0, a)
     else:
+        blocks = c.table.blocks
+        k = blocks.rows[c.block]  # type: ignore[union-attr]
+        # Only a hit resets the escalating penalty.
+        if _hit(c, last_outcome):
+            c.lazy = 0
         # An aborted trial counts toward N but not in the criterion's window.
         if not _skips(c, last_outcome):
             c.corrects = ((c.corrects << 1) | (1 if _hit(c, last_outcome) else 0)) & _U32
-        if c.response != NONE:
-            c.hist[c.hist_at] = c.response
+        # Its response, or under GRGL's anti-bias an abort's side: an abstention.
+        vote = c.response
+        if vote == NONE and k.strength != NONE and _skips(c, last_outcome) and last_entry != NONE:
+            vote = _side(c, last_entry)
+        if vote != NONE:
+            c.hist[c.hist_at] = vote
             c.hist_at = (c.hist_at + 1) % HISTORY
             c.hist_len = min(c.hist_len + 1, HISTORY)
-        k = c.table.blocks.rows[c.block]  # type: ignore[union-attr]
+        if _repeats_abort(c, last_outcome):
+            # GRGL's invalid trial: it repeats, and neither it nor its repeat
+            # counts twice toward N or the session's trials.
+            c.correcting, c.entry = True, last_entry
+            a.flags |= ACT_CORRECTION | ACT_UNCOUNTED
+            c.outcome, c.response = 0, NONE
+            return
         if _block_ends(c, k):
             nxt = _next_block(k)
             if nxt == NONE:
@@ -664,14 +751,45 @@ def _from_bag(c: _Run, k: Block) -> int:
     return k.first + k.count - 1  # unreachable
 
 
+def _side_count(c: _Run, side: int, length: int) -> int:
+    """How many of the last `length` responses held were `side`."""
+    return sum(1 for j in range(length) if c.hist[(c.hist_at + HISTORY - 1 - j) % HISTORY] == side)
+
+
 def _side_weight(c: _Run, side: int, length: int) -> int:
     """Anti-bias: a side weighs 1 + L - its count among the last L responses."""
-    count = sum(1 for j in range(length) if c.hist[(c.hist_at + HISTORY - 1 - j) % HISTORY] == side)
-    return 1 + length - count
+    return 1 + length - _side_count(c, side, length)
+
+
+def antibias_weights(counts: Sequence[int], length: int, strength: int, p_min: int, p_max: int) -> list[int]:
+    """`interp__grgl_weight()`: GRGL's side probabilities in permille, for k sides.
+
+    Side s weighs 1000/k + strength * (L - k*count_s) / L, truncated toward
+    zero, then clamped to [p_min, p_max] and then to [0, 1000]. For two sides
+    that is GRGL's pRight = 0.5 - strength * (2*rights - L) / L
+    (`AntiBiasSelector`); with no history every side weighs 1000/k. In the C
+    core's arithmetic: uint32_t terms, then int32_t, so a strength no sane
+    task sends still gives both the same weight.
+    """
+    k = len(counts)
+    lo, hi = _s32(p_min), _s32(p_max)
+    out = []
+    for count in counts:
+        if length == 0:
+            p = 1000 // k
+        else:
+            num = (1000 * length + k * strength * length - k * strength * k * count) & _U32
+            p = _cdiv(_s32(num), _s32(k * length))[0]
+        p = max(min(max(p, lo), hi, PERMILLE), 0)
+        out.append(p)
+    return out
 
 
 def _antibias(c: _Run, k: Block) -> int:
-    """`interp__antibias()`: a side against the last responses, then a branch on it by weight."""
+    """`interp__antibias()`: a side against the last responses, then a branch on it by weight.
+
+    With a strength, the sides weigh as GRGL's (`antibias_weights`), and a side
+    drawn `max_run` times in a row is left out of the next fresh draw."""
     length = c.hist_len
     if k.window != NONE and c.params[k.window] < length:
         length = c.params[k.window]
@@ -679,13 +797,31 @@ def _antibias(c: _Run, k: Block) -> int:
     for e in _branches(k):
         if _side(c, e) not in sides:
             sides.append(_side(c, e))
-    weights = [_side_weight(c, s, length) for s in sides]
+    if k.strength != NONE:
+        counts = [_side_count(c, s, length) for s in sides]
+        weights = antibias_weights(counts, length, c.params[k.strength],
+                                   c.params[k.p_min] if k.p_min != NONE else 0,
+                                   c.params[k.p_max] if k.p_max != NONE else PERMILLE)
+    else:
+        weights = [_side_weight(c, s, length) for s in sides]
+    if len(sides) > 1 and c.last_side in sides and _at_cap(c, k):
+        weights[sides.index(c.last_side)] = 0
+        if not sum(weights):
+            weights = [0 if s == c.last_side else 1 for s in sides]
+    if not sum(weights):
+        weights = [1] * len(sides)
     r = c.draw(sum(weights))
+    side = sides[0]
     for s, w in zip(sides, weights):
         if r < w:
-            return _by_weight(c, k, s)
+            side = s
+            break
         r -= w
-    return k.first  # unreachable
+    if side == c.last_side:
+        c.side_run = min(c.side_run + 1, 0xFF)
+    else:
+        c.last_side, c.side_run = side, 1
+    return _by_weight(c, k, side)
 
 
 def _select(c: _Run) -> int:
@@ -743,6 +879,10 @@ def _enter(core: Core, target: int, now: int, a: _Tick) -> Core:
     if s.timer_min != NONE:
         lo, hi = _param(c, s.timer_min), _param(c, s.timer_max)
         c.duration = ((lo + c.draw(hi - lo + 1)) & _U32) if hi > lo else lo
+    if s.flags & ESCALATE:
+        # GRGL's lazy penalty: base + lazy * step, at most the cap, then one more.
+        c.duration = _escalated(c, c.duration)
+        c.lazy = min(c.lazy + 1, 0xFF)
     a.on = s.outputs & ~c.outputs & _U32
     a.off = c.outputs & ~s.outputs & _U32
     c.outputs = s.outputs
@@ -781,6 +921,9 @@ def check_interp(table: Table, interp: int) -> None:
         raise ValueError(f"INTERP {interp} has no last-trial state, and this table holds one")
     if interp < BLOCKS_SINCE and (table.blocks is not None or any(s.flags & RESPONSE for s in table.states)):
         raise ValueError(f"INTERP {interp} has no blocks or response state, and this table holds one")
+    if interp < GRGL_SINCE and (any(s.flags & (ESCALATE | AWAIT_LOW) for s in table.states)
+                                or (table.blocks is not None and table.blocks.grgl)):
+        raise ValueError(f"INTERP {interp} has none of GRGL's rules, and this table uses one")
 
 
 def begin(
@@ -817,6 +960,10 @@ def step(core: Core, edges: Edges, now: int) -> tuple[Core, Actions]:
     s = core.table.states[core.state]
     rows = core.table.edges[s.edge_first : s.edge_first + s.edge_count]
     a = _Tick(rose=edges.rose & s.watch, fell=edges.fell & s.watch)
+    # Levels as the tick began, then as its watched edges leave them.
+    was = core.levels
+    if a.rose or a.fell:
+        core = replace(core, levels=(core.levels | a.rose) & ~a.fell & _U32)
 
     matching = [e for e in rows if _matches(e, a)]
     if matching and s.is_count:
@@ -831,6 +978,9 @@ def step(core: Core, edges: Edges, now: int) -> tuple[Core, Actions]:
         # An edge out of a response state is the trial's response, its first only.
         if s.flags & RESPONSE and core.response == NONE:
             core = replace(core, response=taken.input)
+    elif s.flags & AWAIT_LOW and _released(was, rows[0].input):
+        # Its input is already down: the release it waits for is past.
+        target = rows[0].next
     elif s.timer_min != NONE and (now - core.entered_at) & _U32 >= core.duration:
         target = s.on_timeout
     if target != NONE:
@@ -876,9 +1026,14 @@ def train_pulses(hz: int, width: int, length: int) -> list[tuple[int, int]]:
 # --- a whole session ----------------------------------------------------------
 
 
-def _due_in(core: Core, now: int) -> int | None:
-    """Ticks from `now` until the resting state's timer is checked and runs out."""
-    if core.table.states[core.state].timer_min == NONE:
+def due_in(core: Core, now: int) -> int | None:
+    """Ticks from `now` until the resting state moves with no edge: its timer
+    runs out, or an await-low state whose input is down is left. None: only an
+    edge moves it."""
+    s = core.table.states[core.state]
+    if s.flags & AWAIT_LOW:
+        return 1 if not core.levels >> core.table.edges[s.edge_first].input & 1 else None
+    if s.timer_min == NONE:
         return None
     elapsed = (now - core.entered_at) & _U32
     return max(1, core.duration - elapsed)
@@ -911,7 +1066,7 @@ def replay(
         raise ValueError("events fall after the first tick and within the run")
     i = 0
     while True:
-        due = _due_in(core, (start + offset) & _U32)
+        due = due_in(core, (start + offset) & _U32)
         nxt = offset + due if due is not None else None
         if i < len(pending) and (nxt is None or pending[i][0] <= nxt):
             nxt, edges = pending[i][0], pending[i][1]

@@ -18,7 +18,7 @@ import { SLOT_TYPES, classLabel, slotTypeLabel } from "@/lib/taskdef/spineLabels
 import { diagnosticsAt } from "@/lib/taskdef/types";
 import type { SpineStoredValue, SpineView, TaskDiagnostic } from "@/lib/ws/protocol";
 
-import { ProblemLines, StoredValues, problemTitle } from "./bits";
+import { OptionalNumber, ProblemLines, StoredValues, problemTitle } from "./bits";
 
 /** A driven slot's values on a row (`TASKS.md#driven-outputs`): key, label, unit, initial. */
 const DRIVE: Record<string, [string, string, string, number][]> = {
@@ -267,6 +267,7 @@ function MapLine({
       delete next.rewardPermille;
     } else if (next.rewardPermille === undefined) next.rewardPermille = 1000;
     if (!next.hold) delete next.hold;
+    if (next.penaltyMs === undefined) delete next.penaltyMs;
     onChange(next);
   };
   return (
@@ -319,6 +320,17 @@ function MapLine({
               held
             </label>
           )}
+          <span>then</span>
+          <OptionalNumber
+            value={entry.penaltyMs}
+            initial={20000}
+            label={`Penalty after ${response}`}
+            min={0}
+            unit="ms"
+            title="Waits this long before the next trial, in place of the ITI"
+            onChange={(penaltyMs) => set({ penaltyMs })}
+          />
+          {entry.penaltyMs === undefined && <span>the ITI</span>}
         </>
       )}
     </div>

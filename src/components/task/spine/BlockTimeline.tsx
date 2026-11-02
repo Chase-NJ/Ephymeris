@@ -122,6 +122,20 @@ export function BlockTimeline({
             onChange(next);
           }}
         />
+        <label className="flex items-center gap-1" title="An aborted trial repeats its row and counts toward no block's trials or the cap, as GRGL's">
+          <input
+            type="checkbox"
+            checked={def.repeatAborts === true}
+            onChange={(e) => {
+              const next = { ...def };
+              if (e.target.checked) next.repeatAborts = true;
+              else delete next.repeatAborts;
+              onChange(next);
+            }}
+            className="accent-[var(--color-pulsar)]"
+          />
+          aborts repeat, uncounted
+        </label>
         <span>
           {view === null
             ? ""
@@ -291,9 +305,23 @@ function BlockPanel({
           <OptionalNumber value={block.correction} initial={1} label="Correction" min={0} invalid={field("correction").length > 0} onChange={(correction) => update({ correction, correctionAfter: correction === undefined ? undefined : block.correctionAfter })} />
         </Field>
         {select === "antibias" && (
-          <Field label="Bias window">
-            <OptionalNumber value={block.biasWindow} initial={10} label="Bias window" min={1} invalid={field("biasWindow").length > 0} unit="responses" onChange={(biasWindow) => update({ biasWindow })} />
-          </Field>
+          <>
+            <Field label="Bias window">
+              <OptionalNumber value={block.biasWindow} initial={10} label="Bias window" min={1} invalid={field("biasWindow").length > 0} unit="responses" onChange={(biasWindow) => update({ biasWindow })} />
+            </Field>
+            <Field label="Bias strength (GRGL)">
+              <OptionalNumber value={block.biasStrength} initial={500} label="Bias strength" min={0} max={1000} invalid={field("biasStrength").length > 0} unit="‰" onChange={(biasStrength) => update({ biasStrength })} />
+            </Field>
+            <Field label="Least chance">
+              <OptionalNumber value={block.biasMin} initial={20} label="Least chance of a side" min={0} max={1000} invalid={field("biasMin").length > 0} unit="‰" onChange={(biasMin) => update({ biasMin })} />
+            </Field>
+            <Field label="Most chance">
+              <OptionalNumber value={block.biasMax} initial={980} label="Most chance of a side" min={0} max={1000} invalid={field("biasMax").length > 0} unit="‰" onChange={(biasMax) => update({ biasMax })} />
+            </Field>
+            <Field label="Most in a row">
+              <OptionalNumber value={block.maxRun} initial={10} label="Most draws in a row on one side" min={1} invalid={field("maxRun").length > 0} unit="draws" onChange={(maxRun) => update({ maxRun })} />
+            </Field>
+          </>
         )}
       </div>
 
@@ -327,6 +355,27 @@ function BlockPanel({
                     if (ms === undefined) delete phaseMs[String(i)];
                     else phaseMs[String(i)] = ms;
                     update({ phaseMs: Object.keys(phaseMs).length ? phaseMs : undefined });
+                  }}
+                />
+              </span>
+            ) : null,
+          )}
+          {def.spine.map((p, i) =>
+            p.phase === "response" && p.holdMs !== undefined ? (
+              <span key={`hold-${i}`} className="flex items-center gap-1.5 text-[11px] text-static">
+                {i + 1}. hold
+                <OptionalNumber
+                  value={block.holdMs?.[String(i)]}
+                  initial={p.holdMs}
+                  label={`Phase ${i + 1}'s hold in block ${block.id}`}
+                  min={0}
+                  unit="ms"
+                  invalid={field(`holdMs.${i}`).length > 0}
+                  onChange={(ms) => {
+                    const holdMs = { ...(block.holdMs ?? {}) };
+                    if (ms === undefined) delete holdMs[String(i)];
+                    else holdMs[String(i)] = ms;
+                    update({ holdMs: Object.keys(holdMs).length ? holdMs : undefined });
                   }}
                 />
               </span>

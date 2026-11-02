@@ -32,7 +32,9 @@
   adds DRIVEN OUTPUTS (PWM, tone and pulse trains, below), whose train ends on
   its own and so puts a strobe in the stream no state transition makes. A
   run's header then says which replay reads its outputs. 6 adds blocks and the
-  response state (BLOCKS, below), and changes nothing else either.
+  response state (BLOCKS, below), and changes nothing else either. 7 adds
+  GRGL's rules (GRGL RULES, below): a table that uses none of them runs as
+  under 6.
 
 
   THE TICK RULES
@@ -71,7 +73,7 @@
   uint32_t, over a generator the core carries in its own state.
 
 
-  THE STATE TABLE (INTERP_VERSION 6; 4 and 5 without blocks or the response state)
+  THE STATE TABLE (INTERP_VERSION 7; 6 without GRGL's rules, 4 and 5 without blocks or the response state)
   ----------------------------------
   Generated data. A table is an array of InterpStateRow, indexed 0..254, an
   array of InterpEdgeRow the states point into, the table's one
@@ -130,6 +132,8 @@
                 INTERP_RESPONSE: a RESPONSE STATE (the Response window). Leaving it
                 by an edge row makes that row's input the trial's response, the
                 first only, which anti-bias reads.
+                INTERP_ESCALATE: its duration escalates (GRGL RULES).
+                INTERP_AWAIT_LOW: an AWAIT-LOW STATE (GRGL RULES).
     outcome     The outcome class this state records, or 0. Replay reads it off
                 the states a trial entered. The core reads it only in a table
                 with blocks: a trial's class is that of the last marked state it
@@ -183,9 +187,14 @@
     correct     The correction limit's slot, NONE for no correction.
     next        The block entered when this one ends; NONE: the blocks are done.
     errors      The classes its correction repeats after, bit c-1 for class c.
+    strength,   Anti-bias as GRGL's, and the same-side run cap (GRGL RULES);
+    p_min,      NONE in strength: the 1 + L - count rule above, and NONE in
+    p_max,      max_run: no cap.
+    max_run
   InterpBlocks.skipped: the classes every criterion's window passes over, bit
   c-1 for class c (the aborts); InterpBlocks.hits: the classes it counts as
   correct (the scorer's hits: correct, and a correct withhold).
+  InterpBlocks.repeat_aborts, .lazy_step and .lazy_max: GRGL RULES.
   InterpEntry: side (an input bit, or NONE), weight (a slot, or NONE).
   InterpOverride: while `block` runs, a state's timer or chance, or the
   counter's N, that reads slot `slot` reads `with` instead (the first match).
@@ -206,7 +215,8 @@
        params[correct] repeats have run in a row, this trial repeats it: the
        pick takes the last trial's branch with no draw, and the core reports
        INTERP_ACT_CORRECTION.
-  Every trial counts toward N, an abort and a correction included.
+  Every trial counts toward N, an abort and a correction included, unless the
+  table repeats aborts (GRGL RULES).
 
   A VALID TABLE, which the core assumes and replay.py's Table refuses to break:
     - every state index, edge row and parameter slot is in range;
@@ -225,9 +235,44 @@
       end, first + count, is at most 255, its N's and its criterion's slots are
       both set or both NONE, its next is a block or NONE, and its errors fit a
       uint16_t; every pick that starts a trial has a branch for each
-      block's slice, and so has `entries` when it is not NULL; an override
-      names a block and two slots.
+      block's slice, and so has `entries` when it is not NULL; an entry's
+      side is an input bit below 32 or NONE (anti-bias holds INTERP_SIDES
+      on the stack); an override names a block and two slots.
     So a tick enters at most two states.
+
+
+  GRGL RULES (INTERP_VERSION 7; docs/TASKS.md#grgls-rules-on-the-spine)
+  ----------------------------------------------------------------------
+  What GRGL's trial runner does that a 2AFC depends on, each off unless the
+  table asks for it:
+    ESCALATION. Entering an INTERP_ESCALATE state draws its duration as any
+       timer, then adds lazy * params[lazy_step], at most params[lazy_max]
+       (uint32_t), then counts one more in `lazy` (saturating). At a trial
+       start whose last trial was a hit, `lazy` is 0 again: GRGL's lazy
+       penalty, which only a correct trial resets.
+    AWAIT-LOW. The core keeps each input's level as the WATCHED edges leave
+       it (`levels`). An INTERP_AWAIT_LOW state has no timer and one edge
+       row, its input's FALL; besides that edge, it is left by that row on
+       any tick at whose start the input is already low, so a release that
+       came before it is not waited for. Its input must be watched from its
+       rise until the state, or its level is not known.
+    ABORTS THAT REPEAT. With repeat_aborts, a trial start whose last trial's
+       class is in `skipped` repeats that trial's branch, reports
+       INTERP_ACT_CORRECTION and INTERP_ACT_UNCOUNTED, and changes nothing
+       else: no N, criterion, correction, block end or repeat count moves.
+       The session layer counts it toward no trial cap: GRGL's invalid trial.
+    ANTI-BIAS AS GRGL'S. With a strength slot, side s of the block's k sides
+       weighs (1000/k + strength * (L - k * count_s) / L) permille, in
+       uint32_t terms then int32_t, truncated toward zero, clamped to
+       [p_min, p_max] (0 and 1000 when NONE), then to [0, 1000]; 1000/k with
+       no history. A trial that closes with no response, a class in
+       `skipped` and a strength in its block pushes its branch's side into
+       the history: GRGL's abstention.
+    THE RUN CAP. Anti-bias keeps the side it drew last and how many fresh
+       draws in a row it has been (a correction or a repeat draws nothing).
+       With max_run, a side drawn params[max_run] times in a row weighs 0 in
+       the next draw, while another side is left; weights that sum to 0 then
+       give every side left 1.
 
 
   LOWERING THE PHASES
@@ -251,7 +296,13 @@
                               outcome = the class); reward: the phase's outputs
                               and r, timer ms -> class timeout; class timeout: the
                               phase's outputs, timer -> next. A phase's outputs are
-                              HIGH in every state it rests in.
+                              HIGH in every state it rests in. Awaiting the exit
+                              of response c: the reward watches c, and an
+                              INTERP_AWAIT_LOW state, edge (c, FALL), sits
+                              between it and the class timeout.
+    An early exit with a penalty goes to an end whose timer is the penalty
+    (INTERP_ESCALATE for a Wait's that escalates); a map entry's penalty ends
+    its branch in a copy of the row's ITI whose timer is that penalty.
     ITI(t)                    timer t -> the trial's first state, which carries
                               INTERP_STARTS_TRIAL.
     any phase's watch w       w in the watch of every state the phase rests in,
@@ -309,7 +360,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define INTERP_VERSION 6
+#define INTERP_VERSION 7
 
 #define INTERP_NONE 0xFF       // "no state / no slot / no timer" in a uint8_t field
 #define INTERP_PERMILLE 1000UL // a chance state draws over [0, 1000)
@@ -322,6 +373,8 @@
 #define INTERP_COUNT 0x04
 #define INTERP_LAST_TRIAL 0x08
 #define INTERP_RESPONSE 0x10
+#define INTERP_ESCALATE 0x20
+#define INTERP_AWAIT_LOW 0x40
 
 #define INTERP_ACT_SESSION_START 0x01  // InterpActions.flags
 #define INTERP_ACT_TRIAL_START 0x02
@@ -329,6 +382,7 @@
 #define INTERP_ACT_BLOCK_START 0x08
 #define INTERP_ACT_DONE 0x10
 #define INTERP_ACT_CORRECTION 0x20
+#define INTERP_ACT_UNCOUNTED 0x40
 
 #define INTERP_UNIFORM 0               // InterpBlock.select
 #define INTERP_WEIGHTED 1
@@ -337,6 +391,7 @@
 
 #define INTERP_HISTORY 32              // responses anti-bias can read; trials a criterion can; tokens a bag holds
 #define INTERP_WEIGHT_MAX 0xFFFFUL     // a weight is read as at most this
+#define INTERP_SIDES 33                // anti-bias's sides: an input bit, or NONE
 
 typedef struct {
   uint8_t input;
@@ -371,6 +426,10 @@ typedef struct {
   uint8_t correct; // parameter slot of its correction limit; NONE: no correction
   uint8_t next;    // the block entered when it ends; NONE: the blocks are done
   uint16_t errors; // the classes a correction repeats after: bit c-1 for class c
+  uint8_t strength; // anti-bias's strength in permille (GRGL RULES); NONE: 1 + L - count
+  uint8_t p_min;    // its clamp, in permille; NONE: 0 and 1000
+  uint8_t p_max;
+  uint8_t max_run;  // a side drawn this many times in a row sits out the next draw; NONE: no cap
 } InterpBlock;
 
 typedef struct {
@@ -391,7 +450,7 @@ typedef struct {
 #if defined(__AVR__) && defined(__cplusplus)
 static_assert(sizeof(InterpStateRow) == 18, "lowering.py's STATE_ROW_BYTES is this row's size");
 static_assert(sizeof(InterpEdgeRow) == 3, "lowering.py's EDGE_ROW_BYTES is this row's size");
-static_assert(sizeof(InterpBlock) == 12, "lowering.py's BLOCK_BYTES is this row's size");
+static_assert(sizeof(InterpBlock) == 16, "lowering.py's BLOCK_BYTES is this row's size");
 static_assert(sizeof(InterpEntry) == 2, "lowering.py's ENTRY_BYTES is this row's size");
 static_assert(sizeof(InterpOverride) == 3, "lowering.py's OVERRIDE_BYTES is this row's size");
 #endif
@@ -415,6 +474,9 @@ typedef struct {
   uint8_t override_count;
   uint16_t skipped;            // classes a criterion's window passes over: bit c-1 for class c
   uint16_t hits;               // classes a criterion counts as correct, as the scorer's HITS
+  uint8_t repeat_aborts;       // an aborted trial repeats its row and counts toward no N (GRGL RULES)
+  uint8_t lazy_step;           // the escalating penalty's step and cap slots; NONE: none
+  uint8_t lazy_max;
 } InterpBlocks;
 
 typedef struct {
@@ -466,6 +528,10 @@ typedef struct {
   uint8_t hist_len;      // responses held in hist[]
   uint8_t hist_at;       // where the next one goes
   uint8_t hist[INTERP_HISTORY];
+  uint32_t levels;       // each input's level, as the watched edges left it
+  uint8_t lazy;          // escalating penalties since the last hit, saturating
+  uint8_t last_side;     // the side anti-bias drew last, NONE before any
+  uint8_t side_run;      // how many fresh draws in a row it has been, saturating
 } InterpCore;
 
 /*  avr-libc's random(): Park and Miller's minimal standard, x' = 16807 x mod
@@ -567,6 +633,8 @@ static inline bool interp__block_ends(const InterpCore *c, const InterpBlock *k)
   return false;
 }
 
+static inline uint8_t interp__side(const InterpCore *c, uint16_t e);
+
 /*  A trial starts, in a table with blocks: the last trial goes into the
     history, the block's end rule runs, and the correction rule decides whether
     this trial repeats the last. */
@@ -579,16 +647,33 @@ static inline void interp__trial(InterpCore *c, InterpActions *a)
   if (c->block == INTERP_NONE) {
     interp__start_block(c, 0, a);
   } else {
+    const InterpBlocks *blocks = c->table->blocks;
+    const InterpBlock *k = &blocks->rows[c->block];
+    bool aborted = interp__class_in(blocks->skipped, last_outcome);
+    // Only a hit resets the escalating penalty.
+    if (interp__class_in(blocks->hits, last_outcome)) c->lazy = 0;
     // An aborted trial counts toward N but not in the criterion's window.
-    if (!interp__class_in(c->table->blocks->skipped, last_outcome))
-      c->corrects = (c->corrects << 1)
-                    | (interp__class_in(c->table->blocks->hits, last_outcome) ? 1UL : 0UL);
-    if (c->response != INTERP_NONE) {
-      c->hist[c->hist_at] = c->response;
+    if (!aborted)
+      c->corrects = (c->corrects << 1) | (interp__class_in(blocks->hits, last_outcome) ? 1UL : 0UL);
+    // Its response, or under GRGL's anti-bias an abort's side: an abstention.
+    uint8_t vote = c->response;
+    if (vote == INTERP_NONE && k->strength != INTERP_NONE && aborted && last_entry != INTERP_NONE)
+      vote = interp__side(c, last_entry);
+    if (vote != INTERP_NONE) {
+      c->hist[c->hist_at] = vote;
       c->hist_at = (uint8_t)((c->hist_at + 1) % INTERP_HISTORY);
       if (c->hist_len < INTERP_HISTORY) ++c->hist_len;
     }
-    const InterpBlock *k = &c->table->blocks->rows[c->block];
+    if (blocks->repeat_aborts && aborted) {
+      // GRGL's invalid trial: it repeats, and neither it nor its repeat counts
+      // twice toward N or the session's trials.
+      c->correcting = 1;
+      c->entry = last_entry;
+      a->flags |= INTERP_ACT_CORRECTION | INTERP_ACT_UNCOUNTED;
+      c->outcome = 0;
+      c->response = INTERP_NONE;
+      return;
+    }
     if (interp__block_ends(c, k)) {
       if (k->next == INTERP_NONE) a->flags |= INTERP_ACT_DONE;
       else interp__start_block(c, k->next, a);
@@ -673,31 +758,69 @@ static inline uint8_t interp__from_bag(InterpCore *c, const InterpBlock *k)
   return (uint8_t)(k->first + k->count - 1); // unreachable
 }
 
-/*  Anti-bias: a side, then a branch on it by weight. Each side in the block,
-    in the order its first branch comes, weighs 1 + L - its count among the
-    last L responses, L being the responses held, at most the window. */
+/*  GRGL's side weight in permille, for side s of k (GRGL RULES): 1000/k +
+    strength * (L - k*count) / L, truncated toward zero, clamped to
+    [p_min, p_max], then to [0, 1000]; 1000/k with no history. */
+static inline uint32_t interp__grgl_weight(uint32_t count, uint32_t len, uint32_t k, uint32_t strength,
+                                           uint32_t p_min, uint32_t p_max)
+{
+  int32_t p;
+  if (len == 0) p = (int32_t)(1000 / k);
+  else p = (int32_t)(1000 * len + k * strength * len - k * strength * k * count) / (int32_t)(k * len);
+  if (p < (int32_t)p_min) p = (int32_t)p_min;
+  if (p > (int32_t)p_max) p = (int32_t)p_max;
+  if (p > (int32_t)INTERP_PERMILLE) p = (int32_t)INTERP_PERMILLE;
+  return p < 0 ? 0 : (uint32_t)p;
+}
+
+/*  Anti-bias: a side, then a branch on it by weight. The sides are the block's
+    branches' sides, in the order each first comes. Each weighs 1 + L - its
+    count among the last L responses, L being the responses held, at most the
+    window; with a strength, GRGL's weight instead. A side drawn max_run times
+    in a row weighs 0 in the next draw while another side is left; all weights
+    0: every side left weighs 1. */
 static inline uint8_t interp__antibias(InterpCore *c, const InterpBlock *k)
 {
   uint32_t len = c->hist_len;
   if (k->window != INTERP_NONE && c->params[k->window] < len) len = c->params[k->window];
-  uint32_t total = 0, r = 0;
-  for (uint8_t pass = 0; pass < 2; ++pass) {
-    if (pass) r = interp_draw(&c->rng, total);
-    for (uint16_t e = k->first; e < interp__end(k); ++e) {
-      uint8_t side = interp__side(c, e);
-      bool seen = false;
-      for (uint16_t f = k->first; f < e; ++f) seen = seen || interp__side(c, f) == side;
-      if (seen) continue;
-      uint32_t count = 0;
-      for (uint32_t j = 0; j < len; ++j)
-        if (c->hist[(c->hist_at + INTERP_HISTORY - 1 - j) % INTERP_HISTORY] == side) ++count;
-      uint32_t w = 1 + len - count;
-      if (!pass) total += w;
-      else if (r < w) return interp__by_weight(c, k, false, side);
-      else r -= w;
-    }
+  uint8_t sides[INTERP_SIDES];
+  uint16_t weights[INTERP_SIDES]; // at most 1 + INTERP_HISTORY, or 1000 permille
+  uint32_t n = 0;
+  for (uint16_t e = k->first; e < interp__end(k); ++e) {
+    uint8_t side = interp__side(c, e);
+    bool seen = false;
+    for (uint32_t f = 0; f < n; ++f) seen = seen || sides[f] == side;
+    if (!seen) sides[n++] = side;
   }
-  return k->first; // unreachable: r is below the sum
+  for (uint32_t i = 0; i < n; ++i) {
+    uint32_t count = 0;
+    for (uint32_t j = 0; j < len; ++j)
+      if (c->hist[(c->hist_at + INTERP_HISTORY - 1 - j) % INTERP_HISTORY] == sides[i]) ++count;
+    weights[i] = (uint16_t)(k->strength == INTERP_NONE
+                     ? 1 + len - count
+                     : interp__grgl_weight(count, len, n, c->params[k->strength],
+                                           k->p_min != INTERP_NONE ? c->params[k->p_min] : 0,
+                                           k->p_max != INTERP_NONE ? c->params[k->p_max] : INTERP_PERMILLE));
+  }
+  uint32_t total = 0;
+  bool capped = false;
+  if (k->max_run != INTERP_NONE && n > 1 && c->side_run >= c->params[k->max_run])
+    for (uint32_t i = 0; i < n; ++i)
+      if (sides[i] == c->last_side) { weights[i] = 0; capped = true; }
+  for (uint32_t i = 0; i < n; ++i) total += weights[i];
+  if (total == 0)
+    for (uint32_t i = 0; i < n; ++i) { weights[i] = capped && sides[i] == c->last_side ? 0 : 1; total += weights[i]; }
+  if (total == 0)
+    for (uint32_t i = 0; i < n; ++i) { weights[i] = 1; ++total; }
+  uint32_t r = interp_draw(&c->rng, total);
+  uint8_t side = sides[0];
+  for (uint32_t i = 0; i < n; ++i) {
+    if (r < weights[i]) { side = sides[i]; break; }
+    r -= weights[i];
+  }
+  if (side == c->last_side) { if (c->side_run != 0xFF) ++c->side_run; }
+  else { c->last_side = side; c->side_run = 1; }
+  return interp__by_weight(c, k, false, side);
 }
 
 /*  The branch a trial-starting pick takes in a table with blocks: the last
@@ -759,6 +882,13 @@ static inline void interp__enter(InterpCore *c, uint8_t target, uint32_t now, In
     uint32_t hi = interp__param(c, s->timer_max);
     c->duration = hi > lo ? lo + interp_draw(&c->rng, hi - lo + 1) : lo;
   }
+  if (s->flags & INTERP_ESCALATE) {
+    // GRGL's lazy penalty: base + lazy * step, at most the cap, then one more.
+    uint32_t d = c->duration + (uint32_t)c->lazy * interp__param(c, blocks->lazy_step);
+    uint32_t cap = interp__param(c, blocks->lazy_max);
+    c->duration = d > cap ? cap : d;
+    if (c->lazy != 0xFF) ++c->lazy;
+  }
   uint32_t was = c->outputs;
   c->outputs = s->outputs;
   a->on = s->outputs & ~was;
@@ -782,6 +912,10 @@ static inline InterpActions interp_begin(InterpCore *c, const InterpTable *table
   c->outcome = c->repeats = c->correcting = 0;
   c->hist_len = c->hist_at = 0;
   for (uint8_t i = 0; i < INTERP_HISTORY; ++i) c->hist[i] = INTERP_NONE;
+  c->levels = 0;
+  c->lazy = 0;
+  c->last_side = INTERP_NONE;
+  c->side_run = 0;
   InterpActions a = interp__none();
   a.flags = INTERP_ACT_SESSION_START;
   interp__enter(c, 0, now, &a);
@@ -803,6 +937,9 @@ static inline InterpActions interp_step(InterpCore *c, InterpEdges in, uint32_t 
   InterpActions a = interp__none();
   a.rose = in.rose & s->watch;
   a.fell = in.fell & s->watch;
+  // Levels as the tick began, then as its watched edges leave them.
+  uint32_t was = c->levels;
+  c->levels = (c->levels | a.rose) & ~a.fell;
 
   uint8_t matches = 0;
   for (uint8_t i = 0; i < s->edge_count; ++i)
@@ -825,6 +962,9 @@ static inline InterpActions interp_step(InterpCore *c, InterpEdges in, uint32_t 
         if ((s->flags & INTERP_RESPONSE) && c->response == INTERP_NONE) c->response = rows[i].input;
         break;
       }
+  } else if ((s->flags & INTERP_AWAIT_LOW) && !(was & ((uint32_t)1 << rows[0].input))) {
+    // Its input is already down: the release it waits for is past.
+    target = rows[0].next;
   } else if (s->timer_min != INTERP_NONE && (uint32_t)(now - c->entered_at) >= c->duration) {
     target = s->on_timeout;
   }

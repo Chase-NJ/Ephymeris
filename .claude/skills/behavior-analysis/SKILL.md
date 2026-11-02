@@ -33,8 +33,12 @@ Trial boundaries always come from `boundaries_for(profile)` (`ANALYTICS.md#bound
 - Per-condition accuracy (a condition is an odor answered at a given well, i.e. a side): `conditions_of`,
   `table_metrics.legacy_metrics`; spine runs use `table_metrics.score` for P(correct | row).
   `ANALYTICS.md#per-condition-tally`, `ANALYTICS.md#rewarded-and-response-accuracy`, `ANALYTICS.md#pooled-accuracy`.
-- Every number carries n and a 95% Wilson interval (`stream/stats.py`); nothing is suppressed. A run with
-  nothing to score says why (`ANALYTICS.md#why-a-run-has-no-numbers`).
+- Phase-window rates (Pavlovian tasks): each row's lick rate in each phase that counts an input it never
+  acts on, and its paired difference against the row's first window: `stream/rates.py`.
+  `ANALYTICS.md#phase-window-rates`.
+- Every proportion carries n and a 95% Wilson interval (`stream/stats.py`); a rate carries a Student-t interval
+  over trials, which bursty licking makes narrower than its nominal 95% (`ANALYTICS.md#uncertainty`). Nothing
+  is suppressed. A run with nothing to score says why (`ANALYTICS.md#why-a-run-has-no-numbers`).
 - Engagement ladder, learning curves, false starts: `engagement.py`, `curves.py`, `false_starts.py`.
 
 To score one file by hand, use the snippet under `ANALYTICS.md#key-functions` (`summarize(document, profile)`).
@@ -56,6 +60,6 @@ version: see the canary rule in `DATA.md#caching` and `test_the_score_version_pi
 ## Tests
 
 `sidecar/tests/test_analytics_*.py`, `test_legacy_*.py`, `test_replay_trial_table.py`, `test_spine_analytics.py`,
-`test_matwriter.py`, `test_derived_trials.py`. `test_analytics_stream_is_pure.py` keeps `stream/` free of
+`test_phase_rates.py`, `test_pavlovian.py`, `test_matwriter.py`, `test_derived_trials.py`. `test_analytics_stream_is_pure.py` keeps `stream/` free of
 files, database and clock. Never open `fixtures/legacy_pin.json` or `legacy_corpus.json`; to inspect a case,
 load it in Python and print only the fields you need.

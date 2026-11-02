@@ -10,7 +10,8 @@
 
   Each scenario runs in its own process (the runner's state is the sketch's
   own, as on a board): run_spine.sh runs `test_spine handshake`, `stream`,
-  `stop` and `last`, then, built over spine_drive_fixture.h (-DSPINE_FIXTURE_DRIVES),
+  `stop`, `last`, `blocks`, `pairs` and `passes` (several loop() passes in one
+  millisecond, as on a Mega), then, built over spine_drive_fixture.h (-DSPINE_FIXTURE_DRIVES),
   the driven outputs: `test_spine_drives drives`, `train_held`, `train_refused`,
   and, under the shim's real serial timing, `train_timing` and `train_buffer`.
 
@@ -230,6 +231,41 @@ static void blocks()
   expect("neither the trial nor a block is reported at the end", !third);
 }
 
+/* A Mega runs loop() some 27 times a millisecond, so a poke is read on
+   whichever pass sees it, rarely the first of its ms. It must still reach the
+   core: a poke and a release, each read on a later pass, both strobe and both
+   move the trial, within the ms after. */
+static void passes()
+{
+  bb_feed("BEGIN");
+  bb_feed("SET NT=2 T1=100 T3=50 RW=30 RP=1000");
+  bb_feed("START SEED=7");
+  boot();
+  advanceTo(10);
+  ::loop();
+  bb_pinValue[2] = LOW; // the poke, between two passes of ms 10
+  ::loop();
+  ::loop();
+  advanceTo(50);
+  ::loop();
+  bb_pinValue[2] = HIGH; // the release, during the present
+  ::loop();
+  ::loop();
+  advanceTo(120);
+  std::vector<std::pair<int, unsigned long>> got = strobes();
+  auto at = [&](int code) {
+    for (auto &s : got)
+      if (s.first == code) return (long)s.second;
+    return -1L;
+  };
+  long enter = at(BF_PORT_ENTER), leave = at(BF_PORT_EXIT);
+  expect("a poke read on a later pass of its ms strobes", enter == 10 || enter == 11);
+  expect("and starts the present", enter >= 0 && at(BF_SAMPLE_ON) == enter);
+  expect("a release read so aborts it", (leave == 50 || leave == 51) && at(BF_SAMPLE_OFF) == leave);
+  if (enter < 0 || leave < 0)
+    for (auto &s : got) std::cout << "      " << s.first << "\t" << s.second << "\n";
+}
+
 static void pairs()
 {
   bb_feed("BEGIN");
@@ -406,6 +442,7 @@ int main(int argc, char **argv)
   else if (which == "last") last();
   else if (which == "blocks") blocks();
   else if (which == "pairs") pairs();
+  else if (which == "passes") passes();
 #endif
   else { std::cout << "  [FAIL] unknown scenario\n"; return 2; }
   return failures == 0 ? 0 : 1;

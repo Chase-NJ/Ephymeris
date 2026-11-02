@@ -801,7 +801,7 @@ Selection and every end rule run in the interpreter's core, `BoxInterp.h`, so th
 
 `libraries/BehaviorBox/BoxSpine.h` is the one runner of every spine task: the hardware layer around `BoxInterp.h`'s pure core.
 
-- **Inputs.** Each input is read and debounced every loop pass, by its channel's `active_level` and `debounce_ms`.
+- **Inputs.** Each input is read and debounced once a tick, on the first loop pass of each new `millis()` value, by its channel's `active_level` and `debounce_ms`. A Mega runs `loop()` many times a millisecond, and an edge is reported once: one read on a pass that steps no tick never reaches the core.
 - **Ticks.** The core is stepped once per millisecond of `millis()`, including each value AVR `millis()` skips.
 - **Outputs and strobes.** The runner drives each tick's outputs, then strobes the tick's actions, each stamped with the tick.
 - **The handshake.** It is the one in [Confirming the parameters](#confirming-the-parameters), over the table's parameter slots. A value is held only when it is a whole number within its slot's declared range, and the high end of a pair only when it is at least the low end already taken: a Counter's drawn N (`N<i>`, `NX<i>`), a block's drawn N (`BN<b>`, `BNX<b>`) and a criterion's k and n (`BK<b>`, `BKN<b>`), listed in `TaskSpine.h` as `SPINE_PAIRS`. Otherwise the board answers `CLAMPED` and the start is refused.

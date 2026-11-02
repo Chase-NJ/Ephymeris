@@ -1534,6 +1534,13 @@ Pushed on every strobe that updates a rolling live metric. Not batched like `por
 
 **Data:** [BoxTelemetry](#shape-boxtelemetry)
 
+<a id="evt-session.replay"></a>
+#### `session.replay`
+
+A running spine run's live replay changed: the board entered another state, a trial was scored, the run diverged or ended (`ANALYTICS.md#live-scoring`). Replayed on connect, one per box whose latest run is a spine run, until that box starts again or a new mapping is confirmed, so a reloaded Mission Control lands on the current phase.
+
+**Data:** [LiveReplay](#shape-livereplay)
+
 <a id="evt-session.animalended"></a>
 #### `session.animalEnded`
 
@@ -2059,7 +2066,8 @@ One row of a `grid` control — a named piece of hardware with its own commands 
 | `state` *(optional)* | string | Telemetry key whose 0/1 value lights this row's indicator. |
 | `toggle` *(optional)* | string | Command that latches this channel. |
 | `pulse` *(optional)* | string | Command that pulses this channel. |
-| `kind` *(optional)* | string | The rig channel kind behind the row (`emitter`, `reward`, `cue`, `vacuum`). Always set by a generated utility profile. |
+| `kind` *(optional)* | string | The rig channel kind behind the row (`emitter`, `reward`, `cue`, `vacuum`): the colour family it is drawn in. Always set by a generated utility profile. |
+| `setting` *(optional)* | [ControlSetting](#shape-controlsetting) | A driven output's one setting. Absent on a level line. |
 
 <a id="shape-controloption"></a>
 #### ControlOption
@@ -2068,6 +2076,17 @@ One row of a `grid` control — a named piece of hardware with its own commands 
 |---|---|---|
 | `label` | string |  |
 | `command` | string |  |
+
+<a id="shape-controlsetting"></a>
+#### ControlSetting
+
+A driven output's one setting in Debug Mode: a PWM line's duty, a tone's pitch, a train's rate (`TASKS.md#the-box-utility`).
+
+| Field | Type | Notes |
+|---|---|---|
+| `label` | string | What the setting is: `Duty`, `Pitch` or `Rate`. |
+| `state` | string | Telemetry key holding the board's current value, e.g. `house.duty`. |
+| `options` | [SettingOption](#shape-settingoption)[] | The values offered, each with its command; never empty. |
 
 <a id="shape-detectedboard"></a>
 #### DetectedBoard
@@ -2316,6 +2335,37 @@ The three bundled-sketch-library states (`TASKS.md#sketch-library`). There is no
 | `alternateCodes` *(optional)* | number[] | Every code that scores a miss, present only when there are several: a no-go type is wrong at any response port (`ANALYTICS.md#trials-hits-misses-and-exclusions`). `alternateCode` repeats the first. |
 | `windowSize` | number |  |
 
+<a id="shape-livereplay"></a>
+#### LiveReplay
+
+A running spine run as its live replay reads it (`ANALYTICS.md#live-scoring`): where the board is and the numbers so far. Sent whole on every change.
+
+| Field | Type | Notes |
+|---|---|---|
+| `box` | number |  |
+| `animalId` | string |  |
+| `status` | [LiveReplayStatus](#shape-livereplaystatus) |  |
+| `detail` | string \| null | Why, when `diverged` or `unreplayable`. |
+| `state` | number \| null | The table state the board is in, by replay; null unless `replaying`. |
+| `phase` | number \| null | That state's phase, an index into the profile snapshot's `spine.spine` (its `table.phases`). What the live token sits on: never read from a strobe's name. Null unless `replaying`, or for a state in no phase. |
+| `row` | string \| null | The row id the state belongs to; null for a state the rows share (the pick, an early exit's end) or unless `replaying`. |
+| `provisional` | boolean | The board entered this state after its latest strobe, by a timer alone: the sidecar's estimate on the host clock of what the board does when nothing happens (a Wait timing out, an outcome running into the ITI), which no strobe has confirmed yet. False whenever the strobes so far put the board there, and unless `replaying`. |
+| `unavailable` | string \| null | Why the live numbers are unavailable while the token carries on: the live scorer process could not start or stopped (`ARCHITECTURE.md#the-live-scorer`). The run, its strobes and its file are unaffected; Analytics scores it as ever. Null while the scorer is up, and unless `replaying` or `ended`. |
+| `trials` | number | Complete trials so far, as the live trial table counts them. |
+| `current` | [ReplayTrial](#shape-replaytrial) \| null | The trial in progress, as the table reads it so far (`complete: false`); null between trials and unless `replaying`. |
+| `last` | [ReplayTrial](#shape-replaytrial) \| null | The latest complete trial. |
+| `metrics` | [MetricSummary](#shape-metricsummary)[] | P(correct \| row) over the complete trials so far, from the functions Analytics scores the finished run with, so at `ended` they are Analytics'. Empty when `diverged` or `unreplayable`. |
+| `overall` | [MetricSummary](#shape-metricsummary) \| null | P(correct) pooled over every row. |
+| `replay` | [ReplayScore](#shape-replayscore) \| null | The outcome-class tallies so far. |
+| `divergence` | [ReplayDivergence](#shape-replaydivergence) \| null | Where, when `diverged`. |
+
+<a id="shape-livereplaystatus"></a>
+#### LiveReplayStatus
+
+Where a running spine run's live replay stands (`ANALYTICS.md#live-scoring`). `replaying`: every strobe so far is what replay predicts, and `phase` is where the board is. `diverged`: a strobe is not, so the run has no token and no numbers, as Analytics will not score it. `unreplayable`: replay cannot run this run at all. `unavailable`: the live replay failed to take a strobe, so it no longer describes the run; the run itself is unaffected. `ended`: the run is over, and its numbers, when it has them, are Analytics'.
+
+"replaying" \| "diverged" \| "unreplayable" \| "unavailable" \| "ended"
+
 <a id="shape-logbookcohort"></a>
 #### LogbookCohort
 
@@ -2540,6 +2590,18 @@ A count out of a total, with its interval.
 | `order` | number |  |
 | `animals` | [ProposedAnimal](#shape-proposedanimal)[] |  |
 
+<a id="shape-rateestimate"></a>
+#### RateEstimate
+
+A mean over trials with its interval.
+
+| Field | Type | Notes |
+|---|---|---|
+| `n` | number | Trials the mean is over. |
+| `mean` | number \| null | Events per second, the mean of each trial's rate; null with no trials, never 0.0. |
+| `low` | number \| null | Student-t interval over trials, nominally 95%; it covers a bursty licker's rate less often (`ANALYTICS.md#uncertainty`). Null with fewer than two trials. |
+| `high` | number \| null |  |
+
 <a id="shape-recordingbox"></a>
 #### RecordingBox
 
@@ -2692,6 +2754,7 @@ A replayed spine run's tallies, each a function of its trial table (`ANALYTICS.m
 | `classes` | [OutcomeTally](#shape-outcometally)[] | By class number; with `unclassified` they partition `trials`. |
 | `rows` | [RowOutcomes](#shape-rowoutcomes)[] | In the task's row order. |
 | `rewarded` | [Proportion](#shape-proportion) | Trials whose reward line opened, of `trials`. |
+| `rates` | [WindowRate](#shape-windowrate)[] | Each row's rate in each phase that counts an input it never acts on, row by row in the task's order, then by phase. Empty for a task with no such phase (`ANALYTICS.md#phase-window-rates`). |
 
 <a id="shape-replaytrial"></a>
 #### ReplayTrial
@@ -3096,6 +3159,17 @@ One timestamped log entry (`DATA.md#the-session-log`). A deleted note is never s
 #### SessionStatus
 
 "configuring" \| "running" \| "completed" \| "aborted"
+
+<a id="shape-settingoption"></a>
+#### SettingOption
+
+One value a grid row's setting can take.
+
+| Field | Type | Notes |
+|---|---|---|
+| `label` | string | What the operator reads, e.g. `50%` or `2 kHz`. |
+| `value` | string | The value the board reports under the setting's `state` key once this option is in force, so the current one can be shown. |
+| `command` | string | Command that sets it, e.g. `DUTY house 128`. |
 
 <a id="shape-sex"></a>
 #### Sex
@@ -3644,7 +3718,7 @@ The whole baseline picture — one snapshot, shared by the command and the event
 | `configured` | boolean | The install's library has a box utility. Not a setting: the app finds it (`TASKS.md#the-box-utility`). |
 | `sketchPath` | string \| null | Where the copy rebuilt for this rig lives — an install-specific fact, informational only. |
 | `sketchName` | string \| null | The box utility's folder name. |
-| `canIdentify` | boolean | The utility's profile declares an `identify` pair (generated on the rig's first cue). False means placement can still run, just without lights. |
+| `canIdentify` | boolean | The utility's profile declares an `identify` pair (generated on the rig's first level cue, never a tone or a train; a rig whose cues are all driven has none). False means placement can still run, just without lights. |
 | `held` | boolean | Restores are suspended because a confirmed session mapping owns the boxes — reflashing then would erase the task sketch. |
 | `message` | string \| null | Why the baseline isn't operating at all (no sketch set, a name not in the bundled library, a non-utility profile). |
 | `boxes` | [UtilityBoxState](#shape-utilityboxstate)[] |  |
@@ -3656,3 +3730,20 @@ The whole baseline picture — one snapshot, shared by the command and the event
 |---|---|---|
 | `from` | unknown |  |
 | `to` | unknown |  |
+
+<a id="shape-windowrate"></a>
+#### WindowRate
+
+One row's rate in one of its own phase-windows (`ANALYTICS.md#phase-window-rates`).
+
+| Field | Type | Notes |
+|---|---|---|
+| `rowId` | string | The row's stable id. |
+| `name` | string | The row's name. |
+| `phase` | number | The phase's index in the spine. |
+| `label` | string | The phase's kind, for a person: nothing is scored by it. |
+| `channel` | string | The input channel counted. |
+| `rate` | [RateEstimate](#shape-rateestimate) | Its rises per second in the phase, clamped at 0. |
+| `reference` | number \| null | This row's first phase counting the channel, which `versus` is against; null on that phase itself. |
+| `versus` | [RateEstimate](#shape-rateestimate) \| null | This phase's rate minus the reference's, paired within each trial: in a Pavlovian task's CS and trace, its anticipatory licking. Null on the reference. |
+| `lowConfidence` | boolean | The smaller of `rate.n` and `versus.n` is below `minCountedTrials` or `rates.RATE_MIN_TRIALS` (`ANALYTICS.md#uncertainty`), re-judged on every request. |

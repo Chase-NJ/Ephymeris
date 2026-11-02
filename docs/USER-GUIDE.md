@@ -572,8 +572,9 @@ under the session controls: click **Resolve** once you have dealt with it.
 - **The state chip** shows the box's state. `IN_SESSION` (green) means running. `IDLE` means not running.
   `FLASHING` and `RESETTING` are brief. `ERROR` (red) means something went wrong; hover over it to read why.
 - **Live metrics** show how the animal is doing, such as the rolling chance of a correct answer for each
-  odor, with a small trend line. They fill in as trials complete. A spine task has none yet, and its tile
-  says so; every event is still recorded.
+  odor, with a small trend line. They fill in as trials complete. A spine task shows the chance of a
+  correct trial for each trial type, and overall, counted the same way Analytics will count the finished
+  run.
 - **Finished — …** replaces the metrics when the box's run is over, with the reason. *Finished —
   BF_END_SESSION received* means the box ended on its own; *Finished — board disconnected* means it lost
   its connection (see below).
@@ -582,6 +583,12 @@ Click a tile, or a star, to see that box's full panel: its **Rolling accuracy**,
 diagram with the state the box is in right now, a chart of each odor's answers over time, the
 **Outcome mix**, the **Live metrics** and the **Recent strobes** (the latest events from the board).
 **Back to overview** (or Esc) returns.
+
+A spine task's panel shows its phases left to right instead (Wait, Present, Response window and so on),
+with the box's current phase lit, its trial type and trial number underneath, a count of how its trials
+ended, and the same live metrics. If the panel says **Diverged**, the box did something its task does not
+do: it still records every event, but the run will not be scored, and its numbers disappear. Note which
+box and tell whoever looks after the rig.
 
 ![A box's full panel for remy1: Back to overview at the top left, Start/Stop/Reset and Rolling accuracy 0.70 at the top right, the Trial flow diagram with the current state lit, the P(right | odor) chart, the Outcome mix, Live metrics and Recent strobes](images/box-panel.webp)
 
@@ -753,6 +760,12 @@ The panel has three parts:
   **Full self-test**, and **Prime**, which runs water down each chosen line in turn: pick how many
   seconds and which lines, then click **Prime** (it reads, for example, **Prime 4 lines**). After flashing your own sketch, **Return to baseline**
   puts the box back on the utility sketch.
+
+  Every channel on the **Wiring** page is here as soon as you save it. A dimmable light also has a
+  small menu for its brightness (**Duty**), a speaker one for its pitch (**Pitch**), and a pulse-train
+  line such as a laser one for its rate (**Rate**). A train line's switch runs short test pulses, never
+  a steady beam. The menu shows what the box reports, so a dash means the box has not answered yet.
+  Sensors (beams, levers) are listed under the switches, each reading 1 while it is blocked or pressed.
 - **Console.** Everything the board prints. Type in the box and press Enter to send a command. The
   **Status** tab holds the utility sketch's regular status lines, so the **Console** tab stays readable.
   You can copy or save the log.
@@ -782,7 +795,8 @@ as data.** Press Esc or click **← Constellation** to go back.
   **Reset** and **Acknowledge** do the same for each box. The line underneath says how many boxes did
   it and names any box that refused.
 - **Controls.** With the consoles open on boxes resting on the utility sketch, every button, the pulse
-  width, **Prime**, and the switch and pulse for each line reach all of them at once. Each line shows one
+  width, **Prime**, and the switch, pulse and menu for each line reach all of them at once. A menu reads
+  *mixed* when the boxes are set differently, and a dash while any box has not answered. Each line shows one
   small light per box, so you can see which boxes have it open; its switch turns the line on for every
   box, or off once it is on everywhere. The table below lists each box's beams and test status.
 - **Sketch.** **Flash…** puts one program on every targeted box, one box at a time, and opens each
@@ -841,7 +855,11 @@ is saved in an `ephys` folder in the session folder, unless the Recording defaul
 
    A spine task's card counts its trials by how each ended (correct, wrong response, no outcome, and so
    on), and opens on **Trials**: one line per trial with its start, row, outcome, reward, response and
-   when each phase began. Ephymeris works these out by replaying the run exactly as the box ran it. If the
+   when each phase began. A task that counts licks in some phases, such as Pavlovian trace conditioning,
+   also lists each row's lick rate in each of those phases, with its range, and how far it sits above the
+   row's first such phase, named beside it (usually the baseline). A grey rate rests on too few trials to
+   trust: fewer than 30, however few you set Analytics to accept, because licks come in bursts. Ephymeris works these out by
+   replaying the run exactly as the box ran it. If the
    recorded run does not match what the replay predicts, the card says **not scored** and names the first
    strobe that differs; a run from a box firmware this version of Ephymeris does not know is never
    scored either. Both are recorded in full.

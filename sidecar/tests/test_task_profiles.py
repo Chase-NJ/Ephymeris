@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 
@@ -305,6 +306,34 @@ def test_grid_control_round_trips_to_json() -> None:
     # Re-parsing the emitted JSON reproduces it exactly — the shape the sidecar
     # snapshots for a run is the shape it can decode again years later.
     assert parse_profile(profile.to_json()).to_json() == profile.to_json()
+
+
+SETTING = {"label": "Duty", "state": "house.duty",
+           "options": [{"label": "50%", "value": "128", "command": "DUTY house 128"}]}
+
+
+def test_a_grid_row_carries_its_setting() -> None:
+    """A driven output's one setting (`TASKS.md#utility-controls-and-telemetry`),
+    kept exactly through a parse and back."""
+    raw = copy.deepcopy(GRID_PROFILE)
+    raw["controls"][0]["channels"][0]["setting"] = SETTING
+    profile = parse_profile(raw)
+    assert profile.to_json()["controls"][0]["channels"][0]["setting"] == SETTING
+    assert "setting" not in profile.to_json()["controls"][0]["channels"][1]
+    assert parse_profile(profile.to_json()).to_json() == profile.to_json()
+
+
+@pytest.mark.parametrize("broken", [
+    {**SETTING, "options": []},
+    {**SETTING, "state": ""},
+    {**SETTING, "options": [{"label": "50%", "command": "DUTY house 128"}]},
+    "DUTY house 128",
+])
+def test_a_setting_needs_a_state_and_options_with_values(broken) -> None:
+    raw = copy.deepcopy(GRID_PROFILE)
+    raw["controls"][0]["channels"][0]["setting"] = broken
+    with pytest.raises(TaskProfileError, match="Left 1"):
+        parse_profile(raw)
 
 
 def test_grid_control_requires_channels() -> None:

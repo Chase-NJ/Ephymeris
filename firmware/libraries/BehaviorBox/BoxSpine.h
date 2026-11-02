@@ -378,10 +378,20 @@ inline void drive(int j, bool high, uint32_t now)
   digitalWrite(pin, high ? HIGH : LOW);
 }
 
-/*  Every live train's pin at tick `now`, written only when its level changes. */
+#if SPINE_NUM_DRIVES > 0
+static uint32_t trainsAt = 0; // the latest ms the train pins were stepped to
+#endif
+
+/*  Every live train's pin at ms `now`, written only when its level changes.
+    Never back in time: strobing a tick steps the trains to the board's own
+    millis() (strobeAt), so the catch-up after it skips the ticks already
+    passed, rather than raising a pulse again that has fallen. */
 inline void stepTrains(uint32_t now)
 {
 #if SPINE_NUM_DRIVES > 0
+  if ((int32_t)(now - trainsAt) < 0)
+    return;
+  trainsAt = now;
   for (int i = 0; i < SPINE_NUM_DRIVES; i++)
   {
     if (kDrives[i].kind != SPINE_DRIVE_TRAIN || !(drives.live & ((uint32_t)1 << kDrives[i].output)))
@@ -556,6 +566,24 @@ inline InterpEdges sample(uint32_t now)
   return e;
 }
 
+/*  One strobe, with the trains kept on time around it. A strobe takes the board
+    time: its sync pulse and gap (about 0.7 ms), and a print into a full 64-byte
+    TX buffer BLOCKS until the wire drains. So the trains are stepped to the
+    board's millis() before each strobe, and while waiting for room for the
+    whole line, which then never blocks: a pulse HIGH through a burst of
+    strobes still falls within a millisecond of its width. With no train this
+    is emitStrobeAt(). */
+inline void strobeAt(int code, unsigned long ts)
+{
+#if SPINE_NUM_DRIVES > 0
+  const int STROBE_BYTES = 16; // "NNN\t" + a ten-digit timestamp + "\r\n"
+  stepTrains((uint32_t)millis());
+  while (Serial.availableForWrite() < STROBE_BYTES)
+    stepTrains((uint32_t)millis());
+#endif
+  emitStrobeAt(code, ts);
+}
+
 /*  Drive and strobe one tick's actions, in the core's order (THE STREAM). */
 inline void emitTick(const SpineTick &t, uint32_t now)
 {
@@ -570,18 +598,18 @@ inline void emitTick(const SpineTick &t, uint32_t now)
     if (off & ((uint32_t)1 << j)) drive(j, false, now);
   for (int j = 0; j < SPINE_NUM_OUTPUTS; j++)
     if (on & ((uint32_t)1 << j)) drive(j, true, now);
-  if (a.flags & INTERP_ACT_SESSION_START) emitStrobeAt(BF_START_SESSION, ts);
+  if (a.flags & INTERP_ACT_SESSION_START) strobeAt(BF_START_SESSION, ts);
   for (int i = 0; i < SPINE_NUM_INPUTS; i++)
-    if (a.rose & ((uint32_t)1 << i)) emitStrobeAt(kInputs[i].riseCode, ts);
+    if (a.rose & ((uint32_t)1 << i)) strobeAt(kInputs[i].riseCode, ts);
   for (int i = 0; i < SPINE_NUM_INPUTS; i++)
-    if (a.fell & ((uint32_t)1 << i)) emitStrobeAt(kInputs[i].fallCode, ts);
-  if (!ends && (a.flags & INTERP_ACT_BLOCK_START)) emitStrobeAt(BF_BLOCK_START, ts);
-  if (!ends && (a.flags & INTERP_ACT_TRIAL_START)) emitStrobeAt(BF_TRIAL_START, ts);
+    if (a.fell & ((uint32_t)1 << i)) strobeAt(kInputs[i].fallCode, ts);
+  if (!ends && (a.flags & INTERP_ACT_BLOCK_START)) strobeAt(BF_BLOCK_START, ts);
+  if (!ends && (a.flags & INTERP_ACT_TRIAL_START)) strobeAt(BF_TRIAL_START, ts);
   for (int j = 0; j < SPINE_NUM_OUTPUTS; j++)
-    if (off & ((uint32_t)1 << j)) emitStrobeAt(kOutputs[j].offCode, ts);
+    if (off & ((uint32_t)1 << j)) strobeAt(kOutputs[j].offCode, ts);
   for (int j = 0; j < SPINE_NUM_OUTPUTS; j++)
-    if (on & ((uint32_t)1 << j)) emitStrobeAt(kOutputs[j].onCode, ts);
-  if (ends) emitStrobeAt(BF_END_SESSION, ts);
+    if (on & ((uint32_t)1 << j)) strobeAt(kOutputs[j].onCode, ts);
+  if (ends) strobeAt(BF_END_SESSION, ts);
 }
 
 inline void setup()
@@ -628,6 +656,11 @@ inline void loop()
   if (checkForStop())
     stopRequested = true;
   uint32_t now = millis();
+  // loop() runs many times a millisecond, but the core steps once a tick, and
+  // sample() reports each edge once: read the inputs only on a new tick, so no
+  // edge is read on a pass that steps nothing and lost.
+  if (now == lastTick)
+    return;
   InterpEdges in = sample(now);
   while (lastTick != now)
   {

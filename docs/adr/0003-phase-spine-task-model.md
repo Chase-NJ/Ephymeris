@@ -150,7 +150,7 @@ The lab has recorded behavior but no neural data, so new sessions need not repro
   - latencies;
   - correction;
   - per-phase counts of each watched input.
-- **Every metric is a function of the trial table:** `P(outcome | row)`, psychometric curves, d′, rewarded and response accuracy, the engagement ladder, learning curves, phase-window rates and the PR breakpoint. Each carries Wilson intervals, as [ANALYTICS.md](../../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#uncertainty) requires.
+- **Every metric is a function of the trial table:** `P(outcome | row)`, psychometric curves, d′, rewarded and response accuracy, the engagement ladder, learning curves, phase-window rates and the PR breakpoint. Each proportion carries a Wilson interval and each rate a t interval over trials, as [ANALYTICS.md](../../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#uncertainty) requires.
 - **Live scoring runs the same replay**, fed edge by edge, so Mission Control and Analytics cannot disagree. The diagram and its live token draw the spine.
 - **`analytics/stream/legacy/`** is the current scorer, frozen. It decodes runs whose snapshot predates the spine, and it outputs the same trial table, so one analysis spans the cutover.
 

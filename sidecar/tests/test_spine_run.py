@@ -105,9 +105,11 @@ def run_board(folder: Path, host_lines: list[str], events, ticks: int, tmp_path:
     ino = folder / f"{folder.name}.ino"
     channels = registry.channels()
     profile = task_profile.load_profile(folder)
-    # Every input starts inactive: the rig's beams are active LOW.
-    idle = "".join(f"  bb_pinValue[{channels.get(i['channel']).index}] = HIGH;\n"
-                   for i in profile.spine["inputs"])
+    # Every input starts inactive: HIGH for the rig's beams, which are active
+    # LOW, and LOW for an active-HIGH sensor such as a lick spout.
+    idle = "".join(
+        f"  bb_pinValue[{c.index}] = {'LOW' if c.active_level == 'high' else 'HIGH'};\n"
+        for c in (channels.get(i["channel"]) for i in profile.spine["inputs"]))
     feed = "\n".join(f"  bb_feed({json.dumps(line)});" for line in host_lines)
     moves = ", ".join(f"{{{t}UL, {p}, {v}}}" for t, p, v in events) or "{0UL, 0, 0}"
     source = tmp_path / "board.cpp"

@@ -273,7 +273,8 @@ SHAPES = (
                 "canIdentify",
                 BOOL,
                 doc="The utility's profile declares an `identify` pair (generated on "
-                "the rig's first cue). "
+                "the rig's first level cue, never a tone or a train; a rig whose cues "
+                "are all driven has none). "
                 "False means placement can still run, just without lights.",
             ),
             f(
@@ -718,6 +719,38 @@ SHAPES = (
     ),
     Shape("ControlOption", obj(f("label", STR), f("command", STR))),
     Shape(
+        "SettingOption",
+        obj(
+            f("label", STR, doc="What the operator reads, e.g. `50%` or `2 kHz`."),
+            f(
+                "value",
+                STR,
+                doc="The value the board reports under the setting's `state` key once "
+                "this option is in force, so the current one can be shown.",
+            ),
+            f("command", STR, doc="Command that sets it, e.g. `DUTY house 128`."),
+        ),
+        doc="One value a grid row's setting can take.",
+    ),
+    Shape(
+        "ControlSetting",
+        obj(
+            f("label", STR, doc="What the setting is: `Duty`, `Pitch` or `Rate`."),
+            f(
+                "state",
+                STR,
+                doc="Telemetry key holding the board's current value, e.g. `house.duty`.",
+            ),
+            f(
+                "options",
+                ListOf(Ref("SettingOption")),
+                doc="The values offered, each with its command; never empty.",
+            ),
+        ),
+        doc="A driven output's one setting in Debug Mode: a PWM line's duty, a tone's "
+        "pitch, a train's rate (`TASKS.md#the-box-utility`).",
+    ),
+    Shape(
         "ControlChannel",
         obj(
             f("label", STR),
@@ -734,7 +767,14 @@ SHAPES = (
                 STR,
                 optional=True,
                 doc="The rig channel kind behind the row (`emitter`, `reward`, `cue`, "
-                "`vacuum`). Always set by a generated utility profile.",
+                "`vacuum`): the colour family it is drawn in. Always set by a generated "
+                "utility profile.",
+            ),
+            f(
+                "setting",
+                Ref("ControlSetting"),
+                optional=True,
+                doc="A driven output's one setting. Absent on a level line.",
             ),
         ),
         doc="One row of a `grid` control — a named piece of hardware with its "
@@ -894,6 +934,79 @@ SHAPES = (
             f("stopReason", STR, doc="One of the stop reasons in `ARCHITECTURE.md#session-lifecycle`."),
             f("filePath", nullable(STR)),
         ),
+    ),
+    Shape(
+        "LiveReplayStatus",
+        lit("replaying", "diverged", "unreplayable", "unavailable", "ended"),
+        doc="Where a running spine run's live replay stands (`ANALYTICS.md#live-scoring`). "
+        "`replaying`: every strobe so far is what replay predicts, and `phase` is where the board "
+        "is. `diverged`: a strobe is not, so the run has no token and no numbers, as Analytics "
+        "will not score it. `unreplayable`: replay cannot run this run at all. `unavailable`: the "
+        "live replay failed to take a strobe, so it no longer describes the run; the run itself "
+        "is unaffected. `ended`: the run is over, and its numbers, when it has them, are Analytics'.",
+    ),
+    Shape(
+        "LiveReplay",
+        obj(
+            f("box", INT),
+            f("animalId", STR),
+            f("status", Ref("LiveReplayStatus")),
+            f("detail", nullable(STR), doc="Why, when `diverged` or `unreplayable`."),
+            f(
+                "state",
+                nullable(INT),
+                doc="The table state the board is in, by replay; null unless `replaying`.",
+            ),
+            f(
+                "phase",
+                nullable(INT),
+                doc="That state's phase, an index into the profile snapshot's `spine.spine` "
+                "(its `table.phases`). What the live token sits on: never read from a strobe's "
+                "name. Null unless `replaying`, or for a state in no phase.",
+            ),
+            f(
+                "row",
+                nullable(STR),
+                doc="The row id the state belongs to; null for a state the rows share (the "
+                "pick, an early exit's end) or unless `replaying`.",
+            ),
+            f(
+                "provisional",
+                BOOL,
+                doc="The board entered this state after its latest strobe, by a timer alone: the "
+                "sidecar's estimate on the host clock of what the board does when nothing happens "
+                "(a Wait timing out, an outcome running into the ITI), which no strobe has confirmed "
+                "yet. False whenever the strobes so far put the board there, and unless `replaying`.",
+            ),
+            f(
+                "unavailable",
+                nullable(STR),
+                doc="Why the live numbers are unavailable while the token carries on: the live "
+                "scorer process could not start or stopped (`ARCHITECTURE.md#the-live-scorer`). "
+                "The run, its strobes and its file are unaffected; Analytics scores it as ever. "
+                "Null while the scorer is up, and unless `replaying` or `ended`.",
+            ),
+            f("trials", INT, doc="Complete trials so far, as the live trial table counts them."),
+            f(
+                "current",
+                nullable(Ref("ReplayTrial")),
+                doc="The trial in progress, as the table reads it so far (`complete: false`); "
+                "null between trials and unless `replaying`.",
+            ),
+            f("last", nullable(Ref("ReplayTrial")), doc="The latest complete trial."),
+            f(
+                "metrics",
+                ListOf(Ref("MetricSummary")),
+                doc="P(correct | row) over the complete trials so far, from the functions "
+                "Analytics scores the finished run with, so at `ended` they are Analytics'. "
+                "Empty when `diverged` or `unreplayable`.",
+            ),
+            f("overall", nullable(Ref("MetricSummary")), doc="P(correct) pooled over every row."),
+            f("replay", nullable(Ref("ReplayScore")), doc="The outcome-class tallies so far."),
+            f("divergence", nullable(Ref("ReplayDivergence")), doc="Where, when `diverged`."),
+        ),
+        doc="A running spine run as its live replay reads it (`ANALYTICS.md#live-scoring`): "
+        "where the board is and the numbers so far. Sent whole on every change.",
     ),
     Shape(
         "RunnerSession",
@@ -1215,9 +1328,43 @@ SHAPES = (
               "they partition `trials`."),
             f("rows", ListOf(Ref("RowOutcomes")), doc="In the task's row order."),
             f("rewarded", Ref("Proportion"), doc="Trials whose reward line opened, of `trials`."),
+            f("rates", ListOf(Ref("WindowRate")), doc="Each row's rate in each phase that counts an input "
+              "it never acts on, row by row in the task's order, then by phase. Empty for a task with "
+              "no such phase (`ANALYTICS.md#phase-window-rates`)."),
         ),
         doc="A replayed spine run's tallies, each a function of its trial table "
         "(`ANALYTICS.md#metrics-from-the-trial-table`).",
+    ),
+    Shape(
+        "RateEstimate",
+        obj(
+            f("n", INT, doc="Trials the mean is over."),
+            f("mean", nullable(FLOAT), doc="Events per second, the mean of each trial's rate; null with no "
+              "trials, never 0.0."),
+            f("low", nullable(FLOAT), doc="Student-t interval over trials, nominally 95%; it covers a bursty "
+              "licker's rate less often (`ANALYTICS.md#uncertainty`). Null with fewer than two trials."),
+            f("high", nullable(FLOAT)),
+        ),
+        doc="A mean over trials with its interval.",
+    ),
+    Shape(
+        "WindowRate",
+        obj(
+            f("rowId", STR, doc="The row's stable id."),
+            f("name", STR, doc="The row's name."),
+            f("phase", INT, doc="The phase's index in the spine."),
+            f("label", STR, doc="The phase's kind, for a person: nothing is scored by it."),
+            f("channel", STR, doc="The input channel counted."),
+            f("rate", Ref("RateEstimate"), doc="Its rises per second in the phase, clamped at 0."),
+            f("reference", nullable(INT), doc="This row's first phase counting the channel, which `versus` "
+              "is against; null on that phase itself."),
+            f("versus", nullable(Ref("RateEstimate")), doc="This phase's rate minus the reference's, "
+              "paired within each trial: in a Pavlovian task's CS and trace, its anticipatory licking. Null on the "
+              "reference."),
+            f("lowConfidence", BOOL, doc="The smaller of `rate.n` and `versus.n` is below `minCountedTrials` "
+              "or `rates.RATE_MIN_TRIALS` (`ANALYTICS.md#uncertainty`), re-judged on every request."),
+        ),
+        doc="One row's rate in one of its own phase-windows (`ANALYTICS.md#phase-window-rates`).",
     ),
     Shape(
         "ReplayDivergence",
@@ -4510,6 +4657,14 @@ EVENTS = (
         doc="Pushed on every strobe that updates a rolling live metric. Not "
         "batched like `port.output`: metric updates are far lower-frequency "
         "than raw strobes.",
+    ),
+    Event(
+        "session.replay",
+        Ref("LiveReplay"),
+        doc="A running spine run's live replay changed: the board entered another state, a "
+        "trial was scored, the run diverged or ended (`ANALYTICS.md#live-scoring`). Replayed "
+        "on connect, one per box whose latest run is a spine run, until that box starts again "
+        "or a new mapping is confirmed, so a reloaded Mission Control lands on the current phase.",
     ),
     Event(
         "session.animalEnded",

@@ -316,6 +316,11 @@ class Application:
         self.server.register_snapshot(
             Evt.INTAN_STATUS, lambda: self.intan.status_json() if self.intan else None
         )
+        # Each box's spine-run replay, so a reloaded Mission Control lands on
+        # the phase the board is in (`ARCHITECTURE.md#replay-on-connect`).
+        self.server.register_snapshot(
+            Evt.SESSION_REPLAY, lambda: self.runner.replay_snapshot() if self.runner else []
+        )
 
     def start(self) -> None:
         self.db.connect()
@@ -458,6 +463,9 @@ class Application:
             await self.utility.stop()
         if self.ports is not None:
             await self.ports.stop()
+        # The live scorer is killed, never waited on (`ARCHITECTURE.md#the-live-scorer`).
+        if self.runner is not None:
+            self.runner.close()
         # After ports: nothing may be mid-flash once the manager has stopped,
         # so the daemon child (if the gRPC backend is active) can go too.
         await self.tool.close()

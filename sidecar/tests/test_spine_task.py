@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from ephymeris_sidecar.rig import registry
-from ephymeris_sidecar.taskdef import generate, lowering
+from ephymeris_sidecar.taskdef import generate, lowering, pavlovian
 from ephymeris_sidecar.taskdef import spine as spine_module
 from ephymeris_sidecar.taskdef.model import TaskDefinition
 from ephymeris_sidecar.taskdef.store import TaskStore
@@ -420,9 +420,11 @@ def test_the_ram_budget_is_what_an_avr_build_adds_for_the_task(tmp_path):
     assert 8192 - (spine_module.RUNNER_RAM_BYTES + spine_module.TASK_RAM_MAX) == 2728
 
     # Driven outputs (TASKS.md#driven-outputs), with a tone and without one: the
-    # drives and tone()'s own globals are counted too.
-    fixture.install(*fixture.issued_rig(driven=True))
-    for raw in (fixture.stimulus(), no_tone(fixture.stimulus())):
+    # drives and tone()'s own globals are counted too. So are Pavlovian trace and
+    # delay conditioning (TASKS.md#pavlovian-conditioning), on a lick sensor.
+    fixture.install(*fixture.issued_rig(driven=True, lick=True))
+    for raw in (fixture.stimulus(), no_tone(fixture.stimulus()), pavlovian.definition(),
+                pavlovian.definition(trace=False)):
         definition = TaskDefinition.from_json(raw)
         assert store.save(definition) == [], raw["id"]
         low = spine_module._resolve(definition).lowered
@@ -583,6 +585,9 @@ def _held(d: dict, i: int) -> dict:
         (fixture.held_trial, lambda d: _held(d, 3).update(abortOnEnter="cue"), "SPN105", "spine[3].abortOnEnter"),
         (fixture.held_trial, lambda d: _held(d, 3).update(abortOnRelease="sample"), "SPN105",
          "spine[3].abortOnRelease"),
+        # A phase's watch names input slots, each once (`TASKS.md#what-a-spine-task-holds`).
+        (fixture.held_trial, lambda d: _held(d, 3).update(watch=["cue"]), "SPN105", "spine[3].watch"),
+        (fixture.held_trial, lambda d: _held(d, 3).update(watch=["early", "early"]), "SPN105", "spine[3].watch"),
         # A release the core can only see if the input is held when the phase starts.
         (fixture.held_trial, lambda d: _held(d, 0).update(edge="exit"), "SPN111", "spine[1].on"),
         (fixture.held_trial, lambda d: _held(d, 3).update(abortOnRelease="early"), "SPN111",
@@ -610,6 +615,15 @@ def test_a_drawn_count_whose_stored_range_is_inverted_is_refused_at_save(stored)
     key = "counter_0_count_max" if "counter_0_count_max" in stored else "counter_0_count"
     assert ("SPN105", f"params.{key}") in found, found
     assert "#error" in generate.task_spine_h(definition)
+
+
+def test_a_watch_round_trips_and_a_watched_held_trial_is_clean():
+    raw = fixture.held_trial()
+    raw["spine"][3]["watch"] = ["early", "port"]
+    definition = TaskDefinition.from_json(raw)
+    assert definition.spine.phases[3].to_json()["watch"] == ["early", "port"]
+    assert "watch" not in definition.spine.phases[2].to_json(), "an empty watch is not written"
+    assert validate(definition) == []
 
 
 def test_a_drawn_count_whose_stored_range_is_in_order_is_clean():

@@ -55,7 +55,7 @@ flowchart LR
     subgraph generated ["⚙️  Generated into the folder"]
         pins["TaskPins.h<br/>pins + every BF_ code"]
         trials["TaskTrials.h<br/>trial table"]
-        util["UtilityChannels.h<br/>outputs + beams"]
+        util["UtilityChannels.h<br/>outputs + inputs"]
         profile["task.json<br/>what the app reads"]
     end
     board(["🔌 arduino-cli → Mega 2560"])
@@ -131,14 +131,18 @@ flowchart LR
     class mega kBoard
 ```
 
+BOX_Utility reads a channel's role and type, not its kind
+([TASKS.md › The box utility](../docs/TASKS.md#the-box-utility)). The last column is what each kind's
+default role and type make of it there.
+
 | Kind | In a task | In BOX_Utility |
 |---|---|---|
-| **engagement** | Where a trial starts and the animal samples. Exactly one | A beam the self-test checks |
-| **response** | A port a trial type can name as correct; its port slot picks its strobe family | A beam the self-test checks |
-| **emitter** | A stimulus line, the condition a trial presents | A grid row; fires with the vacuum closed in the self-test |
+| **engagement** | Where a trial starts and the animal samples. Exactly one | An input the self-test checks |
+| **response** | A port a trial type can name as correct; its port slot picks its strobe family | An input the self-test checks |
+| **emitter** | A stimulus line, the condition a trial presents | A grid row; fires with every routing line on in the self-test |
 | **reward** | Delivers the reward; pulse width is the volume | A grid row; what Prime opens |
-| **cue** | The trial light: "a trial is available" | A grid row; the first one is how a box identifies itself |
-| **vacuum** | Odor routing with no behavioral meaning | A grid row; energized with each stimulus line in the self-test |
+| **cue** | The trial light: "a trial is available" | A grid row; the first level line is how a box identifies itself |
+| **vacuum** | Odor routing with no behavioral meaning | A grid row; on with each stimulus line in the self-test |
 | **sync** | One pulse per strobe into a recording controller | Never driven: a pulse there is an edge in a recording |
 
 ## The BehaviorBox library
@@ -168,7 +172,8 @@ name outputs by their Rig channel name, case-insensitively:
 | Command | Does |
 |---|---|
 | `TOGGLE <ch>` · `ON <ch>` · `OFF <ch>` | Latch, open, close one output, e.g. `TOGGLE fluid_2` |
-| `PULSE <ch>` | Open it for the pulse width, then close it |
+| `PULSE <ch>` | Open it for exactly the pulse width, then close it, however long its `STATUS` line takes to print |
+| `DUTY <ch> <n>` · `HZ <ch> <n>` | A PWM line's duty; a tone's pitch or a train's rate. Limits and defaults: [TASKS.md › The box utility](../docs/TASKS.md#the-box-utility) |
 | `SET PULSE=<ms>` | Pulse width, 10–5000 ms |
 | `ALLOFF` | Close everything. Always safe, always available |
 | `SELFTEST` · `STOP` | Run or abort the hardware self-test |

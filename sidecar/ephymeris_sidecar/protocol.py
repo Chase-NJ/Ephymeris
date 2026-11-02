@@ -163,6 +163,7 @@ class Evt:
     COHORTS_UPDATED: Final = "cohorts.updated"
     PREFIXES_UPDATED: Final = "prefixes.updated"
     SESSION_TELEMETRY: Final = "session.telemetry"
+    SESSION_REPLAY: Final = "session.replay"
     SESSION_ANIMAL_ENDED: Final = "session.animalEnded"
     LOGBOOK_UPDATED: Final = "logbook.updated"
     SESSION_LIFECYCLE: Final = "session.lifecycle"
@@ -292,7 +293,9 @@ SHAPES: Final[dict[str, Any]] = {
     "LiveMetric": ('obj', (('id', 'str', False), ('label', 'str', False), ('triggerCode', 'int', False), ('successCode', 'int', False), ('alternateCode', 'int', False), ('alternateCodes', ('list', 'int'), True), ('windowSize', 'int', False))),
     "ProfileKind": ('lit', ('behavior', 'utility')),
     "ControlOption": ('obj', (('label', 'str', False), ('command', 'str', False))),
-    "ControlChannel": ('obj', (('label', 'str', False), ('state', 'str', True), ('toggle', 'str', True), ('pulse', 'str', True), ('kind', 'str', True))),
+    "SettingOption": ('obj', (('label', 'str', False), ('value', 'str', False), ('command', 'str', False))),
+    "ControlSetting": ('obj', (('label', 'str', False), ('state', 'str', False), ('options', ('list', ('ref', 'SettingOption')), False))),
+    "ControlChannel": ('obj', (('label', 'str', False), ('state', 'str', True), ('toggle', 'str', True), ('pulse', 'str', True), ('kind', 'str', True), ('setting', ('ref', 'ControlSetting'), True))),
     "Control": ('obj', (('id', 'str', False), ('label', 'str', False), ('type', ('lit', ('button', 'select', 'grid')), False), ('command', 'str', True), ('options', ('list', ('ref', 'ControlOption')), True), ('channels', ('list', ('ref', 'ControlChannel')), True))),
     "TelemetryField": ('obj', (('key', 'str', False), ('label', 'str', False))),
     "TelemetrySpec": ('obj', (('match', 'str', False), ('fields', ('list', ('ref', 'TelemetryField')), False))),
@@ -304,6 +307,8 @@ SHAPES: Final[dict[str, Any]] = {
     "BoxTelemetry": ('obj', (('box', 'int', False), ('animalId', 'str', False), ('metrics', ('list', ('ref', 'TelemetryMetric')), False))),
     "PortTelemetry": ('obj', (('box', 'int', False), ('running', 'bool', False), ('metrics', ('list', ('ref', 'TelemetryMetric')), False))),
     "AnimalEnded": ('obj', (('box', 'int', False), ('animalId', 'str', False), ('stopReason', 'str', False), ('filePath', ('union', ('str', 'null')), False))),
+    "LiveReplayStatus": ('lit', ('replaying', 'diverged', 'unreplayable', 'unavailable', 'ended')),
+    "LiveReplay": ('obj', (('box', 'int', False), ('animalId', 'str', False), ('status', ('ref', 'LiveReplayStatus'), False), ('detail', ('union', ('str', 'null')), False), ('state', ('union', ('int', 'null')), False), ('phase', ('union', ('int', 'null')), False), ('row', ('union', ('str', 'null')), False), ('provisional', 'bool', False), ('unavailable', ('union', ('str', 'null')), False), ('trials', 'int', False), ('current', ('union', (('ref', 'ReplayTrial'), 'null')), False), ('last', ('union', (('ref', 'ReplayTrial'), 'null')), False), ('metrics', ('list', ('ref', 'MetricSummary')), False), ('overall', ('union', (('ref', 'MetricSummary'), 'null')), False), ('replay', ('union', (('ref', 'ReplayScore'), 'null')), False), ('divergence', ('union', (('ref', 'ReplayDivergence'), 'null')), False))),
     "RunnerSession": ('obj', (('session', ('ref', 'Session'), False), ('groupId', ('union', ('str', 'null')), False), ('boxes', ('list', ('ref', 'SessionBox')), False))),
     "ActiveSessions": ('obj', (('running', ('union', (('ref', 'RunnerSession'), 'null')), False), ('configuring', ('list', ('ref', 'Session')), False), ('stale', ('list', ('ref', 'Session')), False), ('confirmations', 'int', False))),
     "SessionListItem": ('obj', (('id', 'str', False), ('cohortId', 'str', False), ('prefixName', 'str', False), ('sessionNumber', 'str', False), ('date', 'str', False), ('startedAt', 'str', False), ('endedAt', ('union', ('str', 'null')), False), ('clockStartedAt', 'str', False), ('clockEndedAt', ('union', ('str', 'null')), False), ('status', ('ref', 'SessionStatus'), False), ('folderPath', 'str', False), ('ordinal', 'int', False), ('runCount', 'int', True), ('groupRuns', ('list', ('ref', 'GroupRun')), False))),
@@ -316,7 +321,9 @@ SHAPES: Final[dict[str, Any]] = {
     "Proportion": ('obj', (('n', 'int', False), ('of', 'int', False), ('p', ('union', ('float', 'null')), False), ('low', ('union', ('float', 'null')), False), ('high', ('union', ('float', 'null')), False))),
     "OutcomeTally": ('obj', (('outcomeClass', 'str', False), ('n', 'int', False), ('of', 'int', False), ('p', ('union', ('float', 'null')), False), ('low', ('union', ('float', 'null')), False), ('high', ('union', ('float', 'null')), False))),
     "RowOutcomes": ('obj', (('rowId', ('union', ('str', 'null')), False), ('name', ('union', ('str', 'null')), False), ('trials', 'int', False), ('unclassified', 'int', False), ('classes', ('list', ('ref', 'OutcomeTally')), False))),
-    "ReplayScore": ('obj', (('interp', 'int', False), ('trials', 'int', False), ('unclassified', 'int', False), ('classes', ('list', ('ref', 'OutcomeTally')), False), ('rows', ('list', ('ref', 'RowOutcomes')), False), ('rewarded', ('ref', 'Proportion'), False))),
+    "ReplayScore": ('obj', (('interp', 'int', False), ('trials', 'int', False), ('unclassified', 'int', False), ('classes', ('list', ('ref', 'OutcomeTally')), False), ('rows', ('list', ('ref', 'RowOutcomes')), False), ('rewarded', ('ref', 'Proportion'), False), ('rates', ('list', ('ref', 'WindowRate')), False))),
+    "RateEstimate": ('obj', (('n', 'int', False), ('mean', ('union', ('float', 'null')), False), ('low', ('union', ('float', 'null')), False), ('high', ('union', ('float', 'null')), False))),
+    "WindowRate": ('obj', (('rowId', 'str', False), ('name', 'str', False), ('phase', 'int', False), ('label', 'str', False), ('channel', 'str', False), ('rate', ('ref', 'RateEstimate'), False), ('reference', ('union', ('int', 'null')), False), ('versus', ('union', (('ref', 'RateEstimate'), 'null')), False), ('lowConfidence', 'bool', False))),
     "ReplayDivergence": ('obj', (('detail', 'str', False), ('index', ('union', ('int', 'null')), False), ('atMs', ('union', ('int', 'null')), False), ('expected', ('union', ('str', 'null')), False), ('recorded', ('union', ('str', 'null')), False))),
     "ProfileSource": ('lit', ('snapshot', 'sketch-current', 'inferred', 'unavailable')),
     "RunSummary": ('obj', (('runId', 'str', False), ('sessionId', 'str', False), ('animalId', 'str', False), ('boxNumber', ('union', ('int', 'null')), False), ('startedAt', 'str', False), ('endedAt', ('union', ('str', 'null')), False), ('sketchPath', 'str', False), ('sketchName', 'str', False), ('profileHash', ('union', ('str', 'null')), False), ('paramsHash', ('union', ('str', 'null')), False), ('profileSource', ('ref', 'ProfileSource'), False), ('stale', 'bool', False), ('falseStart', 'bool', False), ('falseStartSource', ('union', (('lit', ('automatic', 'marked', 'restored')), 'null')), False), ('restartedBy', ('union', ('str', 'null')), False), ('status', ('ref', 'RunStatus'), False), ('metrics', ('list', ('ref', 'MetricSummary')), False), ('overall', ('union', (('ref', 'MetricSummary'), 'null')), False), ('outcomes', ('union', (('ref', 'TrialOutcomes'), 'null')), False), ('conditions', ('list', ('ref', 'ConditionOutcomes')), False), ('engagement', ('union', (('ref', 'TrialEngagement'), 'null')), False), ('totalEvents', 'int', False), ('durationMs', ('union', ('float', 'null')), False), ('stopReason', ('union', ('str', 'null')), False), ('clean', 'bool', False), ('seed', ('union', ('int', 'null')), False), ('detail', ('union', ('str', 'null')), False), ('excludedByDefault', 'bool', False), ('replay', ('union', (('ref', 'ReplayScore'), 'null')), False), ('divergence', ('union', (('ref', 'ReplayDivergence'), 'null')), False))),
@@ -618,6 +625,7 @@ EVENT_DATA: Final[dict[str, Any]] = {
     "cohorts.updated": ('ref', 'CohortsUpdatedData'),
     "prefixes.updated": ('ref', 'PrefixesUpdatedData'),
     "session.telemetry": ('ref', 'BoxTelemetry'),
+    "session.replay": ('ref', 'LiveReplay'),
     "session.animalEnded": ('ref', 'AnimalEnded'),
     "logbook.updated": ('ref', 'LogbookUpdated'),
     "session.lifecycle": ('ref', 'ActiveSessions'),

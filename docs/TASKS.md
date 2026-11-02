@@ -43,6 +43,7 @@ Everything between "a box runs firmware that emits strobes" and "the app draws i
   - [The generated folder](#the-generated-folder)
   - [The runner](#the-runner)
   - [Driven outputs](#driven-outputs)
+  - [Pavlovian conditioning](#pavlovian-conditioning)
   - [The snapshot](#the-snapshot)
   - [Spine diagnostics](#spine-diagnostics)
 - [Rig wiring](#rig-wiring)
@@ -371,7 +372,7 @@ A `"kind": "utility"` profile makes a priming, cleaning or self-test sketch firs
 |---|---|---|---|
 | `button` | a button | its `command` | non-empty `command` |
 | `select` | a dropdown | the chosen option's `command` | non-empty `options[]`, each with a `command` |
-| `grid` | one row per channel with a state lamp | that row's `toggle` or `pulse` | non-empty `channels[]`; each needs a `label` and at least one of `toggle`/`pulse` |
+| `grid` | one row per channel with a state lamp, and a select for a row's `setting` | that row's `toggle` or `pulse`, or the chosen setting option's `command` | non-empty `channels[]`; each needs a `label` and at least one of `toggle`/`pulse`; a `setting` needs a `label`, a `state` and non-empty `options[]`, each with a `label`, `value` and `command` |
 
 ![Debug Mode for box 3 on BOX_Utility: buttons for Full self-test, Stop test and All off, a pulse-width dropdown, a Prime block, and grid rows with a lamp and switch for each fluid line, the vacuum, the trial light (lit, "1 open") and twelve odor lines](images/debug-mode.webp)
 
@@ -379,7 +380,7 @@ A `"kind": "utility"` profile makes a priming, cleaning or self-test sketch firs
 section headers count what is open. Prime is the app's own control
 ([ARCHITECTURE.md](ARCHITECTURE.md#running-a-task-from-debug-mode)), not a profile control.*
 
-`grid` exists because "which solenoid is energized right now" on a fluid rig is a safety readout, not a convenience. A row with neither `toggle` nor `pulse` is rejected rather than rendered as inert decoration. A missing `state` leaves the lamp neutral rather than claiming "closed" — not reported and closed are different facts.
+`grid` exists because "which solenoid is energized right now" on a fluid rig is a safety readout, not a convenience. A row with neither `toggle` nor `pulse` is rejected rather than rendered as inert decoration. A missing `state` leaves the lamp neutral rather than claiming "closed" — not reported and closed are different facts. For the same reason a setting's select shows the value the board reports under the setting's `state`, never the option last chosen: while any box has not reported it (one on an older utility never will) it shows a dash, and when the boxes of a broadcast disagree, *mixed*.
 
 `telemetry` is `{ match?: string (default "STATUS"), fields?: [{key, label?}] }`. The app finds the newest `port.output` line beginning with `match`, parses space-separated `key=value` pairs, and shows the declared fields. **`STATUS` values cannot contain spaces.** Prose belongs in ordinary `Serial.println` lines, which land in the console.
 
@@ -389,7 +390,7 @@ section headers count what is open. Prime is the app's own control
 { "identify": { "on": "ON trial_light", "off": "OFF trial_light" } }
 ```
 
-The two commands that make a box announce itself, used by the utility baseline's `utility.identify` and the guided placement walk ([ARCHITECTURE.md](ARCHITECTURE.md#hardware-utility-baseline)). Keeping them in the profile is what lets the walk work on a rig that signals with a buzzer, another LED, or not at all. **Both halves are required together** — a box that can be lit but not unlit would announce itself indefinitely. Omitting the block is normal: that box simply cannot be asked. For the box utility it is generated, on the rig's first `cue` channel ([The box utility](#the-box-utility)). `identify` is not the same as that channel's row in a `grid`: that is a manual control; this is a contract the app drives on its own.
+The two commands that make a box announce itself, used by the utility baseline's `utility.identify` and the guided placement walk ([ARCHITECTURE.md](ARCHITECTURE.md#hardware-utility-baseline)). Keeping them in the profile is what lets the walk work on a rig that signals with a buzzer, another LED, or not at all. **Both halves are required together** — a box that can be lit but not unlit would announce itself indefinitely. Omitting the block is normal: that box simply cannot be asked. For the box utility it is generated, on the rig's first level cue, never a tone or a train ([The box utility](#the-box-utility)). `identify` is not the same as that channel's row in a `grid`: that is a manual control; this is a contract the app drives on its own.
 
 ### Legacy names
 
@@ -556,28 +557,50 @@ The shipped sketches compile against `BoxPins.h`'s defaults — the box as built
 
 ### The box utility
 
-`BOX_Utility` is the resting firmware on every idle box and Debug Mode's control panel: it latches and pulses outputs, primes lines, and runs a hardware self-test. **Nothing in it describes the box.** The logic is written once in the library's `BoxUtility.h` and host-tested (`extras/host_test/run_box.sh`, against a deliberately smaller fixture box). What the box *is* comes from the rig, through `taskdef/utility.py`, whenever the sketch is rebuilt (every start, wiring change and vocabulary edit, the same triggers as any [rebuilt bundled sketch](#rebuilt-bundled-sketches)).
+`BOX_Utility` is the resting firmware on every idle box and Debug Mode's control panel: it latches and pulses outputs, sets a driven output's duty or Hz, primes lines, and runs a hardware self-test. **Nothing in it describes the box.** The logic is written once in the library's `BoxUtility.h` and host-tested (`extras/host_test/run_box.sh`, against a deliberately smaller fixture box). What the box *is* comes from the rig's [channel set](#the-channel-set-and-the-pin-map), through `taskdef/utility.py`, whenever the sketch is rebuilt (every start, wiring change and vocabulary edit, the same triggers as any [rebuilt bundled sketch](#rebuilt-bundled-sketches)). It reads each channel's `type`, `mode`, `role`, `active_level`, label and pin, and its `kind` only for the colour Debug Mode draws its row in and to keep the sync line out. So a channel added on the Rig page appears in Debug Mode, responds there, and is in the self-test straight away.
 
 ```mermaid
 flowchart LR
-    rig["Rig page<br/>channels, pins, labels"] --> gen["taskdef/utility.py"]
+    rig["Rig page<br/>channel set, pins, labels"] --> gen["taskdef/utility.py"]
     tmpl["firmware/Utility/BOX_Utility/task.json<br/>buttons, pulse select, legacyNames"] --> gen
-    gen --> h["UtilityChannels.h<br/>one row per output and beam"]
-    gen --> tj["task.json<br/>+ grids, beam fields, identify"]
+    gen --> h["UtilityChannels.h<br/>one row per output and input"]
+    gen --> tj["task.json<br/>+ grids, settings, input fields, identify"]
     h --> eng["BoxUtility.h<br/>commands, STATUS, self-test"]
     tj --> dm["Debug Mode panel"]
 ```
 
-| From the rig | Becomes |
+| From the channel set | Becomes |
 |---|---|
-| Every `emitter`, `reward`, `cue` and `vacuum` channel, in declaration order within its kind | An output row: its **channel name** is the command token (`PULSE fluid_2`) and STATUS key (`fluid_2=1`); its **Rig label** names it in the self-test and the Debug Mode grid (a reward line adds its well, a [driven output](#driven-outputs) what it plays). A PWM line is on fully, a tone plays a 1 kHz test tone, and a train pulses a 20 Hz, 5 ms test train for as long as it is on, never held HIGH |
-| Every `engagement` and `response` channel | A beam: a STATUS key, a telemetry field, a prompted step in the self-test |
-| The first `cue` | The `identify` pair (`ON trial_light` / `OFF trial_light`) |
-| `sync` | Nothing. A pulse on it would be an edge in a recording |
+| Every `digital_out`, `pwm_out` and `tone_out`, except the sync line | An output row, grouped by role (below), in declaration order within a group: its **channel name** is the command token (`PULSE fluid_2`) and STATUS key (`fluid_2=1`); its **Rig label** names it in the self-test and the Debug Mode grid (a reward line adds the port it serves, a tone or train what it plays) |
+| A [driven output](#driven-outputs) | Its row also carries its one **setting**, a select in its grid row (below) |
+| Every `digital_in`, whatever its role | An input: a STATUS key (`1` while active, by its own `active_level`), a telemetry field, a prompted step in the self-test. An active-low input is pulled up; an active-high one is not |
+| The first `cue`-role level line | The `identify` pair (`ON trial_light` / `OFF trial_light`), and the light the self-test turns on while any input is active (`BOX_UTILITY_LEVEL_CUE`, its row in the table). By role, so a door shown with the cues is never it, and never a tone or a train: identify runs while animals are placed. A rig with no such line has no `identify` |
+| Role `sync` (or the `sync` kind's line) | Nothing. A pulse on it would be an edge in a recording |
+
+| Role | Self-test | Debug Mode grid |
+|---|---|---|
+| `stimulus` | Fires 500 ms each, with every routing line on | `emitters`, Stimulus lines |
+| `reward` | Pulses 500 ms each | `fluids`, Reward lines (Prime) |
+| `cue`, and any other role an output declares | Blinks six times | `aux`, Cues & other lines |
+| `routing` | On with each stimulus line; on a box with none, blinks six times | `aux` |
+
+| Drive | On means | Setting (command) | Default | Board's limits |
+|---|---|---|---|---|
+| Level | HIGH | none | — | — |
+| `pwm_out` | `analogWrite` at the duty | Duty: 10, 25, 50, 100 % (`DUTY <ch> <n>`) | 255 | 0–255 |
+| `tone_out` | `tone()` at the pitch | Pitch: 500 Hz to 8 kHz (`HZ <ch> <n>`) | 1000 Hz | 31–65535 Hz |
+| `digital_out`, `mode: "train"` | A test train of 5 ms pulses at the rate (`interp_train_high`), never held HIGH | Rate: 5, 10, 20, 40 Hz (`HZ <ch> <n>`) | 20 Hz | 1–100 Hz |
 
 - **Opt-in is the include.** A sketch whose `.ino` includes `UtilityChannels.h` is generated (`wants_utility`), as one including `TaskPins.h` is re-pinned. The shipped `UtilityChannels.h` declares nothing, so a bare build stops at `BoxUtility.h`'s `#error`.
-- **The profile is merged, not replaced.** The folder's own `task.json` keeps what does not depend on the box. The generator adds three grids (`fluids`, `aux`, `emitters`) whose rows carry an explicit `kind`, beam telemetry fields and `identify`. `fluids` keeps its id because Prime finds the reward grid by it.
-- **The self-test follows the table.** Stimulus lines fire with the vacuum energised, reward lines pulse one by one with their labels printed, each cue blinks, then every beam must read clear at rest and break when prompted. The tally is one check per beam plus the rest check.
+- **The profile is merged, not replaced.** The folder's own `task.json` keeps what does not depend on the box. The generator adds three grids (`fluids`, `aux`, `emitters`) whose rows carry an explicit `kind` (the colour Debug Mode draws them in) and, for a driven output, a `setting`; a telemetry field per input; and `identify`. `fluids` keeps its id because Prime finds the reward grid by it.
+- **A setting is the board's, not the app's.** `DUTY` or `HZ` applies at once to a line that is on and is kept through `OFF` and `ALLOFF`; a reset restores the default. The board reports it as `<ch>.duty=<n>` or `<ch>.hz=<n>` in every `STATUS`, and the select shows that value. A value outside the board's limits, a malformed one, or the wrong verb for the line changes nothing, as an out-of-range `SET PULSE` does. A train's width stays 5 ms, shorter than the period of every rate it takes (an `#error` in `BoxUtility.h` holds this), so a click never holds a laser on. `ON` leaves a running train alone, and a new rate ends the pulse in progress and goes on from the new rate's next rise.
+
+> [!CAUTION]
+> **Nothing the utility prints may keep an output on past its time.** A 115200-baud line drains about 11.5 bytes a millisecond into a 64-byte TX buffer, and a print into a full one waits. A `STATUS` line on a big rig is two kilobytes, about 190 ms of draining, so a blocking print would hold a laser on for that long, and a `PULSE` timed after its own `STATUS` would run that much long: `PULSE` is how a reward valve is timed for calibration, so the volume would be wrong with no error. Every byte goes through `say()`, which writes only what fits and, while it waits, steps the trains and ends a timed output (`PULSE`, and each line the self-test fires or blinks), timed by `micros()` from the moment it turned on. So a train pulse falls within a millisecond of its width, and a `PULSE` lasts its width to the millisecond. `test_box_utility.py` holds both on the largest rig a save allows, under the host shim's real serial timing (`bb_realTiming`).
+- **The self-test follows the table**, so it reaches every output and input. Each output is driven as its drive at its current setting: a tone sounds, a train pulses. Every input must read inactive at rest, then go active when prompted. The tally is one check per input plus the rest check.
+
+> [!CAUTION]
+> **Nothing in the utility may name a channel.** A channel name, count or pin written into `BoxUtility.h`, the BOX_Utility folder, `taskdef/utility.py` or the Debug Mode panel drives the right pin under the wrong name on a rewired box, or leaves a new channel out with no error. `test_box_utility.py` fails on any shipped channel name in those sources.
 
 ### Order is meaning
 
@@ -639,7 +662,7 @@ It has limits, and each is diagnosed rather than guessed around:
 
 - the phases are Wait, Hold, Present, Delay, Response window, Counter, Outcome and ITI;
 - a session is a sequence of [blocks](#blocks), each drawing its rows by a selection until its end rule is met;
-- nothing is scored live yet: Mission Control says so, from the profile (`src/lib/sessions/liveScoring.ts`). Analytics scores a finished run by replaying it ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#how-a-spine-run-is-scored));
+- Mission Control scores a run live by replaying it as its strobes arrive, and Analytics scores the finished run by the same replay ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#live-scoring)); Debug Mode runs no live replay, and says so (`src/lib/sessions/liveScoring.ts`);
 - it is proven on the host. On a Mega it has run only with nothing wired, so no response, hold, abort or press has yet come from a real input ([README.md](../README.md#not-yet-done)).
 
 ### What a spine task holds
@@ -649,7 +672,7 @@ A definition with a top-level `spine` key is a spine task (`taskdef/model.py`, `
 | Field | Holds |
 |---|---|
 | `slots[]` | The spine's roles, each `{id, type, mode}` with type `digital_in`, `digital_out`, `pwm_out` or `tone_out`, and `mode: "train"` on a `digital_out` that is a pulse train ([Driven outputs](#driven-outputs)). A slot binds only a channel of its own type and mode |
-| `spine[]` | The phases, in order. Each `{phase, …}`:<br>• `wait` moves on at an edge of input slot `on`: its `edge`, `enter` (the default) or `exit`. An optional `timeoutMs` ends the trial early;<br>• `hold` moves on after `ms` with input slot `on` still active; a release sooner is `hold_broken`;<br>• `present` lasts `ms`. `abortOnRelease` names an input slot whose release aborts it, and `abortOnEnter` one whose entry does;<br>• `delay` lasts `ms`, with the same two optional aborts;<br>• `counter` counts rises of input slot `on` and moves on at the N-th. N is `count` (fixed: FR), drawn uniformly from `count` to `countMax` at each entry (VR), or the next of `ratios`, one per completion, the last repeating (PR). An optional `timeoutMs` is a time limit on the whole count: running out is an `omission`, and with `endsSession: true` that trial is the session's last. At most one per spine;<br>• `response`, the Response window, watches the input slots in `responses` for `ms`; each row's `map` says where a response or the timeout goes. Optional `holdMs` is how long a response must be held when its map entry asks for a hold. At most one per spine, followed by exactly one Outcome;<br>• `outcome`, at most one per spine, opens output slot `line`, a level `digital_out`, then waits `ms`. After a Response window it names no `line`: the row's map does;<br>• `iti` lasts `ms`.<br>Any phase may name `outputs`, the output slots HIGH while in it, a window's through its holds |
+| `spine[]` | The phases, in order. Each `{phase, …}`:<br>• `wait` moves on at an edge of input slot `on`: its `edge`, `enter` (the default) or `exit`. An optional `timeoutMs` ends the trial early;<br>• `hold` moves on after `ms` with input slot `on` still active; a release sooner is `hold_broken`;<br>• `present` lasts `ms`. `abortOnRelease` names an input slot whose release aborts it, and `abortOnEnter` one whose entry does;<br>• `delay` lasts `ms`, with the same two optional aborts;<br>• `counter` counts rises of input slot `on` and moves on at the N-th. N is `count` (fixed: FR), drawn uniformly from `count` to `countMax` at each entry (VR), or the next of `ratios`, one per completion, the last repeating (PR). An optional `timeoutMs` is a time limit on the whole count: running out is an `omission`, and with `endsSession: true` that trial is the session's last. At most one per spine;<br>• `response`, the Response window, watches the input slots in `responses` for `ms`; each row's `map` says where a response or the timeout goes. Optional `holdMs` is how long a response must be held when its map entry asks for a hold. At most one per spine, followed by exactly one Outcome;<br>• `outcome`, at most one per spine, opens output slot `line`, a level `digital_out`, then waits `ms`. After a Response window it names no `line`: the row's map does;<br>• `iti` lasts `ms`.<br>Any phase may name `outputs`, the output slots HIGH while in it, a window's through its holds, and `watch`, input slots whose edges are strobed and whose rises are counted while in it, and which never move it ([Pavlovian conditioning](#pavlovian-conditioning)) |
 | `rows[]` | The trial types. Each has a stable `id` (lower case, digits and underscores: it names the row's parameters), a required `name`, `bind` (slot → channel name), `rewardMs`, `rewardPermille` (read only by an Outcome with no window before it), with a Response window, a `map`, and, for each driven output slot, a `drive` entry ([Driven outputs](#driven-outputs)) |
 | `rows[].map` | The row's **contingency map**: one entry per watched response slot and one for `timeout`, each `{outcome, line, rewardPermille, hold}`:<br>• `outcome`, a class from `lowering.OUTCOME_CLASSES`;<br>• `line`, optional: a level output slot, which the row binds to a reward channel;<br>• `rewardPermille`, with a `line` only, default 1000;<br>• `hold`, on a response only: it must be held for the window's `holdMs`, and letting go sooner is `hold_broken` |
 | `blocks[]` | The session's blocks, in order, each `{id, rows, select, weights, trials, trialsMax, criterion, next, correction, correctionAfter, biasWindow, phaseMs}`: what [Blocks](#blocks) describes. At least one |
@@ -742,7 +765,7 @@ Selection and every end rule run in the interpreter's core, `BoxInterp.h`, so th
 - **Rows.** Each row gets its own copy of the spine, ITI included, since its bindings differ. With two or more rows, state 0 is a **pick state** carrying `STARTS_TRIAL`: its branches are each block's rows' first states, block by block, and it draws one of the running block's by the block's selection from the session RNG, going on in the same tick ([`BoxInterp.h`](../firmware/libraries/BehaviorBox/BoxInterp.h)). A trial's row is the branch it took. With one row, the row's first state is state 0 and there is no pick state. So the first phase of a task with several rows is never an Outcome.
 - **Blocks.** The table carries one `InterpBlock` per block: its slice of the pick's branches, its selection, the parameter slots of its N, criterion, bias window and correction limit, its `next` and its error classes as a bitmask. The table's `InterpBlocks.skipped` and `.hits` are the aborts' and the hits' bitmasks. When any block selects by weight or side, an `InterpEntry` per branch gives its weight's slot and its side, the input bit of the row's one `correct` response. Each `phaseMs` entry is an `InterpOverride`: while that block runs, a state reading `T<i>` reads `B<b>T<i>`. The Response window's state is flagged `INTERP_RESPONSE`, so the core knows a trial's response for anti-bias.
 - **The ITI comes last.** A spine ends in exactly one ITI per row; its timer leads back to state 0, which starts a trial.
-- **Ends.** Every exit that ends a trial early goes to an **end**: a copy of the ITI state that also carries the exit's outcome class. One end per class (and per ITI outputs) serves every row, after all the rows' states, with `table.rows` null. So an 18-row task pays one state for its aborts, not 18. **Past the Outcome a trial is already marked**: an early exit from a phase after it goes to the row's own ITI and marks nothing, or, for a Counter's limit that ends the session, to an end that marks nothing, so no trial carries two classes. Before the Outcome, the class each exit marks:
+- **Ends.** Every exit that ends a trial early goes to an **end**: a copy of the ITI state that also carries the exit's outcome class. One end per class (and per ITI outputs and watch) serves every row, after all the rows' states, with `table.rows` null. So an 18-row task pays one state for its aborts, not 18. **Past the Outcome a trial is already marked**: an early exit from a phase after it goes to the row's own ITI and marks nothing, or, for a Counter's limit that ends the session, to an end that marks nothing, so no trial carries two classes. Before the Outcome, the class each exit marks:
 
   | Exit | Class |
   |---|---|
@@ -752,6 +775,7 @@ Selection and every end rule run in the interpreter's core, `BoxInterp.h`, so th
   | A Wait's timeout before the first Present: no trial was offered | `abort_before_stimulus` |
   | A Wait's timeout from the first Present on: the animal was asked | `omission` |
   | A Counter's time limit | `omission`; with `endsSession`, the end is also a last-trial state |
+- **Watched inputs.** A phase's `watch` slots are in the `watch` of every state the phase writes, with no edge row, so the core strobes their edges and counts their rises and they move nothing: `BoxInterp.h`'s tick rule that a watched edge with no edge row does not hold a timer off. An Outcome's chance state and the pick state watch nothing; an end watches what its ITI watches. A Counter counts only its own edge row's rise, so a watched input there is never a press.
 - **Hold, Wait and the aborts** need no state kind of their own. A Hold is one state watching its input, whose timer leads on and whose fall leads to its end. A Wait on `exit` moves on at the fall. Each abort is one more edge row on its phase's state: the slot's fall or rise, to its end.
 - **The Counter** is one **counter state** per row, flagged `INTERP_COUNT`, with one edge row: its input's rise, to the next phase. N is the table's one **counter** (`BoxInterp.h`'s `InterpCounter`): the parameter slots of `N<i>` and `NX<i>`, or the compiled `ratios`. The core counts rises from entry; only the N-th is an exit, and a press below N does not hold the time limit off. A drawn N comes from the seeded session RNG at each entry, before the state's timer, so replay draws it identically. A progressive N needs no draw: the core counts completions from the session's start, and replay counts the same edges.
 - **The Response window** is one state per row. It watches the response bits, each rise leads to its map entry's branch, and the timer `T<i>` leads to the `timeout` branch.
@@ -777,7 +801,7 @@ Selection and every end rule run in the interpreter's core, `BoxInterp.h`, so th
 
 `libraries/BehaviorBox/BoxSpine.h` is the one runner of every spine task: the hardware layer around `BoxInterp.h`'s pure core.
 
-- **Inputs.** Each input is read and debounced every loop pass, by its channel's `active_level` and `debounce_ms`.
+- **Inputs.** Each input is read and debounced once a tick, on the first loop pass of each new `millis()` value, by its channel's `active_level` and `debounce_ms`. A Mega runs `loop()` many times a millisecond, and an edge is reported once: one read on a pass that steps no tick never reaches the core.
 - **Ticks.** The core is stepped once per millisecond of `millis()`, including each value AVR `millis()` skips.
 - **Outputs and strobes.** The runner drives each tick's outputs, then strobes the tick's actions, each stamped with the tick.
 - **The handshake.** It is the one in [Confirming the parameters](#confirming-the-parameters), over the table's parameter slots. A value is held only when it is a whole number within its slot's declared range, and the high end of a pair only when it is at least the low end already taken: a Counter's drawn N (`N<i>`, `NX<i>`), a block's drawn N (`BN<b>`, `BNX<b>`) and a criterion's k and n (`BK<b>`, `BKN<b>`), listed in `TaskSpine.h` as `SPINE_PAIRS`. Otherwise the board answers `CLAMPED` and the start is refused.
@@ -825,7 +849,7 @@ Beside the level line, an output can be driven three more ways ([ADR 0003](adr/0
   | 5 | 44, 45, 46 |
 
 - **A slot.** It binds only a channel of its own type and mode (SPN102), goes only in a phase's `outputs`, and is never a reward `line`. Its values are [parameters](#lowering), so the board clamps each to its range, and a row that gives none, or one out of range, is SPN112.
-- **A pulse train** fires pulse j of every second at `floor(j × 1000 / hz)` ms into it, `widthMs` long, from the tick the phase drives it HIGH: `BoxInterp.h`'s `interp_train_high()`, stepped on every tick, skipped `millis()` values included, with no `delay()`. A train of `ms` 0 runs as long as its phase holds it; otherwise it **runs out** `ms` ticks after it started, earlier than its phase if the phase is longer.
+- **A pulse train** fires pulse j of every second at `floor(j × 1000 / hz)` ms into it, `widthMs` long, from the tick the phase drives it HIGH: `BoxInterp.h`'s `interp_train_high()`, stepped on every tick, skipped `millis()` values included, with no `delay()`. A strobe takes the board time (its sync pulse and gap, about 0.7 ms, and a print that waits once 64 bytes are queued), so the trains are also stepped to `millis()` before each strobe and while waiting for room for it, and a strobe is never printed into a full buffer: a pulse falls within a millisecond of its width however many strobes its tick has (`run_spine.sh`'s `train_timing`, and `train_buffer` with the buffer full when the train starts, under real serial timing). A train of `ms` 0 runs as long as its phase holds it; otherwise it **runs out** `ms` ticks after it started, earlier than its phase if the phase is longer.
 
 > [!CAUTION]
 > **A width not shorter than the period, `1000 / hz`, would hold the line HIGH**: a steady output where a train was asked for, which replay would agree with. Each value can be within its own range and the pair still be wrong, so it is refused twice. At save it is SPN112, and the folder carries an `#error`. On the board, after every `SET` line, each train whose pair does not fit answers `CLAMPED <width key>`, so a per-box override that makes one never gets a `START`. A hand-typed `START` that makes one is answered the same way, and no run starts.
@@ -834,6 +858,32 @@ Beside the level line, an output can be driven three more ways ([ADR 0003](adr/0
 
 > [!CAUTION]
 > **A train's own end is part of what replay reproduces.** The board's live outputs are the core's less every train that ran out. A train that ran out strobes no second `off` when its phase ends, and the session end turns off only live outputs. Change this in `BoxSpine.h` and `analytics/stream/spine.py` together, or every run with a train reads as a divergence.
+
+### Pavlovian conditioning
+
+ADR 0003's first graded paradigm, written once in `taskdef/pavlovian.py`: `phases()` is its spine with no names, the shape a seed spine carries, and `definition()` is the whole task ([ADR 0003](adr/0003-phase-spine-task-model.md#worked-examples)). It needs no firmware and no state kind of its own: only the phase palette and `watch`.
+
+| Phase | Spine entry | Default |
+|---|---|---|
+| Baseline | `delay`, watching `lick` | 2000 ms |
+| CS | `present`, `outputs: ["cs"]`, watching `lick` | 2000 ms |
+| Trace | `delay`, watching `lick` | 1000 ms |
+| US | `outcome`, `line: "us"`, watching `lick`; its `ms` is the window after the reward | 3000 ms |
+| ITI | `iti` | 10000 ms |
+
+- **Delay conditioning** is `phases(trace=False)`: the same spine without the trace, so the US follows the CS's end. A CS held through the US is the Outcome's `outputs: ["cs"]`.
+- **No response gate.** The US follows the CS whatever the animal does; what it learned is read from its licks ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#phase-window-rates)).
+- **Rows.** `cs_plus` (CS+) pays `us` on every trial, `rewardPermille` 1000; `cs_minus` (CS−) never does, `rewardPermille` 0. Its Outcome still marks `correct`, as every Outcome with no window does, so P(correct | row) is 1 on both rows and says nothing here; `rewarded` and the rates do.
+- **The CS.** By default a `tone_out` slot both rows bind to one `tone` channel, each at its own pitch (`drive`, 8 kHz and 2 kHz). Given level cues (`Cue("odor_line_1")`), it is a `digital_out` slot each row binds to its own channel.
+- **The block.** One block, a shuffle bag of five tokens of each row, 60 trials.
+- **The channels.** `lick_spout` (a `digital_in`, active HIGH and debounced, as a lick sensor is), `tone` and `fluid_2`, each an argument. The shipped rig has neither `lick_spout` nor `tone`: add them on the Rig page, or the task is `SPN101` until then.
+- **Every duration is a parameter.** The ITI is fixed: a drawn ITI needs a drawn duration ([ADR 0003](adr/0003-phase-spine-task-model.md#open-questions), open question 3).
+
+```json
+{"phase": "delay", "ms": 2000, "watch": ["lick"]}
+{"phase": "present", "outputs": ["cs"], "ms": 2000, "watch": ["lick"]}
+"cs_minus": {"bind": {"lick": "lick_spout", "cs": "tone", "us": "fluid_2"}, "rewardPermille": 0, "drive": {"cs": {"hz": 2000}}}
+```
 
 ### The snapshot
 
@@ -861,7 +911,7 @@ It rides in the `# task_profile:` header line of every run's `.tsv` ([DATA.md](D
 | `SPN102` | A channel whose type or mode is not the slot's, or the sync line | A sensor driven as a valve; a laser train held on as a level; a pulse in a recording |
 | **`SPN103`** | **A channel edge with no live code.** The shipped channel set names none, so the rig's first wiring save issues them ([Edge codes](#edge-codes)) | An edge recorded as a number nothing decodes |
 | `SPN104` | The vocabulary lacks `START_SESSION`, `BLOCK_START`, `TRIAL_START` or `END_SESSION`. A machine seeded before `TRIAL_START` or `BLOCK_START` existed adds it on Task > Strobes, at the number the shipped vocabulary gives it (`rig/schema/strobe_vocab.default.json`) | A stream with no trials in it |
-| `SPN105` | A spine of the wrong shape: an unknown phase, no ITI or not last, a slot of the wrong direction, a missing duration, a slot called `timeout`, a mode on a slot that is not a `digital_out` or one other than `train`, an Outcome whose `line` is not a level output slot, more than one Outcome; a Wait, Hold or Counter whose `on` is not an input slot, a Wait `edge` other than `enter` or `exit`, an abort on a slot that is not an input; a Counter with neither or both of `count` and `ratios`, a count outside 1–10000, a `countMax` below `count` or beside `ratios`, more than 254 ratios or one outside 1–10000, `endsSession` without `timeoutMs`, more than one Counter, stored `params` whose `counter_<i>_count_max` would run below `counter_<i>_count`; a window whose `responses` are not distinct input slots, more than one window, a window not followed by exactly one Outcome, an Outcome after a window that names its own `line`; with several rows, a first phase that is an Outcome; a table over 254 states or more than 32 input or output bits, or a task whose states, edge rows, parameters, channels, ratios, blocks and driven outputs take more than 5000 B of RAM | A table the interpreter cannot walk, or a board with too little RAM left for its stack |
+| `SPN105` | A spine of the wrong shape: an unknown phase, no ITI or not last, a slot of the wrong direction, a missing duration, a slot called `timeout`, a mode on a slot that is not a `digital_out` or one other than `train`, an Outcome whose `line` is not a level output slot, more than one Outcome; a Wait, Hold or Counter whose `on` is not an input slot, a `watch` naming a slot that is not an input or one twice, a Wait `edge` other than `enter` or `exit`, an abort on a slot that is not an input; a Counter with neither or both of `count` and `ratios`, a count outside 1–10000, a `countMax` below `count` or beside `ratios`, more than 254 ratios or one outside 1–10000, `endsSession` without `timeoutMs`, more than one Counter, stored `params` whose `counter_<i>_count_max` would run below `counter_<i>_count`; a window whose `responses` are not distinct input slots, more than one window, a window not followed by exactly one Outcome, an Outcome after a window that names its own `line`; with several rows, a first phase that is an Outcome; a table over 254 states or more than 32 input or output bits, or a task whose states, edge rows, parameters, channels, ratios, blocks and driven outputs take more than 5000 B of RAM | A table the interpreter cannot walk, or a board with too little RAM left for its stack |
 | `SPN106` | No row or no block; a row or block id that is not lower case or not its own; a block that draws no row, a row twice or a row the task lacks; a row no block draws; an unknown `select`; `weights` that do not line up with the rows, or that a uniform block would not read; a weight out of range, or a bag over 32 tokens; a block `trials`, `trialsMax`, criterion, `correction` or `biasWindow` out of range; a `correctionAfter` naming a class that is not one, or `correct`, or given with no `correction`; a `next` that names no block; a `phaseMs` entry on a phase with no duration; an anti-bias block with a row that has no one response mapped `correct`; stored `params` whose pair runs high below low; two rows whose parameters would share a metadata key; a reward time or probability out of range. Also, without blocking the table, a session only End Session can end: blocks that loop or never end, with no `sessionTrials` | What the session cannot run, or a parameter the board would clamp |
 | `SPN107` | Two slots on one channel, in one row or across rows | One pin, two roles |
 | `SPN108` | A row with no name | Every readout titled after nothing |
@@ -877,7 +927,7 @@ It rides in the `# task_profile:` header line of every run's `.tsv` ([DATA.md](D
 > - 14 B per input bit and 5 B per output bit;
 > - 2 B per progressive ratio, and 2 B when there are none, since an empty array still takes one element;
 > - 12 B per block (`InterpBlock`), 2 B per branch entry (`InterpEntry`) when any block selects by weight or side, 3 B per override (`InterpOverride`) and 2 B per pair of slots held in order; an empty array of these is left out (`lowering.BLOCK_BYTES`, `ENTRY_BYTES`, `OVERRIDE_BYTES`, `spine.PAIR_BYTES`, pinned as the rows are);
-> - for a task with [driven outputs](#driven-outputs), 9 B (`spine.DRIVE_RUN_BYTES`) and 8 B per driven bit (`DRIVE_BYTES`), and 32 B for `tone()`'s own when it plays one (`TONE_RAM_BYTES`). A task with none compiles none of it.
+> - for a task with [driven outputs](#driven-outputs), 13 B (`spine.DRIVE_RUN_BYTES`) and 8 B per driven bit (`DRIVE_BYTES`), and 32 B for `tone()`'s own when it plays one (`TONE_RAM_BYTES`). A task with none compiles none of it.
 >
 > The rest of a spine sketch's globals is at most 464 B (`spine.RUNNER_RAM_BYTES`): the core's block state, with its ring of 32 responses for anti-bias, is about 60 B of it. A test compiles generated tasks for the Mega, up to the largest under the budget, and holds each build's globals at or under that sum, within 24 B: a task of three inputs and three outputs is the sum to the byte, and a smaller one comes in under it where the compiler folds a small constant channel array away. It skips without `arduino-cli`, except in CI's firmware compile job, which sets `REQUIRE_ARDUINO_CLI=1` so a changed row or array fails there. So a task within the budget compiles to at most 5464 B of globals (67% of a Mega's 8192 B). An 18-row 2AFC of one block (4978 B) fits; 19 rows (5242 B) do not. A task compiles at any size up to 254 states, so past the budget a board would run short of stack mid-session with no error at all.
 >
@@ -967,7 +1017,7 @@ Beside its kind, every channel declares what it is ([ADR 0003](adr/0003-phase-sp
 
 A channel that declares none of these, as every rig saved before they existed does, takes its type and role from its kind (`registry.channel_set_defaults`).
 
-**The trial-runner generator reads none of the new fields.** It still generates from `kind`, `well`, `port_slot` and `onset_strobe`, so every saved task and bundled sketch regenerates byte-identical (`test_channel_set.py`). A [spine task](#spine-tasks) reads `type`, `mode`, `active_level`, `debounce_ms` and `edges`, and nothing else of a channel but its pin.
+**The trial-runner generator reads none of the new fields.** It still generates from `kind`, `well`, `port_slot` and `onset_strobe`, so every saved task and bundled sketch regenerates byte-identical (`test_channel_set.py`). A [spine task](#spine-tasks) reads `type`, `mode`, `active_level`, `debounce_ms` and `edges`, and nothing else of a channel but its pin. [The box utility](#the-box-utility) reads `type`, `mode`, `role` and `active_level`, with the label and the pin.
 
 ### Registry rules
 
@@ -1333,7 +1383,9 @@ A profile with a `spine` key is hashed through `tasks/behaviour.py` ([ADR 0003](
 
 ## Derived state machine
 
-The Task tab and Mission Control draw the trial's state machine. It is **computed from the profile** in `src/lib/tasks/topology.ts` (`taskGraph`) — pure, no React, store or fetch — and laid out by `src/lib/tasks/graphLayout.ts`. Both are pinned by `topology.test.ts` and `graphLayout.test.ts`.
+The Task tab and Mission Control draw the trial's state machine. A [spine task](#spine-tasks)'s is not
+derived: Mission Control draws its spine, with the token where the sidecar's replay puts it
+([ARCHITECTURE.md](ARCHITECTURE.md#live-session-views)). Everything below is the legacy derivation. It is **computed from the profile** in `src/lib/tasks/topology.ts` (`taskGraph`) — pure, no React, store or fetch — and laid out by `src/lib/tasks/graphLayout.ts`. Both are pinned by `topology.test.ts` and `graphLayout.test.ts`.
 
 ### Why derived
 

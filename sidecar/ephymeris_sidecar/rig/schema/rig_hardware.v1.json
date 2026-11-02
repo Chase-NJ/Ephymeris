@@ -137,7 +137,7 @@
               "routing",
               "sync"
             ],
-            "description": "Channel set: what the line is for in a task. Defaults from the kind when absent; nothing generated reads it yet."
+            "description": "Channel set: what the line is for in a task. Defaults from the kind when absent. BOX_Utility groups its outputs by it (TASKS.md#the-box-utility); no task generator reads it yet."
           },
           "active_level": {
             "enum": [

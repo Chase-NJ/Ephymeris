@@ -231,6 +231,7 @@ class SpinePhase:
     count_max: int | None = None       # counter: the high end of a drawn N
     ratios: tuple[int, ...] = ()       # counter: a progressive N, one per completion
     ends_session: bool = False         # counter: its time limit is the session's last trial
+    watch: tuple[str, ...] = ()        # any phase: input slots counted while in it, which move nothing
 
     def to_json(self) -> dict[str, Any]:
         out: dict[str, Any] = {"phase": self.phase}
@@ -240,7 +241,8 @@ class SpinePhase:
                            ("line", self.line),
                            ("responses", list(self.responses) or None), ("holdMs", self.hold_ms),
                            ("count", self.count), ("countMax", self.count_max),
-                           ("ratios", list(self.ratios) or None), ("endsSession", self.ends_session or None)):
+                           ("ratios", list(self.ratios) or None), ("endsSession", self.ends_session or None),
+                           ("watch", list(self.watch) or None)):
             if value is not None:
                 out[key] = value
         return out
@@ -421,6 +423,7 @@ class Spine:
                 count_max=opt_int(p.get("countMax"), "countMax"),
                 ratios=ints(p.get("ratios"), "a counter's ratios"),
                 ends_session=_bool(p.get("endsSession", False), "endsSession"),
+                watch=strings(p.get("watch"), "a phase's watch"),
             )
             for p in objects("spine")
         )

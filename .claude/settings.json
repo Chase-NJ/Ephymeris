@@ -16,6 +16,47 @@
       "Edit(/**)",
       "Write(/**)",
       "Read(/**)"
+    ],
+    "deny": [
+      "Read(/node_modules/**)",
+      "Read(/dist/**)",
+      "Read(/src-tauri/target/**)",
+      "Read(/src-tauri/gen/**)",
+      "Read(/src-tauri/resources/**)",
+      "Read(/sidecar/.venv/**)",
+      "Read(/sidecar/build/**)",
+      "Read(/sidecar/dist/**)",
+      "Read(/**/__pycache__/**)",
+      "Read(/**/.pytest_cache/**)",
+      "Read(/**/*.egg-info/**)",
+      "Read(/package-lock.json)",
+      "Read(/src-tauri/Cargo.lock)",
+      "Read(/docs/images/**)",
+      "Read(/src-tauri/icons/**)",
+      "Read(/sidecar/tests/fixtures/legacy_pin.json)",
+      "Read(/sidecar/tests/fixtures/legacy_corpus.json)",
+      "Read(/**/*.mat)",
+      "Read(/**/*.tsv)",
+      "Read(/**/behavior.json/**)",
+      "Read(/**/behavior_json/**)",
+      "Read(/**/behavior_mat/**)",
+      "Read(/**/recovery_tsv/**)",
+      "Read(/**/*.log)",
+      "Read(/sidecar/*.err)",
+      "Read(/sidecar/*.out)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/filter_output.py\""
+          }
+        ]
+      }
     ]
   }
 }

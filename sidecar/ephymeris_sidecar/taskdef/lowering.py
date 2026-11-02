@@ -31,9 +31,15 @@ block; with one, the row's first state is state 0. Each block is an
 ENDS. Every exit that ends a trial early (an abort, a released Hold, a Wait's
 timeout, a Counter's time limit) goes to an END: a copy of the ITI state that
 also carries the exit's outcome class. One end per (class, ITI outputs,
-last-trial flag) serves every row, after all the rows' states. Past the
-Outcome the trial is already marked: an early exit there goes to the row's own
-ITI, or to an unmarked end when a Counter's limit ends the session.
+ITI watch, last-trial flag) serves every row, after all the rows' states. Past
+the Outcome the trial is already marked: an early exit there goes to the row's
+own ITI, or to an unmarked end when a Counter's limit ends the session.
+
+WATCHED INPUTS (`TASKS.md#what-a-spine-task-holds`). A phase's `watch` slots
+are ORed into the watch of every state the phase writes, with no edge row, so
+the core strobes and counts their edges and they move nothing (BoxInterp.h's
+tick rule 2). An Outcome's chance state and the pick watch nothing: neither is
+ever held across a tick.
 
 PARAMETER SLOTS, in order (`ParamSlot`):
             NT        the session's trial cap, read by the session layer (BoxSpine.h),
@@ -413,6 +419,13 @@ def lower(
             raise LoweringError(f"phase {i}: {slot!r} is not an input slot")
         return row_in[r][slot]
 
+    def watch_mask(r: int, i: int) -> int:
+        """Phase i's `watch`: input bits counted while in it, which move nothing."""
+        mask = 0
+        for slot in phases[i].get("watch") or ():
+            mask |= 1 << input_bit(r, i, slot)
+        return mask
+
     def output_mask(r: int, i: int, slots: Any) -> int:
         mask = 0
         for slot in slots or ():
@@ -509,6 +522,9 @@ def lower(
               chance: str | None = None, on_hit: Any = NONE, on_miss: Any = NONE, flags: int = 0,
               outcome: int = 0) -> int:
         t = slot[timer] if timer is not None else NONE
+        if phase is not None and row is not None and chance is None:
+            # A phase's watched slots, in every state it writes but its draw.
+            watch |= watch_mask(row, phase)
         edge_first = len(edges) if exits else 0
         edges.extend([list(e) for e in exits])
         states.append([outputs_mask, watch, t, t, on_timeout if timer is not None else NONE,
@@ -531,7 +547,7 @@ def lower(
         state(i, r, mask | output_mask(r, i, [line]), 0, reward_ms_key(r), at + 2)
         state(i, r, mask, 0, timer_key(i), nxt)
 
-    ends: dict[tuple[int, int, int], _Ref] = {}
+    ends: dict[tuple[int, int, int, int], _Ref] = {}
 
     def early(r: int, i: int, cls: int, iti_ref: _Ref, flags: int = 0) -> _Ref:
         """Where an early exit of row r from phase i goes: an end, its ITI marked
@@ -541,7 +557,7 @@ def lower(
             if not flags:
                 return iti_ref
             cls = 0
-        key = (cls, output_mask(r, iti, phases[iti].get("outputs")), flags)
+        key = (cls, output_mask(r, iti, phases[iti].get("outputs")), watch_mask(r, iti), flags)
         return ends.setdefault(key, _Ref())
 
     def aborts(r: int, i: int, p: dict[str, Any], iti_ref: _Ref) -> tuple[int, list[tuple[int, int, Any]]]:
@@ -649,9 +665,9 @@ def lower(
     else:
         emit_row(0)
         states[0][_FLAGS] |= STARTS_TRIAL
-    for (cls, mask, flags), ref in ends.items():
+    for (cls, mask, watch, flags), ref in ends.items():
         ref.at = len(states)
-        state(iti, None, mask, 0, timer_key(iti), 0, flags=flags, outcome=cls)
+        state(iti, None, mask, watch, timer_key(iti), 0, flags=flags, outcome=cls)
 
     counter = None
     if counter_phase is not None:

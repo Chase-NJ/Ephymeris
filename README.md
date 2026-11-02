@@ -315,6 +315,10 @@ macOS as run-from-source. Packaged-only path bugs exist (Windows verbatim `\\?\`
   instrument (an RHX digital input beside the sync line, or a scope). Nor, in Debug Mode, an LED
   dimming as its duty changes, a speaker's pitch or a train's rate following its menu, or an
   active-high input lighting its field ([The box utility](docs/TASKS.md#the-box-utility)).
+- **Pavlovian conditioning on a real box.** [Trace and delay conditioning](docs/TASKS.md#pavlovian-conditioning)
+  run on the host, licks counted per phase and read as rates. Not yet seen on a Mega: a lick sensor
+  added on the wiring page, its licks strobed only in the phases that watch it, and the rates in
+  Analytics matching licks counted by hand or on a recording.
 
 ### Known bugs
 

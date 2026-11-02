@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ChartFrame } from "@/components/charts/ChartFrame";
 import { Segmented } from "@/components/common/controls";
 import { outcomeParts } from "@/lib/analytics/session";
-import { classParts, trialRows } from "@/lib/analytics/trialTable";
+import { classParts, rateRows, trialRows } from "@/lib/analytics/trialTable";
 import type {
   ConditionOutcomes,
   RunSeries,
@@ -88,10 +88,12 @@ type DetailView = "trials" | "tape" | "trajectory" | "odors" | "engagement";
 
 /**
  * A spine run's trials as replay read them (`ANALYTICS.md#the-trial-table`):
- * each row's outcome classes, P(outcome | row), above one line per trial —
- * when it started, its row, how it ended, what paid, the response and its
- * latency, and when each phase began. Every value is the sidecar's; nothing
- * here decides an outcome.
+ * each row's outcome classes, P(outcome | row), then its phase-window rates
+ * when the task counts an input it never acts on (a Pavlovian task's licks,
+ * `ANALYTICS.md#phase-window-rates`), above one line per trial — when it
+ * started, its row, how it ended, what paid, the response and its latency,
+ * and when each phase began. Every value is the sidecar's; nothing here
+ * decides an outcome.
  */
 function TrialsView({ run, series }: { run: RunSummary; series: RunSeries | null }) {
   const replay = run.replay;
@@ -100,6 +102,7 @@ function TrialsView({ run, series }: { run: RunSummary; series: RunSeries | null
   const rows = table ? trialRows(table) : [];
   const phases = table?.phases ?? [];
   const showPhases = rows.some((row) => row.phases.length > 0);
+  const rates = rateRows(replay.rates);
 
   return (
     <div className="flex flex-col gap-2">
@@ -127,6 +130,37 @@ function TrialsView({ run, series }: { run: RunSummary; series: RunSeries | null
           </div>
         );
       })}
+
+      {rates.length > 0 && (
+        <div className="border-t border-halo pt-1.5">
+          <table className="w-full font-mono text-[10px] tabular-nums text-static/80">
+            <thead className="text-left text-[9px] text-static/60">
+              <tr>
+                <th className="pr-2 font-normal">row</th>
+                <th className="pr-2 font-normal" title="the phase, numbered from 1, and its kind">phase</th>
+                <th className="pr-2 font-normal">input</th>
+                <th className="pr-2 font-normal" title="mean per-trial rate, 95% t interval over trials">rate</th>
+                <th className="pr-2 font-normal" title="paired within each trial against the row's first phase counting the same input, named in each cell">
+                  difference
+                </th>
+                <th className="pr-2 font-normal">n</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rates.map((rate) => (
+                <tr key={rate.key} className={rate.lowConfidence ? "text-static/40" : ""}>
+                  <td className="max-w-[96px] truncate pr-2">{rate.row}</td>
+                  <td className="pr-2">{rate.window}</td>
+                  <td className="pr-2">{rate.channel}</td>
+                  <td className="pr-2">{rate.rate}</td>
+                  <td className="pr-2">{rate.versus}</td>
+                  <td className="pr-2">{rate.n}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {!table ? (
         <Fallback>The trial table could not be read for this run.</Fallback>
@@ -168,8 +202,8 @@ function TrialsView({ run, series }: { run: RunSummary; series: RunSeries | null
         </div>
       )}
       <p className="text-[10px] leading-relaxed text-static/80">
-        Read off a replay of the run&rsquo;s own state table. A greyed row is a trial the run was cut off
-        during, and is left out of every count.
+        Read off a replay of the run&rsquo;s own state table. A greyed trial is one the run was cut off
+        during, and is left out of every count; a greyed rate rests on too few trials to trust.
       </p>
     </div>
   );

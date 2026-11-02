@@ -2538,6 +2538,18 @@ A count out of a total, with its interval.
 | `order` | number |  |
 | `animals` | [ProposedAnimal](#shape-proposedanimal)[] |  |
 
+<a id="shape-rateestimate"></a>
+#### RateEstimate
+
+A mean over trials with its interval.
+
+| Field | Type | Notes |
+|---|---|---|
+| `n` | number | Trials the mean is over. |
+| `mean` | number \| null | Events per second, the mean of each trial's rate; null with no trials, never 0.0. |
+| `low` | number \| null | Student-t interval over trials, nominally 95%; it covers a bursty licker's rate less often (`ANALYTICS.md#uncertainty`). Null with fewer than two trials. |
+| `high` | number \| null |  |
+
 <a id="shape-recordingbox"></a>
 #### RecordingBox
 
@@ -2690,6 +2702,7 @@ A replayed spine run's tallies, each a function of its trial table (`ANALYTICS.m
 | `classes` | [OutcomeTally](#shape-outcometally)[] | By class number; with `unclassified` they partition `trials`. |
 | `rows` | [RowOutcomes](#shape-rowoutcomes)[] | In the task's row order. |
 | `rewarded` | [Proportion](#shape-proportion) | Trials whose reward line opened, of `trials`. |
+| `rates` | [WindowRate](#shape-windowrate)[] | Each row's rate in each phase that counts an input it never acts on, row by row in the task's order, then by phase. Empty for a task with no such phase (`ANALYTICS.md#phase-window-rates`). |
 
 <a id="shape-replaytrial"></a>
 #### ReplayTrial
@@ -3572,3 +3585,20 @@ The whole baseline picture — one snapshot, shared by the command and the event
 |---|---|---|
 | `from` | unknown |  |
 | `to` | unknown |  |
+
+<a id="shape-windowrate"></a>
+#### WindowRate
+
+One row's rate in one of its own phase-windows (`ANALYTICS.md#phase-window-rates`).
+
+| Field | Type | Notes |
+|---|---|---|
+| `rowId` | string | The row's stable id. |
+| `name` | string | The row's name. |
+| `phase` | number | The phase's index in the spine. |
+| `label` | string | The phase's kind, for a person: nothing is scored by it. |
+| `channel` | string | The input channel counted. |
+| `rate` | [RateEstimate](#shape-rateestimate) | Its rises per second in the phase, clamped at 0. |
+| `reference` | number \| null | This row's first phase counting the channel, which `versus` is against; null on that phase itself. |
+| `versus` | [RateEstimate](#shape-rateestimate) \| null | This phase's rate minus the reference's, paired within each trial: in a Pavlovian task's CS and trace, its anticipatory licking. Null on the reference. |
+| `lowConfidence` | boolean | The smaller of `rate.n` and `versus.n` is below `minCountedTrials` or `rates.RATE_MIN_TRIALS` (`ANALYTICS.md#uncertainty`), re-judged on every request. |

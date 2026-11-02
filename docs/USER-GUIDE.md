@@ -805,7 +805,11 @@ is saved in an `ephys` folder in the session folder, unless the Recording defaul
 
    A spine task's card counts its trials by how each ended (correct, wrong response, no outcome, and so
    on), and opens on **Trials**: one line per trial with its start, row, outcome, reward, response and
-   when each phase began. Ephymeris works these out by replaying the run exactly as the box ran it. If the
+   when each phase began. A task that counts licks in some phases, such as Pavlovian trace conditioning,
+   also lists each row's lick rate in each of those phases, with its range, and how far it sits above the
+   row's first such phase, named beside it (usually the baseline). A grey rate rests on too few trials to
+   trust: fewer than 30, however few you set Analytics to accept, because licks come in bursts. Ephymeris works these out by
+   replaying the run exactly as the box ran it. If the
    recorded run does not match what the replay predicts, the card says **not scored** and names the first
    strobe that differs; a run from a box firmware this version of Ephymeris does not know is never
    scored either. Both are recorded in full.

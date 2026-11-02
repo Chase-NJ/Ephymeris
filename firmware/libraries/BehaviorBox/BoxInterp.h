@@ -254,6 +254,8 @@
                               HIGH in every state it rests in.
     ITI(t)                    timer t -> the trial's first state, which carries
                               INTERP_STARTS_TRIAL.
+    any phase's watch w       w in the watch of every state the phase rests in,
+                              with no edge row: counted, never an exit (rule 2).
 
   The Response window, the contingency map, several rows and blocks are written
   as docs/TASKS.md#lowering describes; they need no state kind beyond these, the

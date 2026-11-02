@@ -24,15 +24,26 @@ DRIVEN_CHANNELS = {
 }
 
 
-def issued_rig(driven: bool = False) -> tuple[dict, dict]:
+#: A lick sensor (ADR 0003's `lick_spout`): an input, active HIGH as a
+#: capacitive sensor is, debounced. Pin 18 is free on the shipped rig.
+LICK_CHANNEL = ({"kind": "response", "type": "digital_in", "role": "port", "active_level": "high",
+                 "debounce_ms": 2}, 18)
+
+
+def issued_rig(driven: bool = False, lick: bool = False) -> tuple[dict, dict]:
     """(rig document, vocabulary document): the shipped rig after its first save,
-    with `DRIVEN_CHANNELS` added first when `driven`."""
+    with `DRIVEN_CHANNELS` added first when `driven`, then `lick_spout` when `lick`."""
     vocab_doc = registry.default_vocabulary_document()
     doc = default_document()
     if driven:
         for name, (entry, pin) in DRIVEN_CHANNELS.items():
             doc["channels"][name] = copy.deepcopy(entry)
             doc["pins"][name] = {"index": pin}
+    if lick:
+        entry, pin = LICK_CHANNEL
+        bits = [p["watch_bit"] for p in doc["pins"].values() if "watch_bit" in p]
+        doc["channels"]["lick_spout"] = copy.deepcopy(entry)
+        doc["pins"]["lick_spout"] = {"index": pin, "watch_bit": max(bits) + 1}
     rig, allocations = allocation.plan(doc, registry.Vocabulary(vocab_doc))
     return rig, allocation.issue(vocab_doc, allocations)
 

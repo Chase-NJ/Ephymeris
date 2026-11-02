@@ -116,6 +116,36 @@ def test_present_and_delay_abort_on_either_edge_and_the_class_says_where():
     assert [low.states[s][1] for s in range(3)] == [0b10, 0b11, 0b01]
 
 
+def test_a_watched_input_is_counted_in_every_state_of_its_phase_and_moves_none():
+    """A phase's `watch` (`TASKS.md#what-a-spine-task-holds`): its slots' bits
+    join the watch of every state the phase writes, with no edge row, so a lick
+    is strobed and counted and never ends the phase. The Outcome's chance state
+    watches nothing; an end watches what its ITI watches."""
+    spine = [{"phase": "delay", "ms": 100, "watch": ["lick"]},
+             {"phase": "present", "outputs": ["cs"], "ms": 200, "watch": ["lick"], "abortOnEnter": "port"},
+             {"phase": "outcome", "line": "us", "ms": 50, "watch": ["lick"]},
+             {"phase": "iti", "ms": 300, "watch": ["lick", "port"]}]
+    low = lower(spine, inputs=["port", "lick"], outputs=["cs", "us"])
+    lick, port = 0b10, 0b01
+    #        outputs watch tmin tmax  on_to chance hit miss first count flags outcome
+    assert low.states == (
+        (0, lick, 1, 1, 1, N, N, N, 0, 0, lowering.STARTS_TRIAL, 0),          # 0 baseline
+        (0b01, lick | port, 2, 2, 2, N, N, N, 0, 1, 0, 0),                     # 1 CS; a poke aborts
+        (0, 0, N, N, N, 6, 3, 4, 0, 0, 0, lowering.OUTCOME_CORRECT),           # 2 the draw: no watch
+        (0b10, lick, 5, 5, 4, N, N, N, 0, 0, 0, 0),                            # 3 the US, for RW1
+        (0, lick, 3, 3, 5, N, N, N, 0, 0, 0, 0),                               # 4 the class timeout
+        (0, lick | port, 4, 4, 0, N, N, N, 0, 0, 0, 0),                        # 5 ITI
+        (0, lick | port, 4, 4, 0, N, N, N, 0, 0, 0, ABORT_DURING),             # 6 the abort's end
+    )
+    assert low.edges == ((0, lowering.RISE, 6),), "a watched lick has no edge row"
+
+
+def test_a_phase_without_watch_lowers_as_it_always_did():
+    plain = lower(TRACER, inputs=["port"], outputs=["cue", "sample", "reward"])
+    empty = lower([dict(p, watch=[]) for p in TRACER], inputs=["port"], outputs=["cue", "sample", "reward"])
+    assert plain == empty
+
+
 def test_one_end_per_class_serves_every_row():
     """An end is the ITI with a class, and the rows share it: an 18-row task
     pays one state for its aborts, not 18."""
@@ -277,6 +307,8 @@ def test_any_path_through_a_trial_marks_at_most_one_class(seed):
                 p["abortOnEnter"] = rng.choice(inputs)
         if kind == "outcome":
             p["line"] = rng.choice(outputs)
+        if rng.random() < 0.3:
+            p["watch"] = rng.sample(inputs, rng.randint(1, 2))
         return p
 
     palette = ("wait", "hold", "present", "delay", "counter")

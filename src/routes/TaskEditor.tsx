@@ -5,9 +5,11 @@ import { useLocation, useNavigate, useParams } from "react-router";
 
 import { DENSE_SKY_OPACITY, SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
 import { SketchStateMachine } from "@/components/task/SketchStateMachine";
-import { EditorHeader, homeOf } from "@/components/task/editor/EditorHeader";
+import { EditorHeader, homeOf, type EditorShared } from "@/components/task/editor/EditorHeader";
 import { GenerationPanel } from "@/components/task/editor/GenerationPanel";
 import { Panel } from "@/components/task/editor/Panel";
+import { SeedChooser } from "@/components/task/spine/SeedChooser";
+import { SpineEditor } from "@/components/task/spine/SpineEditor";
 import { ParameterOrrery } from "@/components/task/editor/ParameterOrrery";
 import { TrialTypes } from "@/components/task/editor/TrialTypes";
 import { errorMessage } from "@/lib/cohorts/commands";
@@ -17,8 +19,8 @@ import { CASCADE, RISE, springPanel } from "@/lib/motion";
 import { useStrobeVocabulary } from "@/lib/strobes/useStrobeVocabulary";
 import { idFromName, listTasks } from "@/lib/taskdef/commands";
 import { isRowOwnedField } from "@/lib/taskdef/lines";
-import { blankTrial, nextStage } from "@/lib/taskdef/types";
-import type { TaskDefinition, TaskDiagnostic, TaskEntry } from "@/lib/taskdef/types";
+import { isSpine } from "@/lib/taskdef/spine";
+import type { TaskDefinition, TaskDiagnostic, TaskDocument, TaskEntry } from "@/lib/taskdef/types";
 import { useTask } from "@/lib/taskdef/useTask";
 import { editorLayout } from "@/lib/tasks/editorLayout";
 import {
@@ -38,9 +40,15 @@ import { EVT } from "@/lib/ws/protocol";
 const MARK_MS = 2400;
 
 /**
- * The task editor — one task, open (`TASKS.md#editor`).
+ * The task editor — one task, open.
  *
- * A telemetry display (`ARCHITECTURE.md#telemetry-panels`) in one frame: the
+ * The route loads, saves and names the document, and hands it to the body for
+ * its kind: a phase-spine task to `SpineEditor` (`TASKS.md#the-spine-editor`),
+ * a trial-table task to `TrialTableEditor` (`TASKS.md#editor`). `/task/new`
+ * with nothing handed over is the seed chooser: a new task starts from a seed
+ * spine, and a trial-table task is only ever opened, or duplicated.
+ *
+ * The trial-table body is a telemetry display (`ARCHITECTURE.md#telemetry-panels`) in one frame: the
  * derived state machine front and centre with every trial type beneath it,
  * and beside them the parameter dial and the trial-generation panel. The
  * machine has a floor and the page bends around it (`editorLayout`): when the
@@ -65,23 +73,16 @@ export function TaskEditor() {
 
   const [tasks, setTasks] = useState<TaskEntry[]>([]);
   const [rig, setRig] = useState<RigDocument | null>(null);
-  // Kept current across edits on the Strobes page.
-  const { vocabulary } = useStrobeVocabulary();
-  const [hoverGroup, setHoverGroup] = useState<string | null>(null);
-  const [hoverNode, setHoverNode] = useState<TaskNode | null>(null);
-  const [hoverCondition, setHoverCondition] = useState<string | null>(null);
-  const [selectedTab, setSelectedTab] = useState<string | null>(null);
-  const [flashGeneration, setFlashGeneration] = useState(false);
-  const [markedRow, setMarkedRow] = useState<number | null>(null);
   const [problemsOpen, setProblemsOpen] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
 
-  /** A brand-new task, built here rather than fetched — or a DUPLICATE handed
-   *  over in router state by the landing. Seeded ONCE: `useTask` treats a new
-   *  seed object as a fresh open and would discard every edit since. */
+  /** A brand-new task: a seed spine picked here (`SeedChooser`), or a
+   *  DUPLICATE handed over in router state by the landing. Seeded ONCE:
+   *  `useTask` treats a new seed object as a fresh open and would discard every
+   *  edit since. Null on `/task/new` until a seed is picked. */
   const location = useLocation();
-  const [seed] = useState<TaskDefinition | null>(() =>
-    taskId === undefined ? (seedFrom(location.state) ?? freshTask()) : null,
+  const [seed, setSeed] = useState<TaskDocument | null>(() =>
+    taskId === undefined ? seedFrom(location.state) : null,
   );
   // Opened once on a new task: its category decides where the sketch folder
   // is written.
@@ -95,8 +96,8 @@ export function TaskEditor() {
     void listTasks(client)
       .then((r) => setTasks(r.tasks))
       .catch((err) => setListError(errorMessage(err)));
-    // The wiring is what the row pickers offer and where each line's onset
-    // code is declared. The vocabulary arrives from `useStrobeVocabulary`.
+    // The wiring is what the trial-table pickers offer and where each line's
+    // onset code is declared. A spine's pickers come from its preview.
     void getRig(client).then((r) => setRig(r.document as RigDocument));
   }, [client, connected]);
 
@@ -120,6 +121,96 @@ export function TaskEditor() {
     );
     if (want !== definition.id) setDefinition({ ...definition, id: want });
   }, [taskId, definition, tasks, setDefinition]);
+
+  /* Saving a NEW task moves it to its own address, with `replace` so Back
+   * returns to the landing rather than to a form that no longer exists. */
+  const save = useCallback(async () => {
+    if (!definition) return;
+    const ok = await session.save();
+    if (ok && taskId === undefined) navigate(`/task/${definition.id}`, { replace: true });
+  }, [definition, navigate, session, taskId]);
+
+  const categories = useMemo(
+    () => [...new Set(tasks.map((t) => t.category))].sort((a, b) => a.localeCompare(b)),
+    [tasks],
+  );
+
+  const shared: EditorShared = {
+    session,
+    saved: taskId !== undefined,
+    categories,
+    detailsOpen,
+    onDetailsOpen: setDetailsOpen,
+    problemsOpen,
+    onProblemsOpen: setProblemsOpen,
+    onBack: () => navigate("/task"),
+    onSave: () => void save(),
+    listError,
+  };
+
+  let body;
+  if (taskId === undefined && seed === null) {
+    body = <SeedChooser onPick={setSeed} onBack={() => navigate("/task")} />;
+  } else if (session.loadError || !definition) {
+    body = (
+      <Frame scrolls>
+        {session.loadError ? (
+          <div
+            className="flex items-center gap-2 rounded-sm border border-halo px-3 py-2 text-[12px]"
+            style={{ color: "var(--color-status-error)" }}
+          >
+            <CircleAlert size={14} strokeWidth={1.75} />
+            {session.loadError}
+          </div>
+        ) : // While the document is on its way in, show NOTHING — a prompt here
+        // flashed for a frame before the editor popped in over it.
+        connected ? null : (
+          <p className="max-w-prose pt-8 text-[13px] leading-relaxed text-static">
+            Waiting for the backend — the task library comes from it.
+          </p>
+        )}
+      </Frame>
+    );
+  } else if (isSpine(definition)) {
+    body = <SpineEditor shared={shared} definition={definition} />;
+  } else {
+    body = <TrialTableEditor shared={shared} definition={definition} rig={rig} />;
+  }
+
+  return (
+    // Every route sits on the rig's sky, dimmed here as on Analytics: this is
+    // a display surface, and the sky must not compete with the drawing.
+    <div className="relative h-full">
+      <SkyBackdrop opacity={DENSE_SKY_OPACITY} />
+      {body}
+    </div>
+  );
+}
+
+/**
+ * A trial-table task, open: the derived state machine front and centre with
+ * every trial type beneath it, and beside them the parameter dial and the
+ * trial-generation panel (`TASKS.md#editor`).
+ */
+function TrialTableEditor({
+  shared,
+  definition,
+  rig,
+}: {
+  shared: EditorShared;
+  definition: TaskDefinition;
+  rig: RigDocument | null;
+}) {
+  const { session } = shared;
+  const { setDefinition } = session;
+  // Kept current across edits on the Strobes page.
+  const { vocabulary } = useStrobeVocabulary();
+  const [hoverGroup, setHoverGroup] = useState<string | null>(null);
+  const [hoverNode, setHoverNode] = useState<TaskNode | null>(null);
+  const [hoverCondition, setHoverCondition] = useState<string | null>(null);
+  const [selectedTab, setSelectedTab] = useState<string | null>(null);
+  const [flashGeneration, setFlashGeneration] = useState(false);
+  const [markedRow, setMarkedRow] = useState<number | null>(null);
 
   const model = useMemo(() => taskGraph(session.profile), [session.profile]);
 
@@ -185,6 +276,7 @@ export function TaskEditor() {
                 "cannot see this trial type — it will not appear as a condition " +
                 "on the diagram, in the live metrics, or in Analytics.",
               code: "TSK112",
+              target: { kind: "row" as const, index },
             },
           ]
         : [],
@@ -194,19 +286,6 @@ export function TaskEditor() {
   const diagnostics = useMemo(
     () => [...session.diagnostics, ...unscoredTrials],
     [session.diagnostics, unscoredTrials],
-  );
-
-  /* Saving a NEW task moves it to its own address, with `replace` so Back
-   * returns to the landing rather than to a form that no longer exists. */
-  const save = useCallback(async () => {
-    if (!definition) return;
-    const ok = await session.save();
-    if (ok && taskId === undefined) navigate(`/task/${definition.id}`, { replace: true });
-  }, [definition, navigate, session, taskId]);
-
-  const categories = useMemo(
-    () => [...new Set(tasks.map((t) => t.category))].sort((a, b) => a.localeCompare(b)),
-    [tasks],
   );
 
   const conditionOfRow = useCallback(
@@ -369,11 +448,7 @@ export function TaskEditor() {
   );
 
   return (
-    // Every route sits on the rig's sky, dimmed here as on Analytics: this is
-    // a display surface, and the sky must not compete with the drawing.
-    <div ref={pageRef} className="relative h-full">
-      <SkyBackdrop opacity={DENSE_SKY_OPACITY} />
-
+    <div ref={pageRef} className="absolute inset-0">
       <motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
@@ -384,38 +459,22 @@ export function TaskEditor() {
           split ? "overflow-hidden" : "overflow-y-auto"
         }`}
       >
-        {session.loadError ? (
-          <div
-            className="flex items-center gap-2 rounded-sm border border-halo px-3 py-2 text-[12px]"
-            style={{ color: "var(--color-status-error)" }}
-          >
-            <CircleAlert size={14} strokeWidth={1.75} />
-            {session.loadError}
-          </div>
-        ) : !definition ? (
-          // While the document is on its way in, show NOTHING — a prompt here
-          // flashed for a frame before the editor popped in over it.
-          connected ? null : (
-            <p className="max-w-prose pt-8 text-[13px] leading-relaxed text-static">
-              Waiting for the backend — the task library comes from it.
-            </p>
-          )
-        ) : (
+        {definition && (
           <>
             <EditorHeader
               session={session}
-              saved={taskId !== undefined}
+              saved={shared.saved}
               diagnostics={diagnostics}
-              categories={categories}
-              detailsOpen={detailsOpen}
-              onDetailsOpen={setDetailsOpen}
-              problemsOpen={problemsOpen}
-              onProblemsOpen={setProblemsOpen}
+              categories={shared.categories}
+              detailsOpen={shared.detailsOpen}
+              onDetailsOpen={shared.onDetailsOpen}
+              problemsOpen={shared.problemsOpen}
+              onProblemsOpen={shared.onProblemsOpen}
               onJump={onJump}
-              onBack={() => navigate("/task")}
-              onSave={() => void save()}
+              onBack={shared.onBack}
+              onSave={shared.onSave}
             />
-            {listError && <p className="text-[11px] text-status-error">{listError}</p>}
+            {shared.listError && <p className="text-[11px] text-status-error">{shared.listError}</p>}
 
             {/* The panels assemble as a CASCADE, and move between the split
                 and stacked homes on their shared layout ids. */}
@@ -462,31 +521,24 @@ export function TaskEditor() {
   );
 }
 
-/**
- * A task with nothing decided yet.
- *
- * Built in the frontend rather than fetched, because there is nothing to fetch:
- * every value here is either empty or the shape the firmware needs at minimum.
- * `params` is empty on purpose — a definition stores only what DIVERGES from
- * the field catalogue, so a new task pins nothing and inherits every default.
- */
-function freshTask(): TaskDefinition {
-  return {
-    id: idFromName("New task", []),
-    name: "New task",
-    category: "Tasks",
-    selectionMode: "antibias",
-    trials: [blankTrial()],
-    stages: [nextStage(undefined)],
-    params: {},
-    legacyNames: [],
-    notes: "",
-  };
-}
-
 /** A duplicated task handed over by the Task landing, if that is how we got here. */
-function seedFrom(state: unknown): TaskDefinition | null {
+function seedFrom(state: unknown): TaskDocument | null {
   if (typeof state !== "object" || state === null || !("seed" in state)) return null;
   const seed = (state as { seed: unknown }).seed;
-  return typeof seed === "object" && seed !== null ? (seed as TaskDefinition) : null;
+  return typeof seed === "object" && seed !== null ? (seed as TaskDocument) : null;
+}
+
+/** The motion frame every editor state sits in. */
+function Frame({ scrolls, children }: { scrolls: boolean; children: React.ReactNode }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0 }}
+      transition={springPanel}
+      className={`scrollbar-none absolute inset-0 flex flex-col gap-3 px-4 py-4 ${scrolls ? "overflow-y-auto" : "overflow-hidden"}`}
+    >
+      {children}
+    </motion.div>
+  );
 }

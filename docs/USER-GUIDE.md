@@ -132,7 +132,7 @@ the top left.
 
 ![The Cohorts screen: three cohorts drawn as planets in a 3D sky, a small disc labelled New cohort, and a search box and Show archived switch at the top left](images/cohorts.webp)
 
-**Task.** What the animal does: the trial types, the shaping ramp and every number the box uses. Saving
+**Task.** What the animal does: the steps of a trial, the trial types and every number the box uses. Saving
 a task makes a program that can be put on a box. Usually managed by the lab manager. The landing page
 lists each saved task with its number of conditions, its stages and whether it is **ready**. A task
 whose saved file can no longer be read is still listed, in red, with the reason.
@@ -156,7 +156,50 @@ task, the import replaces it, and the dialog asks first.
 
 ![The Task tab: a + New task row, then three saved tasks — 4-Odor Discrimination (weighted, 4 conditions, no ramp), Shaping - Both Sides (pool, 5 stages) and 2-Odor Discrimination (anti-bias, 5 stages) — each marked ready, with the Strobes door below](images/task-landing.webp)
 
-Opening a task shows everything about it on one screen:
+**+ New task** starts a task from a **seed**: 2AFC, go/no-go, DNMS, trace (which counts licks in each
+step before the inter-trial interval), or FR/PR (a lever-press ratio). A seed brings the steps of a trial, where each answer goes and one block of trials. It names
+nothing and picks no channels, so a new task opens with a problem on every row:
+
+1. Name each row (trial type).
+2. Pick the channel it uses for each role (port, stimulus, reward line…).
+3. Change whatever else differs from the seed.
+
+New tasks are always built from a seed. A task made of a table of odor lines, saved here or imported
+from the other computer, opens, changes and saves on its own screen, described below. You can
+duplicate one, but you cannot start a new one from scratch.
+
+A task built from a seed shows everything about it on one screen:
+
+- **Spine** across the top: the steps of a trial, left to right in time, with the last step leading
+  back to the first.
+  - Click a step to change what it waits on, how long it lasts and which lines are on during it.
+  - Click **+** between two steps to add one there, and **Remove phase** to take one out.
+  - A step with a problem has a red ring and a count.
+- **RAM** beside it: how much of the box's memory the task takes, out of 5000 bytes.
+  - A task that does not fit turns the end of the bar red and says so under it.
+  - It still saves, but the box cannot run it until it is smaller: fewer rows, steps or answers that
+    pay.
+- **Rows** below, one per trial type. Each row has:
+  - a name;
+  - a channel for each role, chosen from the channels this rig has of the right kind;
+  - its reward time.
+
+  Under each row, every answer the task watches, and running out of time, goes to an outcome. Choose
+  the outcome (correct, wrong response, false alarm…), the line it pays from and how often.
+
+  **Slots** at the top adds or removes a role. **Add a row** copies the last row, unnamed.
+- **Blocks** at the bottom: the session's blocks in the order they run, and what comes after each
+  (the next block, back to an earlier one, or the end).
+  - Click a block to choose its rows, how it draws them, and when it ends: after a number of trials,
+    or once the animal gets enough right.
+  - **Session cap** limits the whole session to a number of trials.
+
+Each problem shows where it is: on its step, under its row, on its block, or under the memory bar.
+**Problems** at the top lists them all; click one to go to it. A value marked **Stored** comes from an
+older or imported copy of the task and wins over the field beside it. Click **Use the value here** to
+drop it.
+
+A task made of a table of odor lines shows its own screen:
 
 - **The state machine** across the top: every step of a trial, drawn from what the task presents.
   Hover a step to see what tunes it; click it to jump to those settings.

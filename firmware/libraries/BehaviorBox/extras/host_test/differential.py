@@ -348,8 +348,7 @@ def generated_table(rng: random.Random, n_params: int):  # noqa: ANN201
     # One to three blocks, each drawing some of the rows by any selection, with
     # any end rule, a next that goes on, loops back or ends, a correction limit
     # and an override of a timed phase.
-    timed = [i for i, p in enumerate(phases)
-             if p["phase"] in lowering._TIMED or (p["phase"] in ("wait", "counter") and "timeoutMs" in p)]
+    timed = [i for i, p in enumerate(phases) if lowering.has_timer(p["phase"], p.get("timeoutMs"))]
     ids = [r["id"] for r in rows]
     n_blocks = rng.choice((1, 1, 2, 3))
     blocks = []

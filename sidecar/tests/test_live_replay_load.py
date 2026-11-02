@@ -17,6 +17,10 @@ passes only when most of its rounds stay within the budget, so one lucky round
 cannot hide a real slowdown. The scorer is checked to run below the sidecar in
 every live round.
 
+It runs **alone** (`-m load`, after CI's parallel suite). Beside other tests, their
+file traffic stalls an fsync on a small runner by tens to hundreds of ms, scoring
+or not, which no statistic over a few rounds sees past.
+
 `EPHYMERIS_LOAD_TRIALS` sets the session length (the review measured 1000);
 the default keeps the suite quick. Every board here is a fake: nothing opens
 a port.
@@ -39,6 +43,8 @@ from ephymeris_sidecar.sessions.writer import AnimalWriter
 from tests.fixtures import spine as fixture
 from tests.test_live_replay import header_of, pressing_animal
 from tests.test_spine_analytics import simulated_document
+
+pytestmark = pytest.mark.load
 
 TRIALS = int(os.environ.get("EPHYMERIS_LOAD_TRIALS", "150"))
 #: Alternating rounds of each, off then on.

@@ -1549,7 +1549,8 @@ path for them. A `diverged` run shows its divergence in the warning colour, with
   scorer](#the-live-scorer), a process of their own, one request out at a time per box;
   `test_live_replay_load.py` holds six boxes' write-and-fsync latency with live scoring on to twice the
   figure with it off, plus a 5 ms floor (an fsync's own spread), and checks the scorer runs below the
-  sidecar. A box keeps its last payload after its run ends, until it starts again or a new
+  sidecar. It runs alone, after CI's parallel suite: beside other tests, their file traffic stalls an fsync
+  far more than live scoring does. A box keeps its last payload after its run ends, until it starts again or a new
   mapping is confirmed, and `session.replay` is replayed on connect.
 - **Unavailable, never wrong.** With the scorer down, the payload's `unavailable` says why and the numbers
   go, while the token carries on. A feed that fails makes the whole replay `unavailable` for the rest of

@@ -71,7 +71,13 @@ jobs:
       # utility tests from piling onto one worker. --durations shows what
       # Windows in particular is slow at.
       - shell: bash
-        run: python -m pytest -n 4 --dist worksteal --durations=25 ${DEV_DRIVE:+--basetemp="$DEV_DRIVE/pytest"}
+        run: python -m pytest -n 4 --dist worksteal --durations=25 -m "not load" ${DEV_DRIVE:+--basetemp="$DEV_DRIVE/pytest"}
+        working-directory: sidecar
+      # The load test times fsyncs, so it runs alone: beside the parallel suite,
+      # other workers' file traffic stalls an fsync by up to a few hundred ms
+      # whether live scoring is on or not.
+      - shell: bash
+        run: python -m pytest -m load -p no:xdist ${DEV_DRIVE:+--basetemp="$DEV_DRIVE/pytest-load"}
         working-directory: sidecar
 
   firmware:

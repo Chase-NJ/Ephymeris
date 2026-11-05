@@ -56,8 +56,9 @@ The [worked example](#a-worked-example) shows all of it on thirty strobes.
 | [`reader.py`](reader.py) | Finds and opens run files; decides `missing` or `unreadable` |
 | [`scoring.py`](scoring.py) | Picks the profile for each run ([the ladder](#which-profile-decodes-a-run)), scores it, and caches the result |
 | [`repository.py`](repository.py) | The profile snapshots and the cache tables |
-| [`service.py`](service.py) | The `analytics.*` commands the app calls |
-| [`archive.py`](archive.py) | A cohort's sessions and runs as one read, and the lock that guards it ([DATA.md](../../../docs/DATA.md#the-cohort-archive)) |
+| [`service.py`](service.py) | The `analytics.*` reads the app calls: the summary, series and recent sessions |
+| [`archive.py`](archive.py) | A cohort's sessions and runs as one read, the lock that guards it, and every write under it, rescan and tidy included ([DATA.md](../../../docs/DATA.md#the-cohort-archive)) |
+| [`walk.py`](walk.py) | What a rescan and a tidy ask the disk, and how a rescan matches a stray file to an animal and names its row |
 
 ## From a session file to a number
 

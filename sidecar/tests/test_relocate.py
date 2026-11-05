@@ -22,7 +22,7 @@ import pytest
 
 from ephymeris_sidecar.analytics import AnalyticsService, CohortArchive
 from ephymeris_sidecar.analytics.repository import AdoptedRun, AnalyticsRepository, CacheKey, CachedRun
-from ephymeris_sidecar.analytics.service import _orphan_run_id
+from ephymeris_sidecar.analytics.walk import _orphan_run_id
 from ephymeris_sidecar.cohorts import relocate
 from ephymeris_sidecar.cohorts.db import DATA_PATHS, OTHER_PATHS, Database
 from ephymeris_sidecar.cohorts.folders import DataFolderError, relative_below
@@ -172,17 +172,7 @@ def test_the_records_survive_the_next_rescan(archive: Archive, volume: str) -> N
     """The point: before, this rescan pruned every record."""
     relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
 
-    async def broadcast(_message: dict) -> None:
-        return None
-
-    service = AnalyticsService(
-        db=archive.db,
-        cohorts=archive.cohorts,
-        sessions=archive.sessions,
-        broadcast=broadcast,
-        archive=archive.cohort_archive,
-    )
-    result = asyncio.run(service.rescan(archive.cohort.id))
+    result = asyncio.run(archive.cohort_archive.rescan(archive.cohort.id))
 
     assert result["pruned"] == {"runs": 0, "sessions": 0, "adopted": 0}
     assert result["rehomed"] == 0
@@ -294,17 +284,7 @@ def test_a_failed_commit_puts_the_files_back(archive: Archive, volume: str) -> N
 
 
 def rescan(archive: Archive) -> dict:
-    async def broadcast(_message: dict) -> None:
-        return None
-
-    service = AnalyticsService(
-        db=archive.db,
-        cohorts=archive.cohorts,
-        sessions=archive.sessions,
-        broadcast=broadcast,
-        archive=archive.cohort_archive,
-    )
-    return asyncio.run(service.rescan(archive.cohort.id))
+    return asyncio.run(archive.cohort_archive.rescan(archive.cohort.id))
 
 
 def cache_key(archive: Archive, run_id: str) -> tuple[int | None, int | None]:
@@ -746,17 +726,7 @@ def old_way(archive: Archive) -> None:
 def test_rescan_re_points_records_an_old_relocate_left_behind(archive: Archive) -> None:
     old_way(archive)
 
-    async def broadcast(_message: dict) -> None:
-        return None
-
-    service = AnalyticsService(
-        db=archive.db,
-        cohorts=archive.cohorts,
-        sessions=archive.sessions,
-        broadcast=broadcast,
-        archive=archive.cohort_archive,
-    )
-    result = asyncio.run(service.rescan(archive.cohort.id))
+    result = asyncio.run(archive.cohort_archive.rescan(archive.cohort.id))
 
     assert result["rehomed"] == 3  # the session, the recorded run, the recovered one
     assert result["pruned"] == {"runs": 0, "sessions": 0, "adopted": 0}
@@ -771,17 +741,7 @@ def test_rescan_re_points_a_recording_an_old_relocate_left_behind(archive: Archi
     elsewhere = archive.record()
     old_way(archive)
 
-    async def broadcast(_message: dict) -> None:
-        return None
-
-    service = AnalyticsService(
-        db=archive.db,
-        cohorts=archive.cohorts,
-        sessions=archive.sessions,
-        broadcast=broadcast,
-        archive=archive.cohort_archive,
-    )
-    asyncio.run(service.rescan(archive.cohort.id))
+    asyncio.run(archive.cohort_archive.rescan(archive.cohort.id))
 
     assert archive.recording_paths() == [
         str(archive.new / "2O-Bdisc" / SESSION / "ephys"),

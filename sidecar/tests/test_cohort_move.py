@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from ephymeris_sidecar.analytics import AnalyticsService, CohortArchive
+from ephymeris_sidecar.analytics import CohortArchive
 from ephymeris_sidecar.analytics.repository import AnalyticsRepository, CacheKey, CachedRun
 from ephymeris_sidecar.cohorts import move_apply, relocate
 from ephymeris_sidecar.cohorts.db import Database
@@ -490,20 +490,14 @@ def test_files_the_other_machine_already_moved_are_followed_not_copied(lab: Lab)
 def test_after_a_move_neither_rescan_prunes_or_adopts(lab: Lab) -> None:
     import asyncio
 
-    async def broadcast(_message: dict) -> None:
-        return None
-
     archive = CohortArchive(
         db=lab.db, cohorts=lab.cohorts, sessions=lab.sessions,
         rig=Lifecycle(), on_changed=Changes(),
     )
-    service = AnalyticsService(
-        db=lab.db, cohorts=lab.cohorts, sessions=lab.sessions, broadcast=broadcast, archive=archive
-    )
     lab.apply("slow1")
 
     for cohort in (lab.a.id, lab.b.id):
-        result = asyncio.run(service.rescan(cohort))
+        result = asyncio.run(archive.rescan(cohort))
         assert result["adopted"] == 0, cohort
         assert result["pruned"] == {"runs": 0, "sessions": 0, "adopted": 0}, cohort
 

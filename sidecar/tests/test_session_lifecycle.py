@@ -1047,7 +1047,7 @@ async def test_a_box_writes_until_its_run_is_recorded(  # noqa: ANN001
     finalization: both are refused until the run is recorded."""
     import threading
 
-    from ephymeris_sidecar.analytics import AnalyticsService, CohortArchive
+    from ephymeris_sidecar.analytics import CohortArchive
     from ephymeris_sidecar.analytics.archive import RigInUse
     from ephymeris_sidecar.sessions import writer as writer_module
     from tests.test_analytics_service import Changes
@@ -1071,19 +1071,13 @@ async def test_a_box_writes_until_its_run_is_recorded(  # noqa: ANN001
     monkeypatch.setattr(writer_module.AnimalWriter, "finalize", slow_finalize)
     monkeypatch.setattr(rig.sessions, "record_animal_run", slow_record)
 
-    async def nothing(_message: dict) -> None:
-        return None
-
     archive = CohortArchive(
         db=db, cohorts=rig.cohorts, sessions=rig.sessions, rig=rig.lifecycle, on_changed=Changes()
-    )
-    service = AnalyticsService(
-        db=db, cohorts=rig.cohorts, sessions=rig.sessions, broadcast=nothing, archive=archive
     )
 
     async def both_refused(cohort_id: str) -> None:
         with pytest.raises(RigInUse):
-            await service.rescan(cohort_id)
+            await archive.rescan(cohort_id)
         with pytest.raises(RigInUse):
             await archive.recover(cohort_id)
 

@@ -352,7 +352,7 @@ def out_of_reach(path: Path) -> bool:
     reach. A missing path counts as gone only when, walking up, a folder
     answers before anything errors: a deleted tree leaves the drive root at
     worst, an unmounted volume leaves nothing. The prune reads absence the
-    same way (`analytics/service._storage_is_reachable`, `DATA.md#pruning`)."""
+    same way (`analytics/walk._storage_is_reachable`, `DATA.md#pruning`)."""
     try:
         os.stat(path)
         return False

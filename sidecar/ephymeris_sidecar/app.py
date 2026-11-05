@@ -364,6 +364,8 @@ class Application:
             sessions=self.sessions,
             rig=_LifecycleRig(self),
             on_changed=self._archive_changed,
+            sketch_lookup=self.sketches.path_for_name,
+            broadcast=self.server.broadcast,
         )
         self.analytics = AnalyticsService(
             db=self.db,
@@ -1449,7 +1451,7 @@ class Application:
         """The explicit archive walk (`DATA.md#database-first`) — never a side
         effect of opening a view."""
         cohort_id = _str_arg(args, "cohortId")
-        return await self._require_analytics().rescan(
+        return await self._require_archive().rescan(
             cohort_id, adopt_orphans=args.get("adoptOrphans") is not False
         )
 
@@ -1461,7 +1463,7 @@ class Application:
         touched, whatever the plan says; everything else the planner decides.
         """
         cohort_id = _str_arg(args, "cohortId")
-        return await self._require_analytics().tidy(
+        return await self._require_archive().tidy(
             cohort_id,
             apply=args.get("apply") is True,
             today=datetime.now().date().isoformat(),

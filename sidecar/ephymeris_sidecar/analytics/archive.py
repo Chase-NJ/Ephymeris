@@ -12,7 +12,8 @@ Also the one way to write the archive (`write`). Everything that rewrites the
 records or the files and folders a walk reads (a relocate, a move, a tidy, a
 rescan, a recover) holds the archive lock end to end, asks the rig whether it
 may run once it holds it, and is announced through `on_changed` once it has.
-A summary reads and indexes under the lock.
+A summary reads and indexes under the lock. The rescan's walk, prune and
+adoption and the tidy live here too, with their disk questions in `walk.py`.
 
 The reads are database only: none opens a run file, so `sessions.list` and
 the session log can read the archive while a summary is still reading files.
@@ -32,12 +33,28 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from ..cohorts import relocate
+from ..logbook.repository import LogbookRepository
+from ..sessions import tidy as session_tidy
 from ..sessions.models import Session, SessionAnimalRun
+from ..sessions.paths import parse_name_date, parse_name_time, parse_session_folder
 from ..sessions.tidy import session_key
 from . import reader
 from .repository import AdoptedRun, AnalyticsRepository
 from .scoring import current_version
 from .stream import false_starts
+from .walk import (
+    _adoptable_animals,
+    _animal_from_filename,
+    _earlier_ids,
+    _folder_state,
+    _is_gone,
+    _iso_or_none,
+    _normalize,
+    _orphan_run_id,
+    _prefer,
+    _remove_empty_tree,
+    _same_path,
+)
 
 log = logging.getLogger(__name__)
 
@@ -189,11 +206,21 @@ class CohortArchive:
         sessions: Any,
         rig: RigQuestions,
         on_changed: Callable[[ArchiveChange], Awaitable[None]],
+        sketch_lookup: Callable[[str], str | None] | None = None,
+        broadcast: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     ) -> None:
         self._db = db
         self._cohorts = cohorts
         self._sessions = sessions
         self._repo = AnalyticsRepository(db)
+        #: Read only for which sessions carry notes — those are never empty
+        #: and never pruned (`DATA.md#the-session-log`).
+        self._logbook = LogbookRepository(db)
+        #: Resolve a document's `sketch` *name* to a sketch in this install's
+        #: library when a rescan adopts an orphan (`DATA.md#orphan-adoption`).
+        self._sketch_lookup = sketch_lookup
+        #: Where a rescan's progress goes; none, and it reports nothing.
+        self._broadcast = broadcast
         self._lock = asyncio.Lock()
         #: Asked under the lock by every write (`write`).
         self._rig = rig
@@ -429,6 +456,487 @@ class CohortArchive:
             result = await asyncio.to_thread(derived.rederive_cohort, cohort.data_folder)
             write.changed(files=result.pop("written"))
         return {**result, "cohortId": cohort_id}
+
+    # --- rescan ------------------------------------------------------------
+
+    async def rescan(self, cohort_id: str, *, adopt_orphans: bool = True) -> dict[str, Any]:
+        """Reconcile a cohort's records against its archive, both ways
+        (`DATA.md#orphan-adoption`, `DATA.md#pruning`).
+
+        The database-first path covers everything this app recorded. The walk
+        covers what it didn't: runs finalized with no active session, a crash
+        between the file write and the commit, and files restored from the
+        backup mirror or copied from the other lab machine.
+
+        And the **prune** covers the other direction, which nothing else in the
+        app does: records whose files the disk no longer has. A deleted session
+        leaves its rows behind forever otherwise, and the deliberate "a
+        missing file keeps its last good summary" rule (`DATA.md#caching`)
+        then keeps charting it —
+        correct for an unplugged drive, wrong for a session the operator threw
+        away. Rescan is where that gets resolved because it is the one moment
+        the operator has explicitly said *the disk is the truth now*.
+
+        Refused (`RigInUse`) while a box runs: a run finalizing mid-walk has
+        its file adopted as well as its record committed
+        (`DATA.md#the-cohort-archive`).
+        """
+        async with self.write(
+            refuse_while="writing", because=RESCAN_WHILE_WRITING
+        ) as write:
+            cohort = await asyncio.to_thread(self._cohorts.get, cohort_id)
+            folder_exists = await asyncio.to_thread(
+                lambda: Path(cohort.data_folder).expanduser().is_dir()
+            )
+            # Records an earlier relocate left at the old folder are re-pointed
+            # *before* the prune, which would otherwise read their files as
+            # deleted and drop them (`DATA.md#data-folder`).
+            rehomed = (
+                await asyncio.to_thread(relocate.rehome, self._db, cohort_id)
+                if adopt_orphans and folder_exists
+                else 0
+            )
+            # Prune before the walk, so `known` is built from surviving records
+            # and a run whose file *moved* is re-adopted in the same pass
+            # rather than pruned on one scan and re-found on the next.
+            pruned, dropped = (
+                await asyncio.to_thread(self._prune, cohort_id)
+                if adopt_orphans and folder_exists
+                else ({"runs": 0, "sessions": 0, "adopted": 0}, {})
+            )
+            runs = await asyncio.to_thread(self._sessions.runs_for_cohort, cohort_id)
+            known = {
+                _normalize(r.file_path) for r in runs if r.file_path
+            }
+            await self._progress(cohort_id, "walking", 0, 0)
+            found = await asyncio.to_thread(reader.walk_session_files, cohort.data_folder)
+
+            # Which of those files this cohort has already adopted, unchanged
+            # since (`DATA.md#carrying-adoptions-forward`). One thread hop and
+            # one stat per file, against a walk that would otherwise open and
+            # parse every one of them again.
+            carried, held = (
+                await asyncio.to_thread(self._carry_over, found, known, cohort_id)
+                if adopt_orphans
+                else ({}, {})
+            )
+
+            orphans: list[dict[str, Any]] = []
+            # Keyed by run identity, not path: a hand-managed archive often
+            # holds a consolidated copy of every session beside the per-prefix
+            # originals, and adopting both would silently double every animal
+            # in every view and put two points per session on every curve.
+            best: dict[str, AdoptedRun] = {}
+            duplicates = 0
+            for path in found:
+                if _normalize(str(path)) in known:
+                    continue
+                identity = reader.run_identity(path)
+                settled = carried.get(identity)
+                if settled is not None and _same_path(settled.file_path, path):
+                    if identity in best:
+                        # Another copy of this run already claimed the slot this
+                        # scan and was judged on merit. This one is the extra.
+                        duplicates += 1
+                        continue
+                    # Already adopted from this exact file, and the file has not
+                    # changed. Held in `best` rather than skipped outright: a
+                    # *duplicate* copy must still win on merit through `_prefer`
+                    # rather than by being the only candidate in the room.
+                    best[identity] = settled
+                    continue
+                entry, adoption = await asyncio.to_thread(
+                    self._describe_orphan, path, cohort, cohort_id, held.get(identity)
+                )
+                if adoption is None:
+                    orphans.append(entry)
+                    continue
+                incumbent = best.get(identity)
+                if incumbent is None:
+                    best[identity] = adoption
+                    orphans.append(entry)
+                    continue
+                duplicates += 1
+                if _prefer(adoption, incumbent):
+                    best[identity] = adoption
+
+            # Only what this scan actually decided. A row carried over unchanged
+            # is left alone rather than rewritten with identical values: every
+            # commit marks the whole database dirty for backup
+            # (`DATA.md#the-database-copy`),
+            # so rewriting an archive's worth of rows per click is a whole-file
+            # copy to a possibly-networked target per click. `is not` rather
+            # than equality — a carried row that a duplicate copy beat is a
+            # genuine change and must be written.
+            adoptable = [
+                entry
+                for identity, entry in best.items()
+                if carried.get(identity) is not entry
+            ]
+            adopted = 0
+            if adopt_orphans and adoptable:
+                sources = await asyncio.to_thread(self._move_sources, cohort_id)
+                # INSERT OR REPLACE on the row's id, so a file whose content
+                # changed since adoption refreshes its row in place rather than
+                # duplicating it. Counted as written: a row another cohort
+                # holds is never taken.
+                adopted = await asyncio.to_thread(
+                    lambda: self._repo.store_adopted(
+                        adoptable,
+                        earlier_ids=_earlier_ids(adoptable, held, dropped, sources),
+                    )
+                )
+            if carried:
+                log.info(
+                    "analytics: rescan of cohort %s reused %d already-adopted"
+                    " files and read %d",
+                    cohort_id,
+                    len(carried),
+                    len(found) - len(carried),
+                )
+
+            await self._progress(cohort_id, "walking", len(found), len(found))
+            if adopted or rehomed or any(pruned.values()):
+                write.changed(cohort_ids=[cohort_id])
+
+        return {
+            "scanned": len(found),
+            "adopted": adopted,
+            "pruned": pruned,
+            "rehomed": rehomed,
+            "duplicates": duplicates,
+            "orphans": orphans,
+            "cohortId": cohort_id,
+            "dataFolder": cohort.data_folder,
+            "folderMissing": not folder_exists,
+        }
+
+    # --- pruning (DATA.md#pruning) -----------------------------------------
+
+    def _prune(self, cohort_id: str) -> tuple[dict[str, int], dict[str, str]]:
+        """Drop records for files the disk demonstrably no longer has.
+
+        Returns the counts, and the id of each adoption it dropped by run
+        identity: a run whose file only moved is adopted again by the same
+        rescan, and a ruling on the dropped id follows it (`_earlier_ids`).
+
+        One worker-thread hop for the whole pass, like the rest of this module:
+        it is a stat per record and a handful of batched `DELETE`s, and the
+        archive lock is already held.
+
+        Ordering matters twice. Runs go first so that the session sweep can ask
+        the honest question — *is anything still pointing at this session?* —
+        rather than guessing from the folder alone, and so that a run already on
+        its way out cannot claim a file on behalf of a record that is about to
+        stop existing.
+        """
+        removed_runs: list[str] = []
+        for run in self._sessions.runs_for_cohort(cohort_id):
+            if _is_gone(run.file_path):
+                removed_runs.append(run.id)
+
+        run_count = self._sessions.delete_runs(removed_runs)
+
+        # Adoptions go for either of two reasons. The file being gone is the
+        # obvious one. The other is a recorded run that now owns the file: the
+        # walk skips a path a run record claims, so an adoption made *before*
+        # that record existed is never revisited and quietly doubles the run in
+        # every panel — the one failure the whole deduplication exists to
+        # prevent, arriving from the side it doesn't watch. Database-first
+        # (`DATA.md#database-first`) decides it: the record wins and the adoption goes.
+        claimed = {
+            _normalize(run.file_path)
+            for run in self._sessions.runs_for_cohort(cohort_id)
+            if run.file_path
+        }
+        removed = [
+            entry
+            for entry in self._repo.adopted_for_cohort(cohort_id)
+            if _is_gone(entry.file_path) or _normalize(entry.file_path) in claimed
+        ]
+        removed_adopted = [entry.id for entry in removed]
+        dropped = {reader.run_identity(Path(entry.file_path)): entry.id for entry in removed}
+
+        adopted_count = self._repo.delete_adopted(removed_adopted)
+        # The cache is the thing that was actually still serving numbers, so it
+        # is cleared for every pruned run of either kind.
+        self._repo.forget_cached(removed_runs + removed_adopted)
+
+        # A session is dropped only once nothing is left that points at it: its
+        # folder is gone *and* it has no surviving runs. Both halves are needed.
+        # Folder-gone alone would delete the record of a session whose runs were
+        # written elsewhere (a cohort relocated with `moveExisting: false` leaves
+        # exactly that shape). No-runs alone would delete every aborted session,
+        # which never wrote a file in the first place and whose folder is real.
+        #
+        # A session the operator wrote notes on is never pruned: the notes are
+        # their data, not bookkeeping, and they outlive the folder they were
+        # mirrored into (`DATA.md#the-session-log`).
+        surviving = self._sessions.run_counts_by_session(cohort_id)
+        annotated = self._logbook.annotated_session_ids(cohort_id)
+        doomed = [
+            session.id
+            for session in self._sessions.list_sessions(cohort_id, include_aborted=True)
+            if not surviving.get(session.id)
+            and session.id not in annotated
+            and _is_gone(session.folder_path, kind="folder")
+        ]
+        # `delete_sessions` refuses an open session; count what it actually did.
+        session_count = self._sessions.delete_sessions(doomed)
+
+        if run_count or adopted_count or session_count:
+            log.info(
+                "analytics: pruned %d run records, %d adoptions and %d sessions"
+                " for cohort %s — their files are no longer on disk",
+                run_count,
+                adopted_count,
+                session_count,
+                cohort_id,
+            )
+        return {
+            "runs": run_count,
+            "sessions": session_count,
+            "adopted": adopted_count,
+        }, dropped
+
+    # --- tidying records (DATA.md#tidy-records) ----------------------------
+
+    async def tidy(self, cohort_id: str, *, apply: bool, today: str) -> dict[str, Any]:
+        """Merge a day's split records and drop empty ones — or say what would.
+
+        `apply=False` is the preview the operator confirms; `apply=True`
+        re-plans from scratch rather than trusting a plan the client holds,
+        because the whole point of the lock is that nothing moved in between.
+        Refused while anything holds the archive, like a second rescan: both
+        move run records between the rows a summary reads. The session holding
+        the rig, asked once the archive is held, is never touched.
+        """
+        async with self.write() as write:
+            held = write.held
+            result = await asyncio.to_thread(
+                self._tidy, cohort_id, apply, {held} if held else set(), today
+            )
+            if result["applied"]:
+                write.changed(cohort_ids=[cohort_id])
+        return result
+
+    def _tidy(
+        self, cohort_id: str, apply: bool, protect: set[str], today: str
+    ) -> dict[str, Any]:
+        self._cohorts.get(cohort_id)  # CohortNotFound for an unknown id
+        view = self.view(cohort_id, include_aborted=True)
+        # Recovered files a record owns are its data as much as its run rows.
+        counts = view.run_counts()
+
+        planned = session_tidy.plan(
+            view.recorded,
+            run_counts=counts,
+            folder_state=_folder_state,
+            protect=protect,
+            today=today,
+            annotated=self._logbook.annotated_session_ids(cohort_id),
+        )
+        if not apply or planned.is_empty:
+            return session_tidy.plan_json(
+                planned, counts, cohort_id=cohort_id, applied=apply and planned.is_empty
+            )
+
+        # A merged record's count is its whole day, for the reply.
+        merged_counts = dict(counts)
+        # One unit of work (`DATA.md#transactions`): a merge the database
+        # refuses undoes the ones before it, so a cohort is never half-tidied.
+        with self._db.write() as tx:
+            for merge in planned.merges:
+                fields = session_tidy.merged_fields(merge)
+                self._sessions.absorb_sessions(
+                    merge.keep.id, [s.id for s in merge.absorb], **fields, tx=tx
+                )
+                merged_counts[merge.keep.id] = sum(
+                    counts.get(s.id, 0) for s in (merge.keep, *merge.absorb)
+                )
+            self._sessions.discard_sessions([e.session.id for e in planned.empty], tx=tx)
+
+        # Folders last, and only a folder no surviving record points at and
+        # that still holds no file — re-checked now, not trusted from the plan.
+        surviving = {
+            _normalize(s.folder_path)
+            for s in self._sessions.list_sessions(cohort_id, include_aborted=True)
+            if s.folder_path
+        }
+        for entry in planned.empty:
+            folder = entry.session.folder_path
+            if entry.removes_folder and _normalize(folder) not in surviving:
+                _remove_empty_tree(folder)
+
+        log.info(
+            "analytics: tidied cohort %s — %d merges, %d empty records removed",
+            cohort_id,
+            len(planned.merges),
+            len(planned.empty),
+        )
+        return session_tidy.plan_json(
+            planned, merged_counts, cohort_id=cohort_id, applied=True
+        )
+
+    def _move_sources(self, cohort_id: str) -> dict[str, str | None]:
+        """The cohorts a move brought this one's animals from, each with its
+        data folder, or None once it is deleted (`_earlier_ids`)."""
+        folders = {c.id: c.data_folder for c in self._cohorts.list_cohorts()}
+        return {c: folders.get(c) for c in self._repo.move_sources(cohort_id)}
+
+    # --- carrying adoptions forward (DATA.md#carrying-adoptions-forward) --
+
+    def _carry_over(
+        self, found: list[Path], known: set[str], cohort_id: str
+    ) -> tuple[dict[str, AdoptedRun], dict[str, str]]:
+        """The adoptions this walk does not need to redo, by run identity —
+        and the id of every adoption this cohort holds, by run identity, which
+        a file the walk does read is stored under again (`_orphan_run_id`).
+
+        Adoption used to be repeated in full on every rescan: each of an
+        archive's files was opened, parsed and written back, so a cohort with a
+        few hundred runs paid a few hundred reads and a full row rewrite per
+        click — on the machine whose archive lives on a network share, over the
+        wire. Nothing came of it. The row is keyed on run identity and the
+        inputs are the same file and the same roster, so the second scan
+        recomputed the first scan's answer.
+
+        A file is carried forward when three things hold, and the third is the
+        one that keeps this honest:
+
+        1. An adopted row exists for its **run identity**.
+        2. That row names **this same path** — not merely the same run. Which
+           copy of a duplicated run won is a content decision (`_prefer`), so a
+           second copy has to be read and judged, never assumed.
+        3. The file's **mtime and size** match what the row was adopted from —
+           the same freshness key `run_metrics_cache` uses (`DATA.md#caching`), and the
+           reason this is a cache rather than a "do it once" flag. Edit the
+           document, or let recovery rewrite it, and the next rescan reads it
+           again and refreshes the row.
+
+        A row from before v7 has no recorded stat and is therefore never fresh:
+        it is re-read once, gains a stat, and is carried from then on.
+        """
+        index = {
+            reader.run_identity(Path(entry.file_path)): entry
+            for entry in self._repo.adopted_for_cohort(cohort_id)
+        }
+        out: dict[str, AdoptedRun] = {}
+        for path in found:
+            if _normalize(str(path)) in known:
+                continue
+            identity = reader.run_identity(path)
+            entry = index.get(identity)
+            if entry is None or entry.file_mtime_ns is None or entry.file_size is None:
+                continue
+            if not _same_path(entry.file_path, path):
+                continue
+            stat = reader.stat_run(path)
+            if (
+                stat.ok
+                and stat.mtime_ns == entry.file_mtime_ns
+                and stat.size == entry.file_size
+            ):
+                out[identity] = entry
+        return out, {identity: entry.id for identity, entry in index.items()}
+
+    def _describe_orphan(
+        self, path: Path, cohort: Any, cohort_id: str, held_id: str | None = None
+    ) -> tuple[dict[str, Any], AdoptedRun | None]:
+        """Match a stray file to an animal by name, and never guess
+        (`DATA.md#orphan-adoption`).
+
+        The document's `rat` field is a *name*, so this is permanently broken
+        by a rename — which is exactly why the database-first path is primary
+        and this is the fallback. An unmatched file is kept and reported
+        unattributed rather than attached to a plausible-looking animal.
+
+        Returns the wire-facing orphan entry plus, when the file both parsed
+        and matched, the `AdoptedRun` the caller may persist. Adoption fields
+        come from what a name can honestly carry: the *session folder* yields
+        prefix, number, and date (either date spelling); the file stem yields
+        the start time; the box, stop reason, and end time stay unknown.
+        """
+        result = reader.read_run(path)
+        session_folder = reader.session_folder_of(path)
+        rat = None
+        if result.ok and result.document is not None:
+            value = result.document.get("rat")
+            rat = value if isinstance(value, str) else None
+        match = None
+        source = None
+        candidates = _adoptable_animals(cohort)
+        if rat:
+            folded = rat.casefold()
+            match = next((a.id for a in candidates if a.name.casefold() == folded), None)
+            if match is not None:
+                source = "document"
+        if match is None:
+            # The document's field is not the only place this run recorded its
+            # animal — the filename did too, in the same breath.
+            match = _animal_from_filename(path, session_folder, candidates)
+            if match is not None:
+                source = "filename"
+        entry = {
+            "path": str(path),
+            "animalId": match,
+            "animalName": rat,
+            "animalSource": source,
+            "date": _iso_or_none(parse_name_date(path.name)),
+            "status": result.status,
+            "reason": result.detail,
+        }
+        if match is None or not result.ok or result.document is None:
+            return entry, None
+
+        parsed = parse_session_folder(session_folder.name)
+        date_iso = parsed.date.isoformat() if parsed.date is not None else None
+        time = parse_name_time(path.name)
+        if date_iso and time:
+            started_at = f"{date_iso}T{time}"
+        else:
+            started_at = date_iso or ""
+
+        sketch = result.document.get("sketch")
+        sketch_name = sketch if isinstance(sketch, str) and sketch else None
+        sketch_path = None
+        if sketch_name is not None and self._sketch_lookup is not None:
+            sketch_path = self._sketch_lookup(sketch_name)
+
+        return entry, AdoptedRun(
+            # The id this cohort already holds the run under, if any, so a
+            # re-read never re-keys a row (`DATA.md#orphan-adoption`).
+            id=held_id or _orphan_run_id(cohort_id, path),
+            cohort_id=cohort_id,
+            animal_id=match,
+            file_path=str(path),
+            prefix_name=parsed.prefix,
+            session_number=parsed.session_number,
+            date=date_iso,
+            started_at=started_at,
+            sketch_name=sketch_name,
+            sketch_path=sketch_path,
+            # Free: `read_run` stats before it parses and hands both back, so
+            # recording what this adoption was taken from costs nothing here and
+            # is what lets the next rescan skip the file entirely
+            # (`DATA.md#carrying-adoptions-forward`).
+            file_mtime_ns=result.mtime_ns,
+            file_size=result.size,
+        )
+
+    # --- progress ----------------------------------------------------------
+
+    async def _progress(self, cohort_id: str, phase: str, done: int, total: int) -> None:
+        from ..protocol import Evt, event
+
+        if self._broadcast is None:
+            return
+        await self._broadcast(
+            event(
+                Evt.ANALYTICS_PROGRESS,
+                {"cohortId": cohort_id, "phase": phase, "done": done, "total": total},
+            )
+        )
 
 
 def _recovered_files(entries: list[dict[str, Any]]) -> list[Path]:

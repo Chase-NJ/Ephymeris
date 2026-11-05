@@ -484,7 +484,7 @@ async def test_a_reader_that_opens_no_file_ignores_another_versions_row(
 
     legacy = LegacyRig(db, tmp_path / "legacy")
     legacy.add_legacy_run("remy1", HIT_1 * 15 + MISS_1 * 5)
-    await legacy.service.rescan(legacy.cohort.id)
+    await legacy.archive.rescan(legacy.cohort.id)
     await legacy.service.summary(legacy.cohort.id)
     [session] = legacy.archive.view(legacy.cohort.id).recovered
     assert session.ended_at is not None, "closed from the current row"

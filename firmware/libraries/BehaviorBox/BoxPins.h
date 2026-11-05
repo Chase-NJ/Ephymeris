@@ -48,11 +48,12 @@
 #endif
 
 /* ---- Sync out: the electrical twin of every strobe ------------------------ */
-/*  One pulse per emitStrobe(), into one digital input of the recording
+/*  One pulse per emitStrobe(), or, from a spine task, per tick that strobes
+    (BoxSpine.h, THE SYNC PULSE), into one digital input of the recording
     controller (Intan DIGITAL-IN-n; which n is a binding in Ephymeris, not a
     property of this box). The RISING EDGE is the event's true time on the
     recording clock; what the event WAS is the serial line, matched by order --
-    the Nth edge is the Nth strobe. A single line cannot carry the code, and
+    the Nth edge is the Nth strobe, or tick. A single line cannot carry the code, and
     eight lines per box would leave room for two boxes on a 16-input controller.
 
     -1 means "this box has no sync line" and compiles the pulse out entirely.

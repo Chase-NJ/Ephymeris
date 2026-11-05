@@ -567,7 +567,7 @@ def _sync_lines(channels: Any) -> list[str]:
     """
     sync = channels.unique_of_kind("sync")
     return [
-        "/*  One pulse per strobe, into a recording controller's digital input.",
+        "/*  One pulse per strobe (a spine task: per tick), into a recording controller's digital input.",
         "    -1 = this rig declares no sync channel; the pulse is compiled out. */",
         f"#define BOX_PIN_SYNC_OUT {sync.index if sync is not None else -1}",
     ]

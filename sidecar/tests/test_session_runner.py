@@ -272,10 +272,33 @@ async def test_the_free_ram_the_board_measured_is_recorded_in_the_header_and_the
     text = tsv_text(tmp_path)
     assert "# free_ram: 4321\n" in text
     assert text.index("# free_ram: 4321") < text.index("101\t0")
+    assert "# sync" not in text  # the trial runner announces none: it pulses per strobe
     # The run leaves `running_boxes()` before its `.json` is written: wait for the file.
     await wait_until(lambda: any((tmp_path / "behavior.json").glob("*.json")))
     document = json.loads(next((tmp_path / "behavior.json").glob("*.json")).read_text(encoding="utf-8"))
     assert document["free_ram"] == 4321
+
+
+async def test_a_tick_pulsed_board_is_recorded_and_its_recording_told(tmp_path: Path, bench: Bench) -> None:
+    """A spine board announces `SYNC=TICK` before READY: one sync pulse per tick
+    that strobes (`RECORDING.md#firmware-pulse`). The header keeps it for
+    offline alignment, and the recording's matcher is built to pair by tick."""
+    runner, _events, ended = make_runner(tmp_path, bench)
+    started = []
+    runner.on_box_started = lambda box, animal, tick_pulsed: started.append(tick_pulsed)
+    runner.start_box(1)
+    board = await bench.run_handshake(1, seed=5, interp=7, sync="TICK")
+    await board.said("101\t0", "246\t10")
+
+    text = tsv_text(tmp_path)
+    assert "# sync: tick\n" in text and text.index("# sync: tick") < text.index("101\t0")
+    assert started == [True]
+    await wait_until(lambda: any((tmp_path / "behavior.json").glob("*.json")))
+    document = json.loads(next((tmp_path / "behavior.json").glob("*.json")).read_text(encoding="utf-8"))
+    assert document["sync"] == "tick"
+    await wait_until(lambda: len(ended) == 1)
+    run, _reason = ended[0]
+    assert "sync" not in run.config.config_metadata  # a fact about the build, never hashed
 
 
 @pytest.mark.parametrize(
@@ -726,7 +749,7 @@ async def test_recording_fields_ride_the_document_and_stay_out_of_the_parameters
     runner, _events, ended = make_runner(tmp_path, bench)
     runner.recording_fields = lambda box: {"intan_recording": "base_260920_101500", "intan_digital_in": 5}
     started, tapped = [], []
-    runner.on_box_started = lambda box, animal: started.append((box, animal))
+    runner.on_box_started = lambda box, animal, tick_pulsed: started.append((box, animal, tick_pulsed))
     runner.on_strobe_tap = lambda box, code, ms: tapped.append((box, code, ms))
 
     runner.start_box(1)
@@ -739,7 +762,7 @@ async def test_recording_fields_ride_the_document_and_stay_out_of_the_parameters
     assert document["intan_digital_in"] == 5
     run, _reason = ended[0]
     assert not any(key.startswith("intan_") for key in run.config.config_metadata)
-    assert started == [(1, "remy1")]
+    assert started == [(1, "remy1", False)]  # announced nothing: one pulse per strobe
     assert tapped == [(1, 101, 40), (1, 246, 90)]
     # It survives a crash: the header is the durable copy.
     assert "# intan_recording: base_260920_101500" in tsv_text(tmp_path)

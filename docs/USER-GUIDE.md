@@ -157,11 +157,13 @@ task, the import replaces it, and the dialog asks first.
 ![The Task tab: a + New task row, then three saved tasks — 4-Odor Discrimination (weighted, 4 conditions, no ramp), Shaping - Both Sides (pool, 5 stages) and 2-Odor Discrimination (anti-bias, 5 stages) — each marked ready, with the Strobes door below](images/task-landing.webp)
 
 **+ New task** starts a task from a **seed**: 2AFC, go/no-go, DNMS, trace (which counts licks in each
-step before the inter-trial interval), or FR/PR (a lever-press ratio). A seed brings the steps of a trial, where each answer goes and one block of trials. It names
-nothing and picks no channels, so a new task opens with a problem on every row:
+step before the inter-trial interval), or FR/PR (a lever-press ratio). A seed brings the steps of a trial,
+what each answer means and one block of trials. It names nothing and picks no channels, so a new task
+opens with a problem on every trial type:
 
-1. Name each row (trial type).
-2. Pick the channel it uses for each role (port, stimulus, reward line…).
+1. Name each trial type.
+2. Pick the channel on this rig that plays each **role** (the port, the sample, the wells, the reward
+   line…). Once one trial type is bound, **Bind like …** under the next fills it the same way in one click.
 3. Change whatever else differs from the seed.
 
 New tasks are always built from a seed. A task made of a table of odor lines, saved here or imported
@@ -170,52 +172,70 @@ duplicate one, but you cannot start a new one from scratch.
 
 A task built from a seed shows everything about it on one screen:
 
-- **Spine** across the top: the steps of a trial, left to right in time, with the last step leading
-  back to the first.
-  - Click a step to change what it waits on, how long it lasts and which lines are on during it.
-  - Click **+** between two steps to add one there, and **Remove phase** to take one out.
+- **Trial** across the top: the steps of a trial, left to right in time, with the last step leading
+  back to the first. Each says in words what it waits for, what is on and for how long; the first
+  Present is marked **stimulus**.
+  - Click a step to change it. Its fields come in three groups: **what it does**; **what ends it
+    early** (a step's own time limit, or an input the animal lets go or enters), each with how such a
+    trial is scored; and **after an early end**, the **penalty**, how long the box waits before the
+    next trial in place of the inter-trial interval. A time limit and a penalty are different things.
+  - **Recorded here** lists the inputs recorded during the step without moving it. Only inputs listed
+    here are recorded in that step: to count licks between trials, list the lick sensor on the ITI.
+  - Click **+** between two steps to add one there, and **Remove step** to take one out.
   - A step with a problem has a red ring and a count.
 - **RAM** beside it: how much of the box's memory the task takes, out of 5000 bytes.
   - A task that does not fit turns the end of the bar red and says so under it.
-  - It still saves, but the box cannot run it until it is smaller: fewer rows, steps or answers that
-    pay.
-- **Rows** below, one per trial type. Each row has:
+  - It still saves, but the box cannot run it until it is smaller: fewer trial types, steps or answers
+    that pay.
+- **Trial types** below, one per kind of trial. Each has:
   - a name;
-  - a channel for each role, chosen from the channels this rig has of the right kind;
+  - a channel for each role, listed by the name the Rig tab gives it and grouped by what it is;
   - its reward time.
 
-  Under each row, every answer the task watches, and running out of time, goes to an outcome. Choose
-  the outcome (correct, wrong response, false alarm…), the line it pays from and how often.
+  Under each, every answer the task watches, and running out of time, reads as a sentence: "Left well
+  → correct · pays left water on 100 % of trials · held 200 ms · then the ITI". Change any word of it.
+  Where an outcome is not what it sounds like, the line says so: **withheld** counts as a hit, an
+  **abort** is left out of the share correct, and a trial type that asks nothing (a CS−) scores correct
+  on every trial, so what you change is how often it pays.
 
-  **Slots** at the top adds or removes a role. **Add a row** copies the last row, unnamed.
-- **Blocks** at the bottom: the session's blocks in the order they run, and what comes after each
-  (the next block, back to an earlier one, or the end).
-  - Click a block to choose its rows, how it draws them, and when it ends: after a number of trials,
-    or once the animal gets enough right.
+  **Roles** at the top says which parts the trial has; **add or remove a role** opens the controls.
+  **Add a trial type** copies the last one, unnamed.
+- **Session** at the bottom: its **shape** first. **One block** of N trials; **Reversal**, which runs the
+  trial types until the animal gets k of the last n right and then runs them with their answers
+  reversed (the reversed copies appear as trial types of their own); **Two blocks that alternate**,
+  looping until the session cap; or **Custom**. Below it, the blocks in the order they run and a
+  sentence saying what follows each.
+  - Click a block to choose its trial types, how it draws them, and when it ends: after a number of
+    trials, or once the animal gets enough right.
   - **Session cap** limits the whole session to a number of trials.
-  - **aborts repeat, uncounted**: a trial the animal abandons is run again and does not count toward any
-    trial number, as the old GRGL task did.
+  - **aborted trials repeat, uncounted**: a trial the animal abandons is run again and does not count
+    toward any trial number, as the old GRGL task did.
   - A block that draws by anti-bias can also take GRGL's **bias strength**, the **least** and **most chance**
     of a side, and **most in a row** on one side.
-- **Penalties.** A step that can end a trial early (a wait running out, a hold broken, an abort) can take a
+- **Penalties.** A step that can end a trial early (a wait giving up, a hold let go, an abort) can take a
   **penalty**: how long the box waits before the next trial, in place of the inter-trial interval. So can
-  each answer in a row's outcomes ("then … ms"). A wait's penalty can **grow** with each trial in a row the
-  animal does not poke, up to a limit, until it gets one right. An Outcome can **wait for the paid well's
-  release** before the inter-trial interval starts.
-- **Simulate** at the very bottom runs a whole session against a pretend animal, before anything is
-  sent to a box. Nothing is saved or flashed.
+  each answer in a trial type's sentence ("then a … penalty instead of the ITI"). A wait's penalty can
+  **grow** with each trial in a row the animal does not poke, up to a limit, until it gets one right. An
+  Outcome can **wait for the paid well to be left** before the inter-trial interval starts.
+- **Simulate** at the very bottom, and the **Simulate** button at the top that jumps to it, runs a whole
+  session against a pretend animal, before anything is sent to a box. Nothing is saved or flashed.
   - Choose the animal: **Always correct**, **Random**, **Biased** (it mostly picks one answer you
     choose) or **Never responds**. Then click **Run**.
-  - It shows the seed it used (type it in the **Seed** box to run the same session again), what ended the
-    session, every row that was **never presented**, the trial where each block began, how each row's
-    trials ended, every trial, and the share correct as the session went on.
+  - The result starts in plain words: how many trials and how long, how many were right, how the rest
+    ended, each trial type's share, whether every trial type was presented, and what ended the session.
+    Below that: the trial where each block began, every trial, and the share correct as the session went
+    on. The seed is shown too: type it in the **Seed** box to run the same session again.
   - It runs on the task as it is now. After you change anything, the result fades until you run it again.
   - It will not run while the task has a problem.
 
-Each problem shows where it is: on its step, under its row, on its block, or under the memory bar.
-**Problems** at the top lists them all; click one to go to it. A value marked **Stored** comes from an
-older or imported copy of the task and wins over the field beside it. Click **Use the value here** to
-drop it.
+Each problem shows where it is, as what to do: on its step, under its trial type, on its block, or
+under the memory bar, and where one click answers it, the click is there (**Bind like …**, **Add a cap
+of 400 trials**, **Add to block 1**). Problems of one kind under one trial type are listed once with a
+count. **Problems** at the top lists them all; click one to go to it. A value marked **Stored** comes
+from an older or imported copy of the task and wins over the field beside it. Click **Use the value
+here** to drop it.
+
+![The spine editor for a 2AFC task: the trial's steps across the top with the Wait step open in its three groups, the RAM meter, two trial types with their channels and each answer as a sentence, and the Session set to one block](images/spine-editor.webp)
 
 A task made of a table of odor lines shows its own screen:
 

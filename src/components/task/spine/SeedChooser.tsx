@@ -7,6 +7,7 @@ import { errorMessage } from "@/lib/cohorts/commands";
 import { CASCADE, RISE, springPanel } from "@/lib/motion";
 import { spinePalette } from "@/lib/taskdef/commands";
 import { PHASE_LABEL } from "@/lib/taskdef/spineLabels";
+import { seedShapeWords } from "@/lib/taskdef/spineWords";
 import type { SpineDefinition } from "@/lib/taskdef/spine";
 import type { TaskDocument } from "@/lib/taskdef/types";
 import { useSidecar } from "@/lib/ws/context";
@@ -56,9 +57,9 @@ export function SeedChooser({
           <h1 className="font-display text-[22px] text-starlight">New task</h1>
         </div>
         <p className="mt-3 max-w-prose text-[12px] leading-relaxed text-static">
-          Start from the shape of a paradigm. A seed brings its phases, its maps and one block; you
-          name each trial type and pick the channels it uses on this rig, then change whatever else
-          differs.
+          Start from a paradigm. A seed brings the steps of a trial, what each answer means and one block
+          of trials. You name each trial type, say which channel on this rig plays each role, then
+          change whatever else differs.
         </p>
         {error && <p className="mt-4 text-[11px] text-status-error">{error}</p>}
         {status !== "connected" && (
@@ -78,12 +79,11 @@ export function SeedChooser({
                 >
                   <h2 className="font-display text-[15px] text-starlight">{seed.label}</h2>
                   <p className="text-[12px] leading-relaxed text-static">{seed.summary}</p>
-                  <p className="font-mono text-[10px] text-static/80">
+                  <p className="text-[10px] leading-relaxed text-static/80">
+                    <span className="text-static/60">Steps: </span>
                     {def.spine.map((p) => PHASE_LABEL[p.phase] ?? p.phase).join(" → ")}
                   </p>
-                  <p className="font-mono text-[9px] tracking-wide text-static/60 uppercase">
-                    {def.rows.length} row{def.rows.length === 1 ? "" : "s"} · {def.slots.length} slots
-                  </p>
+                  <p className="font-mono text-[9px] tracking-wide text-static/60 uppercase">{seedShapeWords(def)}</p>
                 </motion.button>
               );
             })}

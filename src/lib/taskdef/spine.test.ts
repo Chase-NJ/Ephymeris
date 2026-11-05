@@ -153,10 +153,10 @@ describe("phases", () => {
 describe("a phase's watched inputs", () => {
   // `watch`: inputs counted while in the phase, which never move it
   // (`TASKS.md#pavlovian-conditioning`), the counts a rate window reads.
-  it("are a field every phase kind offers, apart from the Response window's Watches", () => {
+  it("are a field every phase kind offers, apart from the Response window's answers", () => {
     for (const kind of Object.keys(PHASE_FIELDS)) {
       const watch = phaseFields(kind).find((f) => f.key === "watch");
-      expect(watch, kind).toEqual({ key: "watch", label: "Counts, never acts on", kind: "inputs", optional: true });
+      expect(watch, kind).toEqual({ key: "watch", label: "Recorded here", kind: "inputs", group: "does", optional: true });
     }
   });
 

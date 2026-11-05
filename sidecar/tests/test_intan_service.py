@@ -401,6 +401,51 @@ async def test_a_reconnect_adopts_the_run_once_its_stamp_can_be_read(rig, tmp_pa
     await h.until(lambda: h.service.status_json()["state"] == "recording")
 
 
+@pytest.mark.parametrize("via", ["poll", "reconnect"])
+async def test_an_end_during_an_adoption_is_not_undone_by_it(rig, tmp_path, via):
+    """A poll -- or the reconnect itself -- is reading the file stamp to pick an
+    unconfirmed run back up when End stops it. The read's answer is about a
+    run that is no longer open: it must not adopt it, leaving `recording` with
+    no run and live streams, for the next poll to call "stopped from RHX"."""
+    h = await rig(poll_s=30.0)
+    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.start_recording()
+    await h.fake.stop_listening()
+    await h.service._poll_once()  # the link is lost
+    await h.fake.listen_again()
+    if via == "poll":
+        del h.fake.params["filename.activefiletimestamp"]
+        await h.service._poll_once()  # back, but the stamp unread: not adopted
+        assert h.service.status_json()["state"] == "error"
+        h.fake.params["filename.activefiletimestamp"] = "260920_101500"
+
+    client = h.service._client
+    real_get = client.get
+    inside, release = asyncio.Event(), asyncio.Event()
+
+    async def get(parameter: str) -> str:
+        if parameter == "filename.activefiletimestamp" and not inside.is_set():
+            inside.set()  # the poll's read, held open; End's own read goes through
+            await release.wait()
+        return await real_get(parameter)
+
+    client.get = get
+    poll = asyncio.create_task(h.service._poll_once())
+    await inside.wait()
+    run = await h.service.stop_recording()
+    release.set()
+    await poll
+
+    assert run is not None and h.fake.params["runmode"] == "Stop"
+    assert h.service.recording is None and not h.service._run_confirmed
+    assert h.service._stream_tasks == []
+    assert h.service.status_json()["state"] == "idle"
+    await h.service._poll_once()
+    status = h.service.status_json()
+    assert status["state"] == "idle"
+    assert "RHX itself" not in (status["message"] or "")
+
+
 async def test_a_stop_and_record_by_hand_during_the_grace_is_not_stopped(rig, tmp_path):
     """While End waits on the boxes, Stop then Record is pressed in RHX: a new
     file. The post-roll stop must not end that recording as if it were ours."""

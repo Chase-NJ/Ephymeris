@@ -16,7 +16,7 @@
  */
 
 import type { SidecarPort } from "../ws/port";
-import { CMD, EVT, type LiveReplay } from "../ws/protocol";
+import { CMD, EVT, SidecarCommandError, type LiveReplay } from "../ws/protocol";
 import { replayStrip } from "./liveReplay";
 import type {
   ActiveSessions,
@@ -94,6 +94,13 @@ export class SessionStore {
    */
   private debugReplayOwed = new Set<number>();
   /**
+   * Debug runs on screen at the last connect that no payload has mentioned
+   * since. The replay sends one for every run still armed, so a box still here
+   * when the replay is over has no run: it ended, or its port left
+   * PASSTHROUGH, while the webview was away (`settleDebugRuns`).
+   */
+  private debugUnheard = new Set<number>();
+  /**
    * Every strobe this box has emitted, in order.
    *
    * Deliberately a second consumer of `port.output` alongside `HardwareStore`:
@@ -132,6 +139,7 @@ export class SessionStore {
         })
         .then((result) => {
           if (detached) return;
+          if (connect === connects) this.settleDebugRuns();
           // A broadcast landed while this was in flight, and either may be the
           // newer: the sidecar can read part of this answer before a transition
           // and send it after that transition's broadcast. Ask again rather than
@@ -142,9 +150,13 @@ export class SessionStore {
           }
           this.takeActive(result);
         })
-        .catch(() => {
+        .catch((error: unknown) => {
           // A failed discovery just leaves activeLoaded false; the next
-          // reconnect or lifecycle broadcast will fill it in.
+          // reconnect or lifecycle broadcast will fill it in. A refusal still
+          // ends the replay, since the sidecar read the command; a timeout or
+          // a dropped connection says nothing about it.
+          const answered = error instanceof SidecarCommandError;
+          if (answered && !detached && connect === connects) this.settleDebugRuns();
         });
     };
     const offs = [
@@ -165,6 +177,7 @@ export class SessionStore {
         if (status !== "connected") return;
         connects += 1;
         this.debugReplayOwed = new Set(this.debugRunning);
+        this.debugUnheard = new Set(this.debugRunning);
         ask();
       }),
 
@@ -208,6 +221,7 @@ export class SessionStore {
       client.on(EVT.PORT_TELEMETRY, (d) => {
         if (typeof d?.box !== "number") return;
         const metrics = d.metrics ?? NO_METRICS;
+        this.debugUnheard.delete(d.box);
         if (d.running && !this.debugRunning.has(d.box)) this.forgetBox(d.box);
         const owed = d.running && this.debugReplayOwed.has(d.box);
         if (owed && sameMetrics(metrics, this.telemetry.get(d.box))) {
@@ -385,6 +399,19 @@ export class SessionStore {
         this.notify(key);
       }
     }
+  }
+
+  /**
+   * The connect's replay is over: a Debug run it did not mention is not
+   * running. Its numbers stay on screen; the next arm finds the box idle and
+   * forgets them.
+   */
+  private settleDebugRuns(): void {
+    for (const box of this.debugUnheard) {
+      this.debugRunning.delete(box);
+      this.notify(`debug:${box}`);
+    }
+    this.debugUnheard.clear();
   }
 
   /** Forget one box's run: it began another. */

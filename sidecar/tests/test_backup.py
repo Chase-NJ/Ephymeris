@@ -510,6 +510,51 @@ async def test_a_sync_now_that_meets_an_open_write_reports_the_database_deferred
 
 
 @pytest.mark.asyncio
+async def test_a_deferred_copy_still_owed_reads_deferred_while_not_yet_due(
+    db: Database, tmp_path: Path
+) -> None:
+    """A pass inside the debounce after a deferred sync copies a live file but
+    not the database: the copy is still owed, so it must not read ok."""
+    root = tmp_path / "Batch A"
+    root.mkdir()
+    live = root / "a.tsv"
+    live.write_text("221\t0\n", encoding="utf-8")
+    manager = make_manager(db, [str(root)], db_debounce=3600.0)
+    await manager.configure(str(tmp_path / "mirror"))
+    manager.track(live)
+    leave_a_write_open(db)
+    await asyncio.wait_for(manager.sync_now(), timeout=3.0)
+
+    live.write_text("221\t0\n222\t1000\n", encoding="utf-8")
+    await manager._pass()
+
+    status = manager.status()
+    assert (status["state"], status["lastSuccessAt"]) == ("deferred", None)
+    end_the_open_write(db, "ROLLBACK")
+
+
+@pytest.mark.asyncio
+async def test_a_pass_that_fails_and_defers_reads_failed(db: Database, tmp_path: Path) -> None:
+    """A real target fault outranks a deferral in a background pass too (`DATA.md#failures`)."""
+    root = tmp_path / "Batch A"
+    root.mkdir()
+    (root / "a.json").write_text("{}", encoding="utf-8")
+    blocker = tmp_path / "blocker"
+    blocker.write_text("", encoding="utf-8")
+    manager = make_manager(db, [str(root)], db_debounce=0.0)
+    await manager.configure(str(blocker))
+    manager.enqueue(root / "a.json")
+    leave_a_write_open(db)
+
+    await asyncio.wait_for(manager._pass(), timeout=3.0)
+
+    status = manager.status()
+    assert status["state"] == "failed"
+    assert "a.json" in status["lastError"]
+    end_the_open_write(db, "ROLLBACK")
+
+
+@pytest.mark.asyncio
 async def test_a_sync_now_that_fails_and_defers_reads_failed(
     db: Database, tmp_path: Path
 ) -> None:

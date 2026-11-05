@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { BackupState, BackupStatus } from "@/lib/ws/protocol";
 
-import { backupPill, backupTone } from "./report";
+import { backupPhrase, backupPill, backupTone } from "./report";
 
 const status = (state: BackupState, lastError: string | null = null): BackupStatus => ({
   configured: true,
@@ -59,5 +59,19 @@ describe("backupPill", () => {
 
   it("stays quiet while healthy", () => {
     expect(backupPill(status("ok"))).toMatchObject({ text: "backup ok", tone: "neutral" });
+  });
+});
+
+describe("backupPhrase", () => {
+  it("names a deferred database copy, not a failing backup", () => {
+    expect(backupPhrase(status("deferred"), null)).toBe("database copy deferred");
+  });
+
+  it("says failing on a real failure", () => {
+    expect(backupPhrase(status("failed", "a.json: denied"), null)).toBe("backup failing");
+  });
+
+  it("states the cadence while healthy", () => {
+    expect(backupPhrase(status("ok"), null)).toBe("mirroring every 10s");
   });
 });

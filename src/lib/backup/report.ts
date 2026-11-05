@@ -4,10 +4,6 @@ import type { BackupStatus } from "@/lib/ws/protocol";
  * How the sidecar's backup report reads (`DATA.md#failures`), shared by
  * Settings' note, its Storage tile and Mission Control's pill so no two of
  * them can disagree. Pure: it maps what the sidecar said and predicts nothing.
- *
- * Only a real failure (`state: "failed"`, or a "Sync now" the sidecar refused)
- * takes the error tone. A `deferred` database copy is owed but not a fault of
- * the target, so it warns, as a first pass still pending does.
  */
 export type BackupTone = "error" | "warning" | "ok" | "neutral";
 
@@ -23,6 +19,17 @@ export function backupTone(status: BackupStatus, syncError: string | null): Back
   if (status.state === "deferred" || status.state === "pending") return "warning";
   if (status.state === "ok") return "ok";
   return "neutral";
+}
+
+/**
+ * The Storage tile's phrase for a configured mirror, ordered as `backupTone`
+ * is so the phrase and its colour always agree.
+ */
+export function backupPhrase(status: BackupStatus, syncError: string | null): string {
+  if (status.state === "failed" || syncError) return "backup failing";
+  if (status.state === "deferred") return "database copy deferred";
+  if (status.state === "pending") return "first mirror pass pending";
+  return `mirroring every ${Math.round(status.intervalSeconds)}s`;
 }
 
 /** What Settings says about a deferred database copy, in full. */

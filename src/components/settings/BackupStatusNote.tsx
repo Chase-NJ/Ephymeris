@@ -110,6 +110,12 @@ function Body({
         Database copy deferred.
         <span className="block text-static">
           {DEFERRED_DETAIL} Session files are mirroring as usual.
+          {lastSync && (
+            <>
+              {" "}Last sync copied{" "}
+              <span className="font-mono text-starlight">{lastSync.copied}</span>.
+            </>
+          )}
         </span>
       </span>
     );

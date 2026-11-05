@@ -1885,7 +1885,7 @@ The kind of answer a condition rewards. `port` is a rig whose response ports car
 <a id="shape-backupstate"></a>
 #### BackupState
 
-`pending` = directory set but no pass has completed yet, distinct from `ok` (a pass succeeded) and `failed` (the last pass didn't) — a freshly set, unreachable network path must not read as healthy before its first pass. `deferred` = the last pass or sync copied everything it could but the database copy waits behind an open write (`DATA.md#the-database-copy`); a later pass makes it. Not a fault of the target: a real failure in the same pass reads `failed`.
+`pending` = directory set but no pass has completed yet, distinct from `ok` (a pass succeeded) and `failed` (the last pass didn't) — a freshly set, unreachable network path must not read as healthy before its first pass. `deferred` = no failure, but a database copy deferred behind an open write is still owed (`DATA.md#failures`).
 
 "disabled" \| "pending" \| "ok" \| "deferred" \| "failed"
 

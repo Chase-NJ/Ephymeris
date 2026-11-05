@@ -120,6 +120,9 @@ class BackupManager:
         #: this stretch of deferrals; and whether that has been warned about.
         self._db_deferred_since: float | None = None
         self._db_deferral_warned = False
+        #: A copy was deferred and none has been made since. Between passes
+        #: the debounce can make the copy not yet due; it is still owed.
+        self._db_owed = False
 
     # --- lifecycle --------------------------------------------------------
 
@@ -160,6 +163,8 @@ class BackupManager:
 
         self._last_error = None
         self._state = "disabled" if target is None else "pending"
+        self._db_owed = False
+        self._db_deferred_since, self._db_deferral_warned = None, False
         if target is None:
             log.info("backup directory cleared; mirroring is off")
         else:
@@ -292,11 +297,7 @@ class BackupManager:
             await self._publish()
 
     def _settle(self, error: str | None, deferred: bool) -> None:
-        """Set the state a pass or sync ended in (`DATA.md#failures`).
-
-        A failure outranks a deferral, and a deferral is not a success: the
-        database copy is still owed, so `lastSuccessAt` waits for it.
-        """
+        """Set the state a pass or sync ended in (`DATA.md#failures`)."""
         self._last_error = error
         if error is not None:
             self._state = "failed"
@@ -323,9 +324,9 @@ class BackupManager:
         return marked is not None and (time.monotonic() - marked) >= self._db_debounce
 
     async def _back_up_database(self, target: Path) -> bool:
-        """Copy the database if it is due; True when the copy was deferred."""
+        """Copy the database if it is due; True while a deferred copy is owed."""
         if not self._db_due():
-            return False
+            return self._db_owed
         with self._lock:
             marked = self._db_dirty_at
         try:
@@ -335,15 +336,20 @@ class BackupManager:
             # snapshots once the write has ended.
             self._note_deferred()
             return True
+        self._note_copied(marked)
+        return False
+
+    def _note_copied(self, marked: float | None) -> None:
+        self._db_owed = False
         self._db_deferred_since, self._db_deferral_warned = None, False
         with self._lock:
             # A commit landing during the copy re-dirties it; only clear the
             # mark we actually acted on, so that write isn't silently lost.
             if self._db_dirty_at == marked:
                 self._db_dirty_at = None
-        return False
 
     def _note_deferred(self) -> None:
+        self._db_owed = True
         now = time.monotonic()
         if self._db_deferred_since is None:
             self._db_deferred_since = now
@@ -426,6 +432,8 @@ class BackupManager:
             roots = await asyncio.to_thread(self._roots)
             result = await asyncio.to_thread(self._walk_and_copy, roots, target)
             self.mark_db_dirty()
+            with self._lock:
+                marked = self._db_dirty_at
             try:
                 await asyncio.to_thread(self._write_db_backup, target)
             except WriteInProgress:
@@ -437,9 +445,7 @@ class BackupManager:
                 result["failed"] += 1
                 result["errors"].append(f"{DB_MIRROR_NAME}: {exc}")
             else:
-                self._db_deferred_since, self._db_deferral_warned = None, False
-                with self._lock:
-                    self._db_dirty_at = None
+                self._note_copied(marked)
         finally:
             self._syncing = False
 

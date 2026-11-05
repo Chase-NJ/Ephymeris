@@ -8,7 +8,7 @@ import { BackupStatusNote } from "@/components/settings/BackupStatusNote";
 import { DirectoryField } from "@/components/settings/DirectoryField";
 import { SettingRow } from "@/components/settings/SettingRow";
 import { UpdatesTile } from "@/components/settings/UpdatesTile";
-import { BACKUP_TONE_COLOR } from "@/lib/backup/report";
+import { BACKUP_TONE_COLOR, backupPhrase, backupTone } from "@/lib/backup/report";
 import { useBackupStatus, type BackupStatus } from "@/lib/backup/useBackupStatus";
 import { CASCADE, RISE, springPanel } from "@/lib/motion";
 import { useSettings } from "@/lib/settings/context";
@@ -205,11 +205,10 @@ export function Settings() {
  * Ordered by what would hurt most. No data directory means nothing is being
  * written anywhere and takes the error tone outright; a failing mirror is the
  * next worst thing (`DATA.md#backup-mirroring` — a backup that silently stopped is a promise
- * the app isn't keeping); a deferred database copy or a pending first pass
- * warns; a live mirror earns Ion; no mirror at all is quiet static, because it
- * is a choice rather than a fault. Same tones `backupTone` gives
- * `BackupStatusNote` in the row below, so the corner and the row can never
- * disagree.
+ * the app isn't keeping); a live mirror earns Ion; no mirror at all is quiet
+ * static, because it is a choice rather than a fault. The backup's tone and
+ * phrase come from `backupTone`/`backupPhrase`, as `BackupStatusNote`'s tone
+ * does in the row below, so the corner and the row can never disagree.
  */
 function StorageFact({
   dataDirectory,
@@ -221,38 +220,14 @@ function StorageFact({
   syncError: string | null;
 }) {
   if (!dataDirectory) {
-    return (
-      <span style={{ color: "var(--color-status-error)" }}>
-        no data directory
-      </span>
-    );
+    return <span style={{ color: BACKUP_TONE_COLOR.error }}>no data directory</span>;
   }
   if (!backup.configured) return <span>no backup</span>;
-  if (backup.state === "failed" || syncError) {
-    return (
-      <span style={{ color: "var(--color-status-error)" }}>
-        backup failing
-      </span>
-    );
-  }
-  if (backup.syncing) return <span className="text-starlight">syncing…</span>;
-  if (backup.state === "deferred") {
-    return (
-      <span style={{ color: BACKUP_TONE_COLOR.warning }}>
-        database copy deferred
-      </span>
-    );
-  }
-  if (backup.state === "pending") {
-    return (
-      <span style={{ color: "var(--color-status-warning)" }}>
-        first mirror pass pending
-      </span>
-    );
+  const tone = backupTone(backup, syncError);
+  if (backup.syncing && tone !== "error") {
+    return <span className="text-starlight">syncing…</span>;
   }
   return (
-    <span style={{ color: "var(--color-status-ok)" }}>
-      mirroring every {Math.round(backup.intervalSeconds)}s
-    </span>
+    <span style={{ color: BACKUP_TONE_COLOR[tone] }}>{backupPhrase(backup, syncError)}</span>
   );
 }

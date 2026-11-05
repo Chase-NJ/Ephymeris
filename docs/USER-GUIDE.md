@@ -665,8 +665,8 @@ manager straight away, and note the box and time.
 
 The Mission Control header shows **backup ok**, **backup deferred** or **backup failing**. A failing backup
 never stops the session and data is still saved locally. Tell the lab manager after the session.
-**backup deferred** needs nothing from you: the database copy is waiting for a save to finish and the next
-pass makes it.
+**backup deferred** means the database copy is waiting for a write to finish; the next pass makes it. If it
+still says deferred after a few minutes, tell the lab manager.
 
 ### Do not touch during a session
 
@@ -1043,7 +1043,8 @@ ask the lab manager for the new installer instead.
 | A box refuses to start and says it did not recognise a parameter, carries an older sketch, or received different parameters than were sent | Nothing was started and no file was written. **Acknowledge** the error, flash the box's task again and **Start**. For *received different parameters*, check the USB cable first. If it refuses again, tell the lab manager what the message says |
 | **Stop** seems to do nothing | The box stops at the end of the current trial. If no animal is poking, that can take until the trial times out. Wait |
 | Screens say *Waiting for the backend* or *The backend isn't connected*, or Debug Mode shows *sidecar down* | The app lost its connection to its own background process. Close Ephymeris and open it again. It does not restart this by itself |
-| **backup failing** on Mission Control, or a warning under **Backup directory** in Settings | Data is still saved locally; the backup copy is not being made. Tell the lab manager. The refresh button beside the warning copies anything missing once the backup drive is back |
+| **backup deferred** on Mission Control, or *Database copy deferred* under **Backup directory** in Settings | See [Backup pill](#backup-pill) |
+| **backup failing** on Mission Control, or *Mirroring is failing* under **Backup directory** in Settings | Data is still saved locally; the backup copy is not being made. Tell the lab manager. The refresh button beside the warning copies anything missing once the backup drive is back |
 | A session from earlier today needs another group | **Start a Session**, pick the cohort, then **Continue today**. See [Continue a session from earlier today](#continue-a-session-from-earlier-today) |
 | The dock shows a session that **Ended unexpectedly** | The app closed during a session. Use **Continue with another group** (same day only), **View in Analytics**, or **Close out**. Then run **Recover** in Analytics |
 | The placement walk says it could not light a box | Go by the number on the box. The walk works without the light |

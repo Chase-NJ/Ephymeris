@@ -31,7 +31,8 @@ import { PHASE_FIELDS, phaseDetail, phaseFields } from "./spineLabels";
 /** The timed phase kinds, as `tasks.spinePalette` serves them (`lowering.TIMED`). */
 const TIMED = ["hold", "present", "delay", "response", "outcome", "iti"];
 
-/** The go/no-go seed, named and bound — as `taskdef/seeds.py` writes it. */
+/** A go/no-go task, named and bound, in a short spine (Wait, Hold, Present) the edits below index into.
+ *  Not the seed: `taskdef/seeds.py` and its tests own that. */
 function goNoGo(): SpineDefinition {
   return {
     id: "gng",

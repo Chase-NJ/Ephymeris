@@ -1613,6 +1613,15 @@ The frontend holds no wiring and no budget. The rig document the editor route lo
 
 **A new task starts from a seed.**
 - `/task/new` is `SeedChooser`, which offers the five seeds `tasks.spinePalette` serves from `taskdef/seeds.py`: 2AFC, go/no-go, DNMS, trace and FR/PR. The trace seed is [Pavlovian conditioning](#pavlovian-conditioning)'s `phases()` with a level CS, so it counts licks. A card says what the seed is for, its steps, and how many steps, trial types and roles it has.
+- The 2AFC, go/no-go and DNMS seeds run the lab's full odor trial ([ADR 0003](adr/0003-phase-spine-task-model.md#worked-examples)), in this order:
+  1. a priming Delay with `sample` on, before the light;
+  2. a Wait on `port` with `cue` on, which times out after 4 s as an abort before the stimulus;
+  3. a pre-hold Delay that aborts on the port's release;
+  4. a Present that aborts on release, driving `sample` with a `vacuum` slot. Closing the vacuum routes the odor to the port, so the vacuum's on edge is when the odor reaches the animal;
+  5. a Wait for the port's exit, the light still on;
+  6. the response window, then Outcome and ITI.
+
+  2AFC's window holds the well (`holdMs`) and go/no-go's watches one port. DNMS puts its retention Delay and test Present, both aborting on release, between the sample and the port's exit. `FULL_TRIAL` in `test_spine_editor.py` pins each order.
 - A seed carries phases and no names: its slots, phases, maps and one block are written out, its rows' ids are neutral (`row_1`, …), and every row's `name` and `bind` is empty. So it opens with SPN108 and SPN101 on each row, until the operator names the row and binds it on this rig.
 - Picking a seed opens it unsaved, as Duplicate does. The Details popover stays closed: the category is `Tasks` until someone changes it there.
 - The same reply carries the palette's phase kinds, outcome classes and selections, the phases that last a set time and the selections that read a row's weight, from `lowering.py`'s own tuples. The editor keeps no copy of any of them.

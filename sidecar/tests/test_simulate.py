@@ -19,7 +19,7 @@ from ephymeris_sidecar.taskdef import generate, lowering, seeds
 from ephymeris_sidecar.taskdef.model import TaskDefinition
 from tests.fixtures import spine as fixture
 from tests.live_sidecar import Refused
-from tests.test_spine_editor import built
+from tests.test_spine_editor import FULL_TRIAL, built
 from tests.wire import dispatch, running_app
 
 
@@ -195,6 +195,20 @@ def test_every_simulated_seed_task_replays_clean(seed_id, animal):
     result = run(definition, animal, limit_ms=10 * 60_000)
     summary = stream.summarize(result.document, None)
     assert summary.status == "ok", summary.detail
+
+
+@pytest.mark.parametrize("seed_id", list(FULL_TRIAL))
+def test_a_target_seed_scores_the_correct_animal_perfect_and_the_silent_one_never(seed_id):
+    # The poke's Wait times out, so an animal that never responds still runs
+    # trials, each an omission or an abort, and never a scored one.
+    definition = built(seed_id)
+    correct = report(definition, CORRECT, limit_ms=10 * 60_000)
+    assert {m["id"]: m["pSession"] for m in correct["metrics"]} == {
+        f"replay:{row['id']}:correct": 1.0 for row in definition["rows"]}
+    silent = report(definition, SILENT, limit_ms=10 * 60_000)
+    outcomes = {t["outcome"] for t in silent["trialTable"]["trials"]}
+    assert outcomes and outcomes <= {"omission", "abort_before_stimulus", "abort_during_sampling"}
+    assert all(m["counted"] == 0 for m in silent["metrics"])
 
 
 def test_simulate_leaves_the_snapshot_it_was_given_alone():

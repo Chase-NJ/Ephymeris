@@ -19,10 +19,25 @@ from typing import Any
 
 from . import pavlovian
 
-_PORT_WAIT = [
-    {"phase": "wait", "on": "port", "outputs": ["cue"]},
-    {"phase": "hold", "on": "port", "outputs": ["cue"], "ms": 200},
-]
+
+def _trial(response: dict[str, Any], *, test: bool = False) -> list[dict[str, Any]]:
+    """ADR 0003's full trial around `response`, the lab's odor trial
+    (`0003-phase-spine-task-model.md#worked-examples`): the sample primed before
+    the light, a poke, a pre-hold, then the vacuum closed so the sample reaches
+    the animal (`VACUUM_ON`), all held at the port; then the port's exit with
+    the light still on. With `test`, DNMS's retention delay and test follow the
+    sample, both held."""
+    spine = [
+        {"phase": "delay", "outputs": ["sample"], "ms": 1000},
+        {"phase": "wait", "on": "port", "outputs": ["cue", "sample"], "timeoutMs": 4000},
+        {"phase": "delay", "outputs": ["cue", "sample"], "ms": 200, "abortOnRelease": "port"},
+        {"phase": "present", "outputs": ["cue", "sample", "vacuum"], "ms": 1000, "abortOnRelease": "port"},
+    ]
+    if test:
+        spine += [{"phase": "delay", "outputs": ["cue"], "ms": 2000, "abortOnRelease": "port"},
+                  {"phase": "present", "outputs": ["cue", "test", "vacuum"], "ms": 1000, "abortOnRelease": "port"}]
+    return [*spine, {"phase": "wait", "on": "port", "edge": "exit", "outputs": ["cue"]}, response,
+            {"phase": "outcome", "ms": 0}, {"phase": "iti", "ms": 3000}]
 
 
 def _row(n: int, **fields: Any) -> dict[str, Any]:
@@ -64,12 +79,8 @@ SEEDS: list[dict[str, Any]] = [
         "summary": "Poke and hold, a stimulus, then a choice of two ports; each row pays at one, held.",
         "definition": _document(
             [("port", _IN), ("left", _IN), ("right", _IN), ("cue", _OUT), ("sample", _OUT),
-             ("reward_l", _OUT), ("reward_r", _OUT)],
-            [*_PORT_WAIT,
-             {"phase": "present", "outputs": ["cue", "sample"], "ms": 1000, "abortOnRelease": "port"},
-             {"phase": "response", "responses": ["left", "right"], "ms": 5000, "holdMs": 200},
-             {"phase": "outcome", "ms": 0},
-             {"phase": "iti", "ms": 3000}],
+             ("vacuum", _OUT), ("reward_l", _OUT), ("reward_r", _OUT)],
+            _trial({"phase": "response", "responses": ["left", "right"], "ms": 5000, "holdMs": 200}),
             [_row(1, map={"left": _pays("reward_l", hold=True), "right": {"outcome": "wrong_response"},
                           "timeout": {"outcome": "omission"}}),
              _row(2, map={"left": {"outcome": "wrong_response"}, "right": _pays("reward_r", hold=True),
@@ -82,12 +93,9 @@ SEEDS: list[dict[str, Any]] = [
         "label": "Go/no-go",
         "summary": "Poke and hold, a stimulus, then one port: one row pays a response, the other asks to withhold.",
         "definition": _document(
-            [("port", _IN), ("resp", _IN), ("cue", _OUT), ("sample", _OUT), ("reward", _OUT)],
-            [*_PORT_WAIT,
-             {"phase": "present", "outputs": ["cue", "sample"], "ms": 1000, "abortOnRelease": "port"},
-             {"phase": "response", "responses": ["resp"], "ms": 3000},
-             {"phase": "outcome", "ms": 0},
-             {"phase": "iti", "ms": 3000}],
+            [("port", _IN), ("resp", _IN), ("cue", _OUT), ("sample", _OUT), ("vacuum", _OUT),
+             ("reward", _OUT)],
+            _trial({"phase": "response", "responses": ["resp"], "ms": 3000}),
             [_row(1, map={"resp": _pays("reward"), "timeout": {"outcome": "omission"}}),
              _row(2, map={"resp": {"outcome": "false_alarm"}, "timeout": {"outcome": "withheld"}})],
             trials=200,
@@ -100,14 +108,8 @@ SEEDS: list[dict[str, Any]] = [
                    "two rows match and two do not.",
         "definition": _document(
             [("port", _IN), ("match", _IN), ("non_match", _IN), ("cue", _OUT), ("sample", _OUT), ("test", _OUT),
-             ("reward_l", _OUT), ("reward_r", _OUT)],
-            [*_PORT_WAIT,
-             {"phase": "present", "outputs": ["cue", "sample"], "ms": 1000, "abortOnRelease": "port"},
-             {"phase": "delay", "outputs": ["cue"], "ms": 2000, "abortOnRelease": "port"},
-             {"phase": "present", "outputs": ["cue", "test"], "ms": 1000, "abortOnRelease": "port"},
-             {"phase": "response", "responses": ["match", "non_match"], "ms": 5000},
-             {"phase": "outcome", "ms": 0},
-             {"phase": "iti", "ms": 3000}],
+             ("vacuum", _OUT), ("reward_l", _OUT), ("reward_r", _OUT)],
+            _trial({"phase": "response", "responses": ["match", "non_match"], "ms": 5000}, test=True),
             [_row(n, map={"match": _pays("reward_l") if same else {"outcome": "wrong_response"},
                           "non_match": {"outcome": "wrong_response"} if same else _pays("reward_r"),
                           "timeout": {"outcome": "omission"}})

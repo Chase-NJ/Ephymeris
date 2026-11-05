@@ -227,6 +227,204 @@ describe("telemetry", () => {
   });
 });
 
+// A reconnect replays `port.telemetry` for a Debug run still going
+// (`ARCHITECTURE.md#replay-on-connect`). That replay is what the store already
+// holds, so it must not draw a second point.
+describe("a Debug run across a reconnect", () => {
+  const metric = (value: number, n = 1) => [{ id: "accuracy", value, n }];
+  const debug = (box: number, value: number, n = 1, running = true) => ({
+    box,
+    running,
+    metrics: metric(value, n),
+  });
+  function reconnect(sidecar: FakeSidecar) {
+    sidecar.setStatus("reconnecting");
+    sidecar.setStatus("connected");
+  }
+
+  it("adds no point for the replayed snapshot", () => {
+    const { sidecar, store } = attached("connected");
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.5));
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.75, 2));
+
+    reconnect(sidecar);
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.75, 2));
+
+    expect(store.getHistory(2, "accuracy")).toEqual([0.5, 0.75]);
+    expect(store.isDebugRunning(2)).toBe(true);
+  });
+
+  it("keeps a repeat that arrives after the snapshot, as without a reconnect", () => {
+    const { sidecar, store } = attached("connected");
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.5));
+
+    reconnect(sidecar);
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.5));
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.5));
+
+    expect(store.getHistory(2, "accuracy")).toEqual([0.5, 0.5]);
+  });
+
+  it("adds the point for trials scored while disconnected", () => {
+    const { sidecar, store } = attached("connected");
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.5));
+
+    reconnect(sidecar);
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.6, 5));
+
+    expect(store.getHistory(2, "accuracy")).toEqual([0.5, 0.6]);
+  });
+
+  it("adds one point when a live batch beats the snapshot to the client", () => {
+    // The sidecar adds a client before replaying to it, so a broadcast can
+    // land first. With one run, the snapshot that follows repeats it.
+    const { sidecar, store } = attached("connected");
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.5));
+
+    reconnect(sidecar);
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 1, 2));
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 1, 2));
+
+    expect(store.getHistory(2, "accuracy")).toEqual([0.5, 1]);
+  });
+
+  it("keeps a repeat once the replay is over, after a snapshot that differed", async () => {
+    const { sidecar, store } = attached("connected");
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.5));
+
+    reconnect(sidecar);
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.6, 5));
+    // The sidecar answers a command only after its replay is sent.
+    await sidecar.reply(CMD.SESSIONS_ACTIVE, configuring());
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.6, 5));
+
+    expect(store.getHistory(2, "accuracy")).toEqual([0.5, 0.6, 0.6]);
+  });
+
+  it("drops each running box's snapshot once", () => {
+    const { sidecar, store } = attached("connected");
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(1, 0.5));
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.25));
+
+    reconnect(sidecar);
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(1, 0.5));
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.25));
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(1, 0.5));
+
+    expect(store.getHistory(1, "accuracy")).toEqual([0.5, 0.5]);
+    expect(store.getHistory(2, "accuracy")).toEqual([0.25]);
+  });
+
+  it("owes one snapshot after reconnects that came before it", () => {
+    const { sidecar, store } = attached("connected");
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.5));
+
+    reconnect(sidecar);
+    reconnect(sidecar);
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.5));
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.5));
+
+    expect(store.getHistory(2, "accuracy")).toEqual([0.5, 0.5]);
+  });
+
+  it("keeps the debt when the last connection's call settles after the new connect", async () => {
+    const { sidecar, store } = attached("connected");
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.5));
+
+    reconnect(sidecar);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.5));
+
+    expect(store.getHistory(2, "accuracy")).toEqual([0.5]);
+  });
+});
+
+// The replay sends a payload only for runs still armed, so a run that ended
+// while the webview was away is known over once the replay is (#189).
+describe("a Debug run that ended while disconnected", () => {
+  const metric = (value: number) => [{ id: "accuracy", value, n: 1 }];
+  const debug = (box: number, value: number) => ({ box, running: true, metrics: metric(value) });
+  function reconnect(sidecar: FakeSidecar) {
+    sidecar.setStatus("reconnecting");
+    sidecar.setStatus("connected");
+  }
+
+  it("stops running once the replay is over, keeping its last numbers", async () => {
+    const { sidecar, store } = attached("connected");
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.5));
+    let heard = 0;
+    store.subscribe("debug:2", () => (heard += 1));
+
+    reconnect(sidecar);
+    expect(store.isDebugRunning(2)).toBe(true);
+    await sidecar.reply(CMD.SESSIONS_ACTIVE, configuring());
+
+    expect(store.isDebugRunning(2)).toBe(false);
+    expect(heard).toBe(1);
+    expect(store.getTelemetry(2)).toEqual(metric(0.5));
+    expect(store.getHistory(2, "accuracy")).toEqual([0.5]);
+  });
+
+  it("forgets it when the next run arms", async () => {
+    const { sidecar, store } = attached("connected");
+    sidecar.emit(EVT.PORT_OUTPUT, output(2, ["rx", "11\t5"]));
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.5));
+
+    reconnect(sidecar);
+    await sidecar.reply(CMD.SESSIONS_ACTIVE, configuring());
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 1));
+
+    expect(store.getHistory(2, "accuracy")).toEqual([1]);
+    expect(store.getStrobes(2)).toEqual([]);
+    expect(store.isDebugRunning(2)).toBe(true);
+  });
+
+  it("keeps a run the replay repeated, and stops only the one it did not", async () => {
+    const { sidecar, store } = attached("connected");
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(1, 0.5));
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.25));
+
+    reconnect(sidecar);
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(1, 0.5));
+    await sidecar.reply(CMD.SESSIONS_ACTIVE, configuring());
+
+    expect(store.isDebugRunning(1)).toBe(true);
+    expect(store.isDebugRunning(2)).toBe(false);
+  });
+
+  it("keeps a run whose replayed snapshot brought news", async () => {
+    const { sidecar, store } = attached("connected");
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.5));
+
+    reconnect(sidecar);
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.75));
+    await sidecar.reply(CMD.SESSIONS_ACTIVE, configuring());
+
+    expect(store.isDebugRunning(2)).toBe(true);
+  });
+
+  it("is over when the sidecar refuses the ask, since it read it after the replay", async () => {
+    const { sidecar, store } = attached("connected");
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.5));
+
+    reconnect(sidecar);
+    await sidecar.refuse(CMD.SESSIONS_ACTIVE, ERR.INTERNAL);
+
+    expect(store.isDebugRunning(2)).toBe(false);
+  });
+
+  it("keeps running when the connection drops before the replay is known over", async () => {
+    const { sidecar, store } = attached("connected");
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.5));
+
+    reconnect(sidecar);
+    sidecar.setStatus("reconnecting");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(store.isDebugRunning(2)).toBe(true);
+  });
+});
+
 // The store notices a new run on the events it already receives; no caller
 // tells it (`ARCHITECTURE.md#overview`: the frontend renders what the sidecar
 // reports and never predicts a transition).

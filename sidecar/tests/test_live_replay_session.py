@@ -20,7 +20,7 @@ from ephymeris_sidecar.analytics.stream.summary import summarize
 from ephymeris_sidecar.ports import handler as handler_module
 from ephymeris_sidecar.protocol import Evt, validate_event_data
 from ephymeris_sidecar.sessions import live_replay
-from ephymeris_sidecar.sessions.scorer import LiveScorer
+from ephymeris_sidecar.sessions.scorer import STOPPED, LiveScorer
 from ephymeris_sidecar.sessions.runner import BoxConfig, SessionRunner
 from ephymeris_sidecar.tasks import profile as task_profile
 from ephymeris_sidecar.tasks.start_command import build_start_command
@@ -265,7 +265,7 @@ async def test_a_scorer_killed_mid_session_costs_only_the_live_numbers(
 
     down = replays(events)[-1]
     assert down["status"] == "replaying" and down["metrics"] == [] and down["overall"] is None
-    assert down["unavailable"] == "the live scorer stopped"
+    assert down["unavailable"] == STOPPED
     await board.said(*lines(strobes[half:]))
     await until(lambda: not runner.running_boxes(), timeout=10)
     moving = [r for r in replays(events) if r["unavailable"] and r["phase"] is not None]

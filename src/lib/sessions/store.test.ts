@@ -277,7 +277,7 @@ describe("a Debug run across a reconnect", () => {
 
   it("adds one point when a live batch beats the snapshot to the client", () => {
     // The sidecar adds a client before replaying to it, so a broadcast can
-    // land first; the snapshot that follows repeats it.
+    // land first. With one run, the snapshot that follows repeats it.
     const { sidecar, store } = attached("connected");
     sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.5));
 
@@ -288,15 +288,53 @@ describe("a Debug run across a reconnect", () => {
     expect(store.getHistory(2, "accuracy")).toEqual([0.5, 1]);
   });
 
-  it("owes nothing for a box with no Debug run on screen", () => {
+  it("keeps a repeat once the replay is over, after a snapshot that differed", async () => {
     const { sidecar, store } = attached("connected");
     sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.5));
-    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.5, 1, false));
 
     reconnect(sidecar);
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.6, 5));
+    // The sidecar answers a command only after its replay is sent.
+    await sidecar.reply(CMD.SESSIONS_ACTIVE, configuring());
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.6, 5));
+
+    expect(store.getHistory(2, "accuracy")).toEqual([0.5, 0.6, 0.6]);
+  });
+
+  it("drops each running box's snapshot once", () => {
+    const { sidecar, store } = attached("connected");
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(1, 0.5));
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.25));
+
+    reconnect(sidecar);
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(1, 0.5));
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.25));
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(1, 0.5));
+
+    expect(store.getHistory(1, "accuracy")).toEqual([0.5, 0.5]);
+    expect(store.getHistory(2, "accuracy")).toEqual([0.25]);
+  });
+
+  it("owes one snapshot after reconnects that came before it", () => {
+    const { sidecar, store } = attached("connected");
     sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.5));
 
-    // A new run: the arm forgets the last one and its first payload counts.
+    reconnect(sidecar);
+    reconnect(sidecar);
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.5));
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.5));
+
+    expect(store.getHistory(2, "accuracy")).toEqual([0.5, 0.5]);
+  });
+
+  it("keeps the debt when the last connection's call settles after the new connect", async () => {
+    const { sidecar, store } = attached("connected");
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.5));
+
+    reconnect(sidecar);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    sidecar.emit(EVT.PORT_TELEMETRY, debug(2, 0.5));
+
     expect(store.getHistory(2, "accuracy")).toEqual([0.5]);
   });
 });

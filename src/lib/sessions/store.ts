@@ -88,7 +88,9 @@ export class SessionStore {
    * Debug runs on screen at the last connect, each owed the snapshot the
    * sidecar replays for it (`ARCHITECTURE.md#replay-on-connect`). The first
    * payload that repeats what the box holds is that snapshot and adds no point;
-   * one that differs is news, and the box stays owed until the repeat lands.
+   * one that differs is news, and the box stays owed until the repeat lands or
+   * the replay is over. The sidecar reads no command until its replay is sent,
+   * so the reply to the connect's `sessions.active` marks that end.
    */
   private debugReplayOwed = new Set<number>();
   /**
@@ -118,10 +120,16 @@ export class SessionStore {
   attach(client: SidecarPort): () => void {
     let detached = false;
     let broadcasts = 0;
+    let connects = 0;
     const ask = () => {
       const seen = broadcasts;
+      const connect = connects;
       client
         .call(CMD.SESSIONS_ACTIVE)
+        .finally(() => {
+          // The replay is over, unless this was the last connection's call.
+          if (connect === connects) this.debugReplayOwed.clear();
+        })
         .then((result) => {
           if (detached) return;
           // A broadcast landed while this was in flight, and either may be the
@@ -155,6 +163,7 @@ export class SessionStore {
 
       client.onStatus((status) => {
         if (status !== "connected") return;
+        connects += 1;
         this.debugReplayOwed = new Set(this.debugRunning);
         ask();
       }),
@@ -200,7 +209,8 @@ export class SessionStore {
         if (typeof d?.box !== "number") return;
         const metrics = d.metrics ?? NO_METRICS;
         if (d.running && !this.debugRunning.has(d.box)) this.forgetBox(d.box);
-        if (d.running && this.debugReplayOwed.has(d.box) && sameMetrics(metrics, this.telemetry.get(d.box))) {
+        const owed = d.running && this.debugReplayOwed.has(d.box);
+        if (owed && sameMetrics(metrics, this.telemetry.get(d.box))) {
           this.debugReplayOwed.delete(d.box);
           return;
         }

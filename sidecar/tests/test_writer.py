@@ -6,6 +6,7 @@ mid-session and prove the `.tsv` is intact up to the last flushed line.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
@@ -13,7 +14,14 @@ from pathlib import Path
 
 import pytest
 
-from ephymeris_sidecar.sessions.writer import AnimalWriter, WriteError, write_atomic
+from ephymeris_sidecar.sessions.writer import (
+    PART_GRACE_S,
+    PART_SUFFIX,
+    AnimalWriter,
+    WriteError,
+    sweep_parts,
+    write_atomic,
+)
 
 CORE = {
     "rat": "remy1",
@@ -381,3 +389,90 @@ def test_two_writes_of_one_file_take_turns_at_the_rename(tmp_path: Path, monkeyp
     assert failures == []
     assert target.read_bytes() in (b"a" * 1024, b"b" * 1024)
     assert [p.name for p in tmp_path.iterdir()] == ["remy1.json"]
+
+
+# --- the startup sweep of writer parts (`DATA.md#built-once-at-the-end`) ---
+
+#: Well past the sweep's grace, so a part dated this far back is stale.
+LONG_AGO = 2 * PART_GRACE_S
+
+
+def _part(folder: Path, name: str, *, pid: int, age: float) -> Path:
+    """A writer part for `name`, as `write_atomic` names one, dated `age` seconds ago."""
+    folder.mkdir(parents=True, exist_ok=True)
+    part = folder / f"{name}.{pid}-123456{PART_SUFFIX}"
+    part.write_bytes(b"half a document")
+    when = time.time() - age
+    os.utime(part, (when, when))
+    return part
+
+
+def _other_pid() -> int:
+    return os.getpid() + 1
+
+
+def test_the_sweep_removes_a_stale_part_another_process_left(tmp_path: Path) -> None:
+    """A power cut mid-finalize leaves the `.part`; the next start removes it."""
+    session = tmp_path / "Cohort" / "2O-Bdisc_25_2026-07-22"
+    stale = _part(session, "remy1_2O-Bdisc_25_2026-07-22_101500.json", pid=_other_pid(), age=LONG_AGO)
+    (session / "remy1_2O-Bdisc_25_2026-07-22_101500.tsv").write_text("# rat: remy1\n")
+
+    assert sweep_parts([tmp_path], started=time.time()) == 1
+
+    assert not stale.exists()
+    assert [p.name for p in session.iterdir()] == ["remy1_2O-Bdisc_25_2026-07-22_101500.tsv"]
+
+
+def test_the_sweep_keeps_every_part_a_live_writer_could_own(tmp_path: Path) -> None:
+    """This process's own part, a part written since shortly before this
+    process started (another lab machine sharing the archive may still be
+    writing it), and any `.part` that isn't the writer's shape."""
+    mine = _part(tmp_path, "remy1.json", pid=os.getpid(), age=LONG_AGO)
+    fresh = _part(tmp_path, "remy2.json", pid=_other_pid(), age=PART_GRACE_S / 2)
+    bare = tmp_path / f"wiring.json{PART_SUFFIX}"
+    bare.write_text("{}")
+    os.utime(bare, (time.time() - LONG_AGO,) * 2)
+    unnumbered = tmp_path / f"remy3.json.backup-1{PART_SUFFIX}"
+    unnumbered.write_text("{}")
+    os.utime(unnumbered, (time.time() - LONG_AGO,) * 2)
+
+    assert sweep_parts([tmp_path], started=time.time()) == 0
+
+    assert mine.exists() and fresh.exists() and bare.exists() and unnumbered.exists()
+
+
+def test_the_sweep_leaves_the_backup_mirror_alone(tmp_path: Path) -> None:
+    """The backup mirror names its parts the same way; a backup directory
+    inside a data folder is not this sweep's to tidy."""
+    backup = tmp_path / "backup"
+    mirrored = _part(backup / "Cohort", "remy1.json", pid=_other_pid(), age=LONG_AGO)
+
+    assert sweep_parts([tmp_path], started=time.time(), skip=[backup]) == 0
+
+    assert mirrored.exists()
+
+
+def test_the_sweep_walks_nested_roots_once_and_survives_a_missing_one(tmp_path: Path) -> None:
+    cohort = tmp_path / "Cohort"
+    stale = _part(cohort, "remy1.json", pid=_other_pid(), age=LONG_AGO)
+
+    removed = sweep_parts([tmp_path, cohort, tmp_path / "unplugged"], started=time.time())
+
+    assert removed == 1
+    assert not stale.exists()
+
+
+def test_a_part_the_sweep_cannot_remove_is_logged_not_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    stale = _part(tmp_path, "remy1.json", pid=_other_pid(), age=LONG_AGO)
+
+    def refuse(self: Path, missing_ok: bool = False) -> None:
+        raise PermissionError(13, "Access is denied", str(self))
+
+    monkeypatch.setattr(Path, "unlink", refuse)
+    with caplog.at_level("WARNING"):
+        assert sweep_parts([tmp_path], started=time.time()) == 0
+
+    assert stale.exists()
+    assert "Access is denied" in caplog.text

@@ -27,7 +27,7 @@ env:
 jobs:
   frontend:
     name: Protocol, typecheck, vitest
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -47,7 +47,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        os: [windows-latest, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
     # Windows takes about five minutes; a hang should fail, not hold the PR for
     # GitHub's six-hour default.
@@ -82,7 +82,7 @@ jobs:
 
   firmware:
     name: Firmware host tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
       - run: sh firmware/libraries/BehaviorBox/extras/host_test/run.sh
@@ -101,7 +101,7 @@ jobs:
   # each with --warnings all (firmware/README.md "Building and testing").
   firmware-compile:
     name: Firmware compile
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6

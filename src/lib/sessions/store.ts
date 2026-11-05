@@ -85,6 +85,15 @@ export class SessionStore {
    */
   private debugRunning = new Set<number>();
   /**
+   * Debug runs on screen at the last connect, each owed the snapshot the
+   * sidecar replays for it (`ARCHITECTURE.md#replay-on-connect`). The first
+   * payload that repeats what the box holds is that snapshot and adds no point;
+   * one that differs is news, and the box stays owed until the repeat lands or
+   * the replay is over. The sidecar reads no command until its replay is sent,
+   * so the reply to the connect's `sessions.active` marks that end.
+   */
+  private debugReplayOwed = new Set<number>();
+  /**
    * Every strobe this box has emitted, in order.
    *
    * Deliberately a second consumer of `port.output` alongside `HardwareStore`:
@@ -111,10 +120,16 @@ export class SessionStore {
   attach(client: SidecarPort): () => void {
     let detached = false;
     let broadcasts = 0;
+    let connects = 0;
     const ask = () => {
       const seen = broadcasts;
+      const connect = connects;
       client
         .call(CMD.SESSIONS_ACTIVE)
+        .finally(() => {
+          // The replay is over, unless this was the last connection's call.
+          if (connect === connects) this.debugReplayOwed.clear();
+        })
         .then((result) => {
           if (detached) return;
           // A broadcast landed while this was in flight, and either may be the
@@ -147,7 +162,10 @@ export class SessionStore {
       }),
 
       client.onStatus((status) => {
-        if (status === "connected") ask();
+        if (status !== "connected") return;
+        connects += 1;
+        this.debugReplayOwed = new Set(this.debugRunning);
+        ask();
       }),
 
       client.on(EVT.PREFIXES_UPDATED, (data) => {
@@ -183,13 +201,26 @@ export class SessionStore {
       // The sidecar arms a Debug run only once its START is on the wire, so
       // the arm (running false -> true) is when the last run is forgotten; a
       // refused START never arms and leaves it on screen.
+      //
+      // The payload has no trial count to guard on, as `session.replay` does,
+      // and two equal payloads in a row are normal (one per strobe batch), so
+      // only the snapshot a connect owes is dropped (`debugReplayOwed`).
       client.on(EVT.PORT_TELEMETRY, (d) => {
         if (typeof d?.box !== "number") return;
+        const metrics = d.metrics ?? NO_METRICS;
         if (d.running && !this.debugRunning.has(d.box)) this.forgetBox(d.box);
-        this.telemetry.set(d.box, d.metrics ?? NO_METRICS);
-        this.appendHistory(d.box, d.metrics ?? NO_METRICS);
+        const owed = d.running && this.debugReplayOwed.has(d.box);
+        if (owed && sameMetrics(metrics, this.telemetry.get(d.box))) {
+          this.debugReplayOwed.delete(d.box);
+          return;
+        }
+        this.telemetry.set(d.box, metrics);
+        this.appendHistory(d.box, metrics);
         if (d.running) this.debugRunning.add(d.box);
-        else this.debugRunning.delete(d.box);
+        else {
+          this.debugRunning.delete(d.box);
+          this.debugReplayOwed.delete(d.box);
+        }
         this.notify(`telemetry:${d.box}`);
         this.notify(`debug:${d.box}`);
       }),
@@ -359,6 +390,7 @@ export class SessionStore {
   /** Forget one box's run: it began another. */
   private forgetBox(box: number): void {
     this.telemetry.delete(box);
+    this.debugReplayOwed.delete(box);
     this.history.delete(box);
     this.replays.delete(box);
     this.replayVersion += 1;
@@ -395,4 +427,13 @@ export class SessionStore {
     if (!set) return;
     for (const callback of set) callback();
   }
+}
+
+/** The same metrics, value for value and window for window. */
+function sameMetrics(a: TelemetryMetric[], b: TelemetryMetric[] | undefined): boolean {
+  return (
+    b !== undefined &&
+    a.length === b.length &&
+    a.every((m, i) => m.id === b[i]!.id && m.value === b[i]!.value && m.n === b[i]!.n)
+  );
 }

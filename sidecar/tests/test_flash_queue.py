@@ -24,15 +24,16 @@ from ephymeris_sidecar.settings import SidecarSettings
 from ephymeris_sidecar.tasks.start_command import build_start_command
 from ephymeris_sidecar.utility import UtilityBaseline
 
-from .test_utility import (  # noqa: F401 - fake_serial is an autouse fixture
+from .scripted_board import Boards
+from .test_utility import (
     TASK_PATH,
     UTILITY_PATH,
     UTILITY_PROFILE,
     FakeDiscovery,
     FakeTool,
+    UtilityBoard,
     _noop_output,
     _noop_presence,
-    fake_serial,
 )
 
 BOXES = (1, 2, 3)
@@ -117,6 +118,8 @@ class Rig:
         self.tool = OverlapTool()
         self.events: list[dict] = []
         self.flashed: list[tuple[int, str, str]] = []
+        #: Every port the manager opened.
+        self.boards = Boards(UtilityBoard)
 
         async def broadcast(message: dict) -> None:
             self.events.append(message)
@@ -127,6 +130,7 @@ class Rig:
             on_state_change=lambda box, *_a: self.queue.port_changed(box),
             on_output=_noop_output,
             on_presence=_noop_presence,
+            open_serial=self.boards,
         )
         self.tool.ports = self.ports
         settings = SidecarSettings.from_payload(

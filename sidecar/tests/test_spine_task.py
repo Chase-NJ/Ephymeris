@@ -418,7 +418,7 @@ def test_the_ram_budget_is_what_an_avr_build_adds_for_the_task(tmp_path):
             assert 0 <= counted - globals_ <= 1, (globals_, counted)
         assert 0 <= counted - globals_ <= 24, (raw["id"], globals_, counted)
     assert globals_ <= spine_module.RUNNER_RAM_BYTES + spine_module.TASK_RAM_MAX
-    assert 8192 - (spine_module.RUNNER_RAM_BYTES + spine_module.TASK_RAM_MAX) == 2718
+    assert 8192 - (spine_module.RUNNER_RAM_BYTES + spine_module.TASK_RAM_MAX) == 2604
 
     # Driven outputs (TASKS.md#driven-outputs), with a tone and without one: the
     # drives and tone()'s own globals are counted too. So are Pavlovian trace and

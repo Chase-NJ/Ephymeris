@@ -85,13 +85,14 @@ DRIVE_RUN_BYTES = 13
 #: output (`SPINE_HAS_TONE`). Measured by the same test.
 TONE_RAM_BYTES = 32
 #: The globals of a spine sketch apart from its task's data: the runner,
-#: BehaviorBox.h and the Arduino core, measured by that same test. A build can
-#: come in some bytes under the sum (the compiler folds a small constant channel
-#: array away), never over it.
-RUNNER_RAM_BYTES = 474
+#: BehaviorBox.h and the Arduino core, measured by that same test; 114 B of it is
+#: the strobe queue, the sync pulse's state and the `SYNC=TICK` string
+#: (`BoxSpine.h`). A build can come in some bytes under the sum (the compiler
+#: folds a small constant channel array away), never over it.
+RUNNER_RAM_BYTES = 588
 #: The most RAM a task's data (`task_ram_bytes`) may take, out of a Mega's 8192 B.
-#: With the runner's own, globals stay at most 5474 B (67%), leaving the stack
-#: and the serial buffers at least 2718 B (`TASKS.md#spine-diagnostics`). An
+#: With the runner's own, globals stay at most 5588 B (68%), leaving the stack
+#: and the serial buffers at least 2604 B (`TASKS.md#spine-diagnostics`). An
 #: 18-row 2AFC fits.
 TASK_RAM_MAX = 5000
 

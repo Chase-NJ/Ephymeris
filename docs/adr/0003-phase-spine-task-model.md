@@ -284,7 +284,7 @@ Two differences from GRGL remain, accepted:
   - the `START` length cap becomes "every `SET` line is capped, and the board confirms the parameter block by CRC before `START`";
   - "nothing on disk is a trial" becomes "the app never reads the derived trial table".
 - **New glossary terms** once this is accepted: spine, phase, slot, contingency map, block, outcome class, channel set, pin map, trial table, replay, diverged run.
-- **The sync line lags in a burst.** Its rising edge can trail the strobe's tick time by about 0.7 ms per strobe. The lag is bounded and recorded, and must be documented in [RECORDING.md](../RECORDING.md#the-sync-line) before the first implant session relies on it.
+- **The sync line pulses once per tick, not per strobe.** Every strobe of a tick carries the tick's time, so the runner raises one edge per tick that strobes, with the tick's outputs, and never waits on it; a pulse per strobe made the k-th strobe of a burst rise about (k−1) × 0.7 ms late and stalled `loop()` while it did. The board announces it (`SYNC=TICK`), the run's header records it, and the edge matcher pairs every strobe of a tick with its one edge. The bound that remains is documented in [RECORDING.md](../RECORDING.md#the-alignment-bound).
 - **Fixes worth making now, whatever this decision becomes:**
   - a generated no-go metric's `alternate` is one port, so a false alarm at the other port is excluded instead of counted;
   - TSK108 misses a table emptied by go rows with no usable response port;

@@ -17,6 +17,7 @@ real RHX and real boxes; a full-length recording from a real animal has not ([No
   - [Synthetic data](#synthetic-data)
 - [The sync line](#the-sync-line)
   - [Firmware pulse](#firmware-pulse)
+    - [The alignment bound](#the-alignment-bound)
   - [Wiring and binding](#wiring-and-binding)
   - [Edge matcher](#edge-matcher)
 - [Recording walkthrough](#recording-walkthrough)
@@ -176,7 +177,7 @@ The two paths one event takes, and where they meet:
 
 ```mermaid
 flowchart LR
-    emit["emitStrobe() on the Mega"] -->|"rising edge on BOX_PIN_SYNC_OUT"| din["RHX digital input<br/>the box's intanDigitalIn"]
+    emit["a strobe, or a tick's strobes, on the Mega"] -->|"rising edge on BOX_PIN_SYNC_OUT"| din["RHX digital input<br/>the box's intanDigitalIn"]
     emit -->|"code and ms over USB serial"| runner["SessionRunner<br/>appends to the .tsv"]
     din -->|"saved at full rate"| rhxFiles[("RHX's own files")]
     din -->|"digital-input word on the waveform socket"| detector["Edge detector<br/>for the box's input"]
@@ -187,28 +188,69 @@ flowchart LR
 
 ### Firmware pulse
 
-`emitStrobe()` in `BehaviorBox.h` brackets its serial print with a pulse on `BOX_PIN_SYNC_OUT`, in this
-order: wait out the LOW gap **first** (so the wait lands before the timestamp, not between it and the
-edge); stamp, then drive HIGH at once (**the rising edge is what the controller timestamps**); print while
-high, spending the pulse width on work that had to happen anyway; hold out the remainder, then LOW.
+Two schemes, one per runner. The board says which before `READY`, because the task alone cannot: a spine
+board flashed before the tick pulse existed still pulses per strobe.
+
+| Runner | Pulses | Announces |
+|---|---|---|
+| The trial runner (`emitStrobe()` in `BehaviorBox.h`: GRGL, every trial-loop sketch, `GRGL_Sim`) | Once per strobe | Nothing |
+| The spine's runner (`BoxSpine.h`) | Once per **tick** that strobes; every strobe of a tick shares its edge | `SYNC=TICK` |
+
+A board that announces nothing pulses per strobe. The runner records `SYNC=TICK` in the header as
+`# sync: tick` ([DATA.md](DATA.md#the-tsv-log)), the key offline alignment reads, and builds the box's
+[edge matcher](#edge-matcher) to pair by tick.
+
+**Per strobe.** `emitStrobe()` brackets its serial print with a pulse, in this order: wait out the LOW gap
+**first** (so the wait lands before the timestamp, not between it and the edge); stamp, then drive HIGH at
+once (**the rising edge is what the controller timestamps**); print while high, spending the pulse width on
+work that had to happen anyway; hold out the remainder, then LOW. It waits about 0.7 ms per strobe, so the
+k-th strobe of a burst rises about (k−1) × 0.7 ms after the first.
+
+**Per tick.** Every strobe of a spine tick carries the tick's time, so one edge says it for all of them. The
+runner raises the line right after the tick's output pins are written, before any of its strobes is
+printed, so the edge is the outputs' edge. It lowers the line on a later `loop()` pass once
+`BOX_SYNC_PULSE_US` has run, and raises the next only once the line has been LOW for `BOX_SYNC_GAP_US`
+(`syncStep`). Nothing waits, so the ticks after a burst still write their outputs and read their inputs on
+time. A tick that strobes before the line is ready (two ticks stepped in one pass, where AVR `millis()`
+skipped a value) is **owed** its rise, raised on the first pass the gap allows: every strobing tick keeps
+an edge of its own. The session's end turns off every output but the sync line (`shutdownOutputs()`), and
+its last pulse falls on a later pass: cut short there, it could be too narrow for the controller to sample.
 
 | Macro (`BoxPins.h`, `#ifndef`-guarded) | Meaning |
 |---|---|
 | `BOX_PIN_SYNC_OUT` | Default **49**, free on the box as built. **Not 13**: the bootloader blinks it on every reset, which a recording logs as events. Not 0/1 (serial) or 50–53 (SPI). **`-1` compiles the pulse out** |
-| `BOX_SYNC_PULSE_US` | Pulse width |
+| `BOX_SYNC_PULSE_US` | Pulse width. Per tick, at least this, and longer by up to one `loop()` pass |
 | `BOX_SYNC_GAP_US` | Minimum LOW before the next pulse |
 
 > [!CAUTION]
 > **Two pulses with no LOW between them are one edge.** Events can be emitted back to back, and a fused
 > pair makes every later event match one strobe late, which reads as plausible data, not a failure. The
 > gap is enforced in firmware and pinned by the host tests (`libraries/BehaviorBox/extras/host_test/`),
-> whose shim logs every pin write with its `micros()`.
+> whose shim logs every pin write with its `micros()`: `run_spine.sh`'s `sync_tick` and `sync_close`
+> hold the per-tick pulse to one rise per strobing tick, its width and its gap.
 
-Every sketch's strobes pulse through these helpers (`syncGap`/`syncRise`/`syncFall`, from
-`emitStrobeAt`), so the sync line and controller input can be proven **with no animal**: start a task on an
-empty box from Debug Mode and its timeouts strobe. `shutdownHardware()` (called by
-`initBoxHardware()`) holds the line LOW, because a floating controller input reads as noise, i.e. events.
-Firmware structure in general: [TASKS.md](TASKS.md#firmware).
+#### The alignment bound
+
+What a matched edge says about when an event happened, per tick:
+
+- **The edge is the outputs' edge.** It rises in the same `loop()` pass as the tick's output writes, after
+  them and before any print: within a few microseconds on a Mega (5 µs in the host test).
+- **A tick's outputs are written on the first pass of its `millis()` value**, so within a pass of the
+  millisecond boundary, at most the 1.024 ms AVR `millis()` period when a value is skipped and two ticks
+  step at once. The strobes' timestamps name the tick; the edge is the true time.
+- **An owed rise lags its tick** by a pulse, a gap and a pass, about 0.75 ms, for each rise owed ahead of
+  it. One is owed when `millis()` skips (about every 42 ms) a value whose tick and the next both strobe.
+  The edge then marks no output edge: its tick's outputs were written when the tick stepped.
+- **An input's edge is when the board read it**: on the first pass of the next tick, after its
+  `debounce_ms`. The edge says when the board acted on a beam break, not when the beam broke.
+
+A per-strobe board (GRGL) has the lag of each burst described above instead.
+
+Every trial-runner strobe pulses through `syncGap`/`syncRise`/`syncFall` (from `emitStrobe`), and every
+spine tick through `BoxSpine.h`'s `syncStep`, so the sync line and controller input can be proven **with no
+animal**: start a task on an empty box from Debug Mode and its timeouts strobe. `shutdownHardware()`
+(called by `initBoxHardware()`) holds the line LOW, because a floating controller input reads as noise,
+i.e. events. Firmware structure in general: [TASKS.md](TASKS.md#firmware).
 
 ### Wiring and binding
 
@@ -238,32 +280,34 @@ Two different facts in two places:
 
 ### Edge matcher
 
-`intan/analysis.py`'s `EdgeMatcher`. The firmware pulses once per strobe, so the Nth edge is the Nth
-strobe, in principle. By count alone, **one** extra edge (the line twitching as the Mega resets through
+`intan/analysis.py`'s `EdgeMatcher`. Each edge is one **strobing time**: a strobe, from a per-strobe
+board, or a tick, from a [tick-pulsed](#firmware-pulse) one (`EdgeMatcher(tick_pulsed=True)`), whose
+strobes all carry the tick's millisecond and all take its edge. So the Nth edge is the Nth strobing time,
+in principle. By count alone, **one** extra edge (the line twitching as the Mega resets through
 DTR, a glitch on a long cable) attributes every later event to its neighbour, and the PSTH still looks
 like a PSTH. So order proposes and **time disposes**: an edge is accepted for a strobe only if it lands
-where the strobe's own millisecond timestamp says, measured from the last accepted pair.
+where the strobing time's own millisecond timestamp says, measured from the last accepted pair.
 
 | Head edge is | Meaning | Action |
 |---|---|---|
-| within tolerance | this strobe's pulse | match; becomes the new anchor |
+| within tolerance | this time's pulse | match each of its strobes; becomes the new anchor |
 | too early | spurious | drop the edge, count `spuriousEdges` |
-| too late | this strobe's pulse never came | release the strobe unmatched, count `unmatchedStrobes` |
+| too late | this time's pulse never came | release its strobes unmatched, each counted in `unmatchedStrobes` |
 
 The same loop as a flow, run whenever a strobe or a batch of edges arrives (`EdgeMatcher._drain`):
 
 ```mermaid
 flowchart TD
-    head{"A strobe pending?"} -->|"no"| wait["Wait for more input"]
+    head{"A strobing time pending?"} -->|"no"| wait["Wait for more input"]
     head -->|"yes"| anchored{"Anchored yet?"}
     anchored -->|"no"| first{"Two consecutive gaps agree<br/>under some alignment?"}
     first -->|"no"| wait
     first -->|"yes: earliest one is the first<br/>match, skipped items counted"| head
     anchored -->|"yes"| edgePending{"An edge pending?"}
     edgePending -->|"no"| wait
-    edgePending -->|"yes"| compare{"Oldest edge vs oldest strobe,<br/>gaps from the anchor"}
+    edgePending -->|"yes"| compare{"Oldest edge vs oldest strobing time,<br/>gaps from the anchor"}
     compare -->|"too early"| spurious["Drop the edge,<br/>spuriousEdges + 1"]
-    compare -->|"too late"| unmatched["Release the strobe,<br/>unmatchedStrobes + 1"]
+    compare -->|"too late"| unmatched["Release its strobes,<br/>unmatchedStrobes + each"]
     compare -->|"within tolerance"| match["Match: this pair<br/>becomes the anchor"]
     spurious --> head
     unmatched --> head
@@ -275,14 +319,20 @@ flowchart TD
   ~100 ms and a fixed tolerance would call that a missing pulse. Measuring from the *last* pair keeps the
   error from accumulating.
 - **The first pair** is the earliest alignment under which two consecutive gaps agree. Strobes are trusted
-  far more than edges (a serial line does not invent events), so at most `MAX_LEAD` leading strobes but
-  any number of leading edges may be skipped; that is what discards the reset twitch instead of anchoring
-  on it.
+  far more than edges (a serial line does not invent events), so at most `MAX_LEAD` leading strobing times
+  but any number of leading edges may be skipped; that is what discards the reset twitch instead of
+  anchoring on it.
+- **A tick's strobes can straddle its edge.** The edge arrives on the waveform socket, the strobes on the
+  serial line, so a tick's edge can be paired on its first strobes before the rest arrive; a strobe of
+  the tick last released takes that tick's answer. An owed rise, at most about 0.75 ms late per rise
+  ahead of it ([the bound](#the-alignment-bound)), is well inside `ABS_TOLERANCE_MS`.
 - **A box gets a fresh matcher at every START** (`IntanService._box_started`), because the Mega's clock
-  restarts there.
+  restarts there. The runner passes the board's `SYNC=TICK` along (`SessionRunner.on_box_started`), so
+  the matcher pairs by tick exactly when the board pulses by tick.
 - An unconnected line must not queue strobes forever: past `MAX_PENDING`, the oldest is given up on.
 
-`intan.status.sync` publishes `matched`/`spuriousEdges`/`unmatchedStrobes` per box and Mission Control
+`intan.status.sync` publishes `matched`/`spuriousEdges`/`unmatchedStrobes` per box, `matched` and
+`unmatchedStrobes` counting strobes in either scheme, and Mission Control
 shows them as the **sync check**, columns *matched*, *missed* (`unmatchedStrobes`) and *stray*
 (`spuriousEdges`): **it is the wiring check**. `unmatchedStrobes` climbing with `matched` at zero is a sync
 line not reaching its input, and the row then reads "no pulses arriving — check the sync line"
@@ -583,6 +633,7 @@ Run against RHX 3.5.0, `ControllerRecordUSB3`, synthetic:
 
 | Question | If the answer is the bad one |
 |---|---|
+| Does a spine run's sync check read nothing missed and nothing stray? The tick pulse ([Firmware pulse](#firmware-pulse)) is proven only in the host shim, not yet on a Mega into a controller input | Edges pair with the wrong ticks or not at all. Check its width and gaps on the DIN trace, and a `millis()` skip's owed rise, before an implant session relies on [the bound](#the-alignment-bound) |
 | Does the RMS-relative threshold need the board to have run first? | Thresholds land wrong. Fix: a short `run` before `SetSpikeDetectionThresholds` |
 | Where a channel swap lands in the stream | The marker is read after RHX acknowledged the swap, assuming RHX's TCP output lags acquisition. If its output thread can run ahead of the clock read, a snippet or two lands on the wrong channel once, then corrects |
 | Digital-input naming on the USB Interface Board (zero-based) | Handled in `digital_in_name`; only matters on a rig using that board |

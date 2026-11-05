@@ -282,31 +282,38 @@ inline void syncFall(unsigned long rose)
 #endif
 }
 
-/*  The strobe line and its sync pulse, for a timestamp already taken. */
-inline void strobeLine(int eventCode, unsigned long timestamp)
+/*  The strobe line alone, with no pulse: what emitStrobe prints, and what the
+    phase interpreter's runner (BoxSpine.h) prints, which pulses once per tick
+    rather than once per strobe (RECORDING.md#firmware-pulse). */
+inline void printStrobe(int eventCode, unsigned long timestamp)
 {
-  unsigned long rose = syncRise();
   char buf[16];
   snprintf(buf, sizeof(buf), "%03d	%lu", eventCode, timestamp);
   Serial.println(buf);
-  syncFall(rose);
+}
+
+/*  The bytes printStrobe() puts on the wire, "\r\n" included, so a caller can
+    ask availableForWrite() for room for the whole line before printing it. */
+inline int strobeBytes(int eventCode, unsigned long timestamp)
+{
+  int n = 3 + 3; // the tab and "\r\n", and the code's three digits at least
+  for (int c = eventCode; c >= 1000; c /= 10)
+    n++;
+  do
+  {
+    n++;
+    timestamp /= 10;
+  } while (timestamp);
+  return n;
 }
 
 inline void emitStrobe(TrialClock &clock, int eventCode)
 {
   syncGap();
-  strobeLine(eventCode, clock.elapsed());
-}
-
-/*  void emitStrobeAt(int eventCode, unsigned long timestamp) ->
-    A strobe stamped with a time the caller already holds, rather than the
-    clock's now. The phase interpreter's runner (BoxSpine.h) strobes each event
-    at the TICK it happened, not the moment it is printed, so a burst of
-    strobes in one tick all carry that tick (0003-phase-spine-task-model.md#interpreter-and-firmware). */
-inline void emitStrobeAt(int eventCode, unsigned long timestamp)
-{
-  syncGap();
-  strobeLine(eventCode, timestamp);
+  unsigned long timestamp = clock.elapsed();
+  unsigned long rose = syncRise();
+  printStrobe(eventCode, timestamp);
+  syncFall(rose);
 }
 
 /*  bool readLineInto(char* dst, size_t cap) ->
@@ -427,7 +434,9 @@ inline void emitStatus(const char *body)
     timestamp here would be meaningless -- and from the utility sketches, which
     have no session at all. The trial light's own edges are reported from
     runTrial(), where a trial is actually in progress. */
-inline void shutdownHardware()
+/*  Every output but the sync line: the end of a spine run, whose last pulse is
+    still HIGH and falls on a later loop() pass (BoxSpine.h, THE SYNC PULSE). */
+inline void shutdownOutputs()
 {
   for (int i = 0; i < NUM_ODORS; i++)
     digitalWrite(Odors[i], LOW);
@@ -435,6 +444,11 @@ inline void shutdownHardware()
     digitalWrite(Fluids[i], LOW);
   digitalWrite(trialLight, LOW);
   digitalWrite(vac, LOW);
+}
+
+inline void shutdownHardware()
+{
+  shutdownOutputs();
 #if BOX_PIN_SYNC_OUT >= 0
   // Held LOW rather than left alone: a floating line on a recording
   // controller's digital input reads as noise, i.e. as events.
@@ -1149,18 +1163,24 @@ inline int boxFreeRam()
 inline int boxFreeRam() { return BOX_HOST_FREE_RAM; }
 #endif
 
-/*  void announceReadyAs(int interp) ->
-    The handshake's opening lines: `INTERP=<n>`, `FREE_RAM=<n>`, then `READY`.
-    In this order so the host has both before it is told it may send anything.
-    `interp` names what runs the task: BOX_INTERP for the trial runner here, the
-    state-table core's INTERP_VERSION for a spine task (BoxSpine.h). */
-inline void announceReadyAs(int interp)
+/*  void announceReadyAs(int interp, bool tickPulse) ->
+    The handshake's opening lines: `INTERP=<n>`, `FREE_RAM=<n>`, `SYNC=TICK`
+    when `tickPulse`, then `READY`. In this order so the host has them all
+    before it is told it may send anything. `interp` names what runs the task:
+    BOX_INTERP for the trial runner here, the state-table core's INTERP_VERSION
+    for a spine task (BoxSpine.h). `tickPulse` says the sync line pulses once
+    per tick that strobes rather than once per strobe, as the spine's runner
+    does; a board that says nothing pulses per strobe, as every board flashed
+    before the spine pulsed per tick does (RECORDING.md#firmware-pulse). */
+inline void announceReadyAs(int interp, bool tickPulse = false)
 {
   char buf[24];
   snprintf(buf, sizeof(buf), "INTERP=%d", interp);
   Serial.println(buf);
   snprintf(buf, sizeof(buf), "FREE_RAM=%d", boxFreeRam());
   Serial.println(buf);
+  if (tickPulse)
+    Serial.println("SYNC=TICK");
   Serial.println("READY");
 }
 

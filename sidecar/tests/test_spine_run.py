@@ -230,7 +230,7 @@ async def test_a_saved_spine_task_runs_a_session_and_its_tsv_alone_replays(tmp_p
     folder = save_tracer(tmp_path)
     port = registry.channels().get("odor_port").index
     transcript = run_board(folder, host_lines(folder), animal(port), 16000, tmp_path)
-    assert transcript[:3] == ["INTERP=8", f"FREE_RAM={FREE_RAM}", "READY"]
+    assert transcript[:4] == ["INTERP=8", f"FREE_RAM={FREE_RAM}", "SYNC=TICK", "READY"]
     assert not any(line.startswith("CLAMPED") for line in transcript)
 
     tsv = await run_session(tmp_path, folder, transcript, monkeypatch)
@@ -238,6 +238,7 @@ async def test_a_saved_spine_task_runs_a_session_and_its_tsv_alone_replays(tmp_p
     header = text[: text.index("\n", text.index("# task_profile:"))]
     # Everything replay needs is in the header, before the first strobe.
     assert "# interp: 8\n" in header and f"# free_ram: {FREE_RAM}\n" in header
+    assert "# sync: tick\n" in header  # one sync pulse per tick that strobes
     assert f"# trial_seed: {SEED}\n" in header and "# block_b1_trials: 3\n" in header
     assert '"spine":' in header
 
@@ -455,7 +456,7 @@ async def run_task(tmp_path, monkeypatch, raw: dict, overrides: dict, ticks: int
     """`run_generated`, for scripted (ms, pin, level) `events` or any animal."""
     folder = save(tmp_path, raw)
     transcript = run_board(folder, host_lines(folder, overrides), list(events), ticks, tmp_path, animal)
-    assert transcript[:3] == ["INTERP=8", f"FREE_RAM={FREE_RAM}", "READY"]
+    assert transcript[:4] == ["INTERP=8", f"FREE_RAM={FREE_RAM}", "SYNC=TICK", "READY"]
     assert not any(line.startswith("CLAMPED") for line in transcript)
     tsv = await run_session(tmp_path, folder, transcript, monkeypatch, overrides)
     document = json.loads(json_of(tsv).read_text(encoding="utf-8"))
@@ -528,7 +529,7 @@ async def test_pwm_tone_and_a_train_drive_their_pins_and_replay_to_every_pulse(t
     out = run_board(folder, host_lines(folder, overrides), events, 9000, tmp_path, trace_pin=laser)
     transcript = [line for line in out if not line.startswith("~PIN")]
     trace = [tuple(int(v) for v in line.split()[1:]) for line in out if line.startswith("~PIN")]
-    assert transcript[:3] == ["INTERP=8", f"FREE_RAM={FREE_RAM}", "READY"]
+    assert transcript[:4] == ["INTERP=8", f"FREE_RAM={FREE_RAM}", "SYNC=TICK", "READY"]
     assert not any(line.startswith("CLAMPED") for line in transcript)
 
     tsv = await run_session(tmp_path, folder, transcript, monkeypatch, overrides)

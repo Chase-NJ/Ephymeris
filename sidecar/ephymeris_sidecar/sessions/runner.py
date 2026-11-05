@@ -166,10 +166,11 @@ class SessionRunner:
         # -- each call site swallows, because a behavior session never pays for
         # the recording's problems.
         #   recording_fields(box) -> flat `intan_*` fields for the document
-        #   on_box_started(box, animal)
+        #   on_box_started(box, animal, tick_pulsed): tick_pulsed when the board
+        #     announced its sync line pulses once per tick (`SYNC=TICK`)
         #   on_strobe_tap(box, code, ms)
         self.recording_fields: Callable[[int], dict[str, Any]] | None = None
-        self.on_box_started: Callable[[int, str], None] | None = None
+        self.on_box_started: Callable[[int, str, bool], None] | None = None
         self.on_strobe_tap: Callable[[int, int, int], None] | None = None
 
     # --- configuration ----------------------------------------------------
@@ -352,6 +353,11 @@ class SessionRunner:
             # `READY` (`TASKS.md#confirming-the-parameters`). Core for the same
             # reason: a fact about the build on this board.
             core["free_ram"] = announced.free_ram
+        if announced.sync is not None:
+            # How the sync line pulsed: once per tick that strobed, announced
+            # as `SYNC=TICK` (`RECORDING.md#firmware-pulse`). Absent, once per
+            # strobe. Offline alignment against RHX's files reads it here.
+            core["sync"] = announced.sync
         if run.config.channel_set_hash is not None:
             # Which channel set the sketch was generated against: the codes
             # each edge strobes and what each channel is (ADR 0003). Core, not
@@ -435,7 +441,7 @@ class SessionRunner:
             self._backup.track(files.tsv)
         if self.on_box_started is not None:
             try:
-                self.on_box_started(box, run.config.animal_name)
+                self.on_box_started(box, run.config.animal_name, announced.tick_pulsed)
             except Exception:  # noqa: BLE001
                 log.exception("box %d: recording start hook failed", box)
 

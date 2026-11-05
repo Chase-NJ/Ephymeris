@@ -16,8 +16,8 @@ status: accepted
   - For an early exit, it is the exit's end.
   - A trial that never marks (cut off by End Session, a crash, or a disconnect) strobes none. Its absence is the trial table's `complete: false`.
 - **Where in the tick:** last, after the outputs driven HIGH and before only `END_SESSION`, the end's tick included.
-  - While each strobe has its own sync pulse, every strobe after the first in a tick lags about 0.7 ms ([RECORDING.md](../RECORDING.md#the-sync-line)).
-  - The outputs carry the physical event an analysis aligns to, such as the reward valve opening, and the verdict has no physical edge. So the verdict takes the lag.
+  - Every strobe of a spine tick shares the tick's one sync pulse ([RECORDING.md](../RECORDING.md#the-sync-line)), so the order costs no alignment.
+  - The verdict is about what the tick's inputs and outputs did, so it follows them. A tick whose only strobe is a mark, such as a Response window timing out with no output edge, still pulses.
 - **From what the board already reports.** The core lists the states each tick entered (`InterpActions.entered`). The runner looks up each one's `outcome` in its table and strobes the code. The core's rules do not change; only its version number does.
   - Replay already predicts `entered` tick by tick, and the [differential test](../TASKS.md#compiling-and-the-host-tests) already holds it equal between the C core and the Python port.
   - So the board and replay derive the outcome strobe from one value that the test already checks.

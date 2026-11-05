@@ -1069,17 +1069,18 @@ class IntanService:
             "intan_sample_rate": recording.sample_rate,
         }
 
-    def box_started(self, box: int, animal: str) -> None:
+    def box_started(self, box: int, animal: str, tick_pulsed: bool = False) -> None:
         """Thread-safe. The Mega's clock restarts at START, so the box gets a
         fresh matcher -- an anchor carried over would be measured against a
-        clock that no longer exists."""
-        self._loop.call_soon_threadsafe(self._box_started, box, animal)
+        clock that no longer exists. `tick_pulsed`: the board announced one
+        pulse per tick that strobes (`SYNC=TICK`), not one per strobe."""
+        self._loop.call_soon_threadsafe(self._box_started, box, animal, tick_pulsed)
 
-    def _box_started(self, box: int, animal: str) -> None:
+    def _box_started(self, box: int, animal: str, tick_pulsed: bool) -> None:
         recording = self._recording
         if recording is None or box not in recording.boxes or not self.is_recording:
             return
-        self._matchers[box] = EdgeMatcher(float(recording.sample_rate))
+        self._matchers[box] = EdgeMatcher(float(recording.sample_rate), tick_pulsed=tick_pulsed)
         self._matched[box] = 0
         self._triggers[box] = {}
         self._loop.create_task(self._livenote(f"BOX{box} START {animal}"))

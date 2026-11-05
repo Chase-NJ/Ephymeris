@@ -11,7 +11,9 @@
   Each scenario runs in its own process (the runner's state is the sketch's
   own, as on a board): run_spine.sh runs `test_spine handshake`, `stream`,
   `stop`, `last`, `blocks`, `pairs` and `passes` (several loop() passes in one
-  millisecond, as on a Mega), then, built over spine_drive_fixture.h (-DSPINE_FIXTURE_DRIVES),
+  millisecond, as on a Mega), the sync pulse under the shim's real timing,
+  `sync_tick` (one per tick that strobes, a burst waiting on nothing) and
+  `sync_close` (two ticks stepped in one pass), then, built over spine_drive_fixture.h (-DSPINE_FIXTURE_DRIVES),
   the driven outputs: `test_spine_drives drives`, `train_held`, `train_refused`,
   and, under the shim's real serial timing, `train_timing` and `train_buffer`.
 
@@ -126,8 +128,8 @@ static void handshake()
   bb_feed("START SEED=7");
   boot();
   std::vector<std::string> l = lines();
-  expect("INTERP, then FREE_RAM, then READY, first", l.size() > 3 && l[0] == "INTERP=8" &&
-         l[1].compare(0, 9, "FREE_RAM=") == 0 && l[2] == "READY");
+  expect("INTERP, then FREE_RAM, then SYNC=TICK, then READY, first", l.size() > 4 && l[0] == "INTERP=8" &&
+         l[1].compare(0, 9, "FREE_RAM=") == 0 && l[2] == "SYNC=TICK" && l[3] == "READY");
   expect("each SET answered with the running count and CRC",
          indexOf("PARAMS 2 1564777853") < indexOf("PARAMS 3 2992546637"));
   expect("a value past its bound is CLAMPED", indexOf("CLAMPED RP") + 1 == indexOf("PARAMS 4 119361984"));
@@ -274,6 +276,210 @@ static void pairs()
   boot();
   expect("a drawn N's high end below its low end is CLAMPED", indexOf("CLAMPED BNX2") != (size_t)-1);
   expect("and held as the range's low end", box_spine::params[8] == 5);
+}
+
+/* ---- The sync pulse, under the shim's real timing ------------------------ */
+/* Every pin write, with the micros() it happened at, and a Mega's loop(): a
+   pass every PASS_US, some 27 a millisecond. */
+struct Write { int pin; int level; unsigned long us; };
+static std::vector<Write> writes;
+static unsigned long longestPass = 0;
+static const unsigned long PASS_US = 37;
+static const int SYNC = BOX_PIN_SYNC_OUT;
+
+static void logWrite(int pin, int value, unsigned long us) { writes.push_back({pin, value, us}); }
+
+/* loop() pass after pass until session time `t` (ms), each pass's own cost
+   measured: a pass that waits is a pass that runs long. */
+static void passTo(unsigned long t)
+{
+  while (micros() < (t0 + t) * 1000UL) {
+    unsigned long before = micros();
+    ::loop();
+    if (micros() - before > longestPass) longestPass = micros() - before;
+    bb_advanceUs(PASS_US);
+  }
+}
+
+/* The sync line's edges: (rise, fall) in micros(), a fall of 0 if none yet. */
+static std::vector<std::pair<unsigned long, unsigned long>> pulses()
+{
+  std::vector<std::pair<unsigned long, unsigned long>> out;
+  int level = LOW;
+  for (const Write &w : writes) {
+    if (w.pin != SYNC || w.level == level) continue;
+    level = w.level;
+    if (level == HIGH) out.push_back(std::make_pair(w.us, 0UL));
+    else if (!out.empty()) out.back().second = w.us;
+  }
+  return out;
+}
+
+/* The distinct tick times the stream strobed, in order. */
+static std::vector<unsigned long> strobedTicks()
+{
+  std::vector<unsigned long> out;
+  for (auto &s : strobes())
+    if (out.empty() || out.back() != s.second) out.push_back(s.second);
+  return out;
+}
+
+static void dumpPulses()
+{
+  for (auto &p : pulses()) std::cout << "      rise " << p.first << " fall " << p.second << "\n";
+  for (auto &s : strobes()) std::cout << "      " << s.first << "\t" << s.second << "\n";
+}
+
+/* Width at least BOX_SYNC_PULSE_US and at most a pass more; LOW at least
+   BOX_SYNC_GAP_US before every rise; every pulse has fallen. */
+static void expectPulseShape()
+{
+  auto got = pulses();
+  bool width = true, gap = true, fell = true;
+  for (size_t i = 0; i < got.size(); i++) {
+    fell &= got[i].second != 0;
+    unsigned long high = got[i].second - got[i].first;
+    width &= got[i].second == 0 || (high >= BOX_SYNC_PULSE_US && high <= BOX_SYNC_PULSE_US + 2 * PASS_US);
+    if (i) gap &= got[i].first - got[i - 1].second >= BOX_SYNC_GAP_US;
+  }
+  expect("every pulse is HIGH its width, within a pass", width);
+  expect("every rise follows at least the gap of LOW", gap);
+  expect("every pulse falls, the session's last included", fell);
+}
+
+/* A spine run pulses once per tick that strobes, rising with that tick's
+   pins; a burst neither waits on the pulse nor on a full TX buffer, so the
+   next tick's pins are written on time. The poke at 300 strobes two lines into
+   a TX buffer already full, and the release at 301 strobes three more. */
+static void syncTick()
+{
+  bb_onPinWrite = logWrite;
+  bb_feed("BEGIN");
+  bb_feed("SET NT=2 T1=100 T3=50 RW=30 RP=1000");
+  bb_feed("START SEED=7");
+  boot();
+  bb_realTiming(115200);
+  passTo(10);
+  bb_pinValue[2] = LOW;
+  passTo(150);
+  bb_pinValue[2] = HIGH; // unwatched
+  passTo(300);
+  std::string backlog(61, '#');
+  backlog += "\r\n";
+  Serial.write(backlog.c_str(), backlog.size()); // 63 bytes: the buffer is full
+  bb_pinValue[2] = LOW;
+  passTo(301);
+  bb_pinValue[2] = HIGH; // a release during the present: abort to the ITI
+  passTo(450);
+
+  std::vector<unsigned long> ticks = strobedTicks();
+  auto got = pulses();
+  expect("the run ended", !strobes().empty() && strobes().back().first == BF_END_SESSION);
+  expect("exactly one pulse per tick that strobes", got.size() == ticks.size() && ticks.size() == 8);
+  bool onTime = true;
+  for (size_t i = 0; i < got.size() && i < ticks.size(); i++) {
+    unsigned long tick = (t0 + ticks[i]) * 1000UL;
+    onTime &= got[i].first >= tick && got[i].first - tick <= PASS_US;
+  }
+  expect("each rises in its tick's first pass", onTime);
+  // Every output write a tick makes, from the session's first to the tick
+  // before its end, is at most a few us before that tick's rise.
+  bool withPins = true;
+  unsigned long ended = (t0 + ticks.back()) * 1000UL;
+  for (const Write &w : writes) {
+    if ((w.pin != 36 && w.pin != 22 && w.pin != 44) || w.us < t0 * 1000UL || w.us >= ended) continue;
+    bool near = false;
+    for (auto &p : got) near |= p.first >= w.us && p.first - w.us <= 5;
+    withPins &= near;
+  }
+  expect("the rise is within 5 us of its tick's output writes", withPins);
+  // The pins of every output strobe are written in the first pass of its tick.
+  const std::vector<std::pair<int, int>> pinOf = {
+    {36, HIGH}, {36, LOW}, {22, HIGH}, {22, LOW}, {44, HIGH}, {44, LOW}};
+  const std::vector<int> codes = {BF_LIGHT_ON, BF_LIGHT_OFF, BF_SAMPLE_ON, BF_SAMPLE_OFF, BF_FLUID_ON, BF_FLUID_OFF};
+  bool pinsOnTime = true;
+  for (auto &s : strobes())
+    for (size_t c = 0; c < codes.size(); c++) {
+      if (s.first != codes[c] || s.second == 0) continue;
+      unsigned long tick = (t0 + s.second) * 1000UL;
+      bool found = false;
+      for (const Write &w : writes)
+        if (w.pin == pinOf[c].first && w.level == pinOf[c].second && w.us >= tick && w.us - tick <= PASS_US)
+          found = true;
+      pinsOnTime &= found;
+    }
+  expect("the tick after a burst still writes its pins on time", pinsOnTime);
+  std::cout << "  longest pass " << longestPass << " us, writes blocked " << bb_txBlockedUs << " us\n";
+  expect("no pass waits: not on the pulse, not on the TX buffer", longestPass <= 4 * PASS_US);
+  expect("no strobe was printed into a full buffer", bb_txBlockedUs == 0);
+  expectPulseShape();
+  if (failures) dumpPulses();
+}
+
+/* Two ticks that strobe, stepped in one pass (millis() skips 110): the second
+   is owed its rise, raised once the first has fallen and the gap has run. Two
+   edges, never one, and the second at most a pulse, a gap and a pass late. */
+static void syncClose()
+{
+  bb_onPinWrite = logWrite;
+  bb_feed("BEGIN");
+  bb_feed("SET NT=2 T1=100 T3=50 RW=1 RP=1000");
+  bb_feed("START SEED=7");
+  boot();
+  bb_realTiming(115200);
+  passTo(10);
+  bb_pinValue[2] = LOW;
+  passTo(109);
+  bb_advanceUs((t0 + 111) * 1000UL - micros()); // the pass at 110 never comes
+  passTo(300);
+
+  auto got = pulses();
+  std::vector<unsigned long> ticks = strobedTicks();
+  bool both = false;
+  for (size_t i = 0; i + 1 < ticks.size(); i++)
+    if (ticks[i] == 110 && ticks[i + 1] == 111) {
+      both = true;
+      unsigned long tick = (t0 + 111) * 1000UL;
+      expect("the first rises at once, in the pass that steps both", got.size() > i && got[i].first == tick);
+      expect("the second is owed: it rises after a pulse and a gap, within a pass",
+             got.size() > i + 1 && got[i + 1].first >= got[i].first + BOX_SYNC_PULSE_US + BOX_SYNC_GAP_US &&
+             got[i + 1].first <= got[i].first + BOX_SYNC_PULSE_US + BOX_SYNC_GAP_US + 2 * PASS_US);
+    }
+  expect("the reward opened and closed in consecutive ticks", both);
+  expect("still one pulse per tick that strobes", got.size() == ticks.size());
+  expectPulseShape();
+  if (failures) dumpPulses();
+}
+/* A tick that strobes only a trial's mark still pulses
+   (0005-spine-runs-strobe-each-trials-outcome.md): built with
+   SPINE_FIXTURE_QUIET_PRESENT, the Present drives nothing, and RP 0 sends the
+   chance state to the class timeout, so the tick it ends strobes
+   OUTCOME_CORRECT and nothing else. */
+static void syncMark()
+{
+  bb_onPinWrite = logWrite;
+  bb_feed("BEGIN");
+  bb_feed("SET NT=1 T1=100 T3=50 RW=30 RP=0");
+  bb_feed("START SEED=7");
+  boot();
+  bb_realTiming(115200);
+  passTo(10);
+  bb_pinValue[2] = LOW;
+  passTo(300);
+
+  std::vector<std::pair<int, unsigned long>> at110;
+  for (auto &s : strobes())
+    if (s.second == 110) at110.push_back(s);
+  expect("the Present's end strobes only the trial's mark",
+         at110 == std::vector<std::pair<int, unsigned long>>({{BF_OUTCOME_CORRECT, 110}}));
+  auto got = pulses();
+  std::vector<unsigned long> ticks = strobedTicks();
+  expect("still one pulse per tick that strobes", got.size() == ticks.size());
+  bool rose = false;
+  for (auto &p : got) rose |= p.first >= (t0 + 110) * 1000UL && p.first - (t0 + 110) * 1000UL <= PASS_US;
+  expect("the mark's tick pulses in its first pass", rose);
+  expectPulseShape();
+  if (failures) dumpPulses();
 }
 #ifdef SPINE_FIXTURE_DRIVES
 static void dump(const std::vector<std::pair<int, unsigned long>> &got)
@@ -444,6 +650,9 @@ int main(int argc, char **argv)
   else if (which == "blocks") blocks();
   else if (which == "pairs") pairs();
   else if (which == "passes") passes();
+  else if (which == "sync_tick") syncTick();
+  else if (which == "sync_close") syncClose();
+  else if (which == "sync_mark") syncMark();
 #endif
   else { std::cout << "  [FAIL] unknown scenario\n"; return 2; }
   return failures == 0 ? 0 : 1;

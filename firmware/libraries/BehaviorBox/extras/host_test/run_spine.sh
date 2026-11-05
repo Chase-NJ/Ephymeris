@@ -5,7 +5,9 @@
 # announcement; the strobe stream's content, order and tick times, with
 # skipped millis() values stepped, and an edge read on any of several loop()
 # passes in one millisecond; and the session end rule, at the block's
-# trial count, after STOP and after a last-trial state.
+# trial count, after STOP and after a last-trial state; and, under the shim's
+# real serial timing, the sync line: one pulse per tick that strobes, rising
+# with its pins, and no pass that waits on the pulse or a full TX buffer.
 #
 # The sidecar's test_spine_run.py compiles a GENERATED spine task the same way
 # and plays it through the real session path; this is the firmware's own check,
@@ -23,14 +25,27 @@ CXX="${CXX:-clang++}"
 "$CXX" -std=c++11 -Wall -Werror -Wno-unused-function \
   -I"$HERE/box_shim" -I"$HERE" -I"$LIB" \
   -x c++ "$HERE/test_spine.cpp" -o "$HERE/test_spine"
-for scenario in handshake stream stop last blocks pairs passes; do
+for scenario in handshake stream stop last blocks pairs passes sync_tick sync_close; do
   "$HERE/test_spine" "$scenario"
 done
+# A Present that drives nothing, so a tick strobes only a trial's mark.
+"$CXX" -std=c++11 -Wall -Werror -Wno-unused-function -DSPINE_FIXTURE_QUIET_PRESENT \
+  -I"$HERE/box_shim" -I"$HERE" -I"$LIB" \
+  -x c++ "$HERE/test_spine.cpp" -o "$HERE/test_spine_quiet"
+"$HERE/test_spine_quiet" sync_mark
 # The same runner over spine_drive_fixture.h: PWM, tone and a pulse train.
 "$CXX" -std=c++11 -Wall -Werror -Wno-unused-function -DSPINE_FIXTURE_DRIVES \
   -I"$HERE/box_shim" -I"$HERE" -I"$LIB" \
   -x c++ "$HERE/test_spine.cpp" -o "$HERE/test_spine_drives"
 for scenario in drives train_held train_refused train_timing train_buffer; do
   "$HERE/test_spine_drives" "$scenario"
+done
+# And with a strobe queue of two, so a burst fills it: a strobe then waits for
+# room, and the trains must still be stepped on time while it does.
+"$CXX" -std=c++11 -Wall -Werror -Wno-unused-function -DSPINE_FIXTURE_DRIVES -DSPINE_STROBE_QUEUE=2 \
+  -I"$HERE/box_shim" -I"$HERE" -I"$LIB" \
+  -x c++ "$HERE/test_spine.cpp" -o "$HERE/test_spine_queue"
+for scenario in train_timing train_buffer; do
+  "$HERE/test_spine_queue" "$scenario"
 done
 echo "test_spine: all passed"

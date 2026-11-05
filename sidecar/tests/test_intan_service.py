@@ -714,6 +714,34 @@ async def test_closing_the_last_scope_stops_the_stream_it_asked_for(rig, tmp_pat
     await h.service.close_scope(scope)  # idempotent
 
 
+async def test_a_tick_pulsed_box_matches_every_strobe_of_a_tick_to_its_one_edge(rig, tmp_path):
+    """A spine board announces `SYNC=TICK` and pulses once per tick that
+    strobes; the runner says so at START and the box's matcher pairs by tick.
+    Matched per strobe, every one, with no edge left over and none missing."""
+    h = await rig(params={"synthetic": "False"})
+    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.start_recording()
+    h.service.box_started(3, "R12", tick_pulsed=True)
+    await asyncio.sleep(0)
+
+    bit = 1 << (5 - 1)  # box 3 is on DIN 5
+    ticks = [(0, [17, 48, 29, 42]), (250, [40, 44]), (1350, [43, 45, 46]), (2400, [47])]
+    origin = 12_800
+    sample_of = lambda ms: origin + ms * FS // 1000  # noqa: E731
+    high = {t: bit for ms, _ in ticks for t in range(sample_of(ms), sample_of(ms) + 15)}
+    blocks = b"".join(din_block(first, high) for first in range(0, 100_000, FRAMES_PER_BLOCK))
+    await h.fake.push_waveform(blocks)
+    for ms, codes in ticks:
+        for code in codes:
+            h.service.on_strobe(3, code, ms)
+
+    strobes = sum(len(codes) for _, codes in ticks)
+    await h.until(lambda: h.service.status_json()["sync"][0]["matched"] == strobes)
+    stat = h.service.status_json()["sync"][0]
+    assert (stat["spuriousEdges"], stat["unmatchedStrobes"]) == (0, 0)
+    assert h.service._triggers[3][45] == [sample_of(1350)]
+
+
 async def test_synthetic_data_has_no_sync_line_so_the_check_is_off_and_strobes_align_by_arrival(rig, tmp_path):
     """RHX's demo mode generates its own digital inputs, which no box drives.
     The counters would diagnose wiring that does not exist, so they are not

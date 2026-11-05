@@ -129,6 +129,94 @@ def test_an_unconnected_sync_line_does_not_queue_strobes_forever():
     assert all(e.sample is None for e in got)
 
 
+# A spine run's stream, as BoxSpine.h strobes it: every strobe of a tick carries
+# that tick's ms, and a tick-pulsed board pulses once per tick that strobes.
+TICKS = [
+    (0, [17, 48, 29, 42]), (10, [40, 44]), (110, [43, 45, 46]), (140, [47]), (191, [48, 29, 42]),
+]
+
+
+def tick_strobes(ticks):
+    return [(code, ms) for ms, codes in ticks for code in codes]
+
+
+def test_a_tick_pulsed_run_gives_every_strobe_of_a_tick_its_tick_s_one_edge():
+    matcher = EdgeMatcher(FS, tick_pulsed=True)
+    got = run(matcher, tick_strobes(TICKS), [samples(ms) for ms, _ in TICKS])
+    assert [(e.code, e.ms, e.sample) for e in got] == [(c, ms, samples(ms)) for c, ms in tick_strobes(TICKS)]
+    assert matcher.spurious_edges == 0 and matcher.unmatched_strobes == 0
+
+
+def test_a_per_strobe_run_still_takes_one_edge_per_strobe_sharing_a_ms_or_not():
+    """GRGL pulses once per strobe, 0.7 ms apart: two strobes of one ms are two
+    edges, and the second is the second strobe's."""
+    strobes = [(101, 0), (230, 640), (243, 640), (222, 1900)]
+    edges = [samples(0), samples(640), samples(640.7), samples(1900)]
+    matcher = EdgeMatcher(FS)
+    got = run(matcher, strobes, edges)
+    assert [(e.code, e.sample) for e in got] == list(zip([c for c, _ in strobes], edges))
+    assert matcher.spurious_edges == 0 and matcher.unmatched_strobes == 0
+
+
+def test_a_strobe_of_a_tick_whose_edge_is_already_paired_takes_that_edge():
+    """The edges can beat the serial line, so a tick's edge may be paired on its
+    first strobes, before the rest of that tick's strobes have arrived."""
+    matcher = EdgeMatcher(FS, tick_pulsed=True)
+    got = matcher.add_edges([samples(ms) for ms, _ in TICKS])
+    for code, ms in tick_strobes(TICKS):
+        got += matcher.add_strobe(code, ms)
+    assert [(e.code, e.sample) for e in got] == [(c, samples(ms)) for c, ms in tick_strobes(TICKS)]
+    assert matcher.unmatched_strobes == 0 and matcher.spurious_edges == 0
+
+
+def test_an_owed_rise_still_pairs_with_its_own_tick():
+    """Two ticks that strobe, stepped in one pass where millis() skipped 110:
+    110's edge rises when the pass runs, at 111, and 111's is owed a pulse and
+    a gap later. Each tick keeps its own edge."""
+    ticks = [(0, [17]), (10, [40]), (110, [46]), (111, [47]), (140, [42])]
+    edges = [samples(0), samples(10), samples(111), samples(111.7), samples(140)]
+    matcher = EdgeMatcher(FS, tick_pulsed=True)
+    got = run(matcher, tick_strobes(ticks), edges)
+    assert [e.sample for e in got] == edges
+    assert matcher.spurious_edges == 0 and matcher.unmatched_strobes == 0
+
+
+def test_a_tick_pulsed_run_drops_the_reset_twitch_too():
+    matcher = EdgeMatcher(FS, tick_pulsed=True)
+    got = run(matcher, tick_strobes(TICKS), [samples(-350)] + [samples(ms) for ms, _ in TICKS])
+    assert [e.sample for e in got] == [samples(ms) for _, ms in tick_strobes(TICKS)]
+    assert matcher.spurious_edges == 1 and matcher.unmatched_strobes == 0
+
+
+def test_a_tick_whose_pulse_never_came_releases_each_of_its_strobes():
+    edges = [samples(ms) for ms, _ in TICKS if ms != 110]
+    matcher = EdgeMatcher(FS, tick_pulsed=True)
+    got = run(matcher, tick_strobes(TICKS), edges)
+    assert [(e.code, e.sample is not None) for e in got] == [
+        (c, ms != 110) for c, ms in tick_strobes(TICKS)]
+    assert matcher.unmatched_strobes == 3 and matcher.spurious_edges == 0
+
+
+def test_a_tick_pulsed_anchor_gives_up_on_leading_ticks_not_strobes():
+    """MAX_LEAD counts strobing times: two leading ticks of six strobes whose
+    pulses never came are two to skip, not six."""
+    edges = [samples(ms) for ms, _ in TICKS[2:]]
+    matcher = EdgeMatcher(FS, tick_pulsed=True)
+    got = run(matcher, tick_strobes(TICKS), edges)
+    assert [e.sample is not None for e in got] == [ms >= 110 for _, ms in tick_strobes(TICKS)]
+    assert matcher.unmatched_strobes == 6
+
+
+def test_an_unconnected_tick_pulsed_line_does_not_queue_strobes_forever():
+    matcher = EdgeMatcher(FS, tick_pulsed=True)
+    got = []
+    for n in range(200):
+        for code in (40, 44, 46):
+            got += matcher.add_strobe(code, n * 1000)
+    assert len(got) == 3 * (200 - EdgeMatcher.MAX_PENDING)
+    assert all(e.sample is None for e in got) and matcher.unmatched_strobes == len(got)
+
+
 # --- histograms -------------------------------------------------------------
 
 

@@ -50,7 +50,7 @@ No linter is configured; `tsc` is the TypeScript check.
 - **Strobes** are `[code, timestamp]` pairs. Codes are defined only in the per-machine strobe vocabulary
   (default `sidecar/ephymeris_sidecar/rig/schema/strobe_vocab.default.json`): refer to them by name, never copy
   a number into code, `task.json`, firmware or tests. Append-only ([why](docs/TASKS.md#strobe-vocabulary)).
-- **Start handshake:** board prints `INTERP=`, `FREE_RAM=`, `READY`; host sends `BEGIN`, then one `SET` line
+- **Start handshake:** board prints `INTERP=`, `FREE_RAM=`, (spine only) `SYNC=TICK`, `READY`; host sends `BEGIN`, then one `SET` line
   at a time, each answered by `PARAMS <n> <crc32>` (after any `CLAMPED <key>`). `START SEED=<n>` goes only when
   both match the host's and nothing was clamped ([details](docs/TASKS.md#confirming-the-parameters)).
 - **End:** a run ends cleanly when the board emits `BF_END_SESSION` (trial cap, `STOP`, or time limit);

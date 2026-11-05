@@ -81,9 +81,30 @@
   TICKS. One tick per millisecond of millis(). AVR millis() skips a value
   roughly every 42 ms; each skipped value is stepped too, with no edges, as
   BoxInterp.h's tick rules require. Inputs are read once per loop() pass and
-  their edges land on the latest tick. Nothing here calls delay() once the
-  session runs; the strobe's sync pulse waits a few hundred microseconds, the
-  bounded lag RECORDING.md#the-sync-line describes.
+  their edges land on the latest tick. Nothing here waits once the session
+  runs: not delay(), not the sync pulse, not a print into a full TX buffer.
+
+
+  THE SYNC PULSE (RECORDING.md#firmware-pulse). One pulse per tick that strobes
+  anything, not one per strobe: every strobe of a tick carries the tick's
+  time, so one edge says it for all of them. It RISES right after the tick's
+  pins are written, so the edge is the outputs' edge, and before any strobe is
+  printed. It FALLS on a later loop() pass once BOX_SYNC_PULSE_US has run, and
+  the next rise waits until the line has been LOW for BOX_SYNC_GAP_US. A tick
+  that strobes before then (two ticks stepped in one pass: a skipped millis()
+  value) is OWED its rise, raised on the first pass the gap allows. So every
+  strobing tick has its own edge, never two ticks one edge, and an owed rise
+  lags its tick by at most a pulse and a gap per rise owed ahead of it. The
+  board says so before READY: SYNC=TICK.
+
+
+  THE STROBE QUEUE. A strobe is queued, and printed on this or a later pass
+  only when the TX buffer has room for the whole line, so a print never blocks.
+  A burst of strobes outruns the wire (a 13-byte line takes 1.1 ms at 115200
+  baud; the buffer holds 63 bytes), and a print into a full buffer would stall
+  loop() until it drained. The queue holds SPINE_STROBE_QUEUE strobes; only
+  when it is full does a strobe wait for room, stepping the trains and the sync
+  line meanwhile, so no strobe is ever dropped.
 */
 
 #ifndef BOX_SPINE_H
@@ -100,6 +121,9 @@
 #endif
 #if SPINE_NUM_INPUTS > 32 || SPINE_NUM_OUTPUTS > 32
 #error "a state table speaks of at most 32 inputs and 32 outputs"
+#endif
+#ifndef SPINE_STROBE_QUEUE
+#define SPINE_STROBE_QUEUE 16
 #endif
 #ifndef SPINE_NUM_DRIVES
 #error "TaskSpine.h names no SPINE_NUM_DRIVES: save the task again."
@@ -573,22 +597,86 @@ inline InterpEdges sample(uint32_t now)
   return e;
 }
 
-/*  One strobe, with the trains kept on time around it. A strobe takes the board
-    time: its sync pulse and gap (about 0.7 ms), and a print into a full 64-byte
-    TX buffer BLOCKS until the wire drains. So the trains are stepped to the
-    board's millis() before each strobe, and while waiting for room for the
-    whole line, which then never blocks: a pulse HIGH through a burst of
-    strobes still falls within a millisecond of its width. With no train this
-    is emitStrobeAt(). */
+#if BOX_PIN_SYNC_OUT >= 0
+static bool syncHigh = false;
+static unsigned long syncRose = 0; // micros() at the rise
+static uint8_t syncOwed = 0;       // rises owed: ticks that strobed before the line was ready
+#endif
+
+/*  The sync line, on every loop() pass and never waiting (THE SYNC PULSE): LOW
+    once the pulse has run its width, and an owed rise once the LOW has run
+    its gap. */
+inline void syncStep()
+{
+#if BOX_PIN_SYNC_OUT >= 0
+  unsigned long now = micros();
+  if (syncHigh && now - syncRose >= (unsigned long)BOX_SYNC_PULSE_US)
+  {
+    digitalWrite(syncOut, LOW);
+    syncHigh = false;
+    syncLastFallMicros() = now;
+  }
+  else if (!syncHigh && syncOwed && now - syncLastFallMicros() >= (unsigned long)BOX_SYNC_GAP_US)
+  {
+    digitalWrite(syncOut, HIGH);
+    syncHigh = true;
+    syncRose = now;
+    syncOwed--;
+  }
+#endif
+}
+
+/*  A tick that strobes is owed a pulse: raised now, if the line is ready. */
+inline void syncTick()
+{
+#if BOX_PIN_SYNC_OUT >= 0
+  if (syncOwed < 255)
+    syncOwed++;
+  syncStep();
+#endif
+}
+
+/* THE STROBE QUEUE: a ring of strobes not yet printed, oldest at queueHead. */
+struct SpineStrobe
+{
+  int code;
+  unsigned long ts;
+};
+static SpineStrobe queued[SPINE_STROBE_QUEUE];
+static uint8_t queueHead = 0;
+static uint8_t queueCount = 0;
+
+/*  Print queued strobes, oldest first, while the TX buffer has room for the
+    whole line: a print that never blocks. */
+inline void printQueued()
+{
+  while (queueCount)
+  {
+    const SpineStrobe &s = queued[queueHead];
+    if (Serial.availableForWrite() < strobeBytes(s.code, s.ts))
+      return;
+    printStrobe(s.code, s.ts);
+    queueHead = (uint8_t)((queueHead + 1) % SPINE_STROBE_QUEUE);
+    queueCount--;
+  }
+}
+
+/*  One strobe, behind every one not yet printed. Only a full queue waits, for
+    the wire to take its oldest, with the trains and the sync line kept on time
+    meanwhile: a pulse HIGH through the wait still falls within a millisecond
+    of its width. */
 inline void strobeAt(int code, unsigned long ts)
 {
-#if SPINE_NUM_DRIVES > 0
-  const int STROBE_BYTES = 16; // "NNN\t" + a ten-digit timestamp + "\r\n"
-  stepTrains((uint32_t)millis());
-  while (Serial.availableForWrite() < STROBE_BYTES)
+  while (queueCount == SPINE_STROBE_QUEUE)
+  {
     stepTrains((uint32_t)millis());
-#endif
-  emitStrobeAt(code, ts);
+    syncStep();
+    printQueued();
+  }
+  SpineStrobe &s = queued[(queueHead + queueCount) % SPINE_STROBE_QUEUE];
+  s.code = code;
+  s.ts = ts;
+  queueCount++;
 }
 
 /*  Drive and strobe one tick's actions, in the core's order (THE STREAM). */
@@ -605,6 +693,11 @@ inline void emitTick(const SpineTick &t, uint32_t now)
     if (off & ((uint32_t)1 << j)) drive(j, false, now);
   for (int j = 0; j < SPINE_NUM_OUTPUTS; j++)
     if (on & ((uint32_t)1 << j)) drive(j, true, now);
+  // The tick's one pulse rises with its pins, if anything below strobes. A
+  // tick can step the core and strobe nothing (a state with no output edge).
+  bool structure = !ends && (a.flags & (INTERP_ACT_BLOCK_START | INTERP_ACT_TRIAL_START));
+  if (ends || (a.flags & INTERP_ACT_SESSION_START) || a.rose || a.fell || structure || off || on)
+    syncTick();
   if (a.flags & INTERP_ACT_SESSION_START) strobeAt(BF_START_SESSION, ts);
   for (int i = 0; i < SPINE_NUM_INPUTS; i++)
     if (a.rose & ((uint32_t)1 << i)) strobeAt(kInputs[i].riseCode, ts);
@@ -617,6 +710,7 @@ inline void emitTick(const SpineTick &t, uint32_t now)
   for (int j = 0; j < SPINE_NUM_OUTPUTS; j++)
     if (on & ((uint32_t)1 << j)) strobeAt(kOutputs[j].onCode, ts);
   if (ends) strobeAt(BF_END_SESSION, ts);
+  printQueued();
 }
 
 inline void setup()
@@ -631,7 +725,7 @@ inline void setup()
   }
   Serial.begin(BOX_BAUD_RATE);
   delay(50); // let the post-reset serial settle
-  announceReadyAs(INTERP_VERSION);
+  announceReadyAs(INTERP_VERSION, true);
   uint32_t seed = awaitStart();
 
   uint32_t now = millis();
@@ -644,6 +738,8 @@ inline void setup()
   stopRequested = false;
   done = false;
   lastTick = now;
+  // The line has been LOW since initBoxHardware(), well past its gap.
+  syncLastFallMicros() = micros() - BOX_SYNC_GAP_US;
   SpineTick first;
   first.actions = spine_begin(run, &kTable, params, seed, now);
   first.ends = false;
@@ -658,6 +754,10 @@ inline void setup()
 
 inline void loop()
 {
+  // Every pass, the session's end included: its last pulse and strobes are
+  // still to finish there.
+  syncStep();
+  printQueued();
   if (done)
     return;
   if (checkForStop())
@@ -681,7 +781,7 @@ inline void loop()
       emitTick(t, lastTick);
     if (t.ends)
     {
-      shutdownHardware();
+      shutdownOutputs(); // not the sync line: its pulse falls on a later pass
       done = true;
       return;
     }

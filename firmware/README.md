@@ -143,7 +143,7 @@ default role and type make of it there.
 | **reward** | Delivers the reward; pulse width is the volume | A grid row; what Prime opens |
 | **cue** | The trial light: "a trial is available" | A grid row; the first level line is how a box identifies itself |
 | **vacuum** | Odor routing with no behavioral meaning | A grid row; on with each stimulus line in the self-test |
-| **sync** | One pulse per strobe into a recording controller | Never driven: a pulse there is an edge in a recording |
+| **sync** | One pulse per strobe (per tick that strobes, from a spine task) into a recording controller | Never driven: a pulse there is an edge in a recording |
 
 ## The BehaviorBox library
 

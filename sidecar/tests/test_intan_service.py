@@ -401,6 +401,28 @@ async def test_a_reconnect_adopts_the_run_once_its_stamp_can_be_read(rig, tmp_pa
     await h.until(lambda: h.service.status_json()["state"] == "recording")
 
 
+async def _end_inside_a_polls_stamp_read(h) -> dict | None:  # noqa: ANN001
+    """End's stop, run to completion while a poll's file-stamp read is held
+    open; End's own reads go through. Returns End's run."""
+    client = h.service._client
+    real_get = client.get
+    inside, release = asyncio.Event(), asyncio.Event()
+
+    async def get(parameter: str) -> str:
+        if parameter == "filename.activefiletimestamp" and not inside.is_set():
+            inside.set()
+            await release.wait()
+        return await real_get(parameter)
+
+    client.get = get
+    poll = asyncio.create_task(h.service._poll_once())
+    await inside.wait()
+    run = await h.service.stop_recording()
+    release.set()
+    await poll
+    return run
+
+
 @pytest.mark.parametrize("via", ["poll", "reconnect"])
 async def test_an_end_during_an_adoption_is_not_undone_by_it(rig, tmp_path, via):
     """A poll -- or the reconnect itself -- is reading the file stamp to pick an
@@ -419,22 +441,7 @@ async def test_an_end_during_an_adoption_is_not_undone_by_it(rig, tmp_path, via)
         assert h.service.status_json()["state"] == "error"
         h.fake.params["filename.activefiletimestamp"] = "260920_101500"
 
-    client = h.service._client
-    real_get = client.get
-    inside, release = asyncio.Event(), asyncio.Event()
-
-    async def get(parameter: str) -> str:
-        if parameter == "filename.activefiletimestamp" and not inside.is_set():
-            inside.set()  # the poll's read, held open; End's own read goes through
-            await release.wait()
-        return await real_get(parameter)
-
-    client.get = get
-    poll = asyncio.create_task(h.service._poll_once())
-    await inside.wait()
-    run = await h.service.stop_recording()
-    release.set()
-    await poll
+    run = await _end_inside_a_polls_stamp_read(h)
 
     assert run is not None and h.fake.params["runmode"] == "Stop"
     assert h.service.recording is None and not h.service._run_confirmed
@@ -444,6 +451,26 @@ async def test_an_end_during_an_adoption_is_not_undone_by_it(rig, tmp_path, via)
     status = h.service.status_json()
     assert status["state"] == "idle"
     assert "RHX itself" not in (status["message"] or "")
+
+
+async def test_an_end_during_a_reconnects_stamp_read_keeps_its_message(rig, tmp_path):
+    """On reconnect RHX is on another file, and End closes the run while that
+    is being read. End's verdict on the recording it left alone stands; the
+    reconnect's stale "not this run" must not overwrite it."""
+    h = await rig(poll_s=30.0)
+    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.start_recording()
+    await h.fake.stop_listening()
+    await h.service._poll_once()  # the link is lost
+    await h.fake.listen_again()
+    h.fake.params["filename.activefiletimestamp"] = "260920_111111"
+
+    run = await _end_inside_a_polls_stamp_read(h)
+
+    assert run is not None and h.fake.params["runmode"] == "Record"
+    status = h.service.status_json()
+    assert status["state"] == "error"
+    assert "not the run whose session ended" in status["message"]
 
 
 async def test_a_stop_and_record_by_hand_during_the_grace_is_not_stopped(rig, tmp_path):

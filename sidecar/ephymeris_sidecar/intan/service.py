@@ -480,7 +480,7 @@ class IntanService:
                 self._trouble(_stopped_in_rhx(self._run_mode))
             else:
                 writes = await self._try_adopt()
-                # Unless End closed the run, or it was picked up, during the read.
+                # Unless End closed the run, or something else confirmed it, during the read.
                 if not writes and self._recording is recording and not self._run_confirmed:
                     self._trouble(_not_this_run(writes, recording))
         elif self._state in ("disconnected", "error"):

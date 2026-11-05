@@ -82,10 +82,18 @@ def test_undo_keeps_a_copy_whose_original_is_gone_or_changed(tmp_path: Path) -> 
     gone.src.unlink()
     changed.src.write_bytes(b"edited since")
 
-    transfer.undo([gone, changed])
-    transfer.undo([FileCopy(gone.src, gone.dst), FileCopy(changed.src, changed.dst)])
+    assert transfer.undo([gone, changed]) == [gone.dst, changed.dst]
+    kept = transfer.undo([FileCopy(gone.src, gone.dst), FileCopy(changed.src, changed.dst)])
 
+    assert kept == [gone.dst, changed.dst], "it says what it kept"
     assert gone.dst.is_file() and changed.dst.is_file()
+
+
+def test_undo_does_not_count_a_copy_it_removed_or_never_made(tmp_path: Path) -> None:
+    made = transfer.copy([pair(tmp_path, "made.json")])[0]
+    never = pair(tmp_path, "never.json")
+    assert transfer.undo([made, never]) == []
+    assert not made.dst.exists()
 
 
 def test_an_original_goes_only_while_its_copy_is_there_and_the_same(tmp_path: Path) -> None:

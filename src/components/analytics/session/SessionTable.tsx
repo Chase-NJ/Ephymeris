@@ -37,7 +37,7 @@ import { springSnappy } from "@/lib/motion";
  * task instead of breaking.
  *
  * **`rewarded` is `pRewarded` — reward delivered, the animal held.** That is
- * deliberately stricter than the app's response accuracy (`pSide`,
+ * deliberately stricter than the app's response accuracy (`pResponse`,
  * `ANALYTICS.md#rewarded-and-response-accuracy`), which credits a correct well
  * whether or not the hold cleared. The key says so, because the two look
  * interchangeable and are not.

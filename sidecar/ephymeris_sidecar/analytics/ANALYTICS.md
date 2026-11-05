@@ -100,7 +100,8 @@ What the run reports:
 | P(left \| odor 3) | **1.0**: 1 / 1, 2 triggered, 1 excluded | trial 2 counted; 4 excluded |
 | Overall accuracy | **0.67**: 2 / 3, 5 triggered, 2 excluded | the two conditions pooled over integers |
 | Rewarded accuracy | **0.25**: 1 rewarded / 4 administered | trial 5 aborted, so it is not administered |
-| Response accuracy | **0.50**: (1 rewarded + 1 hold failed) / 4 | the right side was chosen, water or not |
+| Response accuracy | **0.67**: (1 rewarded + 1 hold failed) / 3 answered | the right side was chosen, water or not; the no-response trial is left out |
+| Side accuracy | **0.50**: (1 rewarded + 1 hold failed) / 4 administered | the same, the no-response trial counted against it |
 | Engagement | 6 presented, 5 poked, 5 given odor: **pEngaged 0.83** | presentation 6 was never poked |
 
 Trial 2 shows why there are two kinds of accuracy: the hit counts toward P(hit), but no water was
@@ -172,7 +173,7 @@ closes an unresolved odor-1 trial.
 | | Definition | Used by |
 |---|---|---|
 | **`pWindow`** | The rolling value at the end of the run, over the authored `windowSize` | Reconciling a run against the last number Mission Control showed |
-| **`pSession`** | `hits / counted` over every trial the same accumulator scored | **Every summary**: strategy plane, cross-session curves, session summary |
+| **`pSession`** | `hits / counted` over every trial the same accumulator scored | **Every summary**: a legacy run's place on the strategy plane, the animal rail's sparkline for a legacy run, the session summary |
 
 Both are read off **one list of verdicts**, the condition's rows in the trial table
 (`table_metrics.legacy_metrics`), which one accumulator gave. So they differ *only* in averaging window and
@@ -297,7 +298,9 @@ three figures:
   `responded` adds `wrongWell` and `falseAlarm`: the correct answer first, held or not, **over the trials
   answered at all**. No response and an abort are left out, exactly as the conditions' hit rates leave them,
   so it is legacy P(hit)'s figure, on a legacy and a [spine run](#a-spine-run-on-the-cross-session-panels)
-  alike. The Accuracy panel's response line and the animal rail's sparkline plot it. Always ≥ rewarded
+  alike, but for a legacy no-go withhold, which a legacy tally holds as no response and so leaves out (a
+  legacy run's sparkline therefore plots its pooled P(hit), which counts it). The Accuracy panel's response
+  line plots it. Always ≥ rewarded
   accuracy; the gap is what the choice did not turn into fluid: a broken hold, a reward drawn against, or
   a trial not answered.
 - **Side accuracy** (`pSide`) = `(rewarded + holdFailed) / administered`: the correct side over every trial
@@ -341,7 +344,7 @@ first well poked decides legacy P(hit).
 | Trial | Bucket |
 |---|---|
 | `correct`, right, paid | rewarded |
-| `correct`, right, its reward drawn against | **unpaid** (spine only) |
+| `correct`, right, not paid: its reward drawn against, or no line on its map entry | **unpaid** (spine only) |
 | `hold_broken`, right | hold failed |
 | `hold_broken` or `correct` at the wrong well, `wrong_response` | wrong well |
 | `omission` | no response |
@@ -509,8 +512,9 @@ have written for a simulated animal and scores it through these same calls, so a
 and read exactly as a recorded one.
 
 > [!CAUTION]
-> **Read a trial off the table's own fields, never a phase kind or a code name.** The one exception is
-> finding the Response window a response is read from. A phase or an outcome class added later must score
+> **Read a trial off the table's own fields, never a phase kind or a code name.** The exceptions are
+> finding the Response window a response is read from, and the engagement ladder a spine run gets for the
+> cross-session panels, which reads the phase each trial reached ([why](#a-spine-run-on-the-cross-session-panels)). A phase or an outcome class added later must score
 > with no change here, and `test_replay_trial_table.py` feeds a table with an
 > outcome number no task has used to prove it. A scorer that matched `"outcome"` phases or `FLUID_*` codes
 > would silently miss the first new one.

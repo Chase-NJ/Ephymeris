@@ -154,3 +154,16 @@ def test_the_snapshot_names_each_response_port_s_side():
     shot = generate.build_profile(TaskDefinition.from_json(two_afc())).to_json()
     sides = {i["channel"]: i.get("side") for i in shot["spine"]["inputs"]}
     assert sides == {"odor_port": None, "left_well": "left", "right_well": "right"}
+
+
+def test_a_poke_let_go_before_the_odor_is_poked_but_not_delivered():
+    # The ladder off the phase each trial reached: wait, hold, present, ...
+    phases = ("wait", "hold", "present", "delay", "outcome", "iti")
+    reached = [
+        (0, None, None, None, None, 100),      # never poked: the Wait timed out
+        (0, 300, None, None, None, 900),       # poked, let go in the hold
+        (0, 300, 600, 1100, 1500, 1600),       # all the way
+    ]
+    trials = [ReplayTrial(index=i, at_ms=0, phase_entries=e) for i, e in enumerate(reached)]
+    ladder = crossover._engagement(trials, phases)
+    assert (ladder.presented, ladder.poked, ladder.odor_delivered) == (3, 2, 1)

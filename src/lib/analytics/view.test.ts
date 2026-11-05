@@ -20,7 +20,9 @@ import {
   poolOutcomes,
   RESPONSE_ACCURACY,
   responseAccuracyOf,
+  sessionOutcomePoints,
   sideAccuracy,
+  sideLowConfidence,
   strategyAxes,
   strategyProfiles,
 } from "./view";
@@ -269,10 +271,46 @@ describe("a spine run on the cross-session panels (#167)", () => {
     expect(RESPONSE_ACCURACY.value(pooled)).toBe(12 / 15);
   });
 
-  it("gives a run's sparkline its response accuracy, falling back to its overall", () => {
-    expect(responseAccuracyOf({ outcomes: tally({ pResponse: 0.75 }), overall: { pSession: 0.5 } } as never))
+  it("gives a spine run's sparkline its response accuracy, and a legacy run its P(hit)", () => {
+    const replay = { rows: [] };
+    expect(responseAccuracyOf({ replay, outcomes: tally({ pResponse: 0.75 }), overall: { pSession: 0.5 } } as never))
       .toBe(0.75);
-    expect(responseAccuracyOf({ outcomes: null, overall: { pSession: 0.5 }, metrics: [] } as never)).toBe(0.5);
+    // A legacy tally cannot see a no-go withhold; its overall P(hit) can, and is the same figure.
+    expect(responseAccuracyOf({ replay: null, outcomes: tally({ pResponse: 0.75 }), overall: { pSession: 0.5 },
+                                metrics: [] } as never)).toBe(0.5);
+    expect(responseAccuracyOf({ replay, outcomes: null, overall: { pSession: 0.4 }, metrics: [] } as never))
+      .toBe(0.4);
+  });
+
+  it("counts response accuracy's answers from the buckets, whatever a row carries", () => {
+    const pooled = poolOutcomes([
+      { outcomes: tally({ trials: 4, administered: 4, rewarded: 2, wrongWell: 1, noResponse: 1, responded: undefined }) },
+    ] as unknown as RunSummary[]);
+    expect(pooled.responded).toBe(3);
+    expect(pooled.pResponse).toBe(2 / 3);
+  });
+
+  it("flags a spine run's plane point when either side rests on few answers", () => {
+    expect(sideLowConfidence(spine)).toBe(true); // the left well: 4 answers
+    const solid = {
+      metrics: [],
+      conditions: (spine.conditions ?? []).map((c) => ({ ...c, outcomes: tally({ rewarded: 20, responded: 20 }) })),
+    } as unknown as RunSummary;
+    expect(sideLowConfidence(solid)).toBe(false);
+  });
+
+  it("pools a legacy run and a spine run of one session on the same curve", () => {
+    const legacy = { sessionId: "s1", animalId: "a1", profileHash: "grgl", replay: null, engagement: null,
+      outcomes: tally({ trials: 10, administered: 10, rewarded: 6, holdFailed: 1, wrongWell: 3 }) };
+    const spineRun = { sessionId: "s1", animalId: "a2", profileHash: "spine", replay: { rows: [] },
+      engagement: { presented: 12, poked: 11, odorDelivered: 10 },
+      outcomes: tally({ trials: 10, administered: 10, rewarded: 7, unpaid: 1, wrongWell: 1, noResponse: 1 }) };
+    const [point] = sessionOutcomePoints({
+      runs: [legacy, spineRun], sessions: [{ id: "s1", date: "2026-11-04" }], animals: [],
+    } as unknown as AnalyticsSummary);
+    expect(point!.outcomes.responded).toBe(10 + 9);
+    expect(point!.outcomes.pResponse).toBe((7 + 8) / 19);
+    expect(point!.engagement.presented).toBe(12);
   });
 });
 

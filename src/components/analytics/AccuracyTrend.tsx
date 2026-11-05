@@ -330,7 +330,8 @@ function TrendBody({
           </p>
           <p className="mt-1">
             Faint ribbons are 95% Wilson intervals; hollow dots mark sessions
-            under {THIN} administered trials — read loosely. Dashed vertical
+            under {THIN} trials — answered, for the response line; administered, for the rewarded one —
+            read loosely. Dashed vertical
             rules are where the cohort&rsquo;s dominant task changed (the strip
             above names them): a cliff at one is a task change, not forgetting.
           </p>
@@ -449,17 +450,17 @@ function describePoint(
   const head =
     `${session.prefixName}_${session.sessionNumber} · ${session.date}` +
     ` · ${describeTaskMix(point.tasks, labels)}`;
-  if (outcomes.pSide === null || outcomes.pRewarded === null) {
-    return `${head}\nno administered trials — ${outcomes.aborted} aborted`;
+  if (outcomes.pResponse === null || outcomes.pRewarded === null) {
+    return `${head}\nno answered trials — ${outcomes.aborted} aborted`;
   }
   const parts = [
-    `${outcomes.administered} administered`,
-    `${pct(outcomes.pSide)} chose the correct well`,
+    `${outcomes.administered} administered, ${outcomes.responded} answered`,
+    `${pct(outcomes.pResponse)} chose the correct well`,
     `${pct(outcomes.pRewarded)} earned fluid`,
     `${outcomes.holdFailed} lost to the hold`,
   ];
-  if (outcomes.administered < THIN) {
-    parts.push(`fewer than ${THIN} administered — read loosely`);
+  if (outcomes.responded < THIN) {
+    parts.push(`fewer than ${THIN} answered — read loosely`);
   }
   return `${head}\n${parts.join(" · ")}`;
 }

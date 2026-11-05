@@ -26,6 +26,7 @@ from typing import Any, Iterable, Sequence
 from .engagement import TrialEngagement
 from .outcomes import ConditionOutcomes, TrialOutcomes
 from .spine import Replayed
+from .table_metrics import row_metric_id
 from .trial_table import CORRECT, ReplayTrial
 
 #: Each spine class's legacy bucket when the response is right, and when it is not.
@@ -84,15 +85,20 @@ def _engagement(trials: Sequence[ReplayTrial], phases: Sequence[str]) -> TrialEn
     Wait (the first, before the first Present), and into the first Present.
     None for a spine with no such Wait and Present."""
     present = next((i for i, kind in enumerate(phases) if kind == "present"), None)
-    wait = next((i for i, kind in enumerate(phases[:present]) if kind == "wait"), None) if present else None
-    if present is None or wait is None:
+    if present is None:
+        return None
+    wait = next((i for i, kind in enumerate(phases[:present]) if kind == "wait"), None)
+    if wait is None:
         return None
 
-    def entered(t: ReplayTrial, phase: int) -> bool:
-        return phase < len(t.phase_entries) and t.phase_entries[phase] is not None
+    iti = len(phases) - 1  # every trial, an early end's included, enters its ITI
 
-    return TrialEngagement(presented=len(trials), poked=sum(entered(t, wait + 1) for t in trials),
-                           odor_delivered=sum(entered(t, present) for t in trials))
+    def past(t: ReplayTrial, phase: int) -> bool:
+        """The trial entered `phase` or a phase after it, before the ITI."""
+        return any(entry is not None for entry in t.phase_entries[phase:iti])
+
+    return TrialEngagement(presented=len(trials), poked=sum(past(t, wait + 1) for t in trials),
+                           odor_delivered=sum(past(t, present) for t in trials))
 
 
 def tallies(result: Replayed, spine: dict[str, Any]) -> tuple[TrialOutcomes | None, list[ConditionOutcomes],
@@ -109,7 +115,7 @@ def tallies(result: Replayed, spine: dict[str, Any]) -> tuple[TrialOutcomes | No
     side = {i.get("channel"): i.get("side") for i in spine.get("inputs") or []}
     bucket = [(t, bucket_of(t, correct.get(t.row or ""))) for t in trials]
     conditions = [
-        ConditionOutcomes(metric_id=f"replay:{row_id}:{CORRECT}", label=name, trigger_code=None,
+        ConditionOutcomes(metric_id=row_metric_id(row_id), label=name, trigger_code=None,
                           outcomes=_tally(b for t, b in bucket if t.row == row_id),
                           answer_side=side.get(correct.get(row_id)))
         for row_id, name in result.rows

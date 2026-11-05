@@ -13,7 +13,7 @@ Two kinds of leftover pile up when a day goes wrong:
 
 Everything here is planning, and pure: it is handed the facts (the rows, their
 run counts, what each folder holds) and returns what to do. Applying the plan is
-the analytics service's (`AnalyticsService.tidy`), under the same lock a rescan
+the cohort archive's (`CohortArchive.tidy`), under the same lock a rescan
 takes, and **it only ever changes the database** — a merge moves run records
 between session rows and never touches a data file, and a folder is removed
 only when it contains no file at all. Records are merged only when they share
@@ -92,7 +92,7 @@ def plan(
     """What a tidy would do to these records.
 
     `run_counts` counts every run a record owns — recorded runs, and recovered
-    files attributed to it (`service._adoption_owners`). `annotated` holds the
+    files attributed to it (`archive._adoption_owners`). `annotated` holds the
     records the operator has written in (`DATA.md#the-session-log`): a note is
     data as much as a file is, so such a record is never empty. `protect` holds the
     session the runner is holding; a group containing it is left whole, since

@@ -429,7 +429,7 @@ class SessionRepository:
     # --- tidying (DATA.md#tidy-records) --------------------------------------------
     #
     # Both methods trust their caller about WHICH records: `sessions/tidy.py`
-    # plans, and the analytics service excludes the session the runner holds.
+    # plans, and the cohort archive excludes the session the runner holds.
     # What they guarantee is that each change lands whole — a merge that moved
     # the runs but left the absorbed row behind would count the day twice in a
     # different way.

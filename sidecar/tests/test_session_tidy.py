@@ -65,11 +65,11 @@ def group_run(group_id: str, at: str) -> GroupRun:
 
 
 async def preview(rig: Rig, **kw) -> dict:
-    return await rig.service.tidy(rig.cohort.id, apply=False, today=kw.get("today", TODAY))
+    return await rig.archive.tidy(rig.cohort.id, apply=False, today=kw.get("today", TODAY))
 
 
 async def apply(rig: Rig, **kw) -> dict:
-    return await rig.service.tidy(rig.cohort.id, apply=True, today=kw.get("today", TODAY))
+    return await rig.archive.tidy(rig.cohort.id, apply=True, today=kw.get("today", TODAY))
 
 
 # --- merging a split day -----------------------------------------------------
@@ -278,7 +278,7 @@ async def test_a_recovered_file_counts_under_the_recorded_session(rig: Rig) -> N
     sid = rig.add_session("12", DAY)
     rig.add_run(sid, "a1", HIT_1)
     _orphan(rig, "12", DAY, "remy2")
-    await rig.service.rescan(rig.cohort.id)
+    await rig.archive.rescan(rig.cohort.id)
 
     summary = await rig.service.summary(rig.cohort.id)
     assert [s["id"] for s in summary["sessions"]] == [sid]
@@ -289,7 +289,7 @@ async def test_a_recovered_file_counts_under_the_recorded_session(rig: Rig) -> N
 async def test_a_recovered_file_makes_its_record_not_empty(rig: Rig) -> None:
     sid = rig.add_session("12", DAY)
     _orphan(rig, "12", DAY, "remy2")
-    await rig.service.rescan(rig.cohort.id)
+    await rig.archive.rescan(rig.cohort.id)
     assert (await preview(rig))["empty"] == []
     assert rig.sessions.get_session(sid)
 
@@ -380,5 +380,5 @@ async def test_prune_never_drops_a_noted_session(rig: Rig) -> None:
     _note(rig, sid, "Ran on the other rig; files are there.")
     # No runs and no folder: exactly what prune drops — but for the note.
     assert not Path(rig.sessions.get_session(sid).folder_path).exists()
-    await rig.service.rescan(rig.cohort.id)
+    await rig.archive.rescan(rig.cohort.id)
     assert rig.sessions.get_session(sid)

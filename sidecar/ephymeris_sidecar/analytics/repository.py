@@ -306,6 +306,30 @@ class AnalyticsRepository:
                 if moved:
                     break
 
+    def move_sources(self, cohort_id: str) -> list[str]:
+        """Every cohort a move brought animals from into this one, directly or
+        through cohorts in between, as recorded in `animal_moves`
+        (`DATA.md#moving-animals-between-cohorts`). A moved row keeps the id
+        its first cohort minted, so these are the cohorts whose ids its runs
+        may still carry. A deleted cohort stays listed: the journal outlives it.
+        """
+        with self._db.read() as q:
+            rows = q.execute(
+                "SELECT source_cohort_id, dest_cohort_id FROM animal_moves"
+                " WHERE state IN ('committed', 'done')"
+            ).fetchall()
+        into: dict[str, set[str]] = {}
+        for source, dest in rows:
+            into.setdefault(dest, set()).add(source)
+        found: set[str] = set()
+        frontier = [cohort_id]
+        while frontier:
+            for source in into.get(frontier.pop(), ()):
+                if source != cohort_id and source not in found:
+                    found.add(source)
+                    frontier.append(source)
+        return sorted(found)
+
     def adopted_for_cohort(self, cohort_id: str) -> list["AdoptedRun"]:
         with self._db.read() as q:
             rows = q.execute(

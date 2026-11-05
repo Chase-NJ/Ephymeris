@@ -205,7 +205,7 @@ async def test_the_log_compares_recovered_files_from_what_they_record(tmp_path: 
         logbook = LogbookService(db=db, cohorts=rig.cohorts, sessions=rig.sessions,
                                  profiles=rig.repo, archive=rig.archive,
                                  broadcast=broadcast)
-        await rig.service.rescan(rig.cohort.id)
+        await rig.archive.rescan(rig.cohort.id)
 
         # Adopted but not yet read: unknown, never "changed".
         before = [c for c in (await logbook.cohort(rig.cohort.id))["changes"] if not c["first"]]

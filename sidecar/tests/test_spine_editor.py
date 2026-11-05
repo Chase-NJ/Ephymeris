@@ -36,12 +36,13 @@ def _issued_rig():
 #: How an operator binds each seed's slots on the shipped rig, row by row:
 #: one channel per slot, a row-varying slot on a line of its own per row.
 BINDINGS = {
-    "two_afc": [{"port": "odor_port", "cue": "trial_light", "sample": line, "left": "left_well",
+    "two_afc": [{"port": "odor_port", "cue": "trial_light", "sample": line, "vacuum": "vacuum", "left": "left_well",
                  "right": "right_well", "reward_l": "fluid_1", "reward_r": "fluid_2"}
                 for line in ("odor_line_1", "odor_line_2")],
-    "go_no_go": [{"port": "odor_port", "cue": "trial_light", "sample": line, "resp": "right_well",
-                  "reward": "fluid_2"} for line in ("odor_line_1", "odor_line_2")],
-    "dnms": [{"port": "odor_port", "cue": "trial_light", "sample": sample, "test": test, "match": "left_well",
+    "go_no_go": [{"port": "odor_port", "cue": "trial_light", "sample": line, "vacuum": "vacuum",
+                  "resp": "right_well", "reward": "fluid_2"} for line in ("odor_line_1", "odor_line_2")],
+    "dnms": [{"port": "odor_port", "cue": "trial_light", "sample": sample, "test": test, "vacuum": "vacuum",
+              "match": "left_well",
               "non_match": "right_well", "reward_l": "fluid_1", "reward_r": "fluid_2"}
              for sample, test in (("odor_line_1", "odor_line_3"), ("odor_line_2", "odor_line_4"),
                                   ("odor_line_1", "odor_line_4"), ("odor_line_2", "odor_line_3"))],
@@ -78,6 +79,33 @@ def test_a_seed_carries_phases_and_no_names(seed):
     assert {d.target["kind"] for d in problems} == {"row"}
 
 
+#: The target seeds' trials, phase by phase: ADR 0003's full trial
+#: (`0003-phase-spine-task-model.md#worked-examples`), DNMS with its retention
+#: delay and test between the sample and the port's exit.
+FULL_TRIAL = {
+    "two_afc": ["delay", "wait", "delay", "present", "wait", "response", "outcome", "iti"],
+    "go_no_go": ["delay", "wait", "delay", "present", "wait", "response", "outcome", "iti"],
+    "dnms": ["delay", "wait", "delay", "present", "delay", "present", "wait", "response", "outcome", "iti"],
+}
+
+
+@pytest.mark.parametrize("seed_id", list(FULL_TRIAL))
+def test_a_target_seed_runs_the_lab_s_full_trial(seed_id):
+    """The sample primed before the light, a poke with the light on, a pre-hold,
+    the sample with the vacuum closed, both aborting on the port's release, then
+    the port's exit before the response window (`TASKS.md#the-spine-editor`)."""
+    spine = next(s for s in seeds.SEEDS if s["id"] == seed_id)["definition"]["spine"]
+    assert [p["phase"] for p in spine] == FULL_TRIAL[seed_id]
+    prime, poke, pre_hold, sample, *_ = spine
+    assert prime["outputs"] == ["sample"]
+    assert poke["on"] == "port" and "edge" not in poke and "cue" in poke["outputs"]
+    assert pre_hold["abortOnRelease"] == sample["abortOnRelease"] == "port"
+    assert "vacuum" not in pre_hold["outputs"] and {"sample", "vacuum"} <= set(sample["outputs"])
+    exit_, window = spine[-4], spine[-3]
+    assert (exit_["on"], exit_["edge"], exit_["outputs"]) == ("port", "exit", ["cue"])
+    assert ("holdMs" in window) == (seed_id == "two_afc"), "only 2AFC holds the well"
+
+
 def test_the_trace_seed_counts_licks_in_every_phase_before_the_iti():
     """Built from trace conditioning's own phases (`taskdef/pavlovian.py`): its
     baseline, CS, trace and US count a lick input they never act on, so a task
@@ -100,10 +128,10 @@ def test_the_preview_says_which_phases_a_block_can_override():
     ratio["spine"][0]["timeoutMs"] = 10000
     assert overridable(ratio) == [0, 1, 2]
     afc = built("two_afc")
-    assert overridable(afc) == [1, 2, 3, 4, 5], "a Wait with no timeout has no timer"
-    afc["spine"][0]["timeoutMs"] = 5000
-    afc["spine"][2]["timeoutMs"] = 5000  # not a Wait or Counter: no second timer
-    assert overridable(afc) == [0, 1, 2, 3, 4, 5]
+    assert overridable(afc) == [0, 1, 2, 3, 5, 6, 7], "the port-exit Wait has no timeout, so no timer"
+    afc["spine"][4]["timeoutMs"] = 5000
+    afc["spine"][3]["timeoutMs"] = 5000  # not a Wait or Counter: no second timer
+    assert overridable(afc) == [0, 1, 2, 3, 4, 5, 6, 7]
 
 
 @pytest.mark.parametrize("seed_id", list(BINDINGS))

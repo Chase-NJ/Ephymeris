@@ -887,7 +887,7 @@ A [database copy deferred behind an open write](#the-database-copy) is owed, not
 
 ## Reading the archive
 
-`analytics/` reads runs back, and [ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#the-folder-at-a-glance) maps every file in it. The parts this document covers: `reader.py` (walking and reading files), `archive.py` ([the cohort archive](#the-cohort-archive)), `scoring.py` (`RunScorer`: [which profile decodes a run](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#which-profile-decodes-a-run), scoring, and the [cache](#caching) and its version), `service.py` (the commands, adoption, pruning, tidy) and `repository.py` (the cache and adoptions tables).
+`analytics/` reads runs back, and [ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#the-folder-at-a-glance) maps every file in it. The parts this document covers: `reader.py` (walking and reading files), `archive.py` ([the cohort archive](#the-cohort-archive), with the rescan's adoption and pruning and the tidy), `walk.py` (what those ask the disk, and how an adoption is matched and named), `scoring.py` (`RunScorer`: [which profile decodes a run](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#which-profile-decodes-a-run), scoring, and the [cache](#caching) and its version), `service.py` (the summary, series and recent sessions) and `repository.py` (the cache and adoptions tables).
 
 ### Database first
 

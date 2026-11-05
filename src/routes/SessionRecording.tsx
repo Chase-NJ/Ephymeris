@@ -29,7 +29,9 @@ import {
   applyParsedProbeMap,
   assignPorts,
   configurePayload,
+  failedProbeMapParse,
   presentPorts,
+  probeMapWaiting,
   reconcileRows,
   recordingReadiness,
   rememberedDefaults,
@@ -133,14 +135,16 @@ export function SessionRecording() {
   // arrival, one reconciling brought (a swap does without changing which boxes
   // there are), and one just chosen. Keyed on which rows are waiting, so
   // choosing the same file again, after a failure or to refresh it, parses again.
+  // A parse the link cut off left its row waiting, so it parses again here on
+  // reconnect (`failedProbeMapParse`).
   const waiting = rows
-    .filter((r) => r.probeMapPath && !r.probeMap && !r.probeError)
+    .filter(probeMapWaiting)
     .map((r) => `${r.box}:${r.probeMapPath}`)
     .join("\u0000");
   useEffect(() => {
     if (link !== "connected") return;
     for (const row of rows) {
-      if (row.probeMapPath && !row.probeMap && !row.probeError) void loadProbeMap(row.box, row.probeMapPath);
+      if (probeMapWaiting(row) && row.probeMapPath) void loadProbeMap(row.box, row.probeMapPath);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [link, waiting]);
@@ -165,7 +169,7 @@ export function SessionRecording() {
       const reply = await client.call(CMD.INTAN_PARSE_PROBE_MAP, { path });
       parsed = { probeMap: reply.probeMap as ProbeMap };
     } catch (err) {
-      parsed = { error: errorMessage(err) };
+      parsed = failedProbeMapParse(err, client.getStatus());
     } finally {
       parsing.current.delete(key);
     }
@@ -492,7 +496,11 @@ export function SessionRecording() {
                                   />
                                 ) : (
                                   <div className="flex h-full items-center justify-center px-4 text-center text-[11px] leading-relaxed text-static">
-                                    Optional — a probe map lights this box's sites live as they fire.
+                                    {!probeMapWaiting(row)
+                                      ? "Optional — a probe map lights this box's sites live as they fire."
+                                      : link === "connected"
+                                        ? "Parsing the probe map…"
+                                        : "Parses the probe map once the sidecar reconnects."}
                                   </div>
                                 )}
                               </div>

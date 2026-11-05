@@ -63,6 +63,11 @@ NICENESS = 10
 #: Windows' `BELOW_NORMAL_PRIORITY_CLASS`.
 _BELOW_NORMAL = 0x4000
 
+#: Why the live numbers stop when the child dies. The webview shows it, so it is
+#: one reason whichever thread notices first: the reader at EOF, or the sender
+#: on a pipe the child's death closed (Windows' `[WinError 232]`).
+STOPPED = "the live scorer stopped"
+
 #: Set as the interpreter exits, before `multiprocessing` reaps its children
 #: (atexit runs in reverse): a scorer killed then is not a scorer that failed.
 _exiting = threading.Event()
@@ -179,8 +184,12 @@ class LiveScorer:
                     requests.send(("forget", key))
                 for key, (header, strobes, count) in waiting.items():
                     requests.send(("score", key, header, strobes, count))
+            except OSError as exc:  # the child's end is gone: it died
+                log.info("the live scorer's request pipe closed: %s", exc)
+                self._fail(STOPPED)
+                return
             except Exception as exc:  # noqa: BLE001
-                self._fail(f"the live scorer went away: {exc}")
+                self._fail(f"the live scorer could not be sent a request: {exc}")
                 return
 
     def _start(self) -> tuple[Any, Any, multiprocessing.process.BaseProcess]:
@@ -212,7 +221,7 @@ class LiveScorer:
                 kind, key, count, fields = results.recv()
             except Exception:  # noqa: BLE001 - EOF: the child is gone
                 self._reap()
-                self._fail("the live scorer stopped")
+                self._fail(STOPPED)
                 return
             if kind == "ready":
                 self._ready.set()

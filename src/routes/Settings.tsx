@@ -8,7 +8,12 @@ import { BackupStatusNote } from "@/components/settings/BackupStatusNote";
 import { DirectoryField } from "@/components/settings/DirectoryField";
 import { SettingRow } from "@/components/settings/SettingRow";
 import { UpdatesTile } from "@/components/settings/UpdatesTile";
-import { BACKUP_TONE_COLOR, backupPhrase, backupTone } from "@/lib/backup/report";
+import {
+  BACKUP_TONE_COLOR,
+  backupPhrase,
+  backupTone,
+  type SyncError,
+} from "@/lib/backup/report";
 import { useBackupStatus, type BackupStatus } from "@/lib/backup/useBackupStatus";
 import { CASCADE, RISE, springPanel } from "@/lib/motion";
 import { useSettings } from "@/lib/settings/context";
@@ -217,7 +222,7 @@ function StorageFact({
 }: {
   dataDirectory: string | null;
   backup: BackupStatus;
-  syncError: string | null;
+  syncError: SyncError | null;
 }) {
   if (!dataDirectory) {
     return <span style={{ color: BACKUP_TONE_COLOR.error }}>no data directory</span>;

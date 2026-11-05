@@ -3,7 +3,12 @@ import { Check, CircleAlert, FolderOpen, Loader2, RefreshCw } from "lucide-react
 
 import { Button } from "@/components/common/controls";
 import { springPanel } from "@/lib/motion";
-import { BACKUP_TONE_COLOR, DEFERRED_DETAIL, backupTone } from "@/lib/backup/report";
+import {
+  BACKUP_TONE_COLOR,
+  DEFERRED_DETAIL,
+  backupTone,
+  type SyncError,
+} from "@/lib/backup/report";
 import type { BackupStatus, SyncResult } from "@/lib/backup/useBackupStatus";
 
 /**
@@ -23,7 +28,7 @@ export function BackupStatusNote({
   status: BackupStatus;
   onSync: () => void;
   canSync: boolean;
-  syncError: string | null;
+  syncError: SyncError | null;
   lastSync: SyncResult | null;
 }) {
   const tone = backupTone(status, syncError);
@@ -71,7 +76,7 @@ function Body({
   lastSync,
 }: {
   status: BackupStatus;
-  syncError: string | null;
+  syncError: SyncError | null;
   lastSync: SyncResult | null;
 }) {
   if (!status.configured) {
@@ -84,8 +89,8 @@ function Body({
     );
   }
 
-  if (syncError) {
-    return <span className="text-starlight">Sync failed: {syncError}</span>;
+  if (syncError && !syncError.refused) {
+    return <span className="text-starlight">Sync failed: {syncError.message}</span>;
   }
 
   if (status.syncing) {
@@ -102,6 +107,11 @@ function Body({
         </span>
       </span>
     );
+  }
+
+  // Refused, not failed: the target is as the sidecar last reported it.
+  if (syncError) {
+    return <span className="text-static">Sync not started: {syncError.message}</span>;
   }
 
   if (status.state === "deferred") {

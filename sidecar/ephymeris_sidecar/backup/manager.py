@@ -434,32 +434,17 @@ class BackupManager:
         self._syncing = True
         await self._publish()
         try:
-            roots = await asyncio.to_thread(self._roots)
-            result = await asyncio.to_thread(self._walk_and_copy, roots, target)
-            self.mark_db_dirty()
-            with self._lock:
-                marked = self._db_dirty_at
-            try:
-                await asyncio.to_thread(self._write_db_backup, target)
-            except WriteInProgress:
-                # The mark set above stays and a later pass copies it, but this
-                # sync did not: say so, as a deferral rather than a failure.
-                self._note_deferred()
-                result["deferred"] += 1
-            except OSError as exc:
-                result["failed"] += 1
-                result["errors"].append(f"{DB_MIRROR_NAME}: {exc}")
-            else:
-                self._note_copied(marked)
+            result = await self._sync_into(target)
+            self._mirrored += result["copied"]
+            self._settle(
+                result["errors"][0] if result["failed"] else None,
+                deferred=result["deferred"] > 0,
+            )
         finally:
+            # On every way out: the sidecar replays its last `backup.status`
+            # on connect, and one still saying syncing would keep Sync disabled.
             self._syncing = False
-
-        self._mirrored += result["copied"]
-        self._settle(
-            result["errors"][0] if result["failed"] else None,
-            deferred=result["deferred"] > 0,
-        )
-        await self._publish()
+            await self._publish()
         log.info(
             "backup sync: %d copied, %d already current, %d failed, %d deferred",
             result["copied"],
@@ -467,6 +452,27 @@ class BackupManager:
             result["failed"],
             result["deferred"],
         )
+        return result
+
+    async def _sync_into(self, target: Path) -> dict[str, Any]:
+        """The archive walk, then the database copy, as one `SyncResult`."""
+        roots = await asyncio.to_thread(self._roots)
+        result = await asyncio.to_thread(self._walk_and_copy, roots, target)
+        self.mark_db_dirty()
+        with self._lock:
+            marked = self._db_dirty_at
+        try:
+            await asyncio.to_thread(self._write_db_backup, target)
+        except WriteInProgress:
+            # The mark set above stays and a later pass copies it, but this
+            # sync did not: say so, as a deferral rather than a failure.
+            self._note_deferred()
+            result["deferred"] += 1
+        except OSError as exc:
+            result["failed"] += 1
+            result["errors"].append(f"{DB_MIRROR_NAME}: {exc}")
+        else:
+            self._note_copied(marked)
         return result
 
     def _walk_and_copy(self, roots: Iterable[str], target: Path) -> dict[str, Any]:

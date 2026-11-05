@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { CMD, EVT, type BackupStatus, type SyncResult } from "@/lib/ws/protocol";
 import { useSidecar } from "@/lib/ws/context";
+import { syncErrorFrom, type SyncError } from "@/lib/backup/report";
 
 /**
  * Live Backup Directory mirroring state (`DATA.md#backup-mirroring`).
@@ -31,7 +32,7 @@ const UNKNOWN: BackupStatus = {
 export function useBackupStatus() {
   const { client } = useSidecar();
   const [status, setStatus] = useState<BackupStatus>(UNKNOWN);
-  const [syncError, setSyncError] = useState<string | null>(null);
+  const [syncError, setSyncError] = useState<SyncError | null>(null);
   const [lastSync, setLastSync] = useState<SyncResult | null>(null);
 
   useEffect(
@@ -53,7 +54,7 @@ export function useBackupStatus() {
       // override table, alongside flashing's.
       setLastSync(await client.call(CMD.BACKUP_SYNC_NOW));
     } catch (error) {
-      setSyncError(error instanceof Error ? error.message : String(error));
+      setSyncError(syncErrorFrom(error));
       setStatus((s) => ({ ...s, syncing: false }));
     }
   }, [client]);

@@ -82,7 +82,7 @@ jobs:
           ls src-tauri/target/release/bundle/nsis/
           ls "src-tauri/target/release/bundle/nsis/Ephymeris_${VERSION}_x64-setup.exe.sig"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: installer
           path: |

@@ -18,7 +18,7 @@ jobs:
   # will call itself, rather than ship an installer named one thing that
   # reports another.
   version:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
       - name: Tag matches package.json and tauri.conf.json
@@ -36,9 +36,9 @@ jobs:
 
   draft:
     needs: installer
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: installer
           path: installer

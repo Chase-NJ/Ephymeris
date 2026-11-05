@@ -7,16 +7,18 @@ put the next strobe's write a second behind. So here six boxes each stream a
 long fixed-ratio session, paced, through the real writer and the real live
 replay, and each strobe's write-and-fsync is timed from when it was due. With
 live scoring on it must stay within twice the figure with it off, plus a floor
-of the scheduler's own spread.
+of the machine's own spread (the scheduler's on RAM, an fsync's on a disk).
 
 On Linux the boxes write to RAM (`/dev/shm`), elsewhere to `tmp_path`. Live
 scoring can slow a write only through the GIL and the CPU: the scorer is a child
 that touches no file (`ARCHITECTURE.md#the-live-scorer`). A cloud runner's disk
-stalls fsyncs by up to a second, scoring or not, and stays that way for minutes
-(issue #201), so on it the comparison measured the disk. On RAM the writer, each
-write, flush and fsync, and the GIL dropped and retaken around them are as ever;
+stalls fsyncs by up to a second, scoring or not, for minutes at a time (issue
+#201), so there the comparison would measure the disk. On RAM the writer, each
+write, flush and fsync, and the GIL dropped and retaken around them are real;
 only the device holds still. Scoring on a thread of the sidecar, or 300 µs of
-held GIL per strobe, still puts p99 at least seven times over the bound there.
+held GIL per strobe, puts p99 about seven times over the bound or more. A change
+that slows writes only through the disk, such as the scorer writing a file, is
+out of this test's reach on Linux; macOS and Windows runs still write to disk.
 
 On a small runner the machine's own noise moves either figure by several times
 from one run to the next, which no change here causes. So the two are measured
@@ -27,8 +29,8 @@ cannot hide a real slowdown. The scorer is checked to run below the sidecar in
 every live round.
 
 It runs **alone** (`-m load`, after CI's parallel suite). Beside other tests, their
-CPU and, off Linux, their file traffic stall a write by tens to hundreds of ms,
-scoring or not, which no statistic over a few rounds sees past.
+file traffic stalls a disk's fsync by tens to hundreds of ms, and their CPU competes
+with the boxes', scoring or not, which no statistic over a few rounds sees past.
 
 `EPHYMERIS_LOAD_TRIALS` sets the session length (the review measured 1000);
 the default keeps the suite quick. Every board here is a fake: nothing opens
@@ -45,7 +47,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Iterator
+from collections.abc import Iterator
 
 import pytest
 
@@ -135,6 +137,8 @@ async def run(tmp: Path, document: dict, live: bool) -> list[float]:
         t.start()
     while any(t.is_alive() for t in threads):
         await asyncio.sleep(0.01)
+    # A box whose write failed (a full RAM disk) ends its thread early; its round is not a measure.
+    assert all(len(box) == len(document["ts_data"]) for box in lags), "every box wrote every strobe"
     if scorer is not None:
         assert any(p["metrics"] for p in published), "live scoring ran during the load"
         if hasattr(os, "getpriority"):
@@ -163,6 +167,6 @@ async def test_six_boxes_scored_live_write_as_fast_as_six_not(root: Path) -> Non
     print(f"\n{BOXES} boxes x {len(document['ts_data'])} strobes ({TRIALS} trials), median of {ROUNDS}: "
           f"live off {median['off']}, live on {median['on']}; every round: {rounds}")
     off, on = median["off"], median["on"]
-    # The floor: the scheduler's own spread, which on an idle machine is most of either figure.
+    # The floor: the machine's own spread, which on an idle machine is most of either figure.
     assert on["p99"] <= 2 * off["p99"] + 0.005, (off, on)
     assert on["max"] <= 2 * off["max"] + 0.020, (off, on)

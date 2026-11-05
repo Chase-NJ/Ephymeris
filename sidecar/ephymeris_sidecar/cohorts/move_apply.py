@@ -73,19 +73,24 @@ def preview(db: Database, request: MoveRequest, *, busy: str | None = None) -> M
 
 
 def _refuse_unfinished(conn: Query, plan: MovePlan) -> None:
-    """A move between either cohort left `copying`, waiting for a folder it
-    couldn't reach. Its copies would count as already at the destination
-    (`present`), and its undo, at a later start, would remove them from
-    under the records this move points at them."""
+    """A move left waiting for a folder it couldn't reach. One involving
+    either cohort left `copying`: its copies would count as already at the
+    destination (`present`), and its undo, at a later start, would remove
+    them from under the records this move points at them. One into the
+    source left `committed`: it deletes an original only while its copy is
+    where it put it, so taking the copies on would leave the originals,
+    records gone, for a rescan to adopt back."""
+    ids = (plan.source.id, plan.dest.id)
     row = conn.execute(
-        "SELECT error FROM animal_moves WHERE state = 'copying' AND (source_cohort_id IN (?, ?)"
-        " OR dest_cohort_id IN (?, ?)) LIMIT 1",
-        (plan.source.id, plan.dest.id, plan.source.id, plan.dest.id),
+        "SELECT error FROM animal_moves WHERE (state = 'copying'"
+        " AND (source_cohort_id IN (?, ?) OR dest_cohort_id IN (?, ?)))"
+        " OR (state = 'committed' AND dest_cohort_id = ?) LIMIT 1",
+        (*ids, *ids, plan.source.id),
     ).fetchone()
     if row is not None:
         plan.refuse(
             "unfinished-move",
-            f"An earlier move of animals between these cohorts hasn't finished"
+            f"An earlier move of animals involving these cohorts hasn't finished"
             f" ({row[0] or 'interrupted'}). Connect both data folders and restart Ephymeris"
             " to finish it, then try again.",
         )
@@ -125,7 +130,7 @@ def apply(
         _copy_files(plan, on_copied)
     except Exception as exc:
         if not _roll_back(db, journal, plan_files(plan), str(exc)):
-            raise MoveRefused(plan, _sentence(exc) + LEFT_FOR_LATER) from exc
+            raise _left_for_later(plan, exc) from exc
         raise
 
     failure: BaseException | None = None
@@ -149,7 +154,7 @@ def apply(
     if failure is not None:
         # After the unit ended: undoing is a unit of its own.
         if not _roll_back(db, journal, plan_files(plan), str(failure)):
-            raise MoveRefused(plan, _sentence(failure) + LEFT_FOR_LATER) from failure
+            raise _left_for_later(plan, failure) from failure
         raise failure
     plan = again
 
@@ -547,15 +552,13 @@ def _waiting(db: Database, journal: str, copies: list[transfer.FileCopy]) -> boo
     return True
 
 
-#: Said when a live move fails and its undo waits for a folder out of reach.
-LEFT_FOR_LATER = (
-    " Nothing was moved; what was copied is removed at the next start that can reach both"
-    " data folders."
-)
-
-
-def _sentence(exc: BaseException) -> str:
-    return str(exc).rstrip(".") + "."
+def _left_for_later(plan: MovePlan, failure: BaseException) -> MoveRefused:
+    """A live move that failed with its undo waiting for a folder out of
+    reach. A refusal keeps its own plan, whose reasons the dialog shows."""
+    later = "What was copied is removed at the next start that can reach both data folders."
+    if isinstance(failure, MoveRefused):
+        return MoveRefused(failure.plan, f"{failure} {later}")
+    return MoveRefused(plan, f"{str(failure).rstrip('.')}. Nothing was moved. {later}")
 
 
 def _roll_back(db: Database, journal: str, files: list[dict[str, Any]], reason: str) -> bool:

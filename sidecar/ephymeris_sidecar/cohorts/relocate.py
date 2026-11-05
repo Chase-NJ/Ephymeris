@@ -527,7 +527,10 @@ def _refuse_unfinished(conn: Query, cohort_id: str, destination: Path, moving_da
     Likewise, for a relocate that moves data, a move of animals to or from
     the cohort left `copying`: its undo removes a copy only while the
     original is where it was, so moving the originals would leave its copies
-    for good, and moving its copies would carry them off unrecorded."""
+    for good, and moving its copies would carry them off unrecorded. Or one
+    left `committed`: it deletes an original only while both are where it
+    left them, so moving either would leave the originals, records gone, for
+    a rescan to adopt back."""
     rows = conn.execute(
         "SELECT source, target, state, error FROM folder_moves WHERE cohort_id = ?"
         " AND state IN ('moving', 'copying')",
@@ -544,7 +547,7 @@ def _refuse_unfinished(conn: Query, cohort_id: str, destination: Path, moving_da
     if not moving_data:
         return
     move = conn.execute(
-        "SELECT error FROM animal_moves WHERE state = 'copying'"
+        "SELECT error FROM animal_moves WHERE state IN ('copying', 'committed')"
         " AND ? IN (source_cohort_id, dest_cohort_id) LIMIT 1",
         (cohort_id,),
     ).fetchone()

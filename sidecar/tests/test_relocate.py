@@ -718,17 +718,23 @@ def test_a_copy_left_to_a_later_start_does_not_hold_up_a_relocate_elsewhere(
     assert f"copies kept at {archive.new}" in error, "the journal says what it left"
 
 
+@pytest.mark.parametrize(
+    ("state", "role"),
+    [("copying", "source"), ("copying", "dest"), ("committed", "source"), ("committed", "dest")],
+)
 def test_a_move_of_animals_left_to_a_later_start_holds_up_moving_the_data(
-    archive: Archive,
+    archive: Archive, state: str, role: str
 ) -> None:
-    """Its undo removes a copy only while the original is where it was:
-    moving the originals would leave its copies in the other cohort for good,
-    to be adopted there. Pointing moves nothing, so it goes ahead."""
+    """Its undo removes a copy, and its finish an original, only while both
+    are where it left them: moving either would leave files with no records,
+    for a rescan to adopt into a cohort that has moved them on. Pointing
+    moves nothing, so it goes ahead."""
+    source, dest = (archive.cohort.id, "other") if role == "source" else ("other", archive.cohort.id)
     statements(archive.db).execute(
         "INSERT INTO animal_moves (id, source_cohort_id, dest_cohort_id, state, plan_json,"
-        " created_at, updated_at, error) VALUES ('m', ?, 'other', 'copying', '{}', 'now', 'now',"
+        " created_at, updated_at, error) VALUES ('m', ?, ?, ?, '{}', 'now', 'now',"
         " 'waiting for D:/B')",
-        (archive.cohort.id,),
+        (source, dest, state),
     )
     with pytest.raises(DataFolderError, match="animals .* hasn't finished .waiting for D:/B"):
         relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)

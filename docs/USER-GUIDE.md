@@ -175,21 +175,26 @@ A task built from a seed shows everything about it on one screen:
 - **Trial** across the top: the steps of a trial, left to right in time, with the last step leading
   back to the first. Each says in words what it waits for, what is on and for how long; the first
   Present is marked **stimulus**.
-  - Click a step to change it. Its fields come in three groups: **what it does**; **what ends it
-    early** (a step's own time limit, or an input the animal lets go or enters), each with how such a
-    trial is scored; and **after an early end**, the **penalty**, how long the box waits before the
-    next trial in place of the inter-trial interval. A time limit and a penalty are different things.
-  - **Recorded here** lists the inputs recorded during the step without moving it. Only inputs listed
-    here are recorded in that step: to count licks between trials, list the lick sensor on the ITI.
+  - Click a step to change it. It shows only the settings it has, in three groups: **what it does**;
+    **what ends it early** (a step's own time limit, or an input the animal lets go or enters), each
+    with how such a trial is scored; and **after an early end**, the **penalty**, how long the box waits
+    before the next trial in place of the inter-trial interval. A time limit and a penalty are
+    different things. **Add…** lists the settings the step could take, in the same groups; the × beside
+    a setting takes it off again.
+  - **Recorded here** (under Add…) lists the inputs recorded during the step without moving it. Only
+    inputs listed there are recorded in that step: to count licks between trials, add it to the ITI.
+  - **RAM** under the steps: how much of the box's memory the task takes, out of 5000 bytes. Click it
+    for the breakdown. A task that does not fit turns the bar red and says so under it. It still
+    saves, but the box cannot run it until it is smaller: fewer trial types, steps or answers that pay.
   - Click **+** between two steps to add one there, and **Remove step** to take one out.
   - A step with a problem has a red ring and a count.
-- **RAM** beside it: how much of the box's memory the task takes, out of 5000 bytes.
-  - A task that does not fit turns the end of the bar red and says so under it.
-  - It still saves, but the box cannot run it until it is smaller: fewer trial types, steps or answers
-    that pay.
-- **Trial types** below, one per kind of trial. Each has:
+- **Trial types** below. **Wiring** first: each role that is the same in every trial type (the port, the
+  light, the wells, the reward lines) is set once, from the channels this rig has, listed by the name the
+  Rig tab gives them. A role one trial type uses differently (the sample) moves onto the rows: pick
+  **differs here** on a row to choose a role for that trial type alone, and **make it the same for
+  all** to bring it back. Then one row per kind of trial, with:
   - a name;
-  - a channel for each role, listed by the name the Rig tab gives it and grouped by what it is;
+  - the roles that differ per trial type;
   - its reward time.
 
   Under each, every answer the task watches, and running out of time, reads as a sentence: "Left well
@@ -198,15 +203,15 @@ A task built from a seed shows everything about it on one screen:
   **abort** is left out of the share correct, and a trial type that asks nothing (a CS−) scores correct
   on every trial, so what you change is how often it pays.
 
-  **Roles** at the top says which parts the trial has; **add or remove a role** opens the controls.
-  **Add a trial type** copies the last one, unnamed.
+  **Roles** at the top opens the list of parts the trial has, to add or remove one. **Add a trial
+  type** copies the last one, unnamed.
 - **Session** at the bottom: its **shape** first. **One block** of N trials; **Reversal**, which runs the
   trial types until the animal gets k of the last n right and then runs them with their answers
   reversed (the reversed copies appear as trial types of their own); **Two blocks that alternate**,
   looping until the session cap; or **Custom**. Below it, the blocks in the order they run and a
   sentence saying what follows each.
-  - Click a block to choose its trial types, how it draws them, and when it ends: after a number of
-    trials, or once the animal gets enough right.
+  - Click a block to open its settings: its trial types, how it draws them, and when it ends, after a
+    number of trials or once the animal gets enough right.
   - **Session cap** limits the whole session to a number of trials.
   - **aborted trials repeat, uncounted**: a trial the animal abandons is run again and does not count
     toward any trial number, as the old GRGL task did.
@@ -235,7 +240,7 @@ count. **Problems** at the top lists them all; click one to go to it. A value ma
 from an older or imported copy of the task and wins over the field beside it. Click **Use the value
 here** to drop it.
 
-![The spine editor for a 2AFC task: the trial's steps across the top with the Wait step open in its three groups, the RAM meter, two trial types with their channels and each answer as a sentence, and the Session set to one block](images/spine-editor.webp)
+![The spine editor for a 2AFC task: the trial's steps across the top with the Wait step open and the RAM line under it, the Wiring line binding the shared roles once, two trial types each with its sample and every answer as a sentence, and the Session set to one block](images/spine-editor.webp)
 
 A task made of a table of odor lines shows its own screen:
 

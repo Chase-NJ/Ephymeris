@@ -1,5 +1,5 @@
-import { ChevronDown, ChevronRight, Plus, Trash2, X } from "lucide-react";
-import { Fragment, useMemo, useState } from "react";
+import { ArrowLeftRight, ChevronDown, ChevronRight, Plus, Trash2, X } from "lucide-react";
+import { useMemo, useState } from "react";
 
 import { NumberInput, Select, TextInput } from "@/components/common/controls";
 import type { RigDocument } from "@/lib/hardware/types";
@@ -16,8 +16,19 @@ import {
   type SpineDefinition,
 } from "@/lib/taskdef/spine";
 import { SLOT_TYPES, classLabel, slotTypeLabel } from "@/lib/taskdef/spineLabels";
-import { problemLines } from "@/lib/taskdef/spineProblems";
-import { channelChoices, channelGroups, classNote, mapSentences, msWord, responseWindow, rowSentence } from "@/lib/taskdef/spineWords";
+import { problemLines, wiringLines } from "@/lib/taskdef/spineProblems";
+import {
+  bindShared,
+  channelChoices,
+  channelGroups,
+  classNote,
+  mapSentences,
+  msWord,
+  responseWindow,
+  roleScopes,
+  rowSentence,
+  sharedChannel,
+} from "@/lib/taskdef/spineWords";
 import { diagnosticsAt } from "@/lib/taskdef/types";
 import type { SpineStoredValue, SpineView, TaskDiagnostic } from "@/lib/ws/protocol";
 
@@ -41,19 +52,21 @@ function driveOf(type: string, mode?: string | null): string | null {
   return null;
 }
 
-const cell = "px-1.5 py-1 align-top";
+const LABEL = "font-mono text-[9px] tracking-[0.14em] text-static/70 uppercase";
 
 /**
- * The trial types (the rows), one per kind of trial, with the channel that
- * plays each role and, under each, its contingency map as a sentence per
- * answer whose words are the controls (`TASKS.md#the-spine-editor`).
+ * The trial types (`TASKS.md#the-spine-editor`). A **Wiring** line binds each
+ * role that is the same in every trial type once; a role two trial types bind
+ * differently is per type and appears on each row. So a row shows only what
+ * makes it a trial type: its name, the roles that differ, its reward and its
+ * contingency map as a sentence per answer whose words are the controls.
  *
  * A binding cell offers exactly the channels the preview says the slot can
  * bind on this rig (`SpineView.slots[].channels`): the frontend holds no
  * wiring. The rig document is read for each channel's Rig-tab label and kind,
- * display only, as the trial-table editor reads it. A row's problems are
- * listed under it as instructions, grouped by their fix, and its cells carry
- * their own, as the sidecar placed them.
+ * display only, as the trial-table editor reads it. Which roles are shared is
+ * read off the bindings (`spineWords.roleScopes`); a row can also show a
+ * shared role to choose differently, which makes it per type.
  */
 export function RowsTable({
   def,
@@ -84,154 +97,217 @@ export function RowsTable({
   const ownProbability = outcomeAt >= 0 && (windowAt < 0 || windowAt > outcomeAt);
   const driven = def.slots.filter((s) => driveOf(s.type, s.mode));
   const at = (path: string) => diagnosticsAt([...diagnostics], path);
-  // Every column after the row number: name, the slots, reward, its probability, remove.
-  const columns = def.slots.length + (ownProbability ? 4 : 3);
   const groupsOf = useMemo(
-    () => def.slots.map((slot, s) => channelGroups(channelChoices(view?.slots[s]?.id === slot.id ? view.slots[s].channels : [], rig))),
+    () => Object.fromEntries(def.slots.map((slot, s) => [slot.id, channelGroups(channelChoices(view?.slots[s]?.id === slot.id ? view.slots[s].channels : [], rig))])),
     [def.slots, view, rig],
   );
+  const scopes = roleScopes(def);
+  const shared = def.slots.filter((s) => scopes[s.id] === "shared").map((s) => s.id);
+  const perType = def.slots.filter((s) => scopes[s.id] === "per-type").map((s) => s.id);
+  /** Shared roles a row shows anyway, to choose differently: row index → roles. */
+  const [exposed, setExposed] = useState<Record<number, string[]>>({});
+  const expose = (r: number | null, slot: string) =>
+    setExposed((e) => {
+      const next = { ...e };
+      for (const i of r === null ? def.rows.map((_, i) => i) : [r]) next[i] = [...new Set([...(next[i] ?? []), slot])];
+      return next;
+    });
+  const unexpose = (slot: string) => setExposed((e) => Object.fromEntries(Object.entries(e).map(([k, v]) => [k, v.filter((s) => s !== slot)])));
+  const bindingProblems = (slot: string) => def.rows.flatMap((_, r) => at(`rows[${r}].bind.${slot}`));
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-3">
       <Roles def={def} diagnostics={diagnostics} onChange={onChange} />
-      <div className="scrollbar-slim overflow-x-auto">
-        <table className="w-full border-collapse text-[12px]">
-          <thead>
-            <tr className="font-mono text-[9px] tracking-[0.14em] text-static/70 uppercase">
-              <th className={`${cell} text-left font-normal`}>#</th>
-              <th className={`${cell} text-left font-normal`}>Name</th>
-              {def.slots.map((slot) => (
-                <th key={slot.id} className={`${cell} text-left font-normal normal-case tracking-normal`}>
-                  <span className="font-mono text-[11px] text-starlight/90">{slot.id}</span>
-                  <span className="ml-1 text-[9px] text-static/60">{slotTypeLabel(slot.type, slot.mode)}</span>
-                </th>
-              ))}
-              <th className={`${cell} text-left font-normal`}>Reward ms</th>
-              {ownProbability && <th className={`${cell} text-left font-normal`}>Pays on % of trials</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {def.rows.map((row, r) => {
-              const problems = diagnosticsOn(diagnostics, "row", r);
-              const sentences = mapSentences(def, row, rig);
-              return (
-                <Fragment key={row.id}>
-                  <tr
-                    id={`spine-row-${r}`}
-                    className={`border-t border-halo/50 transition-colors ${marked === r ? "bg-pulsar/10" : ""}`}
+
+      <div className="flex flex-col gap-1.5">
+        <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
+          <span className={`${LABEL} self-center`}>Wiring</span>
+          {shared.map((slot) => {
+            const problems = bindingProblems(slot);
+            return (
+              <label key={slot} className="flex flex-col gap-0.5" title={problemTitle(problems)}>
+                <span className="flex items-center gap-1 font-mono text-[10px] text-starlight/90">
+                  {slot}
+                  <button
+                    type="button"
+                    aria-label={`Choose ${slot} per trial type`}
+                    title="Choose this role per trial type instead"
+                    onClick={() => expose(null, slot)}
+                    className="text-static/50 transition-colors hover:text-starlight"
                   >
-                    <td className={`${cell} pt-2 font-mono text-[10px] text-static`} title={row.id}>
-                      {r + 1}
-                    </td>
-                    <td className={cell}>
-                      <NameInput
-                        value={row.name}
-                        invalid={at(`rows[${r}].name`).length > 0}
-                        onChange={(name) => onChange(setRow(def, r, { ...row, name }))}
-                      />
-                    </td>
-                    {def.slots.map((slot, s) => {
-                      const here = at(`rows[${r}].bind.${slot.id}`);
-                      return (
-                        <td key={slot.id} className={cell} title={problemTitle(here)}>
-                          <ChannelSelect
-                            value={row.bind[slot.id] ?? ""}
-                            groups={groupsOf[s] ?? []}
-                            label={`${slot.id} of trial type ${r + 1}`}
-                            tone={here.length ? "error" : "normal"}
-                            className="w-[140px]"
-                            onChange={(channel) => onChange(setBinding(def, r, slot.id, channel))}
-                          />
-                        </td>
-                      );
-                    })}
-                    <td className={cell}>
-                      <NumberInput
-                        value={row.rewardMs}
-                        fallback={100}
-                        integer
-                        min={0}
-                        label={`Reward ms of trial type ${r + 1}`}
-                        invalid={at(`rows[${r}].rewardMs`).length > 0}
-                        className="w-[72px]"
-                        onChange={(rewardMs) => onChange(setRow(def, r, { ...row, rewardMs }))}
-                      />
-                    </td>
-                    {ownProbability && (
-                      <td className={cell}>
-                        <NumberInput
-                          value={row.rewardPermille / 10}
-                          fallback={100}
-                          min={0}
-                          max={100}
-                          label={`Reward probability of trial type ${r + 1}, in percent`}
-                          invalid={at(`rows[${r}].rewardPermille`).length > 0}
-                          className="w-[72px]"
-                          onChange={(percent) => onChange(setRow(def, r, { ...row, rewardPermille: Math.round(percent * 10) }))}
-                        />
-                      </td>
-                    )}
-                    <td className={`${cell} pt-2`}>
-                      <button
-                        type="button"
-                        aria-label={`Remove trial type ${r + 1}`}
-                        onClick={() => onChange(removeRow(def, r))}
-                        className="text-static transition-colors hover:text-status-error"
-                      >
-                        <Trash2 size={12} strokeWidth={1.75} />
-                      </button>
-                    </td>
-                  </tr>
-                  <tr className={marked === r ? "bg-pulsar/10" : ""}>
-                    <td />
-                    <td colSpan={columns} className="px-1.5 pb-2">
-                      <div className="flex flex-col gap-1">
-                        {sentences.length === 0 && (
-                          <Note className="text-static">{rowSentence(def, row, rig)}</Note>
-                        )}
-                        {sentences.map((sentence) => (
-                          <MapLine
-                            key={sentence.key}
-                            response={sentence.key}
-                            subject={sentence.subject}
-                            entry={row.map?.[sentence.key]}
-                            classes={outcomeClasses}
-                            lines={lines}
-                            lineWord={(slot) => {
-                              const channel = row.bind[slot];
-                              return channel ? channelChoices([channel], rig)[0]?.label ?? slot : slot;
-                            }}
-                            holdMs={sentence.key !== "timeout" ? window?.holdMs : undefined}
-                            problems={at(`rows[${r}].map.${sentence.key}`)}
-                            onChange={(entry) => onChange(setMapEntry(def, r, sentence.key, entry))}
-                          />
-                        ))}
-                        {driven.map((slot) => (
-                          <DriveLine
-                            key={slot.id}
-                            slot={slot.id}
-                            kind={driveOf(slot.type, slot.mode) ?? ""}
-                            values={row.drive?.[slot.id] ?? {}}
-                            problems={at(`rows[${r}].drive.${slot.id}`)}
-                            onChange={(values) =>
-                              onChange(setRow(def, r, { ...row, drive: { ...(row.drive ?? {}), [slot.id]: values } }))
-                            }
-                          />
-                        ))}
-                        <StoredValues stored={stored} target={{ kind: "row", index: r }} onClear={onClearStored} />
-                        {problems.length > 0 && (
-                          <ProblemLines lines={problemLines(diagnostics, def, rig, r)} onFix={(apply) => onChange(apply(def))} />
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                </Fragment>
-              );
-            })}
-          </tbody>
-        </table>
+                    <ArrowLeftRight size={9} strokeWidth={1.75} />
+                  </button>
+                </span>
+                <ChannelSelect
+                  value={sharedChannel(def, slot)}
+                  groups={groupsOf[slot] ?? []}
+                  label={`Channel for ${slot}, in every trial type`}
+                  tone={problems.length ? "error" : "normal"}
+                  className="w-[150px]"
+                  onChange={(channel) => onChange(bindShared(def, slot, channel))}
+                />
+              </label>
+            );
+          })}
+          {shared.length === 0 && <span className="text-[11px] text-static">every role differs per trial type</span>}
+        </div>
+        {perType.length > 0 && (
+          <p className="flex flex-wrap items-center gap-x-2 text-[11px] text-static">
+            <span>Each trial type chooses:</span>
+            {perType.map((slot) => (
+              <span key={slot} className="flex items-center gap-1">
+                <span className="font-mono text-starlight/90">{slot}</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    unexpose(slot);
+                    onChange(bindShared(def, slot, sharedChannel(def, slot)));
+                  }}
+                  className="text-[10px] text-pulsar transition-colors hover:text-starlight"
+                  title="Bind every trial type as the first does"
+                >
+                  make it the same for all
+                </button>
+              </span>
+            ))}
+          </p>
+        )}
+        <Note>
+          A role is a part in the trial: the port, the sample, the wells, the line that pays. Wiring binds a role for every trial type at
+          once; a role one trial type binds differently moves onto the rows.
+        </Note>
+        <ProblemLines lines={wiringLines(diagnostics, rig, shared)} onFix={(apply) => onChange(apply(def))} />
       </div>
-      <ProblemLines lines={problemLines(diagnostics, def, rig, null).filter((l) => l.code !== "SPN103" && l.diagnostics[0]?.target.kind === "row")} onFix={(apply) => onChange(apply(def))} />
+
+      <div className="flex flex-col divide-y divide-halo/50">
+        {def.rows.map((row, r) => {
+          const problems = diagnosticsOn(diagnostics, "row", r);
+          const sentences = mapSentences(def, row, rig);
+          const roles = [...perType, ...(exposed[r] ?? []).filter((s) => !perType.includes(s) && def.slots.some((x) => x.id === s))];
+          const hidden = shared.filter((s) => !roles.includes(s));
+          return (
+            <div id={`spine-row-${r}`} key={row.id} className={`flex flex-col gap-1.5 py-2 transition-colors ${marked === r ? "bg-pulsar/10" : ""}`}>
+              <div className="flex flex-wrap items-end gap-x-3 gap-y-2">
+                <span className="self-center font-mono text-[10px] text-static" title={row.id}>
+                  {r + 1}
+                </span>
+                <label className="flex flex-col gap-0.5">
+                  <span className={LABEL}>Name</span>
+                  <NameInput value={row.name} invalid={at(`rows[${r}].name`).length > 0} onChange={(name) => onChange(setRow(def, r, { ...row, name }))} />
+                </label>
+                {roles.map((slot) => {
+                  const here = at(`rows[${r}].bind.${slot}`);
+                  return (
+                    <label key={slot} className="flex flex-col gap-0.5" title={problemTitle(here)}>
+                      <span className="font-mono text-[10px] text-starlight/90">
+                        {slot} <span className="text-static/60">{slotTypeLabel(def.slots.find((s) => s.id === slot)?.type ?? "", def.slots.find((s) => s.id === slot)?.mode)}</span>
+                      </span>
+                      <ChannelSelect
+                        value={row.bind[slot] ?? ""}
+                        groups={groupsOf[slot] ?? []}
+                        label={`${slot} of trial type ${r + 1}`}
+                        tone={here.length ? "error" : "normal"}
+                        className="w-[150px]"
+                        onChange={(channel) => onChange(setBinding(def, r, slot, channel))}
+                      />
+                    </label>
+                  );
+                })}
+                {hidden.length > 0 && (
+                  <label className="flex flex-col gap-0.5">
+                    <span className={LABEL}>differs here</span>
+                    <select
+                      aria-label={`A role trial type ${r + 1} chooses for itself`}
+                      value=""
+                      onChange={(e) => e.target.value && expose(r, e.target.value)}
+                      className="rounded-sm border border-dashed border-halo bg-nebula px-2 py-1.5 text-[11px] text-static"
+                    >
+                      <option value="">choose a role…</option>
+                      {hidden.map((slot) => (
+                        <option key={slot} value={slot}>
+                          {slot}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                <label className="flex flex-col gap-0.5">
+                  <span className={LABEL}>Reward ms</span>
+                  <NumberInput
+                    value={row.rewardMs}
+                    fallback={100}
+                    integer
+                    min={0}
+                    label={`Reward ms of trial type ${r + 1}`}
+                    invalid={at(`rows[${r}].rewardMs`).length > 0}
+                    className="w-[72px]"
+                    onChange={(rewardMs) => onChange(setRow(def, r, { ...row, rewardMs }))}
+                  />
+                </label>
+                {ownProbability && (
+                  <label className="flex flex-col gap-0.5">
+                    <span className={LABEL}>Pays on % of trials</span>
+                    <NumberInput
+                      value={row.rewardPermille / 10}
+                      fallback={100}
+                      min={0}
+                      max={100}
+                      label={`Reward probability of trial type ${r + 1}, in percent`}
+                      invalid={at(`rows[${r}].rewardPermille`).length > 0}
+                      className="w-[72px]"
+                      onChange={(percent) => onChange(setRow(def, r, { ...row, rewardPermille: Math.round(percent * 10) }))}
+                    />
+                  </label>
+                )}
+                <button
+                  type="button"
+                  aria-label={`Remove trial type ${r + 1}`}
+                  onClick={() => onChange(removeRow(def, r))}
+                  className="self-center text-static transition-colors hover:text-status-error"
+                >
+                  <Trash2 size={12} strokeWidth={1.75} />
+                </button>
+              </div>
+              <div className="flex flex-col gap-1 pl-5">
+                {sentences.length === 0 && <Note className="text-static">{rowSentence(def, row, rig)}</Note>}
+                {sentences.map((sentence) => (
+                  <MapLine
+                    key={sentence.key}
+                    response={sentence.key}
+                    subject={sentence.subject}
+                    entry={row.map?.[sentence.key]}
+                    classes={outcomeClasses}
+                    lines={lines}
+                    lineWord={(slot) => {
+                      const channel = row.bind[slot];
+                      return channel ? (channelChoices([channel], rig)[0]?.label ?? slot) : slot;
+                    }}
+                    holdMs={sentence.key !== "timeout" ? window?.holdMs : undefined}
+                    problems={at(`rows[${r}].map.${sentence.key}`)}
+                    onChange={(entry) => onChange(setMapEntry(def, r, sentence.key, entry))}
+                  />
+                ))}
+                {driven.map((slot) => (
+                  <DriveLine
+                    key={slot.id}
+                    slot={slot.id}
+                    kind={driveOf(slot.type, slot.mode) ?? ""}
+                    values={row.drive?.[slot.id] ?? {}}
+                    problems={at(`rows[${r}].drive.${slot.id}`)}
+                    onChange={(values) => onChange(setRow(def, r, { ...row, drive: { ...(row.drive ?? {}), [slot.id]: values } }))}
+                  />
+                ))}
+                <StoredValues stored={stored} target={{ kind: "row", index: r }} onClear={onClearStored} />
+                {problems.length > 0 && <ProblemLines lines={problemLines(diagnostics, def, rig, r, shared)} onFix={(apply) => onChange(apply(def))} />}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <ProblemLines
+        lines={problemLines(diagnostics, def, rig, null).filter((l) => l.code !== "SPN103" && l.diagnostics[0]?.target.kind === "row")}
+        onFix={(apply) => onChange(apply(def))}
+      />
       <button
         type="button"
         onClick={() => onChange(addRow(def))}
@@ -253,7 +329,7 @@ function NameInput({ value, invalid, onChange }: { value: string; invalid: boole
       value={value}
       placeholder="name this trial type"
       onChange={(e) => onChange(e.target.value)}
-      className={`w-[150px] rounded-sm border bg-nebula px-2 py-1.5 text-[12px] text-starlight placeholder:text-static/60 focus:outline-none ${
+      className={`w-[170px] rounded-sm border bg-nebula px-2 py-1.5 text-[12px] text-starlight placeholder:text-static/60 focus:outline-none ${
         invalid ? "border-status-error" : "border-halo focus:border-pulsar"
       }`}
     />
@@ -262,7 +338,7 @@ function NameInput({ value, invalid, onChange }: { value: string; invalid: boole
 
 /**
  * One answer of the contingency map as a sentence whose words are the
- * controls: "Left well → [correct], pays [left water] on [100] % of trials,
+ * controls: "Left well → [correct] · pays [left water] on [100] % of trials ·
  * [held 200 ms] · then [the ITI]". The class's note follows where it
  * surprises (`spineWords.classNote`).
  */
@@ -377,7 +453,7 @@ function MapLine({
               <span>penalty instead of the ITI</span>
             </>
           )}
-          {note && <span className="w-full pl-[100px] text-[10px] text-static/70 sm:w-auto sm:pl-0">· {note}</span>}
+          {note && <span className="text-[10px] text-static/70">· {note}</span>}
         </>
       )}
     </div>
@@ -400,9 +476,7 @@ function DriveLine({
 }) {
   return (
     <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-static" title={problemTitle(problems)}>
-      <span className={`w-[92px] truncate font-mono ${problems.length ? "text-status-error" : "text-starlight/90"}`}>
-        {slot}
-      </span>
+      <span className={`w-[92px] truncate font-mono ${problems.length ? "text-status-error" : "text-starlight/90"}`}>{slot}</span>
       {(DRIVE[kind] ?? []).map(([key, label, unit, initial]) => (
         <span key={key} className="flex items-center gap-1">
           <span>{label}</span>
@@ -424,20 +498,10 @@ function DriveLine({
 }
 
 /**
- * The roles: each part in the trial the steps name (the port, the sample,
- * the left well), which each trial type binds to a channel of this rig.
- * Adding and removing one sits behind a disclosure: a first task has every
- * role its seed needs, and a role removed is a step left pointing at nothing.
+ * The roles the steps name, behind a disclosure: a first task has every role
+ * its seed needs, and a role removed is a step left pointing at nothing.
  */
-function Roles({
-  def,
-  diagnostics,
-  onChange,
-}: {
-  def: SpineDefinition;
-  diagnostics: readonly TaskDiagnostic[];
-  onChange: (next: SpineDefinition) => void;
-}) {
+function Roles({ def, diagnostics, onChange }: { def: SpineDefinition; diagnostics: readonly TaskDiagnostic[]; onChange: (next: SpineDefinition) => void }) {
   const [open, setOpen] = useState(false);
   const [id, setId] = useState("");
   const [type, setType] = useState<string>("digital_in");
@@ -451,41 +515,25 @@ function Roles({
   const problems = def.slots.flatMap((_, i) => diagnosticsOn(diagnostics, "slot", i));
   return (
     <div className="flex flex-col gap-1">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span className="font-mono text-[9px] tracking-[0.14em] text-static/70 uppercase">Roles</span>
-        <span className="text-[11px] text-static">
-          {def.slots.map((slot, i) => (
-            <span key={`${slot.id}-${i}`} className={diagnosticsOn(diagnostics, "slot", i).length ? "text-status-error" : ""}>
-              {i > 0 && " · "}
-              <span className="font-mono text-starlight/90">{slot.id}</span> <span className="text-static/60">{slotTypeLabel(slot.type, slot.mode)}</span>
-            </span>
-          ))}
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-1 self-start text-[11px] text-static transition-colors hover:text-starlight"
+      >
+        {open ? <ChevronDown size={11} strokeWidth={1.75} /> : <ChevronRight size={11} strokeWidth={1.75} />}
+        <span className={LABEL}>Roles</span>
+        <span>
+          {def.slots.length} · {open ? "done" : "add or remove one"}
         </span>
-        <button
-          type="button"
-          aria-expanded={open}
-          onClick={() => setOpen(!open)}
-          className="flex items-center gap-0.5 text-[11px] text-static transition-colors hover:text-starlight"
-        >
-          {open ? <ChevronDown size={11} strokeWidth={1.75} /> : <ChevronRight size={11} strokeWidth={1.75} />}
-          {open ? "done" : "add or remove a role"}
-        </button>
-      </div>
-      <Note>
-        A role is a part in the trial: the port the animal pokes, the sample it smells, the well it answers at, the line that pays. Each
-        trial type below says which channel on this rig plays it.
-      </Note>
+        {problems.length > 0 && <span className="text-status-error">{problems.length} problem{problems.length === 1 ? "" : "s"}</span>}
+      </button>
       {open && (
         <div className="flex flex-wrap items-center gap-1.5">
           {def.slots.map((slot, i) => {
             const bad = diagnosticsOn(diagnostics, "slot", i).length > 0;
             return (
-              <span
-                key={`${slot.id}-${i}`}
-                className={`flex items-center gap-1 rounded-sm border px-1.5 py-0.5 text-[11px] ${
-                  bad ? "border-status-error" : "border-halo"
-                }`}
-              >
+              <span key={`${slot.id}-${i}`} className={`flex items-center gap-1 rounded-sm border px-1.5 py-0.5 text-[11px] ${bad ? "border-status-error" : "border-halo"}`}>
                 <span className="font-mono text-starlight/90">{slot.id}</span>
                 <span className="text-static">{slotTypeLabel(slot.type, slot.mode)}</span>
                 <button
@@ -502,25 +550,14 @@ function Roles({
           })}
           <span className="flex items-center gap-1">
             <TextInput value={id} onChange={setId} onSubmit={add} placeholder="new role" label="New role id" mono className="w-[110px] !py-1" />
-            <Select
-              value={type}
-              label="New role type"
-              compact
-              options={SLOT_TYPES.map((t) => ({ value: t.value as string, label: t.label }))}
-              onChange={setType}
-            />
-            <button
-              type="button"
-              onClick={add}
-              disabled={!id.trim()}
-              className="flex items-center gap-1 text-[11px] text-static transition-colors hover:text-starlight disabled:opacity-40"
-            >
+            <Select value={type} label="New role type" compact options={SLOT_TYPES.map((t) => ({ value: t.value as string, label: t.label }))} onChange={setType} />
+            <button type="button" onClick={add} disabled={!id.trim()} className="flex items-center gap-1 text-[11px] text-static transition-colors hover:text-starlight disabled:opacity-40">
               <Plus size={11} strokeWidth={1.75} /> role
             </button>
           </span>
         </div>
       )}
-      {problems.length > 0 && (
+      {open && problems.length > 0 && (
         <ul className="flex flex-col gap-0.5 text-[11px] text-status-error">
           {problems.map((d, i) => (
             <li key={i}>

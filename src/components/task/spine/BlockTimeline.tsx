@@ -108,7 +108,10 @@ export function BlockTimeline({
             <Plus size={12} strokeWidth={1.75} /> block
           </button>
         </div>
-        <Note className="text-static">{sessionSentence(def, nexts)}</Note>
+        <Note className="text-static">
+          {sessionSentence(def, nexts)}
+          {selected === null && <span className="text-static/60"> Click a block to edit its trial types, draw and end rule.</span>}
+        </Note>
       </div>
 
       <div className="flex flex-wrap items-center gap-2 text-[11px] text-static">

@@ -619,6 +619,211 @@ def test_a_relocate_that_loses_the_old_folder_after_its_copy_leaves_the_journal_
     assert archive.journal() == "done"
 
 
+@pytest.mark.parametrize("side", ["old", "new"])
+def test_a_copying_resume_that_cannot_reach_a_side_leaves_the_journal_to_retry(
+    archive: Archive, unreachable_volume, monkeypatch: pytest.MonkeyPatch, side: str
+) -> None:
+    """#67: with either folder unreachable at start-up, the undo couldn't tell
+    which copies were safe to remove, kept them all, and still marked the
+    journal `rolled-back`. The copies stayed at the target and a retried
+    relocate was refused as "not empty". It stays `copying` instead, and the
+    next start that reaches both undoes it."""
+    journal(archive, "copying")
+    shutil.copytree(archive.old, archive.new)  # ... and the process dies here
+    unreachable_volume(getattr(archive, side))
+
+    relocate.resume(archive.db)
+    assert archive.journal() == "copying"
+
+    monkeypatch.undo()  # the share answers again (and every other fake goes)
+    assert any(p.is_file() for p in archive.new.rglob("*")), "nothing was undone"
+    assert archive.all_under(archive.old)
+
+    relocate.resume(archive.db)
+
+    assert archive.journal() == "rolled-back"
+    assert not any(p.is_file() for p in archive.new.rglob("*"))
+    relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
+    assert archive.all_under(archive.new)
+
+
+def test_a_copy_left_to_a_later_start_explains_a_retry_and_does_not_hold_up_a_session(
+    archive: Archive, unreachable_volume, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """While a copy waits to be undone, the records are still at the old
+    folder, so a session there is safe: the undo takes only the copies. A new
+    relocate of the cohort is refused with what it waits for, not as a full
+    destination."""
+    journal(archive, "copying")
+    shutil.copytree(archive.old, archive.new)
+    unreachable_volume(archive.old)
+    relocate.resume(archive.db)
+    monkeypatch.undo()  # back, but only the next start finishes it
+
+    assert not relocate.moving(archive.db, archive.cohort.id)
+    # Its target, a folder inside it, and one around it; moving or pointing.
+    for destination in (archive.new, archive.new / "Inner", archive.new.parent):
+        for move_existing in (True, False):
+            with pytest.raises(DataFolderError, match="hasn't finished") as refused:
+                relocate.relocate_cohort(
+                    archive.db, archive.cohort.id, str(destination), move_existing
+                )
+            assert f"waiting for {archive.old}" in str(refused.value)
+    assert archive.cohorts.get(archive.cohort.id).data_folder == str(archive.old)
+
+
+def test_a_copy_left_to_a_later_start_does_not_hold_up_a_relocate_elsewhere(
+    archive: Archive, unreachable_volume, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Its target may never come back. A relocate to another folder is no
+    business of the undo's: that one takes only copies whose original is
+    still there, so it leaves this relocate's files alone."""
+    journal(archive, "copying")
+    shutil.copytree(archive.old, archive.new)
+    unreachable_volume(archive.new)
+    relocate.resume(archive.db)
+
+    third = archive.root / "third" / "Batch A"
+    relocate.relocate_cohort(archive.db, archive.cohort.id, str(third), True)
+    assert archive.all_under(third)
+
+    monkeypatch.undo()
+    relocate.resume(archive.db)  # the originals are gone: it removes nothing
+    assert archive.all_under(third)
+    assert any(p.is_file() for p in archive.new.rglob("*")), "the undo kept what it can't check"
+    [(state, error)] = statements(archive.db).execute(
+        "SELECT state, error FROM folder_moves WHERE id = 'j'"
+    ).fetchall()
+    assert state == "rolled-back"
+    assert f"copies kept at {archive.new}" in error, "the journal says what it left"
+
+
+@pytest.mark.parametrize(
+    ("state", "role"),
+    [("copying", "source"), ("copying", "dest"), ("committed", "source"), ("committed", "dest")],
+)
+def test_a_move_of_animals_left_to_a_later_start_holds_up_moving_the_data(
+    archive: Archive, state: str, role: str
+) -> None:
+    """Its undo removes a copy, and its finish an original, only while both
+    are where it left them: moving either would leave files with no records,
+    for a rescan to adopt into a cohort that has moved them on. Pointing
+    moves nothing, so it goes ahead."""
+    source, dest = (archive.cohort.id, "other") if role == "source" else ("other", archive.cohort.id)
+    statements(archive.db).execute(
+        "INSERT INTO animal_moves (id, source_cohort_id, dest_cohort_id, state, plan_json,"
+        " created_at, updated_at, error) VALUES ('m', ?, ?, ?, '{}', 'now', 'now',"
+        " 'waiting for D:/B')",
+        (source, dest, state),
+    )
+    with pytest.raises(DataFolderError, match="animals .* hasn't finished .waiting for D:/B"):
+        relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
+    assert archive.all_under(archive.old)
+
+    relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), False)
+    assert archive.cohorts.get(archive.cohort.id).data_folder == str(archive.new)
+
+
+def test_a_copy_that_loses_the_new_folder_is_left_for_a_later_start_to_undo(
+    archive: Archive, other_volume, unreachable_volume, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The live path of #67: the new drive drops mid-copy, so the undo can't
+    check what it copied."""
+    other_volume(archive.new.parent)
+    copy_tree = relocate._copy_tree
+
+    def copy_then_drop(source: Path, target: Path):  # noqa: ANN202
+        copy_tree(source, target)
+        unreachable_volume(archive.new)
+        raise OSError("the drive went away")
+
+    monkeypatch.setattr(relocate, "_copy_tree", copy_then_drop)
+
+    with pytest.raises(DataFolderError, match="next start that can reach both"):
+        relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
+    assert archive.journal() == "copying"
+    assert archive.all_under(archive.old)
+
+    monkeypatch.undo()
+    relocate.resume(archive.db)
+
+    assert archive.journal() == "rolled-back"
+    assert not any(p.is_file() for p in archive.new.rglob("*"))
+
+
+def test_a_resume_that_cannot_reach_the_copies_leaves_the_journal_to_retry(
+    archive: Archive, other_volume, power_cut, unreachable_volume,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#68, the reverse of B18: with the new folder unreachable, no copy could
+    be read, so every original was kept, and the journal still went `done`.
+    The move never finished and nothing would finish it. It stays
+    `committed` instead."""
+    commit_then_cut(archive, other_volume, power_cut)
+    unreachable_volume(archive.new)
+
+    relocate.resume(archive.db)
+    assert archive.journal() == "committed"
+
+    monkeypatch.undo()  # the share answers again (and every other fake goes)
+    assert any(p.is_file() for p in archive.old.rglob("*")), "nothing was deleted"
+
+    relocate.resume(archive.db)
+
+    assert not archive.old.exists()
+    assert archive.journal() == "done"
+
+
+def test_a_rename_resumed_with_the_volume_unreachable_leaves_the_journal_to_retry(
+    archive: Archive, unreachable_volume, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#68 on one volume: with the folder renamed and the volume gone, the
+    target couldn't be seen, so the resume read it as never moved and rolled
+    the journal back, leaving every record at a folder that isn't there. It
+    stays `moving` instead."""
+    journal(archive, "moving")
+    archive.new.parent.mkdir(parents=True)
+    os.rename(archive.old, archive.new)  # ... and the process dies here
+    unreachable_volume(archive.old.parent)
+    unreachable_volume(archive.new.parent)
+
+    relocate.resume(archive.db)
+    assert archive.journal() == "moving"
+
+    monkeypatch.undo()  # the volume is back
+    relocate.resume(archive.db)
+
+    assert archive.journal() == "done"
+    assert archive.all_under(archive.new)
+
+
+def test_a_relocate_that_loses_the_new_folder_after_its_copy_leaves_the_journal_to_retry(
+    archive: Archive, other_volume, unreachable_volume, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#68 on the live path: the new drive drops between the verified copy
+    and the deletes."""
+    other_volume(archive.new.parent)
+    copy_tree = relocate._copy_tree
+
+    def copy_then_drop(source: Path, target: Path):  # noqa: ANN202
+        copies = copy_tree(source, target)
+        unreachable_volume(archive.new)  # the drive stops answering here
+        return copies
+
+    monkeypatch.setattr(relocate, "_copy_tree", copy_then_drop)
+
+    relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
+
+    assert archive.journal() == "committed"
+    monkeypatch.undo()
+    assert any(p.is_file() for p in archive.old.rglob("*")), "nothing was deleted"
+
+    relocate.resume(archive.db)
+
+    assert not archive.old.exists()
+    assert archive.journal() == "done"
+
+
 def test_a_relocate_still_deleting_holds_up_a_session(
     archive: Archive, other_volume, monkeypatch: pytest.MonkeyPatch
 ) -> None:

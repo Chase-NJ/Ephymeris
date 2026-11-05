@@ -39,8 +39,6 @@ from ephymeris_sidecar.protocol import (
 from ephymeris_sidecar.sessions.models import GroupRun, Prefix, Session
 from ephymeris_sidecar.tasks import profile as task_profile
 
-from .test_utility import fake_serial  # noqa: F401 - the queue's flashes open ports
-
 
 # --- Validator semantics ---------------------------------------------------
 
@@ -233,7 +231,7 @@ def test_utility_baseline_payloads_match_schema() -> None:
     assert validate_event_data("utility.updated", status) == []
 
 
-async def test_flash_queue_status_matches_schema(fake_serial) -> None:  # noqa: ANN001
+async def test_flash_queue_status_matches_schema() -> None:
     """One snapshot for three commands and an event, run for real: a box
     flashed, one that failed, one waiting on its port, and boxes with nothing."""
     import asyncio

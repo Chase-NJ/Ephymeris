@@ -27,12 +27,10 @@ from tests.wire import dispatch
 
 from .test_debug_flash import flash, make_app
 from .test_flash_queue import Rig, rig  # noqa: F401 - rig is a fixture
-from .test_utility import (  # noqa: F401 - fake_serial is an autouse fixture
+from .test_utility import (  # noqa: F401 - rig_definition is a fixture
     TASK_PATH,
     UTILITY_PATH,
-    FakeSerial,
     box_state,
-    fake_serial,
     make_baseline,
     rig_definition,
     settle,
@@ -113,7 +111,7 @@ async def test_a_baseline_flash_never_takes_a_console(rig: Rig) -> None:
     """Whatever the job's `prepare` decided: a baseline job's flash asks the
     port for `IDLE` only, so a console open at the take is refused there."""
     rig.ports.open_passthrough(1)
-    console = FakeSerial.instances[-1]
+    console = rig.boards.latest
 
     rig.queue.submit([rig.job(1, "baseline", UTILITY_PATH)])
     await rig.settle()

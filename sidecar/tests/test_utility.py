@@ -16,8 +16,6 @@ import pytest
 
 from ephymeris_sidecar.boards.tool import BoardTool, DetectedBoard, FlashFailed
 from ephymeris_sidecar.hardware.store import HardwareStore
-from ephymeris_sidecar.ports import handler as handler_module
-from ephymeris_sidecar.ports import manager as manager_module
 from ephymeris_sidecar.ports.flashing import FlashQueue
 from ephymeris_sidecar.ports.manager import FQBN, PortManager
 from ephymeris_sidecar.ports.states import PortState
@@ -34,6 +32,8 @@ from ephymeris_sidecar.tasks.profile import (
     TaskProfileError,
 )
 from ephymeris_sidecar.utility import UtilityBaseline, UtilityUnavailable
+
+from .scripted_board import Boards, ScriptedBoard
 
 HWID = "TESTBOARD01"
 ADDRESS = "/dev/cu.faketest"
@@ -62,50 +62,18 @@ class FakeTool(BoardTool):
         self.uploads.append(sketch_dir)
 
 
-class FakeSerial:
-    """A board that greets on open and answers every write with a STATUS line."""
+class UtilityBoard(ScriptedBoard):
+    """BOX_Utility: greets when its port opens and answers every command with a
+    STATUS line. A board that never answers (a baud mismatch) is a plain
+    `ScriptedBoard`."""
 
-    instances: list["FakeSerial"] = []
-    #: Set false to model a board that never answers — a baud mismatch.
-    answers = True
-
-    def __init__(self, *_args, **kwargs) -> None:
-        self.port = kwargs.get("port")
-        self.baudrate = kwargs.get("baudrate")
-        self.dtr = True
-        self.closed = False
-        self.written: list[str] = []
-        self._pending = bytearray(b"BOX Utility ready.\n" if FakeSerial.answers else b"")
-        FakeSerial.instances.append(self)
-
-    @property
-    def in_waiting(self) -> int:
-        return len(self._pending)
-
-    def read(self, size: int = 1) -> bytes:
-        if not self._pending:
-            import time
-
-            time.sleep(0.01)  # behave like a blocking read timeout
-            return b""
-        chunk = bytes(self._pending[:size])
-        del self._pending[:size]
-        return chunk
+    def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+        super().__init__(*args, **kwargs)
+        self.say("BOX Utility ready.\n")
 
     def write(self, data: bytes) -> int:
-        self.written.append(data.decode().strip())
-        if FakeSerial.answers:
-            self._pending.extend(b"STATUS mode=idle light=1\n")
-        return len(data)
-
-    def flush(self) -> None:
-        pass
-
-    def open(self) -> None:
-        pass
-
-    def close(self) -> None:
-        self.closed = True
+        self.say("STATUS mode=idle light=1\n")
+        return super().write(data)
 
 
 class FakeSketch:
@@ -131,15 +99,6 @@ UTILITY_PROFILE = TaskProfile(
 )
 
 
-@pytest.fixture(autouse=True)
-def fake_serial(monkeypatch: pytest.MonkeyPatch):
-    FakeSerial.instances = []
-    FakeSerial.answers = True
-    monkeypatch.setattr(handler_module.serial, "Serial", FakeSerial)
-    monkeypatch.setattr(manager_module.serial, "Serial", FakeSerial)
-    yield FakeSerial
-
-
 async def _noop_output(_box, _lines):  # noqa: ANN001
     pass
 
@@ -155,12 +114,14 @@ async def make_baseline(
     wiring_problem=lambda: None,  # noqa: ANN001
 ) -> tuple[UtilityBaseline, PortManager, FakeTool, list[dict]]:
     tool = FakeTool()
+    boards = Boards(UtilityBoard)
     manager = PortManager(
         loop=asyncio.get_event_loop(),
         tool=tool,
         on_state_change=lambda *_a: None,
         on_output=_noop_output,
         on_presence=_noop_presence,
+        open_serial=boards,
     )
     settings = SidecarSettings.from_payload(
         {
@@ -198,6 +159,8 @@ async def make_baseline(
     baseline.update_settings(settings)
     #: The queue this test built for it, which `settle` waits on.
     baseline.flash_queue = flashes
+    #: Every port its manager opened.
+    baseline.boards = boards
     return baseline, manager, tool, events
 
 
@@ -457,7 +420,7 @@ async def test_a_rebuilt_utility_is_restored_to_every_box_that_carried_the_old_o
 # --- identify ---------------------------------------------------------------
 
 
-async def test_identify_lights_a_baseline_box_and_puts_it_out(fake_serial) -> None:
+async def test_identify_lights_a_baseline_box_and_puts_it_out() -> None:
     baseline, manager, _tool, _ = await make_baseline()
     baseline.ensure()
     await settle(baseline)
@@ -466,7 +429,7 @@ async def test_identify_lights_a_baseline_box_and_puts_it_out(fake_serial) -> No
     assert delivered is True
     assert state["identifying"] is True
     assert manager.handler(1).state is PortState.PASSTHROUGH
-    assert fake_serial.instances[-1].written == ["ON LIGHT"]
+    assert baseline.boards.latest.sent() == ["ON LIGHT"]
 
     delivered, state = await baseline.identify(1, False)
     assert delivered is True
@@ -475,7 +438,7 @@ async def test_identify_lights_a_baseline_box_and_puts_it_out(fake_serial) -> No
     assert manager.handler(1).state is PortState.IDLE
 
 
-async def test_identify_leaves_a_users_console_open(fake_serial) -> None:
+async def test_identify_leaves_a_users_console_open() -> None:
     baseline, manager, _tool, _ = await make_baseline()
     baseline.ensure()
     await settle(baseline)
@@ -485,7 +448,7 @@ async def test_identify_leaves_a_users_console_open(fake_serial) -> None:
     await baseline.identify(1, False)
 
     assert manager.handler(1).state is PortState.PASSTHROUGH
-    assert fake_serial.instances[-1].written == ["ON LIGHT", "OFF LIGHT"]
+    assert baseline.boards.latest.sent() == ["ON LIGHT", "OFF LIGHT"]
 
 
 async def test_identify_reports_a_silent_board_rather_than_claiming_success() -> None:
@@ -493,7 +456,7 @@ async def test_identify_reports_a_silent_board_rather_than_claiming_success() ->
     baseline, _manager, _tool, _ = await make_baseline()
     baseline.ensure()
     await settle(baseline)
-    FakeSerial.answers = False
+    baseline.boards.board = ScriptedBoard
 
     delivered, state = await baseline.identify(1, True)
 
@@ -517,7 +480,7 @@ async def test_identify_without_an_identify_pair_is_a_typed_refusal() -> None:
         await baseline.identify(1, True)
 
 
-async def test_stop_extinguishes_everything(fake_serial) -> None:
+async def test_stop_extinguishes_everything() -> None:
     baseline, manager, _tool, _ = await make_baseline()
     baseline.ensure()
     await settle(baseline)
@@ -525,7 +488,7 @@ async def test_stop_extinguishes_everything(fake_serial) -> None:
 
     await baseline.stop()
 
-    assert fake_serial.instances[-1].written[-1] == "OFF LIGHT"
+    assert baseline.boards.latest.sent()[-1] == "OFF LIGHT"
     assert manager.handler(1).state is PortState.IDLE
 
 

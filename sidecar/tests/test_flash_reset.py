@@ -7,8 +7,6 @@ import asyncio
 import pytest
 
 from ephymeris_sidecar.boards.tool import BoardTool, DetectedBoard, FlashFailed
-from ephymeris_sidecar.ports import handler as handler_module
-from ephymeris_sidecar.ports import manager as manager_module
 from ephymeris_sidecar.ports.manager import (
     FQBN,
     CarriedSketch,
@@ -18,6 +16,8 @@ from ephymeris_sidecar.ports.manager import (
 )
 from ephymeris_sidecar.ports.states import IDLE_OR_CONSOLE, IllegalTransition, PortState
 from ephymeris_sidecar.settings import SidecarSettings
+
+from .scripted_board import Boards, ScriptedBoard
 
 HWID = "TESTBOARD01"
 ADDRESS = "/dev/cu.faketest"
@@ -47,52 +47,22 @@ class FakeTool(BoardTool):
             raise self.fail_upload
 
 
-class FakeSerial:
-    instances: list["FakeSerial"] = []
-    #: Raised by an explicit `open()`, as pyserial does for a port that went away.
-    open_error: OSError | None = None
-
-    def __init__(self, *_args, **kwargs) -> None:
-        self.port = kwargs.get("port")
-        self.baudrate = kwargs.get("baudrate")
-        self.dtr = True
-        self.closed = False
-        self.dtr_history: list[bool] = []
-        FakeSerial.instances.append(self)
-
-    @property
-    def in_waiting(self) -> int:
-        return 0
-
-    def read(self, _size: int = 1) -> bytes:
-        import time as _time
-
-        _time.sleep(0.05)  # behave like a blocking read timeout
-        return b""
-
-    def write(self, data: bytes) -> int:
-        return len(data)
+class VanishedBoard(ScriptedBoard):
+    """A port that went away: an explicit `open()` raises, as pyserial's does."""
 
     def open(self) -> None:
-        if FakeSerial.open_error is not None:
-            raise FakeSerial.open_error
+        raise OSError("port vanished")
 
-    def close(self) -> None:
-        self.closed = True
 
-    def __setattr__(self, name, value) -> None:
-        if name == "dtr" and "dtr_history" in self.__dict__:
-            self.__dict__["dtr_history"].append(value)
-        super().__setattr__(name, value)
+#: Every port this test's manager opened.
+boards = Boards()
 
 
 @pytest.fixture(autouse=True)
-def fake_serial(monkeypatch: pytest.MonkeyPatch):
-    FakeSerial.instances = []
-    FakeSerial.open_error = None
-    monkeypatch.setattr(handler_module.serial, "Serial", FakeSerial)
-    monkeypatch.setattr(manager_module.serial, "Serial", FakeSerial)
-    yield FakeSerial
+def _fresh_boards():
+    boards.board = ScriptedBoard
+    boards.opened.clear()
+    yield boards
 
 
 async def _noop_output(_box, _lines):  # noqa: ANN001
@@ -117,6 +87,7 @@ async def make_manager(
         on_state_change=on_state_change or (lambda *a: states.append(a)),
         on_output=_noop_output,
         on_presence=_noop_presence,
+        open_serial=boards,
     )
     manager.update_settings(
         SidecarSettings.from_payload(
@@ -157,7 +128,7 @@ async def test_flash_from_idle_returns_to_idle() -> None:
     assert tool.calls[1][3] == ADDRESS
 
 
-async def test_flash_from_passthrough_auto_resumes_at_prior_baud(fake_serial) -> None:
+async def test_flash_from_passthrough_auto_resumes_at_prior_baud() -> None:
     """`ARCHITECTURE.md#exclusivity` — the user sees the new sketch's output without an extra click."""
     manager, _tool, _, progress = await make_manager()
     manager.open_passthrough(1, baud=9600)
@@ -167,14 +138,14 @@ async def test_flash_from_passthrough_auto_resumes_at_prior_baud(fake_serial) ->
 
     assert state is PortState.PASSTHROUGH
     assert resumed is True
-    reopened = fake_serial.instances[-1]
+    reopened = boards.opened[-1]
     assert reopened.baudrate == 9600  # prior baud, not the default
     # The pre-flash port was cleanly released before arduino-cli took over.
-    assert fake_serial.instances[0].closed is True
+    assert boards.opened[0].closed is True
     manager.handler(1).shutdown()
 
 
-async def test_suppress_passthrough_resume_forces_idle(fake_serial) -> None:
+async def test_suppress_passthrough_resume_forces_idle() -> None:
     """`ARCHITECTURE.md#flash-sequence` — the session flash sequence needs IDLE.
 
     Without this the port would auto-resume PASSTHROUGH and the runner could
@@ -191,7 +162,7 @@ async def test_suppress_passthrough_resume_forces_idle(fake_serial) -> None:
     assert state is PortState.IDLE
     assert resumed is False
     # The pre-flash port was still cleanly released.
-    assert fake_serial.instances[0].closed is True
+    assert boards.opened[0].closed is True
 
 
 async def test_compile_failure_lands_in_error_and_never_uploads() -> None:
@@ -347,13 +318,13 @@ def test_the_fingerprint_follows_content_not_noise(tmp_path) -> None:  # noqa: A
     assert sketch_fingerprint(str(tmp_path / "missing")) == sketch_fingerprint(str(tmp_path / "gone"))
 
 
-async def test_a_console_is_closed_by_the_time_the_flash_is_heard(fake_serial) -> None:  # noqa: ANN001
+async def test_a_console_is_closed_by_the_time_the_flash_is_heard() -> None:
     """`ARCHITECTURE.md#exclusivity`: whoever hears `FLASHING` may hand the port
     to the uploader, so the console must already be shut when it is."""
     console_closed: dict[PortState, bool] = {}
 
     def on_state_change(_box: int, _old: PortState, new: PortState, _reason: str) -> None:
-        console_closed.setdefault(new, fake_serial.instances[0].closed)
+        console_closed.setdefault(new, boards.opened[0].closed)
 
     manager, _tool, _, _ = await make_manager(on_state_change)
     manager.open_passthrough(1, baud=9600)
@@ -367,21 +338,21 @@ async def test_a_console_is_closed_by_the_time_the_flash_is_heard(fake_serial) -
 # --- reset ----------------------------------------------------------------
 
 
-async def test_reset_from_idle_pulses_dtr_and_returns_to_idle(fake_serial) -> None:
+async def test_reset_from_idle_pulses_dtr_and_returns_to_idle() -> None:
     manager, _tool, _, _ = await make_manager()
 
     state, resumed = await manager.reset(1)
 
     assert state is PortState.IDLE
     assert resumed is False
-    pulse_port = fake_serial.instances[-1]
+    pulse_port = boards.opened[-1]
     assert pulse_port.port == ADDRESS
     # `ARCHITECTURE.md#reset`: dtr False → delay → dtr True (initial True assert precedes open()).
     assert pulse_port.dtr_history == [True, False, True]
     assert pulse_port.closed is True
 
 
-async def test_reset_from_passthrough_auto_resumes(fake_serial) -> None:
+async def test_reset_from_passthrough_auto_resumes() -> None:
     manager, _tool, _, _ = await make_manager()
     manager.open_passthrough(1, baud=57600)
 
@@ -389,13 +360,13 @@ async def test_reset_from_passthrough_auto_resumes(fake_serial) -> None:
 
     assert state is PortState.PASSTHROUGH
     assert resumed is True
-    assert fake_serial.instances[-1].baudrate == 57600
+    assert boards.opened[-1].baudrate == 57600
     manager.handler(1).shutdown()
 
 
-async def test_reset_failure_lands_in_error(fake_serial) -> None:  # noqa: ANN001
+async def test_reset_failure_lands_in_error() -> None:
     manager, _tool, _, _ = await make_manager()
-    fake_serial.open_error = OSError("port vanished")
+    boards.board = VanishedBoard
 
     with pytest.raises(OSError):
         await manager.reset(1)

@@ -7,6 +7,9 @@ plays the board by feeding the lines it would print (`READY`, `SEED`,
 strobes) and reading what the sidecar wrote back. The board answers `SET` lines
 the way the firmware does, with the running `PARAMS`, so a start gets through
 the parameter handshake unless a test sets `ScriptedBoard.answer` to refuse it.
+
+A test that builds its own manager or handler passes a `Boards` as its
+`open_serial` instead of using `Bench`.
 """
 
 from __future__ import annotations
@@ -22,22 +25,51 @@ from ephymeris_sidecar.ports import handler as handler_module
 from ephymeris_sidecar.ports.manager import PortManager
 from ephymeris_sidecar.ports.states import PortState
 from ephymeris_sidecar.settings import SidecarSettings
+from ephymeris_sidecar.tasks.start_command import SET_LINE_MAX
+
+
+def running_params(tokens: list[str]) -> list[str]:
+    """The firmware's answer to a `SET` line: the count and CRC-32 of every
+    token it has accepted since `BEGIN`."""
+    return [f"PARAMS {len(tokens)} {zlib.crc32(' '.join(tokens).encode())}"]
+
+
+def clamping(*keys: str) -> Callable[[list[str]], list[str]]:
+    """An `answer` for a board whose clamp moves `keys`: `CLAMPED <key>` for
+    each one accepted so far, then the running `PARAMS`."""
+
+    def answer(tokens: list[str]) -> list[str]:
+        moved = [t.partition("=")[0] for t in tokens if t.partition("=")[0] in keys]
+        return [f"CLAMPED {key}" for key in moved] + running_params(tokens)
+
+    return answer
+
+
+def silent(_tokens: list[str]) -> list[str]:
+    """An `answer` for a sketch that predates `SET`: it answers nothing."""
+    return []
 
 
 class ScriptedBoard:
     """One opened serial port: what the board says, and what it was sent."""
 
     #: How the board answers a `SET` line, given the tokens it has accepted so
-    #: far: the lines it prints. A test replaces it to play a board that clamps,
-    #: truncates or does not speak `SET`.
-    answer: Callable[[list[str]], list[str]] = staticmethod(
-        lambda tokens: [f"PARAMS {len(tokens)} {zlib.crc32(' '.join(tokens).encode())}"]
-    )
+    #: far: the lines it prints. A test replaces it to play a board that clamps
+    #: (`clamping`) or does not speak `SET` (`silent`).
+    answer: Callable[[list[str]], list[str]] = staticmethod(running_params)
+    #: The board's line buffer: a longer line arrives cut to this many
+    #: characters (the firmware's, less its terminator, unless a test says).
+    cap: int = SET_LINE_MAX - 1
+    #: The keys the firmware parses. Any other is ignored, uncounted and
+    #: unhashed. None: every key.
+    known: set[str] | None = None
 
     def __init__(self, *_args, **kwargs) -> None:
         self.port = kwargs.get("port")
         self.baudrate = kwargs.get("baudrate")
-        self.dtr = True
+        self._dtr = True
+        #: Every value DTR was set to after the port was made, in order.
+        self.dtr_history: list[bool] = []
         self.closed = False
         self.written = bytearray()
         self._out = bytearray()
@@ -53,22 +85,46 @@ class ScriptedBoard:
         #: of it has been handled.
         self._empty_reads = 0
 
-    def say(self, text: str) -> None:
-        """Queue lines the board prints."""
+    @property
+    def dtr(self) -> bool:
+        return self._dtr
+
+    @dtr.setter
+    def dtr(self, value: bool) -> None:
+        self._dtr = value
+        self.dtr_history.append(value)
+
+    def say(self, text: str | bytes) -> None:
+        """Queue what the board prints, as is."""
         with self._lock:
-            self._out.extend(text.encode())
+            self._out.extend(text if isinstance(text, bytes) else text.encode())
 
     async def said(self, *lines: str, timeout: float = 5.0) -> None:
         """Print `lines` and return once the session thread has handled them."""
+        await until(self._printed("".join(f"{line}\n" for line in lines)), timeout=timeout)
+
+    def heard(self, data: str | bytes, timeout: float = 5.0) -> None:
+        """Print `data` as is and return once the reader thread has handled all
+        of it: `said` for a handler driven without a running loop."""
+        handled = self._printed(data)
+        deadline = time.monotonic() + timeout
+        while not handled():
+            if time.monotonic() > deadline:
+                raise AssertionError("the reader never took what the board printed")
+            time.sleep(0.005)
+
+    def _printed(self, data: str | bytes) -> Callable[[], bool]:
+        """Queue `data`; the returned check holds once the reader has come
+        back for more after taking it."""
         with self._lock:
-            self._out.extend("".join(f"{line}\n" for line in lines).encode())
+            self._out.extend(data if isinstance(data, bytes) else data.encode())
             before = self._empty_reads
 
         def handled() -> bool:
             with self._lock:
                 return self._empty_reads > before
 
-        await until(handled, timeout=timeout)
+        return handled
 
     def sent(self) -> list[str]:
         """Every line the sidecar wrote to the board, in order."""
@@ -98,17 +154,23 @@ class ScriptedBoard:
     def write(self, data: bytes) -> int:
         self.written.extend(data)
         for line in data.decode().splitlines():
+            line = line[: self.cap]
             if line == "BEGIN":
                 self._tokens = []
             elif line == "SET" or line.startswith("SET "):
-                self._tokens.extend(line.split()[1:])
+                self._tokens.extend(t for t in line.split()[1:] if self._parses(t))
                 reply = self.answer(self._tokens)
                 with self._lock:
-                    self._out.extend("".join(f"{text}\n" for text in reply).encode())
+                    self._out.extend("".join(f"{text}\r\n" for text in reply).encode())
             elif line.startswith("START") and self.seed_on_start is not None:
                 with self._lock:
-                    self._out.extend(f"SEED\t{self.seed_on_start}\n".encode())
+                    self._out.extend(f"SEED\t{self.seed_on_start}\r\n".encode())
         return len(data)
+
+    def _parses(self, token: str) -> bool:
+        """Whether the firmware takes `token`: a `key=value` whose key it knows."""
+        key, eq, _value = token.partition("=")
+        return bool(eq) and (self.known is None or key in self.known)
 
     def flush(self) -> None:
         pass
@@ -118,6 +180,25 @@ class ScriptedBoard:
 
     def close(self) -> None:
         self.closed = True
+
+
+class Boards:
+    """An `open_serial` for a manager or handler a test builds itself. Each open
+    plays a `board` (a `ScriptedBoard` unless the test swaps in another), and
+    every board opened is kept, latest last."""
+
+    def __init__(self, board: Callable[..., ScriptedBoard] = ScriptedBoard) -> None:
+        self.board = board
+        self.opened: list[ScriptedBoard] = []
+
+    def __call__(self, *args, **kwargs) -> ScriptedBoard:  # noqa: ANN002, ANN003
+        board = self.board(*args, **kwargs)
+        self.opened.append(board)
+        return board
+
+    @property
+    def latest(self) -> ScriptedBoard:
+        return self.opened[-1]
 
 
 class _NoTool(BoardTool):

@@ -163,12 +163,14 @@ class Application:
         self._first_start = not has_mark(data_dir / DB_FILENAME, hardware_store.FIRST_START_MARK)
         #: This machine's strobe vocabulary — the one source of every code
         #: (`TASKS.md#strobe-vocabulary`). Seeded from the shipped default on
-        #: first start, then pointed at the registry exactly as the wiring is.
+        #: first start, caught up with the codes a newer build ships on every
+        #: later one, then pointed at the registry exactly as the wiring is.
         self.vocab_store = strobe_store.VocabularyStore(data_dir)
         try:
-            self.vocab_store.ensure_seeded()
-        except OSError as exc:
-            log.error("could not seed the strobe vocabulary (%s); decoding with the default", exc)
+            if not self.vocab_store.ensure_seeded():
+                self.vocab_store.catch_up()
+        except (OSError, strobe_store.StrobeRefused) as exc:
+            log.error("could not seed or catch up the strobe vocabulary (%s); decoding with what is there", exc)
         #: The rig wiring plus the vocabulary: installs both, and owns every
         #: write to either and the lock generated-folder readers take
         #: (`TASKS.md#the-rig-definition`).

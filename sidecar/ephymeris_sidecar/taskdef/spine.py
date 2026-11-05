@@ -291,8 +291,9 @@ def _resolve(definition: TaskDefinition) -> _Resolved:
 
     for name in (*STRUCTURAL.values(), *OUTCOME_CODES):
         if name not in vocab:
-            problem(f"vocabulary.{name}", "SPN104", f"the strobe vocabulary has no {name} code. Add it on "
-                    "Task > Strobes, at the number the shipped vocabulary gives it")
+            problem(f"vocabulary.{name}", "SPN104", f"the strobe vocabulary has no {name} code: its shipped "
+                    "number is taken here, or it was removed. Add it on Task > Strobes, at the number the "
+                    "shipped vocabulary gives it")
             out.blockers.append(f"the strobe vocabulary has no {name} code: add it on Task > Strobes")
     return out
 

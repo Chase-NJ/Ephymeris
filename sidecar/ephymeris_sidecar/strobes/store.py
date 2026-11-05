@@ -9,12 +9,17 @@ from it, `tasks/profile.py` fills every profile's `strobes` map from it, and the
 Strobes page edits it. It used to be three hand-mirrored copies (a bundled JSON
 registry, `BoxStrobes.h`, each sketch's `task.json`) held in step by a test.
 
-SEEDED, NOT MERGED. The first start on a machine copies the shipped default;
-after that the default is never read again there. A merge on every start would
-mean a code an operator removed came back with the next app update — the same
-argument `hardware/store.py` makes for the rig document. There is deliberately
-no Reset: a reset could drop a code this machine added and then reissue its
-number to something else.
+SEEDED, THEN CAUGHT UP BY GENERATION, NEVER MERGED WHOLE. The first start on a
+machine copies the shipped default. Every later start reads the default again
+for one purpose: codes a newer build declares (`since` past this document's
+`shipped_since` watermark) are added at their shipped numbers (`catch_up`).
+A plain merge on every start would mean a code an operator removed came back
+with the next app update — the same argument `hardware/store.py` makes for the
+rig document — which is what the watermark prevents: a removed code's
+generation is already behind it, so it is never offered again. Nothing is ever
+removed, renumbered or reinstated by a start. There is deliberately no Reset: a
+reset could drop a code this machine added and then reissue its number to
+something else.
 
 EVERY OPERATION HERE IS PURE: document in, new document out, or `StrobeRefused`.
 The evidence a hazardous edit is judged against — which firmware names a code,
@@ -50,6 +55,12 @@ MAX_VOCAB_BYTES = 512 * 1024
 #: The origin stamped on a code added from the Strobes page.
 OPERATOR_ORIGIN = "operator"
 
+#: The shipped generation this document has caught up to: the largest `since`
+#: among the default's codes when the document was seeded or last caught up.
+#: A document from before the field is read as caught up to the latest
+#: generation it holds any code of, once, and stamped.
+SHIPPED_SINCE = "shipped_since"
+
 
 class StrobeRefused(Exception):
     """An edit the rules do not allow, or allow only with `confirm`.
@@ -83,9 +94,36 @@ class VocabularyStore:
             return False
         doc = default_vocabulary_document()
         doc["seeded_at"] = _now()
+        doc[SHIPPED_SINCE] = shipped_generation(doc)
         self._write(doc)
         log.info("strobe vocabulary seeded from the shipped default at %s", self.path)
         return True
+
+    def catch_up(self) -> CatchUpPlan | None:
+        """Add the codes a newer build ships, on a document seeded before them.
+
+        Returns the plan, or None when the document will not read: nothing is
+        written then, for `load_strict`'s reason. A code whose shipped number
+        this machine has given to something else is skipped and logged, and
+        the spine editor keeps asking for it (SPN104); the rest are added. The
+        watermark moves either way, so a skipped code is asked for once by
+        this path and from then on only by the editor.
+        """
+        try:
+            doc = self.load_strict()
+        except StrobeRefused as exc:
+            log.error("strobe vocabulary not caught up with the shipped default: %s", exc)
+            return None
+        plan = plan_catch_up(doc, default_vocabulary_document())
+        if not plan.adds and doc.get(SHIPPED_SINCE) == plan.since:
+            return plan
+        self.save(apply_catch_up(doc, default_vocabulary_document(), plan))
+        for add_ in plan.adds:
+            log.info("strobe vocabulary caught up: %s = %d, shipped since generation %d",
+                     add_["name"], add_["code"], add_["since"])
+        for skip in plan.skipped:
+            log.warning("strobe vocabulary not caught up on %s: %s", skip["name"], skip["message"])
+        return plan
 
     def load(self) -> dict | None:
         """The document, or None when it is missing or will not read.
@@ -532,9 +570,98 @@ def apply_merge(doc: dict, other: dict, plan: MergePlan) -> dict:
     return out
 
 
+@dataclass
+class CatchUpPlan:
+    """What one start adds from the shipped default, and what it could not."""
+
+    #: `{name, code, since}`, in code order.
+    adds: list[dict[str, Any]] = field(default_factory=list)
+    #: `{name, code, message}`: a shipped code this document lacks whose number
+    #: is taken here, or whose name is here at another number.
+    skipped: list[dict[str, Any]] = field(default_factory=list)
+    #: The watermark the document carries once the plan is applied.
+    since: int = 0
+
+
+def shipped_generation(default: dict) -> int:
+    """The latest generation the shipped default declares a code in."""
+    return max((int(e.get("since", 0)) for e in _entries(default.get("codes")).values()), default=0)
+
+
+def plan_catch_up(doc: dict, default: dict) -> CatchUpPlan:
+    """The shipped codes `doc` lacks from generations after its watermark.
+
+    WHY A WATERMARK AND NOT A MERGE. `plan_merge` says what this document
+    lacks; it cannot say why. A code missing because the operator removed it
+    (which the archive check allowed) must stay removed, and one missing
+    because this machine was seeded before the build that declared it must be
+    added. The generation tells them apart: only codes declared after the
+    watermark are offered, and the watermark then moves past them, so a code
+    removed later is never offered again.
+
+    A document without the field is read as caught up to the latest generation
+    it holds any shipped code of, at that code's shipped name and number. That
+    puts a machine seeded at generation 2 at 2, so generation 3 is added; it
+    cannot see a code removed from the generation it is judged at, which the
+    stamp then settles for good.
+    """
+    latest = shipped_generation(default)
+    watermark = doc.get(SHIPPED_SINCE)
+    if not _is_int(watermark):
+        watermark = _inferred_watermark(doc, default)
+    plan = CatchUpPlan(since=max(latest, watermark))
+    if latest <= watermark:
+        return plan
+    newer = {
+        name: int(e.get("since", 0))
+        for name, e in _entries(default.get("codes")).items()
+        if int(e.get("since", 0)) > watermark
+    }
+    merge = plan_merge(doc, default)
+    plan.adds = [
+        {"name": a["name"], "code": a["code"], "since": newer[a["name"]]}
+        for a in merge.adds
+        if a["name"] in newer and not a["retired"]
+    ]
+    plan.skipped = [c for c in merge.conflicts if c["name"] in newer]
+    return plan
+
+
+def apply_catch_up(doc: dict, default: dict, plan: CatchUpPlan) -> dict:
+    """The document with `plan`'s adds and watermark. Skips are left as they are."""
+    out = copy.deepcopy(doc)
+    for add_ in plan.adds:
+        entry = copy.deepcopy(default["codes"][add_["name"]])
+        entry["caught_up_at"] = _now()
+        out.setdefault("codes", {})[add_["name"]] = entry
+    out["codes"] = _sorted_section(out["codes"])
+    out[SHIPPED_SINCE] = plan.since
+    return out
+
+
+def _inferred_watermark(doc: dict, default: dict) -> int:
+    """The latest generation `doc` holds a shipped code of, by name and number."""
+    mine = _entries(doc.get("codes"))
+    return max(
+        (
+            int(e.get("since", 0))
+            for name, e in _entries(default.get("codes")).items()
+            if name in mine and mine[name].get("code") == e.get("code")
+        ),
+        default=0,
+    )
+
+
+def _entries(section: Any) -> dict[str, dict]:
+    """A section's real entries: no `_readme`, nothing that is not an object."""
+    if not isinstance(section, dict):
+        return {}
+    return {n: e for n, e in section.items() if not n.startswith("_") and isinstance(e, dict)}
+
+
 def export_document(doc: dict) -> dict:
     """The document as it travels: the vocabulary, without this machine's stamps."""
-    return {k: v for k, v in doc.items() if k not in ("seeded_at", "edited_at")}
+    return {k: v for k, v in doc.items() if k not in ("seeded_at", "edited_at", SHIPPED_SINCE)}
 
 
 # --------------------------------------------------------------------------- #

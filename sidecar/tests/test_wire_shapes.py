@@ -40,7 +40,6 @@ from ephymeris_sidecar.sessions.models import GroupRun, Prefix, Session
 from ephymeris_sidecar.tasks import profile as task_profile
 
 
-
 # --- Validator semantics ---------------------------------------------------
 
 

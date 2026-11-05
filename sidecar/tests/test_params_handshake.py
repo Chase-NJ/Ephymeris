@@ -40,8 +40,18 @@ def _profile(*keys: str):
     )
 
 
+class Mega(ScriptedBoard):
+    """The firmware answers START with the seed it carries."""
+
+    def write(self, data: bytes) -> int:
+        for line in data.decode().splitlines():
+            if line.startswith("START"):
+                self.say("SEED\t" + line.partition("SEED=")[2] + "\r\n")
+        return super().write(data)
+
+
 #: Every board this test's handler opened.
-boards = Boards()
+boards = Boards(Mega)
 
 
 def boot(board: ScriptedBoard, interp: str | None = "1") -> None:
@@ -75,7 +85,7 @@ def _shutdown():
 class Run:
     """One claimed session and everything its callbacks heard. `board` sets
     how the board's firmware takes and answers `SET` (`ScriptedBoard`'s `cap`,
-    `known` and `answer`); START is answered with the run's `seed`."""
+    `known` and `answer`)."""
 
     def __init__(self, command, seed: int = SEED, **board) -> None:  # noqa: ANN001, ANN003
         self.handler = PortHandler(1, _loop, lambda *args: None, boards)
@@ -94,7 +104,6 @@ class Run:
         )
         self.board = wait_for(lambda: boards.opened) and boards.opened[0]
         # Nothing reaches the firmware before READY, so it can be set up here.
-        self.board.seed_on_start = seed
         for name, value in board.items():
             setattr(self.board, name, value)
 

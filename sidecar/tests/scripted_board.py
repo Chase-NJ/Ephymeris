@@ -25,6 +25,7 @@ from ephymeris_sidecar.ports import handler as handler_module
 from ephymeris_sidecar.ports.manager import PortManager
 from ephymeris_sidecar.ports.states import PortState
 from ephymeris_sidecar.settings import SidecarSettings
+from ephymeris_sidecar.tasks.start_command import SET_LINE_MAX
 
 
 def running_params(tokens: list[str]) -> list[str]:
@@ -57,8 +58,8 @@ class ScriptedBoard:
     #: (`clamping`) or does not speak `SET` (`silent`).
     answer: Callable[[list[str]], list[str]] = staticmethod(running_params)
     #: The board's line buffer: a longer line arrives cut to this many
-    #: characters. None: nothing is cut.
-    cap: int | None = None
+    #: characters (the firmware's, less its terminator, unless a test says).
+    cap: int = SET_LINE_MAX - 1
     #: The keys the firmware parses. Any other is ignored, uncounted and
     #: unhashed. None: every key.
     known: set[str] | None = None
@@ -160,10 +161,10 @@ class ScriptedBoard:
                 self._tokens.extend(t for t in line.split()[1:] if self._parses(t))
                 reply = self.answer(self._tokens)
                 with self._lock:
-                    self._out.extend("".join(f"{text}\n" for text in reply).encode())
+                    self._out.extend("".join(f"{text}\r\n" for text in reply).encode())
             elif line.startswith("START") and self.seed_on_start is not None:
                 with self._lock:
-                    self._out.extend(f"SEED\t{self.seed_on_start}\n".encode())
+                    self._out.extend(f"SEED\t{self.seed_on_start}\r\n".encode())
         return len(data)
 
     def _parses(self, token: str) -> bool:

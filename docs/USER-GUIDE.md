@@ -663,8 +663,10 @@ manager straight away, and note the box and time.
 
 ### Backup pill
 
-The Mission Control header shows **backup ok** or **backup failing**. A failing backup never stops the
-session and data is still saved locally. Tell the lab manager after the session.
+The Mission Control header shows **backup ok**, **backup deferred** or **backup failing**. A failing backup
+never stops the session and data is still saved locally. Tell the lab manager after the session.
+**backup deferred** needs nothing from you: the database copy is waiting for a save to finish and the next
+pass makes it.
 
 ### Do not touch during a session
 

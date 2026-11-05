@@ -436,11 +436,14 @@ async def test_a_backup_meeting_a_write_left_open_defers_rather_than_waits(
         # Free the stuck backup thread (it holds the lock) before failing.
         end_the_open_write(db, "ROLLBACK")
         pytest.fail("the database backup waited forever on a write left open")
-    assert manager.status()["state"] == "ok", "a deferred copy is not a failed one"
+    status = manager.status()
+    assert status["state"] == "deferred", "a deferred copy is not a failed one"
+    assert status["lastError"] is None
 
     end_the_open_write(db, "COMMIT")
     await manager._pass()
     assert mirrored(mirror) == ["open", "x"], "copied once the write ended"
+    assert manager.status()["state"] == "ok"
 
 
 @pytest.mark.asyncio
@@ -487,21 +490,45 @@ async def test_a_copy_deferred_too_long_is_warned_about_once(
 
 
 @pytest.mark.asyncio
-async def test_a_sync_now_that_meets_an_open_write_says_the_database_was_not_copied(
+async def test_a_sync_now_that_meets_an_open_write_reports_the_database_deferred(
     db: Database, tmp_path: Path
 ) -> None:
     """"Sync now" is how an operator proves the target works
-    (`DATA.md#no-automatic-backfill`); it must not report a database copy it
-    deferred as done (`DATA.md#the-database-copy`)."""
+    (`DATA.md#no-automatic-backfill`); a database copy it deferred is neither
+    done nor a fault of the target (`DATA.md#the-database-copy`)."""
     manager = make_manager(db, [], db_debounce=3600.0)
     await manager.configure(str(tmp_path / "mirror"))
     leave_a_write_open(db)
 
     result = await asyncio.wait_for(manager.sync_now(), timeout=3.0)
 
-    assert result["failed"] == 1
-    assert DB_MIRROR_NAME in result["errors"][0]
-    assert manager.status()["state"] == "failed"
+    assert (result["deferred"], result["failed"], result["errors"]) == (1, 0, [])
+    status = manager.status()
+    assert status["state"] == "deferred"
+    assert (status["lastError"], status["lastSuccessAt"]) == (None, None)
+    end_the_open_write(db, "ROLLBACK")
+
+
+@pytest.mark.asyncio
+async def test_a_sync_now_that_fails_and_defers_reads_failed(
+    db: Database, tmp_path: Path
+) -> None:
+    """A real target fault outranks a deferral (`DATA.md#failures`)."""
+    root = tmp_path / "Batch A"
+    root.mkdir()
+    (root / "a.json").write_text("{}", encoding="utf-8")
+    blocker = tmp_path / "blocker"
+    blocker.write_text("", encoding="utf-8")
+    manager = make_manager(db, [str(root)], db_debounce=3600.0)
+    await manager.configure(str(blocker))
+    leave_a_write_open(db)
+
+    result = await asyncio.wait_for(manager.sync_now(), timeout=3.0)
+
+    assert (result["failed"], result["deferred"]) == (1, 1)
+    status = manager.status()
+    assert status["state"] == "failed"
+    assert status["lastError"] == result["errors"][0]
     end_the_open_write(db, "ROLLBACK")
 
 

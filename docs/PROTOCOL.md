@@ -1885,9 +1885,9 @@ The kind of answer a condition rewards. `port` is a rig whose response ports car
 <a id="shape-backupstate"></a>
 #### BackupState
 
-`pending` = directory set but no pass has completed yet, distinct from `ok` (a pass succeeded) and `failed` (the last pass didn't) — a freshly set, unreachable network path must not read as healthy before its first pass.
+`pending` = directory set but no pass has completed yet, distinct from `ok` (a pass succeeded) and `failed` (the last pass didn't) — a freshly set, unreachable network path must not read as healthy before its first pass. `deferred` = the last pass or sync copied everything it could but the database copy waits behind an open write (`DATA.md#the-database-copy`); a later pass makes it. Not a fault of the target: a real failure in the same pass reads `failed`.
 
-"disabled" \| "pending" \| "ok" \| "failed"
+"disabled" \| "pending" \| "ok" \| "deferred" \| "failed"
 
 <a id="shape-backupstatus"></a>
 #### BackupStatus
@@ -3468,12 +3468,15 @@ This machine's strobe vocabulary (`TASKS.md#strobe-vocabulary`) — the one sour
 <a id="shape-syncresult"></a>
 #### SyncResult
 
+What `backup.syncNow` did.
+
 | Field | Type | Notes |
 |---|---|---|
 | `copied` | number |  |
 | `skipped` | number | Already current — not an error. |
 | `failed` | number |  |
-| `errors` | string[] |  |
+| `deferred` | number | Copies postponed rather than failed: the database copy behind an open write, which a later pass makes. Never counted in `failed` or listed in `errors`. |
+| `errors` | string[] | The first few failed copies; a deferral is not one. |
 | `directory` | string |  |
 
 <a id="shape-taskdiagnostic"></a>

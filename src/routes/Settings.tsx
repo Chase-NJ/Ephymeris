@@ -8,6 +8,7 @@ import { BackupStatusNote } from "@/components/settings/BackupStatusNote";
 import { DirectoryField } from "@/components/settings/DirectoryField";
 import { SettingRow } from "@/components/settings/SettingRow";
 import { UpdatesTile } from "@/components/settings/UpdatesTile";
+import { BACKUP_TONE_COLOR } from "@/lib/backup/report";
 import { useBackupStatus, type BackupStatus } from "@/lib/backup/useBackupStatus";
 import { CASCADE, RISE, springPanel } from "@/lib/motion";
 import { useSettings } from "@/lib/settings/context";
@@ -204,10 +205,11 @@ export function Settings() {
  * Ordered by what would hurt most. No data directory means nothing is being
  * written anywhere and takes the error tone outright; a failing mirror is the
  * next worst thing (`DATA.md#backup-mirroring` — a backup that silently stopped is a promise
- * the app isn't keeping); a live mirror earns Ion; no mirror at all is quiet
- * static, because it is a choice rather than a fault. Same tones
- * `BackupStatusNote` uses in the row below, so the corner and the row can
- * never disagree.
+ * the app isn't keeping); a deferred database copy or a pending first pass
+ * warns; a live mirror earns Ion; no mirror at all is quiet static, because it
+ * is a choice rather than a fault. Same tones `backupTone` gives
+ * `BackupStatusNote` in the row below, so the corner and the row can never
+ * disagree.
  */
 function StorageFact({
   dataDirectory,
@@ -234,6 +236,13 @@ function StorageFact({
     );
   }
   if (backup.syncing) return <span className="text-starlight">syncing…</span>;
+  if (backup.state === "deferred") {
+    return (
+      <span style={{ color: BACKUP_TONE_COLOR.warning }}>
+        database copy deferred
+      </span>
+    );
+  }
   if (backup.state === "pending") {
     return (
       <span style={{ color: "var(--color-status-warning)" }}>

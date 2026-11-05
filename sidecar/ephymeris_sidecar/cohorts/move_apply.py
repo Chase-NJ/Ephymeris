@@ -39,7 +39,7 @@ from ..sessions.models import GroupRun
 from ..sessions.repository import SessionRepository
 from ..sessions.tidy import Merge, merged_fields
 from . import freshness, relocate, transfer
-from .db import Database, Tx
+from .db import Database, Query, Tx
 from .move import (
     MovePlan,
     MoveRequest,
@@ -67,7 +67,28 @@ def _now() -> str:
 
 def preview(db: Database, request: MoveRequest, *, busy: str | None = None) -> MovePlan:
     with db.read() as q:
-        return plan_move(q, request, busy=busy)
+        plan = plan_move(q, request, busy=busy)
+        _refuse_unfinished(q, plan)
+        return plan
+
+
+def _refuse_unfinished(conn: Query, plan: MovePlan) -> None:
+    """A move between either cohort left `copying`, waiting for a folder it
+    couldn't reach. Its copies would count as already at the destination
+    (`present`), and its undo, at a later start, would remove them from
+    under the records this move points at them."""
+    row = conn.execute(
+        "SELECT error FROM animal_moves WHERE state = 'copying' AND (source_cohort_id IN (?, ?)"
+        " OR dest_cohort_id IN (?, ?)) LIMIT 1",
+        (plan.source.id, plan.dest.id, plan.source.id, plan.dest.id),
+    ).fetchone()
+    if row is not None:
+        plan.refuse(
+            "unfinished-move",
+            f"An earlier move of animals between these cohorts hasn't finished"
+            f" ({row[0] or 'interrupted'}). Connect both data folders and restart Ephymeris"
+            " to finish it, then try again.",
+        )
 
 
 def apply(
@@ -83,6 +104,7 @@ def apply(
     """
     with db.write() as unit:
         plan = plan_move(unit, request, busy=busy)
+        _refuse_unfinished(unit, plan)
         if plan.refused:
             raise MoveRefused(plan)
         journal = str(uuid.uuid4())

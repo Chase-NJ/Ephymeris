@@ -678,6 +678,41 @@ def test_a_copying_resume_that_cannot_reach_a_side_leaves_the_journal_to_retry(
     assert state == "rolled-back"
 
 
+def test_a_copy_that_loses_the_destination_is_left_for_a_later_start_to_undo(
+    lab: Lab, unreachable_volume, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The live path: the destination drops mid-copy, so the undo can't check
+    what it copied, and a later move between the two is refused until a
+    start undoes it. Otherwise that move would take this one's copies as
+    already there, and this undo would later remove them from under its
+    records."""
+    copy_files = move_apply._copy_files
+
+    def copy_then_drop(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        copy_files(*args, **kwargs)
+        unreachable_volume(lab.b_root)
+        raise OSError("the drive went away")
+
+    monkeypatch.setattr(move_apply, "_copy_files", copy_then_drop)
+    with pytest.raises(OSError, match="went away"):
+        lab.apply("slow1")
+    [state] = statements(lab.db).execute("SELECT state FROM animal_moves").fetchone()
+    assert state == "copying"
+
+    monkeypatch.undo()  # back, but only the next start undoes it
+    refused = {r["code"] for r in lab.preview("slow1").refused}
+    assert refused == {"unfinished-move"}
+    with pytest.raises(move_apply.MoveRefused, match="hasn't finished"):
+        lab.apply("slow1")
+
+    move_apply.resume(lab.db)
+
+    assert lab.files(lab.b_root) == set()
+    lab.apply("slow1")
+    assert not any("slow1" in f for f in lab.files(lab.a_root))
+    assert all(Path(p).is_file() for _, p in lab.runs(lab.b.id).values())
+
+
 def test_records_changing_under_the_copy_abandon_the_move(lab: Lab) -> None:
     def record_once_copied(done: int, total: int) -> None:
         if done < total:

@@ -681,10 +681,59 @@ def test_a_copy_left_to_a_later_start_explains_a_retry_and_does_not_hold_up_a_se
     monkeypatch.undo()  # back, but only the next start finishes it
 
     assert not relocate.moving(archive.db, archive.cohort.id)
-    with pytest.raises(DataFolderError, match="hasn't finished") as refused:
-        relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.root / "third"), True)
-    assert str(archive.old) in str(refused.value)
-    assert not (archive.root / "third").exists()
+    for move_existing in (True, False):
+        with pytest.raises(DataFolderError, match="hasn't finished") as refused:
+            relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), move_existing)
+        assert f"waiting for {archive.old}" in str(refused.value)
+    assert archive.cohorts.get(archive.cohort.id).data_folder == str(archive.old)
+
+
+def test_a_copy_left_to_a_later_start_does_not_hold_up_a_relocate_elsewhere(
+    archive: Archive, unreachable_volume, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Its target may never come back. A relocate to another folder is no
+    business of the undo's: that one takes only copies whose original is
+    still there, so it leaves this relocate's files alone."""
+    journal(archive, "copying")
+    shutil.copytree(archive.old, archive.new)
+    unreachable_volume(archive.new)
+    relocate.resume(archive.db)
+
+    third = archive.root / "third" / "Batch A"
+    relocate.relocate_cohort(archive.db, archive.cohort.id, str(third), True)
+    assert archive.all_under(third)
+
+    monkeypatch.undo()
+    relocate.resume(archive.db)  # the originals are gone: it removes nothing
+    assert archive.all_under(third)
+    assert any(p.is_file() for p in archive.new.rglob("*")), "the undo kept what it can't check"
+
+
+def test_a_copy_that_loses_the_new_folder_is_left_for_a_later_start_to_undo(
+    archive: Archive, other_volume, unreachable_volume, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The live path of #67: the new drive drops mid-copy, so the undo can't
+    check what it copied."""
+    other_volume(archive.new.parent)
+    copy_tree = relocate._copy_tree
+
+    def copy_then_drop(source: Path, target: Path):  # noqa: ANN202
+        copy_tree(source, target)
+        unreachable_volume(archive.new)
+        raise OSError("the drive went away")
+
+    monkeypatch.setattr(relocate, "_copy_tree", copy_then_drop)
+
+    with pytest.raises(DataFolderError, match="next start that can reach both"):
+        relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
+    assert archive.journal() == "copying"
+    assert archive.all_under(archive.old)
+
+    monkeypatch.undo()
+    relocate.resume(archive.db)
+
+    assert archive.journal() == "rolled-back"
+    assert not any(p.is_file() for p in archive.new.rglob("*"))
 
 
 def test_a_resume_that_cannot_reach_the_copies_leaves_the_journal_to_retry(

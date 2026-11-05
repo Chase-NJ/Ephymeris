@@ -199,16 +199,16 @@ def relocate_cohort(db: Database, cohort_id: str, destination: str, move_existin
     rewrites nothing: the cohort is attached to data that is already there,
     and whatever the records named stays where it was.
     """
+    target = Path(destination).expanduser()
     with db.read() as q:
         row = q.execute(
             "SELECT data_folder FROM cohorts WHERE id = ?", (cohort_id,)
         ).fetchone()
         if row is not None:
-            _refuse_unfinished(q, cohort_id)
+            _refuse_unfinished(q, cohort_id, target)
     if row is None:
         raise CohortNotFound(cohort_id)
     source = Path(row[0]).expanduser()
-    target = Path(destination).expanduser()
 
     if not move_existing or not source.exists() or _same(source, target):
         final = folders.relocate(source, target, move_existing)
@@ -263,8 +263,14 @@ def _carry_out(
         message = f"Couldn't move data to {target}: {exc}"
         if same_volume:
             _finish(db, journal, "rolled-back", str(exc))
-        elif not _undo_copy(db, journal, source, target, str(exc)):
-            message += " What was copied is removed at the next start that can reach both folders."
+        else:
+            try:
+                undone = _undo_copy(db, journal, source, target, str(exc))
+            except OSError:  # the journal stays `copying`; the next start undoes it
+                log.exception("relocate: couldn't remove the copy at %s", target)
+                undone = False
+            if not undone:
+                message += " What was copied is removed at the next start that can reach both folders."
         raise DataFolderError(message) from exc
 
     failure: BaseException | None = None
@@ -502,22 +508,29 @@ def moving(db: Database, cohort_id: str) -> bool:
         return any(state == "moving" or journal in _carrying_out for journal, state in rows)
 
 
-def _refuse_unfinished(conn: Query, cohort_id: str) -> None:
-    """A relocate an earlier start left to undo or finish, with a folder it
-    couldn't reach. Another would copy into, or name, what that one has yet
-    to clean up."""
-    row = conn.execute(
-        "SELECT source, target, error FROM folder_moves WHERE cohort_id = ?"
-        " AND state IN ('moving', 'copying') LIMIT 1",
+def _refuse_unfinished(conn: Query, cohort_id: str, destination: Path) -> None:
+    """A relocate left waiting for a folder it couldn't reach. A rename's
+    records may name a folder that has moved, so nothing else may change the
+    cohort's folder first. A copy's undo will remove what it copied, so no
+    relocate may move into, or point at, its target; any other destination
+    is safe, and a target that never comes back must not hold the cohort."""
+    rows = conn.execute(
+        "SELECT source, target, state, error FROM folder_moves WHERE cohort_id = ?"
+        " AND state IN ('moving', 'copying')",
         (cohort_id,),
-    ).fetchone()
-    if row is not None:
-        source, target, error = row
+    ).fetchall()
+    for source, target, state, error in rows:
+        if state == "copying" and not _overlap(destination, Path(target)):
+            continue
         raise DataFolderError(
             f"An earlier move of this cohort's data from {source} to {target} hasn't finished"
             f" ({error or 'interrupted'}). Connect both folders and restart Ephymeris to"
             " finish it, then change the data folder."
         )
+
+
+def _overlap(a: Path, b: Path) -> bool:
+    return _same(a, b) or relative_below(a, b) is not None or relative_below(b, a) is not None
 
 
 def _refuse_open_sessions(conn: Query, cohort_id: str) -> None:

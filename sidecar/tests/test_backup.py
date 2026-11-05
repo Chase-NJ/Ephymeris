@@ -19,6 +19,7 @@ import json
 import logging
 import sqlite3
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -531,6 +532,44 @@ async def test_a_deferred_copy_still_owed_reads_deferred_while_not_yet_due(
     status = manager.status()
     assert (status["state"], status["lastSuccessAt"]) == ("deferred", None)
     end_the_open_write(db, "ROLLBACK")
+
+
+@pytest.mark.asyncio
+async def test_a_repoint_starts_a_new_deferral_stretch(
+    db: Database, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A new target has none of the old one's history, deferrals included."""
+    manager = make_manager(db, [], db_debounce=0.0, db_defer_warn=0.0)
+    await manager.configure(str(tmp_path / "a"))
+    leave_a_write_open(db)
+    with caplog.at_level(logging.WARNING, logger="ephymeris_sidecar.backup.manager"):
+        await asyncio.wait_for(manager._pass(), timeout=3.0)
+        await manager.configure(str(tmp_path / "b"))
+        assert manager.status()["state"] == "pending"
+        await asyncio.wait_for(manager._pass(), timeout=3.0)
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 2, "the new target's deferral is warned about afresh"
+    end_the_open_write(db, "ROLLBACK")
+
+
+@pytest.mark.asyncio
+async def test_a_commit_during_a_sync_copy_stays_owed_a_copy(
+    db: Database, tmp_path: Path
+) -> None:
+    """"Sync now" clears only the mark it acted on, as a pass does."""
+    manager = make_manager(db, [], db_debounce=0.0)
+    await manager.configure(str(tmp_path / "mirror"))
+    copy = manager._write_db_backup
+
+    def copy_then_commit(target: Path) -> None:
+        copy(target)
+        time.sleep(0.01)  # a later monotonic stamp than the mark acted on
+        manager.mark_db_dirty()
+
+    manager._write_db_backup = copy_then_commit  # type: ignore[method-assign]
+    await manager.sync_now()
+
+    assert manager._db_due(), "the commit that landed during the copy is still owed one"
 
 
 @pytest.mark.asyncio

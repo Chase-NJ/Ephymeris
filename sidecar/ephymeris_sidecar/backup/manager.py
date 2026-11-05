@@ -333,7 +333,12 @@ class BackupManager:
             await asyncio.to_thread(self._write_db_backup, target)
         except WriteInProgress:
             # Not a failure of the target: the mark stays, and the next pass
-            # snapshots once the write has ended.
+            # snapshots once the write has ended. A "Sync now" copying in the
+            # meantime may have cleared it; restore it, or the owed copy would
+            # read deferred with nothing left to retry it.
+            with self._lock:
+                if self._db_dirty_at is None:
+                    self._db_dirty_at = marked
             self._note_deferred()
             return True
         self._note_copied(marked)

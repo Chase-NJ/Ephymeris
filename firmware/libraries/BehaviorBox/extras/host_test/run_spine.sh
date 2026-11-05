@@ -28,6 +28,11 @@ CXX="${CXX:-clang++}"
 for scenario in handshake stream stop last blocks pairs passes sync_tick sync_close; do
   "$HERE/test_spine" "$scenario"
 done
+# A Present that drives nothing, so a tick strobes only a trial's mark.
+"$CXX" -std=c++11 -Wall -Werror -Wno-unused-function -DSPINE_FIXTURE_QUIET_PRESENT \
+  -I"$HERE/box_shim" -I"$HERE" -I"$LIB" \
+  -x c++ "$HERE/test_spine.cpp" -o "$HERE/test_spine_quiet"
+"$HERE/test_spine_quiet" sync_mark
 # The same runner over spine_drive_fixture.h: PWM, tone and a pulse train.
 "$CXX" -std=c++11 -Wall -Werror -Wno-unused-function -DSPINE_FIXTURE_DRIVES \
   -I"$HERE/box_shim" -I"$HERE" -I"$LIB" \

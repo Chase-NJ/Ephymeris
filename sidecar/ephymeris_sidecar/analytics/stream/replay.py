@@ -34,15 +34,19 @@ from typing import Iterable, Sequence
 #: `stream/spine.py` predicts. 6 adds blocks and the response state. 7 adds
 #: GRGL's rules (BoxInterp.h's GRGL RULES): the escalating penalty, the
 #: await-low state, aborts that repeat uncounted, and anti-bias's strength,
-#: clamp and run cap; a table that uses none of them runs as under 6.
-INTERP_VERSIONS = frozenset({2, 3, 4, 5, 6, 7})
-INTERP_VERSION = 7
+#: clamp and run cap; a table that uses none of them runs as under 6. 8
+#: changes no table and no rule here either: the runner strobes each trial's
+#: outcome class, which `stream/spine.py` predicts from `Actions.entered`.
+INTERP_VERSIONS = frozenset({2, 3, 4, 5, 6, 7, 8})
+INTERP_VERSION = 8
 #: The first version whose outputs can be driven (PWM, tone, a pulse train).
 DRIVES_SINCE = 5
 #: The first version with blocks and the response state.
 BLOCKS_SINCE = 6
 #: The first version with GRGL's rules.
 GRGL_SINCE = 7
+#: The first version whose stream carries each trial's outcome class.
+OUTCOMES_SINCE = 8
 
 NONE = 0xFF
 PERMILLE = 1000

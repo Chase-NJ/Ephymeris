@@ -99,7 +99,7 @@ from typing import Any, Sequence
 #: which the spine runner announces as `INTERP=<n>`. A run's snapshot records
 #: it beside the table, and replay refuses one it does not know. 1 is the trial
 #: runner's, in the same numbering space (`analytics/stream/replay.py`).
-INTERP_VERSION = 7
+INTERP_VERSION = 8
 
 #: BoxInterp.h's constants (`INTERP_NONE`, `INTERP_RISE`, ...), mirrored.
 NONE = 0xFF
@@ -135,6 +135,10 @@ OUTCOME_CLASSES = (
     "abort_before_stimulus",
     "abort_during_sampling",
 )
+#: The strobe code each class is announced by, in class order, from `INTERP` 8:
+#: BoxSpine.h's `kOutcomeCodes`, which a test holds to it
+#: (`0005-spine-runs-strobe-each-trials-outcome.md`).
+OUTCOME_CODES = tuple(f"OUTCOME_{name.upper()}" for name in OUTCOME_CLASSES)
 OUTCOME_CORRECT = 1
 OUTCOME_HOLD_BROKEN = OUTCOME_CLASSES.index("hold_broken") + 1
 OUTCOME_OMISSION = OUTCOME_CLASSES.index("omission") + 1

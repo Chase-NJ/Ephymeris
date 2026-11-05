@@ -277,8 +277,8 @@ def test_the_trial_runner_s_interpreter_is_never_replayed_as_a_table() -> None:
     table format, kept so its runs still replay; 3 adds the pick state, 4
     the counter and last-trial states, 5 driven outputs (no table change),
     6 blocks, and 7 GRGL's rules."""
-    assert rp.INTERP_VERSIONS == {2, 3, 4, 5, 6, 7}
-    assert rp.INTERP_VERSION == 7
+    assert rp.INTERP_VERSIONS == {2, 3, 4, 5, 6, 7, 8}
+    assert rp.INTERP_VERSION == 8
     with pytest.raises(ValueError, match="INTERP 1"):
         rp.replay(TRIAL, PARAMS, seed=1, events=[], ticks=10, interp=1)
 

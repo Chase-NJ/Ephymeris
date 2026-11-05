@@ -20,6 +20,10 @@
 
   The channel codes are fixture codes, like strobe_fixture.h's: a host test
   that passes with them proves the runner reads its table, not the lab's codes.
+
+  Built with SPINE_FIXTURE_QUIET_PRESENT, state 1 drives no output, so with RP 0
+  the tick the Present ends strobes only the trial's mark (OUTCOME_CORRECT, on
+  the chance state), and that tick must still pulse the sync line.
 */
 #ifndef SPINE_FIXTURE_H
 #define SPINE_FIXTURE_H
@@ -34,12 +38,18 @@
 #define BF_FLUID_OFF 47
 #define BF_BLOCK_START 48
 
-#define SPINE_INTERP 7
+#define SPINE_INTERP 8
+
+#ifdef SPINE_FIXTURE_QUIET_PRESENT
+#define SPINE_FIXTURE_PRESENT_OUTPUTS 0x0UL
+#else
+#define SPINE_FIXTURE_PRESENT_OUTPUTS 0x3UL
+#endif
 
 #define SPINE_NUM_STATES 7
 #define SPINE_STATES { \
   {0x1UL, 0x1UL, 255, 255, 255, 255, 255, 255, 0, 1, 1, 0}, \
-  {0x3UL, 0x1UL, 1, 1, 2, 255, 255, 255, 1, 1, 0, 0}, \
+  {SPINE_FIXTURE_PRESENT_OUTPUTS, 0x1UL, 1, 1, 2, 255, 255, 255, 1, 1, 0, 0}, \
   {0x0UL, 0x0UL, 255, 255, 255, 5, 3, 4, 0, 0, 0, 1}, \
   {0x4UL, 0x0UL, 4, 4, 4, 255, 255, 255, 0, 0, 0, 0}, \
   {0x0UL, 0x0UL, 2, 2, 5, 255, 255, 255, 0, 0, 0, 0}, \

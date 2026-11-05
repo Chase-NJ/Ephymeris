@@ -38,7 +38,12 @@
   core's order within a tick:
     START_SESSION, watched inputs that rose (their channel's enter code), that
     fell (exit), BLOCK_START (a block's first trial), TRIAL_START, outputs
-    driven LOW (off), driven HIGH (on).
+    driven LOW (off), driven HIGH (on), then the OUTCOME code of each state
+    entered that carries an outcome class: once per trial, at its mark
+    (0005-spine-runs-strobe-each-trials-outcome.md). Last, before only
+    END_SESSION: a verdict on what the tick's inputs and outputs did. It
+    shares the tick's one sync pulse, so a tick that strobes nothing else
+    still pulses.
   An input edge no state is watching is never strobed: the core ignores it, so
   replay needs only what was strobed.
 
@@ -335,6 +340,40 @@ static const InterpBlocks kBlocks = {kBlockRows, BOX_SPINE_ENTRIES, BOX_SPINE_OV
                                      SPINE_BLOCK_SKIPPED, SPINE_BLOCK_HITS, SPINE_REPEAT_ABORTS,
                                      SPINE_LAZY_STEP, SPINE_LAZY_MAX};
 static const InterpTable kTable = {kStates, kEdges, &kCounter, &kBlocks};
+
+/* Each outcome class's code, by class number less one: the order of
+   taskdef/lowering.py's OUTCOME_CLASSES, which a sidecar test holds this to.
+   Outcome class numbers are append-only, so a class is never renumbered here.
+   In flash on AVR, where a const array without PROGMEM takes RAM the task's
+   budget never counted (docs/TASKS.md#spine-diagnostics). */
+#ifdef __AVR__
+#include <avr/pgmspace.h>
+#define BOX_SPINE_FLASH PROGMEM
+#define BOX_SPINE_OUTCOME_CODE(i) ((int)pgm_read_word(&kOutcomeCodes[i]))
+#else
+#define BOX_SPINE_FLASH
+#define BOX_SPINE_OUTCOME_CODE(i) ((int)kOutcomeCodes[i])
+#endif
+static const int16_t kOutcomeCodes[] BOX_SPINE_FLASH = {
+  BF_OUTCOME_CORRECT, BF_OUTCOME_WRONG_RESPONSE, BF_OUTCOME_HOLD_BROKEN, BF_OUTCOME_OMISSION,
+  BF_OUTCOME_WITHHELD, BF_OUTCOME_FALSE_ALARM, BF_OUTCOME_ABORT_BEFORE_STIMULUS,
+  BF_OUTCOME_ABORT_DURING_SAMPLING};
+#define BOX_SPINE_NUM_OUTCOMES (sizeof(kOutcomeCodes) / sizeof(kOutcomeCodes[0]))
+
+/*  Whether state `s` carries an outcome class the runner strobes. */
+inline bool marked(uint8_t s)
+{
+  uint8_t outcome = kTable.states[s].outcome;
+  return outcome > 0 && outcome <= BOX_SPINE_NUM_OUTCOMES;
+}
+
+/*  Whether a tick entered a state whose outcome class it strobes. */
+inline bool marks(const InterpActions &a)
+{
+  for (int k = 0; k < 2 && a.entered[k] != INTERP_NONE; k++)
+    if (marked(a.entered[k])) return true;
+  return false;
+}
 
 /* The run's parameter block, filled from the table's defaults and the SET lines. */
 static uint32_t params[SPINE_NUM_PARAMS];
@@ -694,9 +733,10 @@ inline void emitTick(const SpineTick &t, uint32_t now)
   for (int j = 0; j < SPINE_NUM_OUTPUTS; j++)
     if (on & ((uint32_t)1 << j)) drive(j, true, now);
   // The tick's one pulse rises with its pins, if anything below strobes. A
-  // tick can step the core and strobe nothing (a state with no output edge).
+  // tick can step the core and strobe nothing (a state with no output edge),
+  // or strobe only a trial's mark (a window timing out with no output edge).
   bool structure = !ends && (a.flags & (INTERP_ACT_BLOCK_START | INTERP_ACT_TRIAL_START));
-  if (ends || (a.flags & INTERP_ACT_SESSION_START) || a.rose || a.fell || structure || off || on)
+  if (ends || (a.flags & INTERP_ACT_SESSION_START) || a.rose || a.fell || structure || off || on || marks(a))
     syncTick();
   if (a.flags & INTERP_ACT_SESSION_START) strobeAt(BF_START_SESSION, ts);
   for (int i = 0; i < SPINE_NUM_INPUTS; i++)
@@ -709,6 +749,11 @@ inline void emitTick(const SpineTick &t, uint32_t now)
     if (off & ((uint32_t)1 << j)) strobeAt(kOutputs[j].offCode, ts);
   for (int j = 0; j < SPINE_NUM_OUTPUTS; j++)
     if (on & ((uint32_t)1 << j)) strobeAt(kOutputs[j].onCode, ts);
+  // Last, the end's tick included. A lowered table never marks a trial in the
+  // tick the next starts, but one that did strobes the mark after that
+  // TRIAL_START, as replay predicts.
+  for (int k = 0; k < 2 && a.entered[k] != INTERP_NONE; k++)
+    if (marked(a.entered[k])) strobeAt(BOX_SPINE_OUTCOME_CODE(kTable.states[a.entered[k]].outcome - 1), ts);
   if (ends) strobeAt(BF_END_SESSION, ts);
   printQueued();
 }

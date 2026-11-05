@@ -128,7 +128,7 @@ static void handshake()
   bb_feed("START SEED=7");
   boot();
   std::vector<std::string> l = lines();
-  expect("INTERP, then FREE_RAM, then SYNC=TICK, then READY, first", l.size() > 4 && l[0] == "INTERP=7" &&
+  expect("INTERP, then FREE_RAM, then SYNC=TICK, then READY, first", l.size() > 4 && l[0] == "INTERP=8" &&
          l[1].compare(0, 9, "FREE_RAM=") == 0 && l[2] == "SYNC=TICK" && l[3] == "READY");
   expect("each SET answered with the running count and CRC",
          indexOf("PARAMS 2 1564777853") < indexOf("PARAMS 3 2992546637"));
@@ -160,15 +160,15 @@ static void stream()
   const std::vector<std::pair<int, unsigned long>> want = {
     {BF_START_SESSION, 0}, {BF_BLOCK_START, 0}, {BF_TRIAL_START, 0}, {BF_LIGHT_ON, 0},
     {BF_PORT_ENTER, 10}, {BF_SAMPLE_ON, 10},
-    {BF_LIGHT_OFF, 110}, {BF_SAMPLE_OFF, 110}, {BF_FLUID_ON, 110},
+    {BF_LIGHT_OFF, 110}, {BF_SAMPLE_OFF, 110}, {BF_FLUID_ON, 110}, {BF_OUTCOME_CORRECT, 110},
     {BF_FLUID_OFF, 140},
     {BF_BLOCK_START, 191}, {BF_TRIAL_START, 191}, {BF_LIGHT_ON, 191},
     {BF_PORT_ENTER, 300}, {BF_SAMPLE_ON, 300},
-    {BF_PORT_EXIT, 350}, {BF_LIGHT_OFF, 350}, {BF_SAMPLE_OFF, 350},
+    {BF_PORT_EXIT, 350}, {BF_LIGHT_OFF, 350}, {BF_SAMPLE_OFF, 350}, {BF_OUTCOME_ABORT_DURING_SAMPLING, 350},
     {BF_END_SESSION, 400},
   };
   std::vector<std::pair<int, unsigned long>> got = strobes();
-  expect("the stream is edges and structure, in tick order, at tick times", got == want);
+  expect("the stream is edges, structure and each trial's outcome, in tick order, at tick times", got == want);
   if (got != want)
     for (auto &s : got) std::cout << "      " << s.first << "\t" << s.second << "\n";
   expect("every output is LOW once the session ends",
@@ -450,6 +450,37 @@ static void syncClose()
   expectPulseShape();
   if (failures) dumpPulses();
 }
+/* A tick that strobes only a trial's mark still pulses
+   (0005-spine-runs-strobe-each-trials-outcome.md): built with
+   SPINE_FIXTURE_QUIET_PRESENT, the Present drives nothing, and RP 0 sends the
+   chance state to the class timeout, so the tick it ends strobes
+   OUTCOME_CORRECT and nothing else. */
+static void syncMark()
+{
+  bb_onPinWrite = logWrite;
+  bb_feed("BEGIN");
+  bb_feed("SET NT=1 T1=100 T3=50 RW=30 RP=0");
+  bb_feed("START SEED=7");
+  boot();
+  bb_realTiming(115200);
+  passTo(10);
+  bb_pinValue[2] = LOW;
+  passTo(300);
+
+  std::vector<std::pair<int, unsigned long>> at110;
+  for (auto &s : strobes())
+    if (s.second == 110) at110.push_back(s);
+  expect("the Present's end strobes only the trial's mark",
+         at110 == std::vector<std::pair<int, unsigned long>>({{BF_OUTCOME_CORRECT, 110}}));
+  auto got = pulses();
+  std::vector<unsigned long> ticks = strobedTicks();
+  expect("still one pulse per tick that strobes", got.size() == ticks.size());
+  bool rose = false;
+  for (auto &p : got) rose |= p.first >= (t0 + 110) * 1000UL && p.first - (t0 + 110) * 1000UL <= PASS_US;
+  expect("the mark's tick pulses in its first pass", rose);
+  expectPulseShape();
+  if (failures) dumpPulses();
+}
 #ifdef SPINE_FIXTURE_DRIVES
 static void dump(const std::vector<std::pair<int, unsigned long>> &got)
 {
@@ -484,6 +515,7 @@ static void drives()
     {BF_PORT_ENTER, 10}, {BF_SAMPLE_ON, 10}, {BF_LED_ON, 10}, {BF_TONE_ON, 10}, {BF_LASER_TRAIN_ON, 10},
     {BF_LASER_TRAIN_OFF, 70},
     {BF_LIGHT_OFF, 110}, {BF_SAMPLE_OFF, 110}, {BF_LED_OFF, 110}, {BF_TONE_OFF, 110}, {BF_FLUID_ON, 110},
+    {BF_OUTCOME_CORRECT, 110},
     {BF_FLUID_OFF, 140},
     {BF_END_SESSION, 191},
   };
@@ -620,6 +652,7 @@ int main(int argc, char **argv)
   else if (which == "passes") passes();
   else if (which == "sync_tick") syncTick();
   else if (which == "sync_close") syncClose();
+  else if (which == "sync_mark") syncMark();
 #endif
   else { std::cout << "  [FAIL] unknown scenario\n"; return 2; }
   return failures == 0 ? 0 : 1;

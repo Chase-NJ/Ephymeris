@@ -369,6 +369,86 @@
         "behaviorbox"
       ],
       "rationale": "A structural code of the phase spine (docs/adr/0003-phase-spine-task-model.md#the-strobe-stream), which lists it beside TRIAL_START. Emitted by BoxSpine.h at the tick the interpreter starts a block (INTERP_ACT_BLOCK_START): the session's first trial, and the first trial after a block's end rule is met. Replay predicts it from the table, so a block switch is part of the checksum, and a reader of the .tsv or a recording sees switches without replaying. Numbered next to TRIAL_START for the same reason: a machine that already issued edge codes can add it at this same number."
+    },
+    "OUTCOME_CORRECT": {
+      "code": 272,
+      "origin": "ephymeris",
+      "since": 3,
+      "emitted_on": "the tick a spine trial enters its marked state, when its outcome class is correct: last in that tick, after the outputs",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "An outcome code of the phase spine (docs/adr/0005-spine-runs-strobe-each-trials-outcome.md), one per outcome class, in the order of taskdef/lowering.py's OUTCOME_CLASSES. Emitted by BoxSpine.h once per trial a spine run marks, from the states the interpreter entered; replay predicts it, so a trial's class is part of the checksum and a reader of the .tsv or a recording sees each verdict without replaying. Analysis still scores by replay and never reads it. The eight are numbered together after TRIAL_START and BLOCK_START, apart from the lowest free codes a channel-set save issues to edges, so a machine that already issued edge codes can add each at this same number."
+    },
+    "OUTCOME_WRONG_RESPONSE": {
+      "code": 273,
+      "origin": "ephymeris",
+      "since": 3,
+      "emitted_on": "the tick a spine trial enters its marked state, when its outcome class is wrong_response: last in that tick, after the outputs",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "An outcome code of the phase spine (docs/adr/0005-spine-runs-strobe-each-trials-outcome.md), one per outcome class, in the order of taskdef/lowering.py's OUTCOME_CLASSES. Emitted by BoxSpine.h once per trial a spine run marks, from the states the interpreter entered; replay predicts it, so a trial's class is part of the checksum and a reader of the .tsv or a recording sees each verdict without replaying. Analysis still scores by replay and never reads it. The eight are numbered together after TRIAL_START and BLOCK_START, apart from the lowest free codes a channel-set save issues to edges, so a machine that already issued edge codes can add each at this same number."
+    },
+    "OUTCOME_HOLD_BROKEN": {
+      "code": 274,
+      "origin": "ephymeris",
+      "since": 3,
+      "emitted_on": "the tick a spine trial enters its marked state, when its outcome class is hold_broken: last in that tick, after the outputs",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "An outcome code of the phase spine (docs/adr/0005-spine-runs-strobe-each-trials-outcome.md), one per outcome class, in the order of taskdef/lowering.py's OUTCOME_CLASSES. Emitted by BoxSpine.h once per trial a spine run marks, from the states the interpreter entered; replay predicts it, so a trial's class is part of the checksum and a reader of the .tsv or a recording sees each verdict without replaying. Analysis still scores by replay and never reads it. The eight are numbered together after TRIAL_START and BLOCK_START, apart from the lowest free codes a channel-set save issues to edges, so a machine that already issued edge codes can add each at this same number."
+    },
+    "OUTCOME_OMISSION": {
+      "code": 275,
+      "origin": "ephymeris",
+      "since": 3,
+      "emitted_on": "the tick a spine trial enters its marked state, when its outcome class is omission: last in that tick, after the outputs",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "An outcome code of the phase spine (docs/adr/0005-spine-runs-strobe-each-trials-outcome.md), one per outcome class, in the order of taskdef/lowering.py's OUTCOME_CLASSES. Emitted by BoxSpine.h once per trial a spine run marks, from the states the interpreter entered; replay predicts it, so a trial's class is part of the checksum and a reader of the .tsv or a recording sees each verdict without replaying. Analysis still scores by replay and never reads it. The eight are numbered together after TRIAL_START and BLOCK_START, apart from the lowest free codes a channel-set save issues to edges, so a machine that already issued edge codes can add each at this same number."
+    },
+    "OUTCOME_WITHHELD": {
+      "code": 276,
+      "origin": "ephymeris",
+      "since": 3,
+      "emitted_on": "the tick a spine trial enters its marked state, when its outcome class is withheld: last in that tick, after the outputs",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "An outcome code of the phase spine (docs/adr/0005-spine-runs-strobe-each-trials-outcome.md), one per outcome class, in the order of taskdef/lowering.py's OUTCOME_CLASSES. Emitted by BoxSpine.h once per trial a spine run marks, from the states the interpreter entered; replay predicts it, so a trial's class is part of the checksum and a reader of the .tsv or a recording sees each verdict without replaying. Analysis still scores by replay and never reads it. The eight are numbered together after TRIAL_START and BLOCK_START, apart from the lowest free codes a channel-set save issues to edges, so a machine that already issued edge codes can add each at this same number."
+    },
+    "OUTCOME_FALSE_ALARM": {
+      "code": 277,
+      "origin": "ephymeris",
+      "since": 3,
+      "emitted_on": "the tick a spine trial enters its marked state, when its outcome class is false_alarm: last in that tick, after the outputs",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "An outcome code of the phase spine (docs/adr/0005-spine-runs-strobe-each-trials-outcome.md), one per outcome class, in the order of taskdef/lowering.py's OUTCOME_CLASSES. Emitted by BoxSpine.h once per trial a spine run marks, from the states the interpreter entered; replay predicts it, so a trial's class is part of the checksum and a reader of the .tsv or a recording sees each verdict without replaying. Analysis still scores by replay and never reads it. The eight are numbered together after TRIAL_START and BLOCK_START, apart from the lowest free codes a channel-set save issues to edges, so a machine that already issued edge codes can add each at this same number."
+    },
+    "OUTCOME_ABORT_BEFORE_STIMULUS": {
+      "code": 278,
+      "origin": "ephymeris",
+      "since": 3,
+      "emitted_on": "the tick a spine trial enters its marked state, when its outcome class is abort_before_stimulus: last in that tick, after the outputs",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "An outcome code of the phase spine (docs/adr/0005-spine-runs-strobe-each-trials-outcome.md), one per outcome class, in the order of taskdef/lowering.py's OUTCOME_CLASSES. Emitted by BoxSpine.h once per trial a spine run marks, from the states the interpreter entered; replay predicts it, so a trial's class is part of the checksum and a reader of the .tsv or a recording sees each verdict without replaying. Analysis still scores by replay and never reads it. The eight are numbered together after TRIAL_START and BLOCK_START, apart from the lowest free codes a channel-set save issues to edges, so a machine that already issued edge codes can add each at this same number."
+    },
+    "OUTCOME_ABORT_DURING_SAMPLING": {
+      "code": 279,
+      "origin": "ephymeris",
+      "since": 3,
+      "emitted_on": "the tick a spine trial enters its marked state, when its outcome class is abort_during_sampling: last in that tick, after the outputs",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "An outcome code of the phase spine (docs/adr/0005-spine-runs-strobe-each-trials-outcome.md), one per outcome class, in the order of taskdef/lowering.py's OUTCOME_CLASSES. Emitted by BoxSpine.h once per trial a spine run marks, from the states the interpreter entered; replay predicts it, so a trial's class is part of the checksum and a reader of the .tsv or a recording sees each verdict without replaying. Analysis still scores by replay and never reads it. The eight are numbered together after TRIAL_START and BLOCK_START, apart from the lowest free codes a channel-set save issues to edges, so a machine that already issued edge codes can add each at this same number."
     }
   },
   "port_slots": {

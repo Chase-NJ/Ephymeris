@@ -941,6 +941,7 @@ def _spine_canary(*, diverge: bool = False) -> dict[str, Any]:
     low = lowering.lower(phases, ["port"], ["cue", "sample", "reward"], session_cap=True)
     names = ["START_SESSION", "TRIAL_START", "END_SESSION", "PORT_ENTER", "PORT_EXIT",
              "CUE_ON", "CUE_OFF", "SAMPLE_ON", "SAMPLE_OFF", "REWARD_ON", "REWARD_OFF"]
+    names += lowering.OUTCOME_CODES  # what an INTERP 8 run also strobes
     code = {name: i + 1 for i, name in enumerate(names)}
     values = {"NT": 3, "RW1": 100, "RP1": 700}
     config = [{"metadataKey": f"p_{key.lower()}", "wireKey": key, "label": key, "type": "int",
@@ -963,6 +964,7 @@ def _spine_canary(*, diverge: bool = False) -> dict[str, Any]:
                         for s in ("cue", "sample", "reward")],
             "params": list(low.params),
             "table": {"states": [list(s) for s in low.states], "edges": [list(e) for e in low.edges]},
+            "outcomes": list(lowering.OUTCOME_CODES),
             "structural": {"sessionStart": "START_SESSION", "trialStart": "TRIAL_START",
                            "sessionEnd": "END_SESSION"},
         },
@@ -1010,6 +1012,7 @@ def _afc_canary() -> dict[str, Any]:
                for slot, channel in low.outputs]
     names = ["START_SESSION", "TRIAL_START", "END_SESSION", "BLOCK_START",
              *(i[k] for i in inputs for k in ("rise", "fall")), *(o[k] for o in outputs for k in ("on", "off"))]
+    names += lowering.OUTCOME_CODES  # what an INTERP 8 run also strobes
     code = {name: n + 1 for n, name in enumerate(names)}
     values = {"T1": 500, "T2": 2000, "H2": 100, "T3": 0, "T4": 1000, "BN1": 20}
     config = [{"metadataKey": f"p_{key.lower()}", "wireKey": key, "label": key, "type": "int",
@@ -1024,6 +1027,7 @@ def _afc_canary() -> dict[str, Any]:
                       "phases": list(low.phases), "rows": list(low.rows),
                       "blocks": [list(b) for b in low.blocks], "entries": [list(e) for e in low.entries],
                       "overrides": [], "skipped": low.skipped, "hits": low.hits},
+            "outcomes": list(lowering.OUTCOME_CODES),
             "structural": {"sessionStart": "START_SESSION", "trialStart": "TRIAL_START",
                            "sessionEnd": "END_SESSION", "blockStart": "BLOCK_START"},
         },
@@ -1054,6 +1058,7 @@ def _trace_canary(*, split: bool = False) -> dict[str, Any]:
     names = ["START_SESSION", "BLOCK_START", "TRIAL_START", "END_SESSION", "LICK_ENTER", "LICK_EXIT",
              "CS_A_ON", "CS_A_OFF", "CS_B_ON", "CS_B_OFF", "US_ON", "US_OFF"]
     names += ["LICK_B_ENTER", "LICK_B_EXIT"] if split else []
+    names += lowering.OUTCOME_CODES  # what an INTERP 8 run also strobes
     code = {name: i + 1 for i, name in enumerate(names)}
     values = {"T0": 1000, "T1": 1000, "T2": 500, "T3": 300, "T4": 700, "RW1": 100, "RP1": 1000,
               "RW2": 100, "RP2": 0, "BN1": 6, "W1_1": 2, "W1_2": 2}
@@ -1081,6 +1086,7 @@ def _trace_canary(*, split: bool = False) -> dict[str, Any]:
                       "phases": list(low.phases), "rows": list(low.rows),
                       "blocks": [list(b) for b in low.blocks], "entries": [list(e) for e in low.entries],
                       "overrides": [list(o) for o in low.overrides], "skipped": low.skipped, "hits": low.hits},
+            "outcomes": list(lowering.OUTCOME_CODES),
             "structural": {"sessionStart": "START_SESSION", "blockStart": "BLOCK_START",
                            "trialStart": "TRIAL_START", "sessionEnd": "END_SESSION"},
         },

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { TaskSimulation } from "@/lib/ws/protocol";
 
-import { DEFAULT_FORM, absentLabels, endedLabel, responsesOf, simulateArgs, switchLabels } from "./simulate";
+import { DEFAULT_FORM, absentLabels, endedLabel, responsesOf, simulateArgs, switchLabels, verdict } from "./simulate";
 import type { SpineDefinition } from "./spine";
 
 const def = {
@@ -73,5 +73,59 @@ describe("the labels", () => {
   it("says what ended the session", () => {
     expect(endedLabel(sim({ endedBy: "timeLimit", limitMs: 90_000 }))).toBe("ended at its 1.5 min time limit");
     expect(endedLabel(sim({ endedBy: "blocks" }))).toBe("ended when the blocks ran out");
+  });
+});
+
+describe("the verdict in words", () => {
+  const tally = (outcomeClass: string, n: number) => ({ outcomeClass, n, of: 200, p: n / 200, low: null, high: null });
+  const run = (over: Partial<TaskSimulation>) =>
+    sim({
+      overall: { id: "o", label: "o", pSession: 1, pWindow: null, hits: 200, counted: 200, triggered: 200, excluded: 0, windowSize: 20, wilsonLow: null, wilsonHigh: null } as never,
+      replay: {
+        trials: 200,
+        classes: [tally("correct", 200)],
+        rows: [
+          { rowId: "row_1", name: "Odor 1", trials: 98, unclassified: 0, classes: [tally("correct", 98)] },
+          { rowId: "row_2", name: "Odor 2", trials: 102, unclassified: 0, classes: [tally("correct", 102)] },
+        ],
+      } as never,
+      trialTable: { kind: "replay", phases: [], gaps: [], trials: [{ index: 199, atMs: 23 * 60_000 } as never] },
+      ...over,
+    });
+
+  it("says a perfect run as every one right, by trial type", () => {
+    expect(verdict(run({}), "Always correct")).toEqual([
+      "Always correct: 200 trials in about 23 min, every one right (98 Odor 1, 102 Odor 2).",
+      "Every trial type was presented.",
+      "Ended when the blocks ran out.",
+    ]);
+  });
+
+  it("says a mixed run as the share right, the outcome mix and each trial type's count", () => {
+    const mixed = run({
+      overall: { hits: 71, counted: 200 } as never,
+      replay: {
+        trials: 200,
+        classes: [tally("correct", 71), tally("wrong_response", 70), tally("omission", 59)],
+        rows: [
+          { rowId: "row_1", name: "Odor 1", trials: 98, unclassified: 0, classes: [tally("correct", 36), tally("wrong_response", 35), tally("omission", 27)] },
+          { rowId: "row_2", name: "Odor 2", trials: 102, unclassified: 0, classes: [tally("correct", 35), tally("wrong_response", 35), tally("omission", 32)] },
+        ],
+      } as never,
+      absent: [{ rowId: "row_3", name: "Odor 3", blocks: [] }],
+      endedBy: "trials",
+    });
+    expect(verdict(mixed, "Random")).toEqual([
+      "Random: 200 trials in about 23 min: 71 right of 200 counted (36 %) · 71 correct, 70 wrong response, 59 omission.",
+      "By trial type: Odor 1 36 of 98, Odor 2 35 of 102.",
+      "Never presented: Odor 3: in no block.",
+      "Ended at the session's trial cap.",
+    ]);
+  });
+
+  it("says when nothing ran", () => {
+    expect(verdict(run({ replay: null, overall: null, trialTable: { kind: "replay", phases: [], gaps: [], trials: [] } }), "Never responds")[0]).toBe(
+      "Never responds: 0 trials. Nothing ran.",
+    );
   });
 });

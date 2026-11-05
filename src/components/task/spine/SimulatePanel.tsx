@@ -12,6 +12,7 @@ import {
   responsesOf,
   simulateArgs,
   switchLabels,
+  verdict,
   type AnimalKind,
   type SimulateForm,
 } from "@/lib/taskdef/simulate";
@@ -19,14 +20,15 @@ import type { SpineDefinition } from "@/lib/taskdef/spine";
 import { useSidecar } from "@/lib/ws/context";
 import type { TaskDiagnostic, TaskSimulation } from "@/lib/ws/protocol";
 
-import { Field } from "./bits";
+import { Field, Note } from "./bits";
 
 /**
  * Simulate (`TASKS.md#simulating-a-spine-task`): the unsaved task run against
  * a simulated animal through replay, before anything is compiled or flashed.
  * The sidecar runs and scores it as Analytics scores a run, so what this draws
- * is Analytics' own trial view. It runs on demand only; once the document
- * changes, the last result is dimmed until it is run again.
+ * is Analytics' own trial view, under a verdict in plain words
+ * (`simulate.verdict`). It runs on demand only; once the document changes, the
+ * last result is dimmed until it is run again.
  */
 export function SimulatePanel({
   definition,
@@ -39,7 +41,7 @@ export function SimulatePanel({
   const [form, setForm] = useState<SimulateForm>(DEFAULT_FORM);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<{ sim: TaskSimulation; ranFor: string } | null>(null);
+  const [result, setResult] = useState<{ sim: TaskSimulation; ranFor: string; animal: string } | null>(null);
 
   const responses = responsesOf(definition);
   const problems = diagnostics.length;
@@ -66,7 +68,7 @@ export function SimulatePanel({
     setError(null);
     try {
       const sim = await simulateTask(client, definition, built.args);
-      setResult({ sim, ranFor });
+      setResult({ sim, ranFor, animal: ANIMALS.find((a) => a.kind === form.kind)?.label ?? form.kind });
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -76,6 +78,11 @@ export function SimulatePanel({
 
   return (
     <div className="flex flex-col gap-3">
+      <Note>
+        Check the task before an animal sees it: a whole session against a pretend animal, scored exactly as Analytics would score a
+        real run. Try the always-correct animal first (every trial type should come out right), then the random one (the outcome mix
+        should be what you expect). Nothing is compiled, flashed or saved.
+      </Note>
       <div className="flex flex-wrap items-end gap-3">
         <Field label="Animal">
           <Select<AnimalKind>
@@ -110,33 +117,35 @@ export function SimulatePanel({
           {running ? "Running…" : "Run"}
         </Button>
       </div>
-      <p className="text-[10px] leading-relaxed text-static/80">
-        {ANIMALS.find((a) => a.kind === form.kind)?.help}. Nothing is compiled, flashed or written.
-      </p>
+      <p className="text-[10px] leading-relaxed text-static/80">{ANIMALS.find((a) => a.kind === form.kind)?.help}.</p>
       {blocked && <p className="text-[11px] text-static">{blocked}</p>}
       {error && <p className="text-[11px] text-status-error">{error}</p>}
-      {result && <SimulationResult sim={result.sim} stale={stale} />}
+      {result && <SimulationResult sim={result.sim} animal={result.animal} stale={stale} />}
     </div>
   );
 }
 
-function SimulationResult({ sim, stale }: { sim: TaskSimulation; stale: boolean }) {
+function SimulationResult({ sim, animal, stale }: { sim: TaskSimulation; animal: string; stale: boolean }) {
   const trials = sim.trialTable?.trials.length ?? 0;
   const absent = absentLabels(sim);
   const curves = sim.series.filter((m) => m.values.length >= 2);
+  const said = verdict(sim, animal);
   return (
     <div className={`flex flex-col gap-2.5 border-t border-halo pt-2.5 transition-opacity ${stale ? "opacity-40" : ""}`}>
       {stale && <p className="text-[11px] text-static">The task has changed since this run. Run it again.</p>}
-      <p className="font-mono text-[10px] tabular-nums text-static">
-        seed {sim.seed} · {trials} trial{trials === 1 ? "" : "s"} · {endedLabel(sim)}
+      <div className="flex flex-col gap-0.5">
+        {said.map((line, i) => (
+          <p key={i} className={`text-[12px] leading-relaxed ${i === 0 ? "text-starlight" : absent.length && line.startsWith("Never presented") ? "text-status-warning" : "text-static"}`}>
+            {line}
+          </p>
+        ))}
+      </div>
+      <p className="font-mono text-[10px] tabular-nums text-static/80">
+        seed {sim.seed} · {trials} trial{trials === 1 ? "" : "s"} · {endedLabel(sim)} · type the seed in the Seed box to run this session again
       </p>
       {sim.status !== "ok" && (
         <p className="text-[11px] text-status-error">The simulated run could not be scored: {sim.detail}</p>
       )}
-      <p className="text-[11px] text-static">
-        <span className="text-static/70">Never presented: </span>
-        {absent.length === 0 ? "every row was drawn" : <span className="text-status-warning">{absent.join(" · ")}</span>}
-      </p>
       {sim.switches.length > 0 && (
         <p className="text-[11px] text-static">
           <span className="text-static/70">Blocks: </span>

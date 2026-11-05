@@ -84,9 +84,10 @@ export function TaskEditor() {
   const [seed, setSeed] = useState<TaskDocument | null>(() =>
     taskId === undefined ? seedFrom(location.state) : null,
   );
-  // Opened once on a new task: its category decides where the sketch folder
-  // is written.
-  const [detailsOpen, setDetailsOpen] = useState(taskId === undefined);
+  // Never opened by itself: a new task's category defaults to `Tasks`, which
+  // the header's Details button shows, and the folder it decides is changed
+  // there whenever someone wants another.
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   const session = useTask(taskId ?? null, seed);
   const { definition, setDefinition } = session;
@@ -172,7 +173,7 @@ export function TaskEditor() {
       </Frame>
     );
   } else if (isSpine(definition)) {
-    body = <SpineEditor shared={shared} definition={definition} />;
+    body = <SpineEditor shared={shared} definition={definition} rig={rig} />;
   } else {
     body = <TrialTableEditor shared={shared} definition={definition} rig={rig} />;
   }

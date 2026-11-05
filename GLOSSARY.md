@@ -29,6 +29,21 @@ _Avoid_: unconfirmed wiring, pending wiring
 The one session that holds the rig, from its mapping's confirmation (or a resume) until it ends or is abandoned. It stays held between groups, and it may still read `configuring`.
 _Avoid_: running session, active session
 
+<a id="trial-type"></a>
+**Trial type**:
+One kind of trial a spine task presents: a row of its definition, with a name, the channel that plays each role, and what each answer means. A trial-table task's equivalent is a condition.
+_Avoid_: row (in anything a user reads), condition (for a spine task)
+
+<a id="role"></a>
+**Role**:
+A part in a spine task's trial that a channel plays: the port the animal pokes, the sample, the left well, the line that pays. A slot of the definition; each trial type binds it to a channel of this rig.
+_Avoid_: slot (in anything a user reads), wire
+
+<a id="step"></a>
+**Step**:
+One phase of a spine task's trial as the editor shows it: a Wait, Hold, Present, Delay, Response window, Counter, Outcome or ITI.
+_Avoid_: phase (in anything a user reads), state
+
 <a id="penalty"></a>
 **Penalty**:
 How long a spine trial that ended a given way waits before the next trial, in place of the inter-trial interval: set on the exit that ends it (a Wait's timeout, a broken hold, an abort) or on a contingency-map entry.

@@ -1,5 +1,6 @@
-import { diagnosticsOn, meterOf } from "@/lib/taskdef/spine";
-import type { SpineRam, TaskDiagnostic } from "@/lib/ws/protocol";
+import { meterOf, type SpineDefinition } from "@/lib/taskdef/spine";
+import type { ProblemLine } from "@/lib/taskdef/spineProblems";
+import type { SpineRam } from "@/lib/ws/protocol";
 
 import { ProblemLines } from "./bits";
 
@@ -17,15 +18,23 @@ const SHADES = [1, 0.78, 0.6, 0.45, 0.33, 0.24];
  * disabled: the task still saves, and its folder carries the `#error` that
  * stops it compiling.
  */
-export function RamMeter({ ram, diagnostics }: { ram: SpineRam | null; diagnostics: readonly TaskDiagnostic[] }) {
+export function RamMeter({
+  ram,
+  lines,
+  onFix,
+}: {
+  ram: SpineRam | null;
+  /** The problems the sidecar placed on `ram`, as instructions. */
+  lines: readonly ProblemLine[];
+  onFix: (apply: (def: SpineDefinition) => SpineDefinition) => void;
+}) {
   const meter = ram ? meterOf(ram) : null;
-  const problems = diagnosticsOn(diagnostics, "ram");
   if (!ram) return <p className="text-[11px] text-static">Measuring…</p>;
   if (!meter) {
     return (
       <p className="text-[11px] leading-relaxed text-static">
-        Nothing to measure: this spine cannot be written as a table yet. The problems above the
-        diagram and on its slots, phases, rows and blocks say why.
+        Nothing to measure: this task cannot be written as a table yet. The problems above the
+        diagram and on its roles, steps, trial types and blocks say why.
       </p>
     );
   }
@@ -61,7 +70,7 @@ export function RamMeter({ ram, diagnostics }: { ram: SpineRam | null; diagnosti
           </li>
         ))}
       </ul>
-      <ProblemLines diagnostics={problems} />
+      <ProblemLines lines={lines} onFix={onFix} />
     </div>
   );
 }

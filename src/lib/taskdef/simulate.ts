@@ -110,3 +110,48 @@ export function absentLabels(sim: TaskSimulation): string[] {
     return row.blocks.length === 0 ? `${name}: in no block` : `${name}: never drawn in ${row.blocks.join(", ")}`;
   });
 }
+
+/** "about 23 min", from the last trial's start. */
+function aboutMinutes(sim: TaskSimulation): string | null {
+  const last = sim.trialTable?.trials.at(-1);
+  if (!last || last.atMs === null) return null;
+  const min = Math.round(last.atMs / 60_000);
+  return min < 1 ? "under a minute" : `about ${min} min`;
+}
+
+/**
+ * The result in plain words, before any table: how many trials and how long,
+ * how they ended, each row's share right, and what ended the session. Every
+ * number is the sidecar's (`TaskSimulation.replay`, `overall`, `absent`);
+ * this only says them.
+ */
+export function verdict(sim: TaskSimulation, animal: string): string[] {
+  const lines: string[] = [];
+  const trials = sim.replay?.trials ?? sim.trialTable?.trials.length ?? 0;
+  const span = aboutMinutes(sim);
+  const counted = sim.overall?.counted ?? 0;
+  const hits = sim.overall?.hits ?? 0;
+  const classes = (sim.replay?.classes ?? []).filter((c) => c.n > 0);
+  const rows = (sim.replay?.rows ?? []).filter((r) => r.trials > 0);
+  const head = `${animal}: ${trials} trial${trials === 1 ? "" : "s"}${span ? ` in ${span}` : ""}`;
+  if (trials === 0) lines.push(`${head}. Nothing ran.`);
+  else if (counted > 0 && hits === counted && counted === trials) {
+    const byRow = rows.map((r) => `${r.trials} ${r.name ?? r.rowId ?? "unnamed"}`).join(", ");
+    lines.push(`${head}, every one right${byRow ? ` (${byRow})` : ""}.`);
+  } else {
+    const share = counted > 0 ? `${hits} right of ${counted} counted (${Math.round((hits / counted) * 100)} %)` : "none counted";
+    const mix = classes.map((c) => `${c.n} ${c.outcomeClass.replace(/_/g, " ")}`).join(", ");
+    lines.push(`${head}: ${share}${mix ? ` · ${mix}` : ""}.`);
+    const perRow = rows
+      .map((r) => {
+        const right = r.classes.filter((c) => c.outcomeClass === "correct" || c.outcomeClass === "withheld").reduce((n, c) => n + c.n, 0);
+        return `${r.name ?? r.rowId ?? "unnamed"} ${right} of ${r.trials}`;
+      })
+      .join(", ");
+    if (rows.length > 1) lines.push(`By trial type: ${perRow}.`);
+  }
+  const absent = absentLabels(sim);
+  lines.push(absent.length === 0 ? "Every trial type was presented." : `Never presented: ${absent.join("; ")}.`);
+  lines.push(`${endedLabel(sim).charAt(0).toUpperCase()}${endedLabel(sim).slice(1)}.`);
+  return lines;
+}

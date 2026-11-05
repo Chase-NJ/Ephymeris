@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
 import { ArrowLeft, CircleAlert, FolderTree, TriangleAlert } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { Button } from "@/components/common/controls";
 import { TaskDetailsBody, detailsSummary } from "@/components/task/TaskDetails";
@@ -77,6 +78,7 @@ export function EditorHeader({
   onProblemsOpen,
   onJump,
   placeOf = trialTablePlace,
+  actions,
   onBack,
   onSave,
 }: {
@@ -93,6 +95,8 @@ export function EditorHeader({
   onJump: (diagnostic: TaskDiagnostic) => void;
   /** Where the Problems list files each diagnostic. */
   placeOf?: (diagnostic: TaskDiagnostic) => ProblemPlace;
+  /** A body's own header controls, before Revert and Save: the spine editor's Simulate jump. */
+  actions?: ReactNode;
   onBack: () => void;
   onSave: () => void;
 }) {
@@ -166,6 +170,7 @@ export function EditorHeader({
           <TaskDetailsBody definition={definition} categories={categories} onChange={setDefinition} />
         </Popover>
 
+        {actions}
         {session.checking && <span className="text-[10px] text-static/60">checking…</span>}
 
         {session.dirty && (

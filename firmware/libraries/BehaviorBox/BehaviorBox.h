@@ -56,6 +56,7 @@
 #define BEHAVIOR_BOX_H
 
 #include <Arduino.h>
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -460,11 +461,11 @@ inline void initBoxHardware()
   shutdownHardware();
 }
 
-/*  bool verifySensor(int pin, int duration, int pollMs) ->
+/*  bool verifySensor(int pin, unsigned long duration, unsigned long pollMs) ->
     Returns false the moment the IR beam at `pin` reads HIGH (unpoked) within
     `duration` ms; true if it stayed LOW (held) the whole time. `pollMs` is the
     per-sketch sensor polling interval. */
-inline bool verifySensor(int pin, int duration, int pollMs)
+inline bool verifySensor(int pin, unsigned long duration, unsigned long pollMs)
 {
   unsigned long start = millis();
   while (millis() - start < duration)
@@ -476,11 +477,11 @@ inline bool verifySensor(int pin, int duration, int pollMs)
   return true;
 }
 
-/*  void flashLight(int duration, int pollMs) ->
+/*  void flashLight(unsigned long duration, unsigned long pollMs) ->
     Blink the trial light at the sketch's polling cadence for `duration` ms.
     No strobes: one BF_LIGHTS_OFF per blink would bury a session's real light
     edges under hundreds of decorative ones. */
-inline void flashLight(int duration, int pollMs)
+inline void flashLight(unsigned long duration, unsigned long pollMs)
 {
   unsigned long start = millis();
   while (millis() - start < duration)
@@ -573,14 +574,15 @@ inline void flashLight(int duration, int pollMs)
 
     Deliberately a plain aggregate -- no default member initialisers -- so that
     `StageStep{0, 10, 10, 10000, 8000}` stays legal under C++11, which is what
-    the Arduino AVR core compiles with. TaskParams' constructor fills the array. */
+    the Arduino AVR core compiles with. TaskParams' constructor fills the array.
+    The four durations are unsigned long for the reason TaskParams' are. */
 struct StageStep
 {
-  int trials;          // completed trials at which this row engages
-  int odorPokeHold;    // hold before odor delivery AND during sampling (ms)
-  int fluidWellHold;   // hold at the fluid well before reward (ms)
-  int fluidWellPoll;   // window to respond after successful sampling (ms)
-  int odorPortTimeout; // window to poke following trial light on (ms)
+  int trials;                    // completed trials at which this row engages
+  unsigned long odorPokeHold;    // hold before odor delivery AND during sampling (ms)
+  unsigned long fluidWellHold;   // hold at the fluid well before reward (ms)
+  unsigned long fluidWellPoll;   // window to respond after successful sampling (ms)
+  unsigned long odorPortTimeout; // window to poke following trial light on (ms)
 };
 
 /*  EVERY operator-tunable parameter, in one struct.
@@ -596,19 +598,25 @@ struct StageStep
     a hand-typed console session or an older host -- the app sends every field
     the profile declares.
 
-    Adding a parameter is two lines: a field here and a row in TASK_PARAM_LIST. */
+    Adding a parameter is two lines: a field here and a row in TASK_PARAM_LIST.
+
+    Every duration is an unsigned long, the type millis() and delay() use. An int
+    is 16 bits on AVR, so a 45 s penalty could not be held in one: before the
+    board refused such a value it wrapped 45000 to -20536, which delay() reads as
+    about 49.7 days, and the box stopped at its first error. The one ms field
+    still an int is rewardTimes, whose -1 means "not sent". */
 struct TaskParams
 {
   /* --- timings the ramp never touches --- */
-  int errorDelay = 20000;         // timeout after an incorrect response
-  int nogoWellPoll = 2000;        // withhold window on no-go trials
-  int lazyRatDelay = 6000;        // base penalty for failing to initiate
-  int lazyEscalateStep = 6000;    // added per CONSECUTIVE lazy trial
-  int lazyDelayMax = 30000;       // ceiling on the escalated lazy penalty
-  int noPokeHoldTimeout = 10000;  // penalty for failing to hold a poke
-  int standardITI = 4000;         // intertrial interval on correct trials
-  int primingDelay = 1000;        // odor primed before the trial light
-  int pollingRate = 5;            // IR sensor polling interval (ms)
+  unsigned long errorDelay = 20000;        // timeout after an incorrect response
+  unsigned long nogoWellPoll = 2000;       // withhold window on no-go trials
+  unsigned long lazyRatDelay = 6000;       // base penalty for failing to initiate
+  unsigned long lazyEscalateStep = 6000;   // added per CONSECUTIVE lazy trial
+  unsigned long lazyDelayMax = 30000;      // ceiling on the escalated lazy penalty
+  unsigned long noPokeHoldTimeout = 10000; // penalty for failing to hold a poke
+  unsigned long standardITI = 4000;        // intertrial interval on correct trials
+  unsigned long primingDelay = 1000;       // odor primed before the trial light
+  unsigned long pollingRate = 5;           // IR sensor polling interval (ms)
 
   /* --- session policy --- */
   int correctionLeft = 0;            // CL: leading correction budget, LEFT-correct trials
@@ -670,10 +678,10 @@ struct TaskParams
 
   /* --- live holds/windows, rewritten by applyStage() ---
      The trial runner reads ONLY these four; nothing reads stage[] directly. */
-  int odorPokeHold = 500;
-  int fluidWellHold = 200;
-  int fluidWellPoll = 2000;
-  int odorPortTimeout = 4000;
+  unsigned long odorPokeHold = 500;
+  unsigned long fluidWellHold = 200;
+  unsigned long fluidWellPoll = 2000;
+  unsigned long odorPortTimeout = 4000;
 
   /* --- the run's RNG seed ---
      0 == the host sent none (an older app); beginSessionRng() then falls back to
@@ -753,18 +761,22 @@ inline bool escalationArmed(const TaskParams &p, int completedTrials)
     no second place that can fall out of sync.
 
     Expand it by defining P_INT / P_FLOAT / P_BOOL / P_ULONG / P_STAGE first.
-    Keys are short on purpose: each SET line has to fit SET_LINE_MAX, and a
-    fully-declared eased task sends close to fifty of them. */
+    Keys are short to keep the block to a few SET lines: a fully-declared eased
+    task sends close to fifty of them, and the host spreads them over as many
+    lines under SET_LINE_MAX as they take.
+
+    A row's macro must match its field's type: P_INT into an unsigned long would
+    still refuse anything past 32767. */
 #define TASK_PARAM_LIST                     \
-  P_INT("ERR", errorDelay)                  \
-  P_INT("NWP", nogoWellPoll)                \
-  P_INT("LZD", lazyRatDelay)                \
-  P_INT("LZS", lazyEscalateStep)            \
-  P_INT("LZM", lazyDelayMax)                \
-  P_INT("NPH", noPokeHoldTimeout)           \
-  P_INT("ITI", standardITI)                 \
-  P_INT("PRM", primingDelay)                \
-  P_INT("POL", pollingRate)                 \
+  P_ULONG("ERR", errorDelay)                \
+  P_ULONG("NWP", nogoWellPoll)              \
+  P_ULONG("LZD", lazyRatDelay)              \
+  P_ULONG("LZS", lazyEscalateStep)          \
+  P_ULONG("LZM", lazyDelayMax)              \
+  P_ULONG("NPH", noPokeHoldTimeout)         \
+  P_ULONG("ITI", standardITI)               \
+  P_ULONG("PRM", primingDelay)              \
+  P_ULONG("POL", pollingRate)               \
   P_INT("CL", correctionLeft)               \
   P_INT("CR", correctionRight)              \
   P_INT("LZG", lazyEscalationStage)         \
@@ -783,12 +795,12 @@ inline bool escalationArmed(const TaskParams &p, int completedTrials)
 
 /*  One ramp row's five keys: S<n>T trials, S<n>P poke hold, S<n>H well hold,
     S<n>W well poll, S<n>O odor-port timeout. */
-#define TASK_STAGE_KEYS(n)                  \
-  P_INT("S" #n "T", stage[n].trials)        \
-  P_INT("S" #n "P", stage[n].odorPokeHold)  \
-  P_INT("S" #n "H", stage[n].fluidWellHold) \
-  P_INT("S" #n "W", stage[n].fluidWellPoll) \
-  P_INT("S" #n "O", stage[n].odorPortTimeout)
+#define TASK_STAGE_KEYS(n)                    \
+  P_INT("S" #n "T", stage[n].trials)          \
+  P_ULONG("S" #n "P", stage[n].odorPokeHold)  \
+  P_ULONG("S" #n "H", stage[n].fluidWellHold) \
+  P_ULONG("S" #n "W", stage[n].fluidWellPoll) \
+  P_ULONG("S" #n "O", stage[n].odorPortTimeout)
 
 /*  The SET line buffer, terminator included (docs/TASKS.md#the-length-cap),
     mirrored by the host's build_start_command
@@ -868,6 +880,11 @@ struct ParamAudit
 #define BOX_INT_MIN (-32768L)
 #define BOX_INT_MAX 32767L
 
+/*  The top of a TaskParams `unsigned long` (a duration or the seed) as the AVR
+    has it: 32 bits, where a 64-bit host's is wider. Written down for the same
+    reason. On the board strtoul() saturates past it and says so only in errno. */
+#define BOX_ULONG_MAX 4294967295UL
+
 /*  The three number parsers a SET value goes through. Each returns what the board
     will hold and sets `exact` only when that is exactly what was written: all of
     the text is a number, it is in the type's range, and a float is finite. Junk
@@ -894,8 +911,10 @@ inline float parseFloatField(const char *v, bool &exact)
 inline unsigned long parseUlongField(const char *v, bool &exact)
 {
   char *end;
+  errno = 0;
   unsigned long x = strtoul(v, &end, 10);
-  exact = end != v && *end == '\0' && v[0] != '-';
+  exact = end != v && *end == '\0' && v[0] != '-' && errno != ERANGE && x <= BOX_ULONG_MAX;
+  if (x > BOX_ULONG_MAX) x = BOX_ULONG_MAX;
   return x;
 }
 
@@ -985,8 +1004,9 @@ inline void parseParamTokens(char *line, TaskParams &p, ParamAudit *audit)
 // BOX_INT_MIN..MAX is held at the edge, not wrapped), and text that is not a
 // whole number, or a float that is not finite, is not exact either. The audit
 // names such a key so the reply says CLAMPED (a hand-typed START is held the
-// same way, silently). SEED is the one value that spans the full 31-bit
-// Park-Miller range, so it -- and only it -- needs strtoul.
+// same way, silently). An unsigned long field (every duration, and SEED, which
+// spans the full 31-bit Park-Miller range) is 32 bits, and a minus sign is never
+// exact: a negative duration is the 49-day delay it would wrap to.
 #define PARAM_NOTE(key, exact) if (audit) { if (exact) audit->noteExact(key); else audit->noteInexact(key); auditAccept(*audit, k, v); }
 #define P_INT(key, field)   if (strcmp(k, key) == 0) { bool exact; p.field = parseIntField(v, exact); PARAM_NOTE(key, exact) continue; }
 #define P_FLOAT(key, field) if (strcmp(k, key) == 0) { bool exact; p.field = parseFloatField(v, exact); PARAM_NOTE(key, exact) continue; }
@@ -1459,19 +1479,23 @@ private:
       * enabled AND stageAllowsEscalation -> escalating (base + consecutive*step,
         clamped to max), and bumps the counter;
       * otherwise                          -> flat base, counter untouched.
-    reset() zeroes the counter at each sketch's own engage point. */
+    reset() zeroes the counter at each sketch's own engage point.
+
+    uint32_t, not unsigned long, so the host test does the board's arithmetic: an
+    unsigned long is 64 bits on the host, and a sum that wraps on the Mega would
+    pass there. The parser holds every duration to 32 bits, so nothing is lost. */
 class AbstentionPenalty
 {
 public:
-  AbstentionPenalty(long baseDelay = 6000, long step = 6000, long maxDelay = 30000)
+  AbstentionPenalty(uint32_t baseDelay = 6000, uint32_t step = 6000, uint32_t maxDelay = 30000)
       : _base(baseDelay), _step(step), _max(maxDelay) {}
 
   /* Adopt the run's tuning + the GUI toggle from the parsed SET lines. */
   void configure(const TaskParams &p)
   {
-    _base = p.lazyRatDelay;
-    _step = p.lazyEscalateStep;
-    _max = p.lazyDelayMax;
+    _base = (uint32_t)p.lazyRatDelay;
+    _step = (uint32_t)p.lazyEscalateStep;
+    _max = (uint32_t)p.lazyDelayMax;
     _enabled = p.lazyEscalationEnabled;
     _consecutive = 0;
   }
@@ -1479,21 +1503,26 @@ public:
   void setEnabled(bool enabled) { _enabled = enabled; }
   void reset() { _consecutive = 0; }
 
-  long nextDelay(bool stageAllowsEscalation)
+  uint32_t nextDelay(bool stageAllowsEscalation)
   {
     if (_enabled && stageAllowsEscalation)
     {
-      long d = _base + (long)_consecutive * _step;
-      if (d > _max)
-        d = _max;
-      _consecutive++;
+      // Whether n steps still fit under the cap is asked by division, so the
+      // product is formed only when it cannot pass 2^32. A base at or over the
+      // cap is held at the cap, as it always was.
+      uint32_t n = (uint32_t)_consecutive;
+      uint32_t d = _max;
+      if (_base < _max && (_step == 0 || n <= (_max - _base) / _step))
+        d = _base + n * _step;
+      if (d < _max)
+        _consecutive++; // at the cap it stops counting, so the int never wraps
       return d;
     }
     return _base;
   }
 
 private:
-  long _base, _step, _max;
+  uint32_t _base, _step, _max;
   bool _enabled = true;
   int _consecutive = 0;
 };
@@ -1568,7 +1597,7 @@ enum TrialOutcome
   OUTCOME_ERROR      // wrong well, no response, or responded on a no-go
 };
 
-inline int outcomeDelay(TrialOutcome outcome, const TaskParams &p)
+inline unsigned long outcomeDelay(TrialOutcome outcome, const TaskParams &p)
 {
   if (outcome == OUTCOME_CORRECT)
     return p.standardITI;
@@ -1610,7 +1639,7 @@ inline TrialOutcome checkResponse(const TrialType &trial, const TaskParams &p,
        a coin flip -- so shaping (no policy) keeps right-first. */
     bool rightFirst = (policy != nullptr) ? (random(0, 2) == 0) : true;
 
-    while (millis() - pollStart < (unsigned long)p.fluidWellPoll)
+    while (millis() - pollStart < p.fluidWellPoll)
     { // 1. Poll both wells (tie broken by the order above)
       int rRead = digitalRead(rightWell);
       int lRead = digitalRead(leftWell);
@@ -1664,7 +1693,7 @@ inline TrialOutcome checkResponse(const TrialType &trial, const TaskParams &p,
   else
   {
     unsigned long pollStart = millis(); // NO-GO -> poll both wells for nogoWellPoll
-    while (millis() - pollStart < (unsigned long)p.nogoWellPoll)
+    while (millis() - pollStart < p.nogoWellPoll)
     {
       if (digitalRead(rightWell) == LOW)
       {
@@ -1700,7 +1729,7 @@ inline bool runTrial(const TrialType &trial, TaskParams &p, TrialClock &clock,
   unsigned long waitStart = millis();
   while (digitalRead(odorPort) == HIGH)
   { // 4. Await the odor poke
-    if (millis() - waitStart >= (unsigned long)p.odorPortTimeout)
+    if (millis() - waitStart >= p.odorPortTimeout)
     {
       digitalWrite(trialLight, LOW);
       digitalWrite(trial.odorPin, LOW);

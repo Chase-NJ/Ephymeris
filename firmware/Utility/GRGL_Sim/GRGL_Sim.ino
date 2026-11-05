@@ -222,7 +222,7 @@ void actuate(int code)
    phase that follows it. `gap` is the REAL duration of that phase, so at the
    default SIM_SPEEDUP of 1 the wait is exactly what the firmware would spend
    there; this division is the one place the whole stream could be compressed. */
-void emit(int code, int gap)
+void emit(int code, unsigned long gap)
 {
   actuate(code);
   // Pulsed exactly as emitStrobe() pulses (BehaviorBox.h), so the sync line and
@@ -234,7 +234,7 @@ void emit(int code, int gap)
   sprintf(buf, "%03d\t%lu", code, ts);
   Serial.println(buf);
   syncFall(rose);
-  int d = gap / SIM_SPEEDUP;
+  unsigned long d = gap / SIM_SPEEDUP;
   if (d > 0)
     delay(d);
 }
@@ -333,11 +333,10 @@ int movementTime(bool goRight, bool correct)
   if (!goRight)
     base += 100;
   int m = base + (int)random(-jitter, jitter + 1);
-  int cap = params.fluidWellPoll - 50;
-  if (cap < 100)
-    cap = 100;
+  // Unsigned: a window under 50 ms must not wrap to a cap of four billion.
+  unsigned long cap = params.fluidWellPoll > 150 ? params.fluidWellPoll - 50 : 100;
   if (m < 80) m = 80;
-  if (m > cap) m = cap;
+  if ((unsigned long)m > cap) m = (int)cap;
   return m;
 }
 
@@ -346,11 +345,11 @@ int movementTime(bool goRight, bool correct)
    the threshold, with a tail of earlier releases. Scaled off the parameter
    rather than the old hard-coded 500, which on an eased profile's 10 ms hold
    would have asked random() for an empty range. */
-int holdFailDuration()
+long holdFailDuration()
 {
-  int hold = params.fluidWellHold;
+  long hold = (long)params.fluidWellHold;
   if (hold < 10)
-    return hold > 1 ? (int)random(1, hold) : 0;
+    return hold > 1 ? random(1, hold) : 0;
   if (grglFrand() < 0.6)
     return random(hold * 4 / 5, hold - 1); // near-miss cluster
   return random(hold / 5, hold * 4 / 5);   // earlier releases
@@ -358,11 +357,11 @@ int holdFailDuration()
 
 /* A partial odor-port hold (ms) for an early-unpoke abort: below the run's
    odorPokeHold, which the firmware requires. */
-int partialOdorHold()
+long partialOdorHold()
 {
-  int hold = params.odorPokeHold;
+  long hold = (long)params.odorPokeHold;
   if (hold < 10)
-    return hold > 1 ? (int)random(1, hold) : 0;
+    return hold > 1 ? random(1, hold) : 0;
   return random(hold / 4, hold - 5);
 }
 
@@ -430,7 +429,7 @@ void lazyTrial(int completedTrials)
   emit(BF_LIGHTS_ON, params.odorPortTimeout); // whole poke window elapses, no poke
   emit(BF_LAZY_RAT, 0);
   emit(BF_LIGHTS_OFF,
-       (int)abstention.nextDelay(escalationArmed(params, completedTrials)));
+       abstention.nextDelay(escalationArmed(params, completedTrials)));
   emit(BF_INVALID_TRIAL, 0);
 }
 

@@ -88,6 +88,15 @@ int main() {
     assert(a.nextDelay(false)==6000);   // no growth while stage disallows
     assert(a.nextDelay(true)==6000);    // first escalating call still consec 0
     assert(a.nextDelay(true)==12000); }
+  { AbstentionPenalty a(6000,3000000000UL,4000000000UL); a.setEnabled(true); // a sum past 32 bits
+    assert(a.nextDelay(true)==6000);
+    assert(a.nextDelay(true)==3000006000UL);
+    assert(a.nextDelay(true)==4000000000UL); }                         // held at max, never wrapped
+  { AbstentionPenalty a(6000,0,30000); a.setEnabled(true);             // no step: flat, and no divide by it
+    for(int i=0;i<5;i++) assert(a.nextDelay(true)==6000); }
+  { AbstentionPenalty a(45000,15000,300000); a.setEnabled(true);       // a long run of abstentions
+    for(int i=0;i<1000;i++) a.nextDelay(true);
+    assert(a.nextDelay(true)==300000); }
 
   // --- AntiBiasSelector: returns a valid pointer; pushes against expressed bias ---
   //     `rightWell`/`leftWell` rather than raw pins: the selector splits the
@@ -361,37 +370,62 @@ int main() {
     assert(strstr(_serialOut, "CLAMPED") == NULL);
     assert(strncmp(_serialOut, "PARAMS 2 ", 9) == 0); }
 
+  // --- a duration is an unsigned long: what a GRGL task.json allows runs as sent.
+  //     ERR=45000 was the field report: on a 16-bit int it wrapped to -20536,
+  //     which delay() reads as 49.7 days, and the box stopped at its first error.
+  { TaskParams p; ParamAudit a;
+    setLine("SET ERR=45000 ITI=120000 NPH=120000 NWP=60000 LZD=120000", p, a);
+    setLine("SET LZS=60000 LZM=300000 S0W=60000 S0O=60000 PRM=10000", p, a);
+    assert(strstr(_serialOut, "CLAMPED") == NULL);
+    assert(p.errorDelay == 45000UL && p.lazyDelayMax == 300000UL);
+    assert(p.stage[0].odorPortTimeout == 60000UL);
+    parseStart("START", p);
+    assert(p.odorPortTimeout == 60000UL);                             // through applyStage too
+    assert(outcomeDelay(OUTCOME_ERROR, p) == 45000UL); }
+  { TaskParams p; ParamAudit a;                                       // its edge is the AVR's 32 bits,
+    setLine("SET ERR=4294967295", p, a);                              // on every host
+    assert(strstr(_serialOut, "CLAMPED") == NULL && p.errorDelay == 4294967295UL);
+    setLine("SET ERR=4294967296", p, a);                              // one past: held at the edge
+    assert(strstr(_serialOut, "CLAMPED ERR") != NULL && p.errorDelay == 4294967295UL);
+    setLine("SET ERR=99999999999999999999999", p, a);                 // past even the host's
+    assert(strstr(_serialOut, "CLAMPED ERR") != NULL); }
+  { TaskParams p; ParamAudit a;                                       // a negative duration is the wrap
+    setLine("SET ERR=-5", p, a);                                      // itself, never a value
+    assert(strstr(_serialOut, "CLAMPED ERR") != NULL);
+    setLine("SET S0P=-1", p, a);
+    assert(strstr(_serialOut, "CLAMPED S0P") != NULL); }
+
   // --- a value the board's int cannot hold is a clamp, not a wrap. The CRC is
   //     over the text, so it matches whatever the board makes of the digits; the
-  //     only thing that stops ITI=40000 running as -25536 on a 16-bit int is the
+  //     only thing that stops NT=40000 running as -25536 on a 16-bit int is the
   //     board saying it could not hold it. The limit is the AVR's, on every host.
   { TaskParams p; ParamAudit a;
-    setLine("SET ITI=40000", p, a);
-    assert(strncmp(_serialOut, "CLAMPED ITI\r\nPARAMS 1 ", 22) == 0);
-    assert(p.standardITI == 32767); }                                 // held, never wrapped
+    setLine("SET NT=40000", p, a);
+    assert(strncmp(_serialOut, "CLAMPED NT\r\nPARAMS 1 ", 21) == 0);
+    assert(p.numTrials == 32767); }                                   // held, never wrapped
   { TaskParams p; ParamAudit a;
-    setLine("SET ITI=32767 ERR=-32768", p, a);                        // the edges fit
+    setLine("SET NT=32767 S1T=-32768", p, a);                         // the edges fit
     assert(strstr(_serialOut, "CLAMPED") == NULL); }
   { TaskParams p; ParamAudit a;
-    setLine("SET ITI=32768", p, a);                                   // one past
-    assert(strstr(_serialOut, "CLAMPED ITI") != NULL);
-    setLine("SET ERR=-32769", p, a);                                  // and one below
-    assert(strstr(_serialOut, "CLAMPED ITI") != NULL && strstr(_serialOut, "CLAMPED ERR") != NULL);
-    assert(p.errorDelay == -32768); }
+    setLine("SET NT=32768", p, a);                                    // one past
+    assert(strstr(_serialOut, "CLAMPED NT") != NULL);
+    setLine("SET S1T=-32769", p, a);                                  // and one below
+    assert(strstr(_serialOut, "CLAMPED NT") != NULL && strstr(_serialOut, "CLAMPED S1T") != NULL);
+    assert(p.stage[1].trials == -32768); }
   { TaskParams p; ParamAudit a;                                       // a later line that sets it right
-    setLine("SET ITI=70000", p, a);                                   // clears it, and nothing else does
-    setLine("SET ITI=4000", p, a);
+    setLine("SET NT=70000", p, a);                                    // clears it, and nothing else does
+    setLine("SET NT=400", p, a);
     assert(strstr(_serialOut, "CLAMPED") == NULL);
-    assert(p.standardITI == 4000); }
+    assert(p.numTrials == 400); }
   { TaskParams p; ParamAudit a;                                       // moved by the clamp AND too wide: once
-    setLine("SET POL=-40000", p, a);
-    const char *first = strstr(_serialOut, "CLAMPED POL");
-    assert(first != NULL && strstr(first + 1, "CLAMPED POL") == NULL); }
+    setLine("SET CL=-40000", p, a);
+    const char *first = strstr(_serialOut, "CLAMPED CL");
+    assert(first != NULL && strstr(first + 1, "CLAMPED CL") == NULL); }
   { TaskParams p; ParamAudit a;                                       // more keys than the audit can name:
-    setLine("SET ERR=99999 ITI=99999 NPH=99999 NWP=99999 PRM=99999 POL=99999", p, a);
-    setLine("SET LZD=99999 LZS=99999 LZM=99999 CL=99999 CR=99999 LZG=99999", p, a);
-    setLine("SET NT=99999 BS=99999 BW=99999 MCS=99999 S0T=99999 S0P=99999", p, a);
-    assert(strstr(_serialOut, "CLAMPED") != NULL); }                  // still refused, whatever it is called
+    setLine("SET CL=99999 CR=99999 LZG=99999 NT=99999 BS=99999 BW=99999 MCS=99999", p, a);
+    setLine("SET S0T=99999 S1T=99999 S2T=99999 S3T=99999 S4T=99999", p, a);
+    setLine("SET PW1=99999 PW2=99999 PW3=99999 PW4=99999 RW1=99999", p, a);
+    assert(strstr(_serialOut, "CLAMPED *") != NULL); }                // still refused, whatever it is called
   { TaskParams p; ParamAudit a;                                       // a flag is not a number to wrap to zero
     setLine("SET LAZY=65536", p, a);
     assert(strstr(_serialOut, "CLAMPED LAZY") != NULL); }
@@ -421,7 +455,7 @@ int main() {
     setLine("SET ITI=abc", p, a);   assert(p.standardITI == 0);
     setLine("SET LAZY=true", p, a); assert(!p.lazyEscalationEnabled); }
   { const char *good[] = {
-      "SET ITI=4000", "SET ITI=-5", "SET ITI=+7", "SET DBS=0.5", "SET DBS=1e-3", "SET DBS=2", "SET DBS=-0.25",
+      "SET ITI=4000", "SET RW1=-1", "SET ITI=+7", "SET DBS=0.5", "SET DBS=1e-3", "SET DBS=2", "SET DBS=-0.25",
       "SET LAZY=1", "SET LAZY=0",
     };
     for (size_t i = 0; i < sizeof(good) / sizeof(good[0]); i++) {
@@ -441,12 +475,12 @@ int main() {
   //     too and every retry is refused as a count mismatch.
   { TaskParams p; p.numTrials = 200;                                  // a sketch's own fallback
     _serialOutLen = 0; _serialOut[0] = '\0';
-    _serialIn = "BEGIN\nSET ITI=40000 RW1=7 NT=50\n"                   // refused: ITI cannot be held
+    _serialIn = "BEGIN\nSET NT=40000 RW1=7 ITI=50\n"                   // refused: NT cannot be held
                 "BEGIN\nSET ITI=4000\n"                              // corrected, sent again
                 "START SEED=5\n";
     awaitStart(p);
     // The second reply is for the second block alone: one key, ITI=4000.
-    assert(strstr(_serialOut, "CLAMPED ITI\r\nPARAMS 3 ") != NULL);     // the first, with its three keys
+    assert(strstr(_serialOut, "CLAMPED NT\r\nPARAMS 3 ") != NULL);      // the first, with its three keys
     const char *second = strstr(_serialOut, "PARAMS 1 1462853793\r\n");
     assert(second != NULL && strstr(second, "CLAMPED") == NULL);
     assert(p.standardITI == 4000 && p.trialSeed == 5UL);

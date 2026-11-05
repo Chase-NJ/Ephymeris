@@ -13,7 +13,7 @@ import type { TaskDiagnostic, TaskDocument } from "./types";
  * One task-profile editing session.
  *
  * The same shape as `useRig`, because it is the same job: load a document,
- * track dirt, validate continuously, write once. Three things are specific to
+ * track dirt, validate continuously, write once. Two things are specific to
  * a task.
  *
  * VALIDATION IS A ROUND TRIP. `tasks.preview` runs the eleven rules against the
@@ -25,11 +25,6 @@ import type { TaskDiagnostic, TaskDocument } from "./types";
  * machine and the parameter dial draw. So one round trip per edit redraws the
  * whole page, and the diagram an operator is looking at is always the one their
  * current document produces rather than the last saved one.
- *
- * AND THE `START` LINE LENGTH. That is the one budget an operator can exhaust
- * without noticing: the firmware truncates an overlong line in silence and runs
- * on whichever values happened to fit. Showing the number as the ramp grows is
- * cheaper than explaining the failure afterward.
  */
 export interface TaskSession {
   definition: TaskDocument | null;

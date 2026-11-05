@@ -20,7 +20,7 @@ from tests.fake_rhx import FakeRhx
 from tests.live_sidecar import Refused, animal, settings
 from tests.scripted_board import until
 from tests.test_intan_service import config
-from tests.test_utility import HWID, FakeTool, fake_serial  # noqa: F401 - fake_serial is an autouse fixture
+from tests.test_utility import HWID, FakeTool
 from tests.wire import dispatch, running_app
 
 

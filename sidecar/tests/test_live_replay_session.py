@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from ephymeris_sidecar.analytics.stream import live
 from ephymeris_sidecar.analytics.stream import spine as spine_stream
 from ephymeris_sidecar.analytics.stream.summary import summarize
 from ephymeris_sidecar.ports import handler as handler_module
@@ -97,6 +98,16 @@ def replays(events: list[dict]) -> list[dict]:
 
 def lines(strobes) -> list[str]:  # noqa: ANN001
     return [f"{code}\t{ts}" for code, ts in strobes]
+
+
+def replayed_phases(recorded: dict) -> list[int]:
+    """The phase the replay puts the token on after each strobe of `recorded`."""
+    replay = live.LiveReplay(header_of(recorded))
+    phases = []
+    for code, ts in recorded["ts_data"]:
+        replay.feed(code, ts)
+        phases.append(replay.at(ts).phase)
+    return phases
 
 
 async def start(runner: SessionRunner, bench: Bench, recorded: dict):  # noqa: ANN201
@@ -266,10 +277,23 @@ async def test_a_scorer_killed_mid_session_costs_only_the_live_numbers(
     down = replays(events)[-1]
     assert down["status"] == "replaying" and down["metrics"] == [] and down["overall"] is None
     assert down["unavailable"] == STOPPED
-    await board.said(*lines(strobes[half:]))
+    # The token carries on: fed up to each phase change, the wire shows the
+    # replay's phase there. Chunked, since a burst is published as one payload
+    # with only its last view; the run's last strobe ends it, with no phase.
+    phases = replayed_phases(recorded)
+    sent, carried = half, set()
+    for end in range(half + 1, len(strobes)):
+        if phases[end - 1] == phases[sent - 1]:
+            continue
+        before = len(replays(events))
+        await board.said(*lines(strobes[sent:end]))
+        await until(lambda: any(r["unavailable"] and r["phase"] == phases[end - 1]  # noqa: B023
+                                for r in replays(events)[before:]), timeout=10)
+        sent = end
+        carried.add(phases[end - 1])
+    assert len(carried) > 1, "the token carried on"
+    await board.said(*lines(strobes[sent:]))
     await until(lambda: not runner.running_boxes(), timeout=10)
-    moving = [r for r in replays(events) if r["unavailable"] and r["phase"] is not None]
-    assert len({r["phase"] for r in moving}) > 1, "the token carried on"
     final = replays(events)[-1]
     assert final["status"] == "ended" and final["metrics"] == [] and final["unavailable"]
     await until(lambda: any(p.is_file() for p in tmp_path.rglob("*.json")), timeout=10)

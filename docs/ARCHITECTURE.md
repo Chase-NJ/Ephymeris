@@ -1566,7 +1566,12 @@ clears that box. That replay adds no point to the box's history: after a connect
 to its `sessions.active` (which the sidecar sends only once the replay is out), the first payload for a
 run already on screen that repeats what the store holds is taken as the snapshot. A payload that differs
 adds its point: trials scored while disconnected or, with several Debug runs, a snapshot built before a
-batch that overtook it. A confirmed mapping clears every
+batch that overtook it. The replay sends a payload for every Debug run still armed, so a box the store
+shows running that no payload mentions by that reply has no run: it ended, or its port left `PASSTHROUGH`,
+while the window was disconnected. The store marks it not running (Debug Mode stops offering End) and
+keeps its numbers on screen; the next arm clears them as above. A refused `sessions.active` also ends the
+replay; a timeout or a dropped connection does not, and the box keeps running until the next connect.
+A confirmed mapping clears every
 box: the `ActiveSessions` payload carries `confirmations`, which `sessions.confirmMapping` increments, and
 the store clears on a value it has not seen. `session.lifecycle` broadcasts and `sessions.active` answers
 both count, so a mapping confirmed while a window was disconnected clears it on reconnect. The first answer

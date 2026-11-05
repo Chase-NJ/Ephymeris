@@ -135,10 +135,12 @@ def test_the_scorer_runs_below_the_sidecar(scorer) -> None:  # noqa: ANN001
 
 #: What the child exits with when it touches a file, a database or the network.
 TOUCHED = 97
-#: Audit events that touch something besides an open file (`open` is checked on its own).
+#: Audit events that touch something besides an open file (`open` is checked on its
+#: own), or start a process that could.
 TOUCHING_EVENTS = {
-    "os.remove", "os.rename", "os.mkdir", "os.rmdir", "os.truncate", "shutil.copyfile",
-    "shutil.rmtree", "sqlite3.connect", "socket.bind", "socket.connect",
+    "os.remove", "os.rename", "os.mkdir", "os.rmdir", "os.truncate", "os.link", "os.symlink",
+    "shutil.copyfile", "shutil.rmtree", "sqlite3.connect", "socket.bind", "socket.connect",
+    "subprocess.Popen", "os.system", "os.posix_spawn", "os.exec", "os.spawn", "os.startfile",
 }
 
 
@@ -150,17 +152,25 @@ def audited_serve(*args) -> None:  # noqa: ANN002
     import sys
 
     code = tuple(importlib.machinery.all_suffixes())
+    writing = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_APPEND | os.O_TRUNC
 
     def hook(event: str, details: tuple) -> None:
         if event == "open":
-            path, mode = details[0], details[1]
-            if isinstance(path, int) or (str(path).endswith(code) and mode in (None, "r", "rb")):
+            path, mode, flags = details
+            reading = not (set(mode) & set("wax+")) if mode else not flags & writing
+            if isinstance(path, int) or (str(path).endswith(code) and reading):
                 return
         elif event not in TOUCHING_EVENTS:
             return
-        os.write(2, f"the live scorer touched a file: {event} {details!r}\n".encode())
+        try:
+            os.write(2, f"the live scorer touched a file: {event} {details!r}\n".encode())
+        except OSError:
+            pass  # a child with no stderr still exits
         os._exit(TOUCHED)
 
+    # An import the child makes later (Windows' `ctypes`) would otherwise write its
+    # `.pyc`: the interpreter's cache, not the scorer's.
+    sys.dont_write_bytecode = True
     sys.addaudithook(hook)
     scorer_module.serve(*args)
 
@@ -168,9 +178,10 @@ def audited_serve(*args) -> None:  # noqa: ANN002
 def test_the_scorer_touches_no_file(monkeypatch, capfd, scorer) -> None:  # noqa: ANN001
     """It holds nothing the sidecar needs: no port, no file, no database
     (`ARCHITECTURE.md#the-live-scorer`). A file it wrote would compete with every
-    box's strobe fsyncs for the disk, which `test_live_replay_load.py` no longer
-    sees on Linux. So the real child starts, lowers itself, scores a run and
-    forgets it under an audit hook that ends it on the first file it opens."""
+    box's strobe fsyncs for the disk, which `test_live_replay_load.py` cannot see
+    on Linux, where its strobe files are in RAM. So the real child starts, lowers
+    itself, scores a run and forgets it under an audit hook that ends it on the
+    first file it opens."""
     real = scorer_module._start_process
     monkeypatch.setattr(scorer_module, "_start_process", lambda _target, *args: real(audited_serve, *args))
     document = simulated_document(fixture.go_no_go(), go_no_go_animal, trials=6)

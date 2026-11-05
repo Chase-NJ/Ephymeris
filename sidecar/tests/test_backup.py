@@ -168,15 +168,15 @@ def db(tmp_path: Path) -> Database:
         database.close()
 
 
-def make_manager(db: Database, roots: list[str], **kwargs) -> BackupManager:
-    async def broadcast(_message: dict) -> None:
+def make_manager(db: Database, roots: list[str], broadcast=None, **kwargs) -> BackupManager:
+    async def quiet(_message: dict) -> None:
         return None
 
     return BackupManager(
         loop=asyncio.get_event_loop(),
         db=db,
         cohort_roots=lambda: roots,
-        broadcast=broadcast,
+        broadcast=broadcast or quiet,
         **kwargs,
     )
 
@@ -680,6 +680,31 @@ async def test_sync_now_refuses_without_a_directory(db: Database) -> None:
     manager = make_manager(db, [])
     with pytest.raises(BackupNotConfigured):
         await manager.sync_now()
+
+
+@pytest.mark.asyncio
+async def test_a_sync_that_raises_still_reports_it_has_stopped(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The sidecar replays its last `backup.status` on connect: one still
+    saying syncing after a sync died would keep "Sync now" disabled."""
+    sent: list[dict] = []
+
+    async def broadcast(message: dict) -> None:
+        sent.append(message["data"])
+
+    def broken_snapshot(_path: Path) -> None:
+        raise sqlite3.DatabaseError("database disk image is malformed")
+
+    manager = make_manager(db, [], broadcast=broadcast)
+    await manager.configure(str(tmp_path / "mirror"))
+    monkeypatch.setattr(db, "snapshot_to", broken_snapshot)
+
+    with pytest.raises(sqlite3.DatabaseError):
+        await manager.sync_now()
+
+    assert sent[-1]["syncing"] is False
+    assert manager.status()["syncing"] is False
 
 
 @pytest.mark.asyncio

@@ -4,6 +4,8 @@ status: proposed
 
 # A task is a phase spine, lowered to a state table and replayed deterministically
 
+> Amended in part by [ADR 0005](0005-spine-runs-strobe-each-trials-outcome.md) (proposed): a spine run also strobes each trial's outcome class, which replay predicts.
+
 One rig and one task editor should express the core paradigms of systems neuroscience without a special case for each. Today's model cannot: the trial runner is one hand-written 2AFC loop (`runTrial()`), the rig has seven odor-shaped channel kinds with two response slots, and analytics and the diagram read meaning from strobe-name patterns (`ODOR_<n>_ON`, `_L`/`_R`, `^FLUID`) in 34 places. We decided:
 
 - A task is an ordered **spine of phases** from a fixed palette.

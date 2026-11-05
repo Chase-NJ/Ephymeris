@@ -12,6 +12,8 @@ import asyncio
 import copy
 import json
 import logging
+import threading
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -37,6 +39,7 @@ from .rig import registry as rig_registry
 from .sessions.repository import SessionRepository
 from .sessions.lifecycle import MappingEntry, SessionLifecycle
 from .sessions.runner import SessionRunner
+from .sessions.writer import sweep_parts
 from .strobes import store as strobe_store
 from .strobes.editor import VocabularyEditor
 from .strobes.usage import ArchiveScanner
@@ -98,6 +101,10 @@ class Application:
     ) -> None:
         self.server = server
         self.settings = SidecarSettings()
+        #: When this process started, as far as `sweep_parts` is concerned: no
+        #: part written since then can be an earlier run's.
+        self._started = time.time()
+        self._parts_swept = False
         #: This rig's task profiles, and the sketches generated from them.
         #: Built before the first scan, because `discover()` reads its root.
         self.task_store = taskdef_store.TaskStore(data_dir)
@@ -526,6 +533,19 @@ class Application:
         """
         return [c.data_folder for c in self.cohorts.list_cohorts()]
 
+    def _sweep_parts(self) -> None:
+        """Remove the `.part`s an earlier run's interrupted writes left
+        (`DATA.md#built-once-at-the-end`). On its own daemon thread, once per
+        process: no command or session waits on it, and it never holds up exit."""
+        try:
+            roots = [*self._cohort_roots()]
+            if self.settings.data_directory:
+                roots.append(self.settings.data_directory)
+            skip = [self.settings.backup_directory] if self.settings.backup_directory else []
+            sweep_parts([Path(root) for root in roots], started=self._started, skip=[Path(p) for p in skip])
+        except Exception:  # noqa: BLE001
+            log.exception("couldn't sweep earlier runs' .part files")
+
     def _require_ports(self) -> PortManager:
         if self.ports is None:
             raise CommandError(ErrCode.INTERNAL, "hardware layer isn't running")
@@ -636,6 +656,10 @@ class Application:
             self.settings.backup_directory,
         )
         self.tool.set_binary(self.settings.arduino_cli_path)
+        if not self._parts_swept:
+            # The first push is when the data and backup directories are known.
+            self._parts_swept = True
+            threading.Thread(target=self._sweep_parts, name="part-sweep", daemon=True).start()
         if self.backup is not None:
             await self.backup.configure(self.settings.backup_directory)
         if self.ports is not None:

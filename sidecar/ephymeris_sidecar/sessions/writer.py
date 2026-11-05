@@ -16,9 +16,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 from ..tasks.profile import SNAPSHOT_KEY
 from . import derived, matwriter
@@ -33,6 +34,16 @@ class WriteError(Exception):
 #: How the file a structured file is written into before it takes its real
 #: name ends.
 PART_SUFFIX = ".part"
+
+#: The name `write_atomic` gives its `.part`: `<name>.<pid>-<thread>.part`,
+#: for the `.json` and `.mat` it writes. A bare `<name>.part` (the rig
+#: definition's, the vocabulary's, a transfer's) never matches.
+_WRITER_PART = re.compile(rf"^.+\.(?:json|mat)\.(?P<pid>\d+)-\d+{re.escape(PART_SUFFIX)}$")
+
+#: How long before this process started a part must have last been written for
+#: `sweep_parts` to remove it. The pid can't tell two lab machines sharing an
+#: archive apart, so the age is the guard against a write still in flight.
+PART_GRACE_S = 3600.0
 
 #: One lock per name `write_atomic` renames onto. Windows refuses a replace onto
 #: a name another replace is still landing on, so two writers of one file take
@@ -81,6 +92,85 @@ def write_atomic(path: Path, data: str | bytes | Callable[[Path], None]) -> None
     except Exception:
         part.unlink(missing_ok=True)
         raise
+
+
+def sweep_parts(roots: Iterable[Path], *, started: float, skip: Iterable[Path] = ()) -> int:
+    """Remove the `.part`s earlier processes' `write_atomic` left under `roots`
+    (`DATA.md#built-once-at-the-end`).
+
+    A power cut mid-write leaves one, which no walk reads but nothing else
+    removes. Only the writer's own shape (`_WRITER_PART`), from another pid,
+    last written more than `PART_GRACE_S` before `started` (this process's
+    start; a copy keeps its source's mtime, so the ctime counts too). Nothing
+    under `skip`, however it is spelled (the backup mirror names its parts the
+    same way). A root inside another is walked once. Never raises: whatever can't
+    be read or removed is logged and left. Returns how many were removed.
+    """
+    resolved = _distinct_roots(roots)
+    skipped = {_real(path) for path in skip}
+    cutoff = started - PART_GRACE_S
+    removed = 0
+
+    def note(error: OSError) -> None:
+        log.warning("part sweep couldn't read %s: %s", error.filename, error)
+
+    for root in resolved:
+        real_root = Path(_real(root))
+        if any(real_root.is_relative_to(kept) for kept in skipped):
+            continue
+        for current, dirnames, filenames in os.walk(root, onerror=note):
+            dirnames[:] = [d for d in dirnames if _real(Path(current, d)) not in skipped]
+            for filename in filenames:
+                path = Path(current, filename)
+                if _is_stale_part(path, cutoff) and _remove(path):
+                    removed += 1
+    if removed:
+        log.info("removed %d writer .part file(s) earlier runs left", removed)
+    return removed
+
+
+def _distinct_roots(roots: Iterable[Path]) -> list[Path]:
+    """`roots` as absolute paths, without any that lies inside another."""
+    absolute = sorted({Path(os.path.abspath(root)) for root in roots}, key=lambda p: len(p.parts))
+    distinct: list[Path] = []
+    for root in absolute:
+        if not any(root.is_relative_to(kept) for kept in distinct):
+            distinct.append(root)
+    return distinct
+
+
+def _real(path: Path) -> str:
+    """`path` as one spelling: links and Windows junctions resolved, case folded
+    where the filesystem folds it. A path `realpath` can't reach (a share
+    whose logon expired) keeps the spelling it was given."""
+    try:
+        return os.path.normcase(os.path.realpath(path))
+    except OSError:
+        return os.path.normcase(os.path.abspath(path))
+
+
+def _is_stale_part(path: Path, cutoff: float) -> bool:
+    match = _WRITER_PART.match(path.name)
+    if match is None or int(match["pid"]) == os.getpid():
+        return False
+    try:
+        stat = path.stat()
+    except OSError:
+        return False
+    # A copy keeps its source's mtime (`shutil.copy2`, as a relocate copies),
+    # but not its ctime: creation on Windows, the last metadata change elsewhere.
+    return max(stat.st_mtime, stat.st_ctime) < cutoff
+
+
+def _remove(path: Path) -> bool:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        log.warning("part sweep couldn't remove %s: %s", path, exc)
+        return False
+    return True
 
 
 class AnimalWriter:

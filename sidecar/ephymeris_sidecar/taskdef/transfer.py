@@ -33,7 +33,7 @@ from typing import Any, Callable
 
 from ..rig import registry
 from .model import TaskDefinition, TaskDefinitionError, folder_key
-from .spine import STRUCTURAL
+from .spine import OUTCOME_CODES, STRUCTURAL
 from .store import MAX_DEFINITION_BYTES
 from .validate import validate
 
@@ -194,7 +194,7 @@ def codes_used(
         names |= set(edges.values()) if isinstance(edges, dict) else set()
         names.add(entry.get("onset_strobe"))
     if definition.spine is not None:
-        names |= set(STRUCTURAL.values())
+        names |= set(STRUCTURAL.values()) | set(OUTCOME_CODES)
     else:
         for trial in definition.trials:
             names.add(trial.onset_strobe)

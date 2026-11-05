@@ -34,7 +34,10 @@
   run's header then says which replay reads its outputs. 6 adds blocks and the
   response state (BLOCKS, below), and changes nothing else either. 7 adds
   GRGL's rules (GRGL RULES, below): a table that uses none of them runs as
-  under 6.
+  under 6. 8 changes no table and no rule of the core either: the hardware
+  layer strobes each trial's outcome class, read off the states the core
+  entered (BoxSpine.h, THE STREAM; 0005-spine-runs-strobe-each-trials-outcome.md),
+  so a run's header says whether its stream carries them.
 
 
   THE TICK RULES
@@ -73,7 +76,7 @@
   uint32_t, over a generator the core carries in its own state.
 
 
-  THE STATE TABLE (INTERP_VERSION 7; 6 without GRGL's rules, 4 and 5 without blocks or the response state)
+  THE STATE TABLE (INTERP_VERSION 7 and 8; 6 without GRGL's rules, 4 and 5 without blocks or the response state)
   ----------------------------------
   Generated data. A table is an array of InterpStateRow, indexed 0..254, an
   array of InterpEdgeRow the states point into, the table's one
@@ -326,8 +329,9 @@
   table. `block` is the block running after the tick, NONE in a table without
   blocks; replay predicts it, and the differential test compares it.
   entered[] lists the states entered this tick in order, NONE-padded. It is
-  never strobed (the stream carries no state codes) but replay predicts it,
-  and the differential test compares it.
+  never strobed as states (the stream carries no state codes), but from 8 the
+  hardware layer strobes the outcome class of each one that carries one.
+  Replay predicts it, and the differential test compares it.
 
   Tables live in RAM as plain const arrays; the generator holds what a task's
   table, parameters and channels cost to a budget (docs/TASKS.md#spine-diagnostics).
@@ -360,7 +364,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define INTERP_VERSION 7
+#define INTERP_VERSION 8
 
 #define INTERP_NONE 0xFF       // "no state / no slot / no timer" in a uint8_t field
 #define INTERP_PERMILLE 1000UL // a chance state draws over [0, 1000)

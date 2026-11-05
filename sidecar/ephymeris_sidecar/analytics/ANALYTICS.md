@@ -492,15 +492,16 @@ Mode runs no live replay.
 
 ## How a spine run is scored
 
-A [spine task](../../../docs/TASKS.md#spine-tasks)'s run records only what the board observed and what it
-did, so nothing in its strobes says what a trial was. Instead its file carries its state table, parameters
+A [spine task](../../../docs/TASKS.md#spine-tasks)'s run records what the board observed and what it
+did, and from `INTERP` 8 each trial's outcome code ([TASKS.md](../../../docs/TASKS.md#the-runner)), which is
+checked and never read. Its file carries its state table, parameters
 and seed ([the snapshot](../../../docs/TASKS.md#the-snapshot)), and Analytics **replays** it: the input
 edges drive `stream/replay.py`, the port of the board's interpreter, which says what the board did at every
 tick ([ADR 0003](../../../docs/adr/0003-phase-spine-task-model.md#replay-and-analytics)). One replay
 gives two things (`spine.replayed`, which replays the run once):
 
-1. **The check.** Every output, `START_SESSION`, `TRIAL_START` and `END_SESSION` the board strobed is
-   predicted, and must equal what was recorded, strobe for strobe. A run where it does not is
+1. **The check.** Every output, `START_SESSION`, `TRIAL_START`, `END_SESSION` and outcome code the board
+   strobed is predicted, and must equal what was recorded, strobe for strobe. A run where it does not is
    [diverged](#diverged-and-unreplayable-runs), and is not scored.
 2. **The trial table**, read off the same replay, and every number a function of it.
 

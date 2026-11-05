@@ -230,14 +230,14 @@ async def test_a_saved_spine_task_runs_a_session_and_its_tsv_alone_replays(tmp_p
     folder = save_tracer(tmp_path)
     port = registry.channels().get("odor_port").index
     transcript = run_board(folder, host_lines(folder), animal(port), 16000, tmp_path)
-    assert transcript[:3] == ["INTERP=7", f"FREE_RAM={FREE_RAM}", "READY"]
+    assert transcript[:3] == ["INTERP=8", f"FREE_RAM={FREE_RAM}", "READY"]
     assert not any(line.startswith("CLAMPED") for line in transcript)
 
     tsv = await run_session(tmp_path, folder, transcript, monkeypatch)
     text = tsv.read_text(encoding="utf-8")
     header = text[: text.index("\n", text.index("# task_profile:"))]
     # Everything replay needs is in the header, before the first strobe.
-    assert "# interp: 7\n" in header and f"# free_ram: {FREE_RAM}\n" in header
+    assert "# interp: 8\n" in header and f"# free_ram: {FREE_RAM}\n" in header
     assert f"# trial_seed: {SEED}\n" in header and "# block_b1_trials: 3\n" in header
     assert '"spine":' in header
 
@@ -245,8 +245,8 @@ async def test_a_saved_spine_task_runs_a_session_and_its_tsv_alone_replays(tmp_p
     vocab = registry.vocabulary()
     names = {document["task_profile"]["strobes"][str(c)] for c, _ in document["ts_data"]}
     edge_names = set(registry.channel_set().edge_codes())
-    assert names <= edge_names | {"START_SESSION", "BLOCK_START", "TRIAL_START", "END_SESSION"}, \
-        "the stream holds only channel edge codes and structural codes"
+    assert names <= edge_names | set(spine_module.STRUCTURAL.values()) | set(spine_module.OUTCOME_CODES), \
+        "the stream holds only channel edge codes, structural codes and outcome codes"
     assert names >= {"ODOR_PORT_ENTER", "TRIAL_LIGHT_ON", "ODOR_LINE_1_ON", "END_SESSION"}
     assert [n for c, _ in document["ts_data"] for n in [vocab.name_of(c)]].count("TRIAL_START") == 3
     assert [vocab.name_of(c) for c, _ in document["ts_data"]][1] == "BLOCK_START", "the one block starts at once"
@@ -264,6 +264,10 @@ async def test_a_saved_spine_task_runs_a_session_and_its_tsv_alone_replays(tmp_p
     assert (metric.hits, metric.counted, metric.triggered) == (2, 2, 3), "the abort is excluded"
     table = spine_stream.trial_table(document)
     assert [t["outcome"] for t in table["trials"]] == ["correct", "abort_during_sampling", "correct"]
+    # The board strobed each trial's class once, which replay predicted with the rest
+    # (0005-spine-runs-strobe-each-trials-outcome.md).
+    assert [n for c, _ in document["ts_data"] if (n := vocab.name_of(c)) in spine_module.OUTCOME_CODES] == \
+        ["OUTCOME_CORRECT", "OUTCOME_ABORT_DURING_SAMPLING", "OUTCOME_CORRECT"]
     assert [t["phaseEntries"][1] for t in table["trials"]] == [200, 5000, 8500], \
         "the present begins at each poke, on the board's own clock"
     assert summary.replay.rewarded.n == sum(t["rewarded"] for t in table["trials"])
@@ -451,7 +455,7 @@ async def run_task(tmp_path, monkeypatch, raw: dict, overrides: dict, ticks: int
     """`run_generated`, for scripted (ms, pin, level) `events` or any animal."""
     folder = save(tmp_path, raw)
     transcript = run_board(folder, host_lines(folder, overrides), list(events), ticks, tmp_path, animal)
-    assert transcript[:3] == ["INTERP=7", f"FREE_RAM={FREE_RAM}", "READY"]
+    assert transcript[:3] == ["INTERP=8", f"FREE_RAM={FREE_RAM}", "READY"]
     assert not any(line.startswith("CLAMPED") for line in transcript)
     tsv = await run_session(tmp_path, folder, transcript, monkeypatch, overrides)
     document = json.loads(json_of(tsv).read_text(encoding="utf-8"))
@@ -524,7 +528,7 @@ async def test_pwm_tone_and_a_train_drive_their_pins_and_replay_to_every_pulse(t
     out = run_board(folder, host_lines(folder, overrides), events, 9000, tmp_path, trace_pin=laser)
     transcript = [line for line in out if not line.startswith("~PIN")]
     trace = [tuple(int(v) for v in line.split()[1:]) for line in out if line.startswith("~PIN")]
-    assert transcript[:3] == ["INTERP=7", f"FREE_RAM={FREE_RAM}", "READY"]
+    assert transcript[:3] == ["INTERP=8", f"FREE_RAM={FREE_RAM}", "READY"]
     assert not any(line.startswith("CLAMPED") for line in transcript)
 
     tsv = await run_session(tmp_path, folder, transcript, monkeypatch, overrides)

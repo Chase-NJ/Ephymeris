@@ -126,7 +126,7 @@ static void handshake()
   bb_feed("START SEED=7");
   boot();
   std::vector<std::string> l = lines();
-  expect("INTERP, then FREE_RAM, then READY, first", l.size() > 3 && l[0] == "INTERP=7" &&
+  expect("INTERP, then FREE_RAM, then READY, first", l.size() > 3 && l[0] == "INTERP=8" &&
          l[1].compare(0, 9, "FREE_RAM=") == 0 && l[2] == "READY");
   expect("each SET answered with the running count and CRC",
          indexOf("PARAMS 2 1564777853") < indexOf("PARAMS 3 2992546637"));
@@ -158,15 +158,15 @@ static void stream()
   const std::vector<std::pair<int, unsigned long>> want = {
     {BF_START_SESSION, 0}, {BF_BLOCK_START, 0}, {BF_TRIAL_START, 0}, {BF_LIGHT_ON, 0},
     {BF_PORT_ENTER, 10}, {BF_SAMPLE_ON, 10},
-    {BF_LIGHT_OFF, 110}, {BF_SAMPLE_OFF, 110}, {BF_FLUID_ON, 110},
+    {BF_LIGHT_OFF, 110}, {BF_SAMPLE_OFF, 110}, {BF_FLUID_ON, 110}, {BF_OUTCOME_CORRECT, 110},
     {BF_FLUID_OFF, 140},
     {BF_BLOCK_START, 191}, {BF_TRIAL_START, 191}, {BF_LIGHT_ON, 191},
     {BF_PORT_ENTER, 300}, {BF_SAMPLE_ON, 300},
-    {BF_PORT_EXIT, 350}, {BF_LIGHT_OFF, 350}, {BF_SAMPLE_OFF, 350},
+    {BF_PORT_EXIT, 350}, {BF_LIGHT_OFF, 350}, {BF_SAMPLE_OFF, 350}, {BF_OUTCOME_ABORT_DURING_SAMPLING, 350},
     {BF_END_SESSION, 400},
   };
   std::vector<std::pair<int, unsigned long>> got = strobes();
-  expect("the stream is edges and structure, in tick order, at tick times", got == want);
+  expect("the stream is edges, structure and each trial's outcome, in tick order, at tick times", got == want);
   if (got != want)
     for (auto &s : got) std::cout << "      " << s.first << "\t" << s.second << "\n";
   expect("every output is LOW once the session ends",
@@ -309,6 +309,7 @@ static void drives()
     {BF_PORT_ENTER, 10}, {BF_SAMPLE_ON, 10}, {BF_LED_ON, 10}, {BF_TONE_ON, 10}, {BF_LASER_TRAIN_ON, 10},
     {BF_LASER_TRAIN_OFF, 70},
     {BF_LIGHT_OFF, 110}, {BF_SAMPLE_OFF, 110}, {BF_LED_OFF, 110}, {BF_TONE_OFF, 110}, {BF_FLUID_ON, 110},
+    {BF_OUTCOME_CORRECT, 110},
     {BF_FLUID_OFF, 140},
     {BF_END_SESSION, 191},
   };

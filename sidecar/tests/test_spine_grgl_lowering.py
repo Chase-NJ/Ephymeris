@@ -67,8 +67,8 @@ def grgl_2afc(**edits) -> dict:  # noqa: ANN003
 # --- penalties ----------------------------------------------------------------
 
 
-def test_lowering_writes_interp_7():
-    assert lowering.INTERP_VERSION == rp.INTERP_VERSION == 7
+def test_lowering_writes_interp_8():
+    assert lowering.INTERP_VERSION == rp.INTERP_VERSION == 8
 
 
 def test_an_exit_with_a_penalty_ends_in_an_iti_copy_that_reads_it():

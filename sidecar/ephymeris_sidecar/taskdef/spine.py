@@ -40,6 +40,8 @@ from .validate import Diagnostic, target
 #: START_SESSION and END_SESSION: the same events, so no code is spent twice.
 STRUCTURAL = {"sessionStart": "START_SESSION", "blockStart": "BLOCK_START", "trialStart": "TRIAL_START",
               "sessionEnd": "END_SESSION"}
+#: The code each outcome class strobes as (`lowering.OUTCOME_CODES`).
+OUTCOME_CODES = lowering.OUTCOME_CODES
 
 SLOT_TYPES = ("digital_in", "digital_out", "pwm_out", "tone_out")
 OUTPUT_TYPES = ("digital_out", "pwm_out", "tone_out")
@@ -286,7 +288,7 @@ def _resolve(definition: TaskDefinition) -> _Resolved:
     if out.lowered is None:
         out.blockers.append("this spine cannot be lowered to a state table; see the task's diagnostics")
 
-    for role, name in STRUCTURAL.items():
+    for name in (*STRUCTURAL.values(), *OUTCOME_CODES):
         if name not in vocab:
             problem(f"vocabulary.{name}", "SPN104", f"the strobe vocabulary has no {name} code. Add it on "
                     "Task > Strobes, at the number the shipped vocabulary gives it")
@@ -873,6 +875,7 @@ def profile_json(definition: TaskDefinition) -> dict[str, Any]:
                    "lazy": list(low.lazy) if low.lazy is not None else None}
                   if low else None),
         "structural": dict(STRUCTURAL),
+        "outcomes": list(OUTCOME_CODES),
     }
     return {
         "taskName": definition.name,

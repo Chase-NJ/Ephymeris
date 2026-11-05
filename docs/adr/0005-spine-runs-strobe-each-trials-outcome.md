@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # A spine run strobes each trial's outcome class
@@ -15,10 +15,10 @@ status: proposed
   - For a Response window, that is the response's branch: the chance state for an entry with a line, after any hold is complete.
   - For an early exit, it is the exit's end.
   - A trial that never marks (cut off by End Session, a crash, or a disconnect) strobes none. Its absence is the trial table's `complete: false`.
-- **Where in the tick:** last, after the outputs driven HIGH and before `END_SESSION`.
+- **Where in the tick:** last, after the outputs driven HIGH and before only `END_SESSION`, the end's tick included.
   - While each strobe has its own sync pulse, every strobe after the first in a tick lags about 0.7 ms ([RECORDING.md](../RECORDING.md#the-sync-line)).
   - The outputs carry the physical event an analysis aligns to, such as the reward valve opening, and the verdict has no physical edge. So the verdict takes the lag.
-- **From what the board already reports.** The core lists the states each tick entered (`InterpActions.entered`). The runner looks up each one's `outcome` in its table and strobes the code. The core does not change.
+- **From what the board already reports.** The core lists the states each tick entered (`InterpActions.entered`). The runner looks up each one's `outcome` in its table and strobes the code. The core's rules do not change; only its version number does.
   - Replay already predicts `entered` tick by tick, and the [differential test](../TASKS.md#compiling-and-the-host-tests) already holds it equal between the C core and the Python port.
   - So the board and replay derive the outcome strobe from one value that the test already checks.
 - **Versioned as `INTERP` 8.** A board flashed before this change sends no outcome strobes. Replay predicts them only for a run whose header says `INTERP` 8 or later. Runs at 2 to 7 replay as they do now.
@@ -40,4 +40,6 @@ status: proposed
 - **The stream order changes in `BoxSpine.h` and `analytics/stream/spine.py` together**, or every `INTERP` 8 run reads as diverged. The host tests gain a check that each marked trial strobes its class once, at its tick, last in that tick.
 - **A raw spine file is countable without replay**, but its counts are not the scorer's. P(correct) still excludes aborts, and a block's criterion still reads its class sets. Analysis keeps reading the trial table.
 - **Legacy runs are unaffected.** `analytics/stream/legacy/` decodes GRGL's own codes, and the legacy adapter still produces the same trial table for both.
-- **On implementation, the current-behaviour docs change in the same commit:** TASKS.md's [runner](../TASKS.md#the-runner) (the stream and its order) and [spine diagnostics](../TASKS.md#spine-diagnostics), and ANALYTICS.md's replay check.
+- **Every spine task's `profile_hash` moves when it is next saved.** The hash covers `INTERP` and the snapshot ([TASKS.md](../TASKS.md#a-spine-tasks-hash-covers-behaviour-only)), so a task's `INTERP` 7 and 8 runs sit in two comparability groups, as at every `INTERP` before. No animal had run a spine task when this was accepted, so no history splits.
+- **The score canary moves once.** Its spine runs are `INTERP` 8 runs and now carry outcome codes, so every machine re-reads its archive on the first summary after the upgrade ([DATA.md](../DATA.md#caching)). No `INTERP` 7 run scores differently.
+- **The codes cost the board no RAM.** `BoxSpine.h` keeps them in flash (`PROGMEM`), because a task's RAM budget does not count the runner's tables ([TASKS.md](../TASKS.md#spine-diagnostics)).

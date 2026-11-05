@@ -30,7 +30,7 @@
 #define BF_LASER_TRAIN_OFF 53
 #define BF_BLOCK_START 54
 
-#define SPINE_INTERP 7
+#define SPINE_INTERP 8
 
 #define SPINE_NUM_STATES 6
 #define SPINE_STATES { \

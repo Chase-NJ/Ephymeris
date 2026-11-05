@@ -156,7 +156,7 @@ def test_a_task_with_a_window_and_rows_round_trips_and_is_clean(make):
 def test_the_go_no_go_snapshot_names_each_bit_and_annotates_each_state():
     definition = TaskDefinition.from_json(fixture.go_no_go())
     spine = generate.build_profile(definition).spine
-    assert spine["interp"] == lowering.INTERP_VERSION == 7
+    assert spine["interp"] == lowering.INTERP_VERSION == 8
     # One bit per channel: `sample` is two odor lines, one per row.
     assert [(o["slot"], o["channel"]) for o in spine["outputs"]] == [
         ("cue", "trial_light"), ("sample", "odor_line_1"), ("sample", "odor_line_2"), ("reward", "fluid_2")]
@@ -197,7 +197,7 @@ def test_the_tracer_s_reward_keys_name_its_row():
 
 def test_a_go_no_go_folder_carries_its_table():
     header = generate.task_spine_h(TaskDefinition.from_json(fixture.go_no_go()))
-    assert "#define SPINE_INTERP 7" in header and "#error" not in header
+    assert "#define SPINE_INTERP 8" in header and "#error" not in header
     assert "#define SPINE_NUM_STATES 15" in header and "#define SPINE_NUM_OUTPUTS 4" in header
 
 
@@ -534,7 +534,7 @@ def test_the_snapshot_and_the_folder_carry_the_counter():
     table = generate.build_profile(pr).spine["table"]
     assert table["counter"] == {"min": lowering.NONE, "max": lowering.NONE, "ratios": fixture.RICHARDSON_ROBERTS}
     header = generate.task_spine_h(pr)
-    assert "#define SPINE_INTERP 7" in header and "#error" not in header
+    assert "#define SPINE_INTERP 8" in header and "#error" not in header
     assert "#define SPINE_NUM_RATIOS 10" in header and "1, 2, 4, 6, 9, 12, 15, 20, 25, 32" in header
     fr = generate.build_profile(TaskDefinition.from_json(fixture.fixed_ratio()))
     assert fr.spine["table"]["counter"] == {"min": 0, "max": 0, "ratios": []}, "slot 0: no session cap"

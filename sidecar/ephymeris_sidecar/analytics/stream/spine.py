@@ -87,6 +87,9 @@ class SpineRecord:
     trials_slot: int | None = None
     #: The blocks' ids, by index.
     block_ids: tuple[str, ...] = ()
+    #: Each outcome class's code, by class number less one; empty before
+    #: `replay.OUTCOMES_SINCE`, whose runs strobe no outcome.
+    outcomes: tuple[int, ...] = ()
 
 
 #: The version of the trial table `replayed` reads off a run, stamped on the
@@ -225,6 +228,12 @@ def _decode(document: dict[str, Any]) -> SpineRecord:
     rise = tuple(code(i["rise"]) for i in inputs)
     fall = tuple(code(i["fall"]) for i in inputs)
     structural = spine.get("structural", {})
+    outcomes: tuple[int, ...] = ()
+    if interp >= rp.OUTCOMES_SINCE:
+        names = spine.get("outcomes")
+        if not isinstance(names, list) or not names:
+            raise SpineDecodeError(f"the snapshot names no outcome codes, which INTERP {interp} strobes")
+        outcomes = tuple(code(name) for name in names)
     record = SpineRecord(
         table=table,
         params=tuple(params),
@@ -249,6 +258,7 @@ def _decode(document: dict[str, Any]) -> SpineRecord:
         block_start=code(structural["blockStart"]) if "blockStart" in structural else None,
         trials_slot=(spine["params"].index(TRIALS_KEY) if TRIALS_KEY in (spine.get("params") or []) else None),
         block_ids=tuple(str(b.get("id")) if isinstance(b, dict) else "?" for b in spine.get("blocks") or []),
+        outcomes=outcomes,
     )
 
     by_tick: dict[int, list[int]] = {}
@@ -269,8 +279,9 @@ def expected_stream(record: SpineRecord) -> list[tuple[int, int]]:
     """Every strobe the board must have sent, as (code, ts), from the inputs alone.
 
     The board's order within a tick (BoxSpine.h, THE STREAM): START_SESSION,
-    inputs that rose, that fell, TRIAL_START, outputs off, outputs on; and its
-    session end rule. A run cut off before END_SESSION is predicted up to its
+    inputs that rose, that fell, TRIAL_START, outputs off, outputs on, then
+    from `replay.OUTCOMES_SINCE` the outcome class of each state entered that
+    carries one; and its session end rule. A run cut off before END_SESSION is predicted up to its
     last recorded strobe: a power cut can fall between two strobes of one tick,
     so its last tick is held only to as many strobes as the file recorded there.
     """
@@ -394,6 +405,7 @@ def _run(record: SpineRecord, actions: list[tuple[int, rp.Actions]],
         out += [(record.fall[i], now) for i in bits(a.fell)]
         if starts and now == end:
             out += [(record.off[j], now) for j in bits(live)]
+            out += [(record.outcomes[o - 1], now) for o in _marks(record, a)]
             out.append((record.session_end, now))
             stopped(live, now)
             return out, spans
@@ -404,6 +416,7 @@ def _run(record: SpineRecord, actions: list[tuple[int, rp.Actions]],
         off = (a.off | ran_out(now)) & live
         out += [(record.off[j], now) for j in bits(off)]
         out += [(record.on[j], now) for j in bits(a.on)]
+        out += [(record.outcomes[o - 1], now) for o in _marks(record, a)]
         stopped(off, now)
         live = (live & ~off) | a.on
         since.update((b, now) for b in bits(a.on) if b in train_ms)
@@ -412,6 +425,16 @@ def _run(record: SpineRecord, actions: list[tuple[int, rp.Actions]],
     return out, spans
 
 
+
+
+def _marks(record: SpineRecord, a: rp.Actions) -> list[int]:
+    """The outcome class of each state `a` entered that carries one, in entry
+    order: what BoxSpine.h strobes last in the tick. None before
+    `replay.OUTCOMES_SINCE`, and none a class number past the codes."""
+    if not record.outcomes:
+        return []
+    states = record.table.states
+    return [o for s in a.entered if s != rp.NONE and 0 < (o := states[s].outcome) <= len(record.outcomes)]
 
 
 # --- annotations ----------------------------------------------------------------

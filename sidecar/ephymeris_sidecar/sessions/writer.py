@@ -115,8 +115,8 @@ def sweep_parts(roots: Iterable[Path], *, started: float, skip: Iterable[Path] =
         log.warning("part sweep couldn't read %s: %s", error.filename, error)
 
     for root in resolved:
-        real_root = _real(root)
-        if any(real_root == kept or real_root.startswith(kept + os.sep) for kept in skipped):
+        real_root = Path(_real(root))
+        if any(real_root.is_relative_to(kept) for kept in skipped):
             continue
         for current, dirnames, filenames in os.walk(root, onerror=note):
             dirnames[:] = [d for d in dirnames if _real(Path(current, d)) not in skipped]
@@ -141,8 +141,12 @@ def _distinct_roots(roots: Iterable[Path]) -> list[Path]:
 
 def _real(path: Path) -> str:
     """`path` as one spelling: links and Windows junctions resolved, case folded
-    where the filesystem folds it."""
-    return os.path.normcase(os.path.realpath(path))
+    where the filesystem folds it. A path `realpath` can't reach (a share
+    whose logon expired) keeps the spelling it was given."""
+    try:
+        return os.path.normcase(os.path.realpath(path))
+    except OSError:
+        return os.path.normcase(os.path.abspath(path))
 
 
 def _is_stale_part(path: Path, cutoff: float) -> bool:

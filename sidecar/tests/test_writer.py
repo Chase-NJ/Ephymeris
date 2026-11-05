@@ -479,6 +479,24 @@ def test_the_sweep_leaves_the_backup_mirror_alone(tmp_path: Path) -> None:
     assert mirrored.exists()
 
 
+def test_a_backup_directory_realpath_cannot_reach_still_skips_and_sweeps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A share whose logon expired makes `realpath` raise on Windows; the sweep
+    carries on with the path as spelt."""
+    backup = tmp_path / "backup"
+    mirrored = _part(backup, "remy1.json", pid=_other_pid())
+    stale = _part(tmp_path / "Cohort", "remy1.json", pid=_other_pid())
+
+    def unreachable(path, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        raise OSError(1326, "The user name or password is incorrect", str(path))
+
+    monkeypatch.setattr(os.path, "realpath", unreachable)
+    assert sweep_parts([tmp_path], started=_later(STALE), skip=[backup]) == 1
+
+    assert mirrored.exists() and not stale.exists()
+
+
 def test_the_sweep_walks_nested_roots_once_and_survives_a_missing_one(tmp_path: Path) -> None:
     cohort = tmp_path / "Cohort"
     stale = _part(cohort, "remy1.json", pid=_other_pid())

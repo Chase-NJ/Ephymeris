@@ -224,7 +224,7 @@ Relocating is a separate action, `cohorts.setDataFolder` (`relocate`), with two 
 
 | Destination | How | A crash in between |
 |---|---|---|
-| Same volume | One atomic `rename` of the folder, then the records in one transaction | The folder is demonstrably at the target, so the records are rolled forward at the next start that can reach the volume |
+| Same volume | One atomic `rename` of the folder, then the records in one transaction | The folder is demonstrably at the target, so the records are rolled forward at the next start that can reach the volume. A failed commit renames the folder back; if that fails too, the journal stays `moving`, which refuses `sessions.create` for the cohort until the next start rolls the records forward the same way |
 | Another volume | A [verified copy](#verified-transfer) of every file, then the records, then each original whose copy is in place | Undone while copying; finished after the commit. Either way, by the first start that can [reach both folders](#verified-transfer) |
 
 A relocate left for a later start, because it [couldn't reach a folder](#verified-transfer), refuses another relocate of the cohort only where they would collide, saying which folder it waits for. A rename's (`moving`) refuses any: the records may name a folder that has moved. A copy's refuses moving into or pointing at its target, or a folder inside or around it, since its undo will remove what it copied there; any other destination goes ahead, so a target that never comes back holds nothing up. A [move of animals](#moving-animals-between-cohorts) to or from the cohort left `copying` or `committed` refuses moving the data, not pointing: its undo removes a copy, and its finish an original, only while both are where it left them.

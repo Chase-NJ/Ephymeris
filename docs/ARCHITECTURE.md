@@ -1562,7 +1562,9 @@ path for them. A `diverged` run shows its divergence in the warning colour, with
 refused start leaves the last run on screen. A port entering `IN_SESSION` (a real transition, not the
 connect replay) clears that box. Debug Mode's `port.telemetry` going from not running to running, which
 the sidecar sends only once a `START` is on the wire (and replays on connect while that run lasts),
-clears that box. A confirmed mapping clears every
+clears that box. That replay adds no point to the box's history: after a connect, the first payload
+for a run already on screen that repeats what the store holds is taken as the snapshot, and one that
+differs (trials scored while disconnected) adds its point. A confirmed mapping clears every
 box: the `ActiveSessions` payload carries `confirmations`, which `sessions.confirmMapping` increments, and
 the store clears on a value it has not seen. `session.lifecycle` broadcasts and `sessions.active` answers
 both count, so a mapping confirmed while a window was disconnected clears it on reconnect. The first answer

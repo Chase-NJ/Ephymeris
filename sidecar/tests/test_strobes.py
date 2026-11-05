@@ -65,6 +65,85 @@ def test_the_seed_is_written_once_and_never_over_an_existing_document(tmp_path):
     assert "LASER_ON" in vocab_store.load_strict()["codes"]
 
 
+def _seeded_at_generation(generation: int) -> dict:
+    """The shipped default as a machine seeded at `generation` holds it: no code
+    declared later, and no watermark, like every document from before the field."""
+    doc = seed()
+    doc["codes"] = {
+        n: e for n, e in doc["codes"].items() if n.startswith("_") or int(e.get("since", 0)) <= generation
+    }
+    return doc
+
+
+def _shipped_in(generation: int) -> set[str]:
+    return {n for n, e in seed()["codes"].items() if not n.startswith("_") and e["since"] == generation}
+
+
+def test_a_start_adds_the_codes_a_newer_build_ships_and_only_once(tmp_path):
+    vocab_store = strobe_store.VocabularyStore(tmp_path)
+    vocab_store.root.mkdir(parents=True)
+    vocab_store.path.write_text(json.dumps(_seeded_at_generation(2)))
+    assert "TRIAL_START" not in vocab_store.load_strict()["codes"]
+
+    plan = vocab_store.catch_up()
+    assert plan is not None and plan.skipped == []
+    added = {a["name"]: a["code"] for a in plan.adds}
+    assert set(added) == _shipped_in(3)
+    shipped = registry.Vocabulary(seed())
+    assert all(shipped.code_of(n) == c for n, c in added.items()), "at the shipped numbers"
+    doc = vocab_store.load_strict()
+    assert doc[strobe_store.SHIPPED_SINCE] == 3 and "TRIAL_START" in doc["codes"]
+
+    stamp = doc["edited_at"]
+    again = vocab_store.catch_up()
+    assert again is not None and again.adds == []
+    assert vocab_store.load_strict()["edited_at"] == stamp, "nothing to add writes nothing"
+
+
+def test_a_code_removed_after_catching_up_never_comes_back(tmp_path):
+    vocab_store = strobe_store.VocabularyStore(tmp_path)
+    assert vocab_store.ensure_seeded()
+    doc = vocab_store.load_strict()
+    assert doc[strobe_store.SHIPPED_SINCE] == 3, "seeding records the generation it copied"
+    vocab_store.save(strobe_store.remove(doc, "OUTCOME_WITHHELD", sessions_containing=0))
+
+    plan = vocab_store.catch_up()
+    assert plan is not None and plan.adds == []
+    assert "OUTCOME_WITHHELD" not in vocab_store.load_strict()["codes"]
+
+
+def test_a_shipped_number_taken_here_is_skipped_and_the_rest_are_added(tmp_path):
+    vocab_store = strobe_store.VocabularyStore(tmp_path)
+    vocab_store.root.mkdir(parents=True)
+    taken = registry.Vocabulary(seed()).code_of("OUTCOME_CORRECT")
+    doc = strobe_store.add(_seeded_at_generation(2), "LASER_ON", taken, rationale="mine first")
+    vocab_store.path.write_text(json.dumps(doc))
+
+    plan = vocab_store.catch_up()
+    assert plan is not None
+    assert [s["name"] for s in plan.skipped] == ["OUTCOME_CORRECT"]
+    assert {a["name"] for a in plan.adds} == _shipped_in(3) - {"OUTCOME_CORRECT"}
+    stored = vocab_store.load_strict()
+    assert stored["codes"]["LASER_ON"]["code"] == taken, "the machine's own code keeps its number"
+    assert stored[strobe_store.SHIPPED_SINCE] == 3, "asked once here; from now on the editor asks"
+    later = vocab_store.catch_up()
+    assert later is not None and later.adds == [] and later.skipped == []
+
+
+def test_a_damaged_document_is_not_caught_up(tmp_path):
+    vocab_store = strobe_store.VocabularyStore(tmp_path)
+    vocab_store.root.mkdir(parents=True)
+    vocab_store.path.write_text("{not json")
+    assert vocab_store.catch_up() is None
+    assert vocab_store.path.read_text() == "{not json"
+
+
+def test_the_watermark_stays_on_this_machine():
+    doc = strobe_store.apply_catch_up(seed(), seed(), strobe_store.plan_catch_up(seed(), seed()))
+    assert doc[strobe_store.SHIPPED_SINCE] == 3
+    assert strobe_store.SHIPPED_SINCE not in strobe_store.export_document(doc)
+
+
 def test_every_write_is_flushed_to_disk_before_it_replaces_the_document(tmp_path, monkeypatch):
     """B19, asserted on structure: a power cut cannot be staged in a test. A
     rename can reach the disk before the bytes it names, so the new file is

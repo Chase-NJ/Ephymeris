@@ -484,9 +484,10 @@ export interface FlashQueueStatus {
 /**
  * `pending` = directory set but no pass has completed yet, distinct from `ok` (a pass succeeded)
  * and `failed` (the last pass didn't) — a freshly set, unreachable network path must not read as
- * healthy before its first pass.
+ * healthy before its first pass. `deferred` = no failure, but a database copy deferred behind an
+ * open write is still owed (`DATA.md#failures`).
  */
-export type BackupState = "disabled" | "pending" | "ok" | "failed";
+export type BackupState = "disabled" | "pending" | "ok" | "deferred" | "failed";
 
 export interface BackupStatus {
   configured: boolean;
@@ -505,11 +506,18 @@ export interface BackupStatus {
   intervalSeconds: number;
 }
 
+/** What `backup.syncNow` did. */
 export interface SyncResult {
   copied: number;
   /** Already current — not an error. */
   skipped: number;
   failed: number;
+  /**
+   * Copies postponed rather than failed: the database copy behind an open write, which a later
+   * pass makes. Never counted in `failed` or listed in `errors`.
+   */
+  deferred: number;
+  /** The first few failed copies; a deferral is not one. */
   errors: string[];
   directory: string;
 }

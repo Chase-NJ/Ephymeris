@@ -353,7 +353,7 @@ def _pack(profile_name: str, tokens: list[str]) -> tuple[str, ...]:
                 f"{profile_name}: the parameter {token[:24]}… makes a SET line "
                 f"{len(_SET_VERB) + 1 + len(token)} characters long, over the firmware's "
                 f"{SET_LINE_MAX - 1}-character limit. Shorten the value or its wire "
-                f"key -- the board would truncate the line without reporting it."
+                f"key -- the board would cut the line and refuse the start."
             )
         if len(current) + 1 + len(token) >= SET_LINE_MAX:
             lines.append(current)

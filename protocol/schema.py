@@ -5005,8 +5005,9 @@ ERRORS = (
     ErrorCode(
         "PARAMS_CLAMPED",
         "A start refused because the board could not hold a value as sent "
-        "(`CLAMPED <key>`): its clamp would move it, it is outside the board's "
-        "16-bit `int`, or the board read the text as something else (`4.9` as "
+        "(`CLAMPED <key>`): its clamp would move it, it is outside the range its "
+        "field holds (a 16-bit `int` for a count, 0 to 2^32 - 1 for a duration), "
+        "or the board read the text as something else (`4.9` as "
         "4, `abc` as 0). `detail.keys` names them (`*` for more than it can "
         "list). Changing the value fixes it, and reflashing does not. Nothing "
         "was started (`TASKS.md#confirming-the-parameters`).",

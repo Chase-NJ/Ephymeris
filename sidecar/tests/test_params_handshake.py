@@ -44,10 +44,11 @@ class Mega(ScriptedBoard):
     """The firmware answers START with the seed it carries."""
 
     def write(self, data: bytes) -> int:
+        written = super().write(data)
         for line in data.decode().splitlines():
             if line.startswith("START"):
                 self.say("SEED\t" + line.partition("SEED=")[2] + "\r\n")
-        return super().write(data)
+        return written
 
 
 #: Every board this test's handler opened.

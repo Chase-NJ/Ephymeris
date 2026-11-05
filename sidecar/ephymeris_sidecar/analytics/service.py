@@ -478,13 +478,15 @@ class AnalyticsService:
             ]
             adopted = 0
             if adopt_orphans and adoptable:
+                sources = await asyncio.to_thread(self._move_sources, cohort_id)
                 # INSERT OR REPLACE on the row's id, so a file whose content
                 # changed since adoption refreshes its row in place rather than
                 # duplicating it. Counted as written: a row another cohort
                 # holds is never taken.
                 adopted = await asyncio.to_thread(
                     lambda: self._repo.store_adopted(
-                        adoptable, earlier_ids=_earlier_ids(adoptable, held, dropped)
+                        adoptable,
+                        earlier_ids=_earlier_ids(adoptable, held, dropped, sources),
                     )
                 )
             if carried:
@@ -678,6 +680,12 @@ class AnalyticsService:
         return session_tidy.plan_json(
             planned, merged_counts, cohort_id=cohort_id, applied=True
         )
+
+    def _move_sources(self, cohort_id: str) -> dict[str, str | None]:
+        """The cohorts a move brought this one's animals from, each with its
+        data folder, or None once it is deleted (`_earlier_ids`)."""
+        folders = {c.id: c.data_folder for c in self._cohorts.list_cohorts()}
+        return {c: folders.get(c) for c in self._repo.move_sources(cohort_id)}
 
     # --- carrying adoptions forward (DATA.md#carrying-adoptions-forward) --
 
@@ -1210,7 +1218,10 @@ def _stem_only_run_id(path: Path) -> str:
 
 
 def _earlier_ids(
-    adoptable: list[AdoptedRun], held: dict[str, str], dropped: dict[str, str]
+    adoptable: list[AdoptedRun],
+    held: dict[str, str],
+    dropped: dict[str, str],
+    move_sources: dict[str, str | None],
 ) -> dict[str, list[str]]:
     """The ids a ruling on each freshly adopted run may still sit on
     (`ANALYTICS.md#false-starts`), for `store_adopted` to move it from.
@@ -1218,14 +1229,30 @@ def _earlier_ids(
     Only for a run the cohort did not hold: a row read again keeps its own id
     and its own ruling, and never takes one another cohort's pruned row left.
     First the id of a row this rescan's prune just dropped for the same run,
-    which a move kept from the cohort that first adopted it; then the
+    which a move kept from the cohort that first adopted it. Then the id each
+    cohort a move brought this one's animals from would mint for the run
+    (`move_sources`: id → data folder, None once the cohort is deleted), for
+    a moved row an earlier rescan pruned while its file was away; but never
+    the id of a cohort whose folder holds the file, since that cohort may read
+    the run again under that very id and its ruling waits for it. Then the
     stem-only id.
     """
     out: dict[str, list[str]] = {}
     for entry in adoptable:
-        identity = reader.run_identity(Path(entry.file_path))
+        path = Path(entry.file_path)
+        identity = reader.run_identity(path)
         if held.get(identity) is not None:
             continue
         candidates = [dropped[identity]] if identity in dropped else []
-        out[entry.id] = [*candidates, _stem_only_run_id(Path(entry.file_path))]
+        candidates += [
+            _orphan_run_id(source, path)
+            for source, folder in sorted(move_sources.items())
+            if folder is None or not _holds(folder, path)
+        ]
+        out[entry.id] = [*candidates, _stem_only_run_id(path)]
     return out
+
+
+def _holds(folder: str, path: Path) -> bool:
+    """Is `path` inside `folder`, so a rescan of that folder walks it?"""
+    return Path(_normalize(str(path))).is_relative_to(_normalize(folder))

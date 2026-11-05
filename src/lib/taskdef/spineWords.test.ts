@@ -19,9 +19,11 @@ import {
   exitNotes,
   mapSentences,
   msWord,
+  bindShared,
   phaseCaption,
   roleScopes,
   rowSentence,
+  sharedChannel,
   seedShapeWords,
   timingFields,
 } from "./spineWords";
@@ -195,28 +197,30 @@ describe("a phase's caption", () => {
   });
 });
 
-describe("the roles the guide asks once, and the ones it asks per trial type", () => {
-  it("make the output only Present phases drive the stimulus, and everything else shared", () => {
+describe("the roles the Wiring line binds once, and the ones each trial type chooses", () => {
+  it("start all shared on a fresh seed, since nothing in the spine tells the stimulus apart", () => {
     const def = twoAfc();
     def.rows[1]!.bind = {};
     def.rows[0]!.bind = {};
-    expect(roleScopes(def)).toEqual({
-      port: "shared",
-      left: "shared",
-      right: "shared",
-      cue: "shared",
-      sample: "shared",
-      vacuum: "per-type",
-      reward_l: "shared",
-      reward_r: "shared",
-    });
+    expect(new Set(Object.values(roleScopes(def)))).toEqual(new Set(["shared"]));
+    expect(Object.keys(roleScopes(def))).toEqual(def.slots.map((s) => s.id));
   });
 
-  it("keep a role the rows already bind differently per trial type", () => {
+  it("make a role per type the moment two trial types bind it differently", () => {
     const def = twoAfc();
     def.rows[1]!.bind = { ...def.rows[0]!.bind, sample: "odor_line_2" };
     expect(roleScopes(def).sample).toBe("per-type");
     expect(roleScopes(def).port).toBe("shared");
+    expect(sharedChannel(def, "port")).toBe("odor_port");
+    expect(sharedChannel(def, "sample")).toBe("odor_line_1");
+  });
+
+  it("bind a shared role in every trial type at once", () => {
+    const def = twoAfc();
+    def.rows[1]!.bind = {};
+    const bound = bindShared(def, "port", "odor_port");
+    expect(bound.rows.map((r) => r.bind.port)).toEqual(["odor_port", "odor_port"]);
+    expect(bindShared(bound, "port", "").rows.map((r) => "port" in r.bind)).toEqual([false, false]);
   });
 });
 

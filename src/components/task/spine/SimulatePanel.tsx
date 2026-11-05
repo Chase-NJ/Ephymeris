@@ -79,9 +79,8 @@ export function SimulatePanel({
   return (
     <div className="flex flex-col gap-3">
       <Note>
-        Check the task before an animal sees it: a whole session against a pretend animal, scored exactly as Analytics would score a
-        real run. Try the always-correct animal first (every trial type should come out right), then the random one (the outcome mix
-        should be what you expect). Nothing is compiled, flashed or saved.
+        A whole session against a pretend animal, scored as Analytics scores a real run. Try Always correct first, then Random. Nothing is
+        compiled, flashed or saved.
       </Note>
       <div className="flex flex-wrap items-end gap-3">
         <Field label="Animal">

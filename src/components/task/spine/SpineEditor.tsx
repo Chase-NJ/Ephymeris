@@ -40,10 +40,12 @@ interface Palette {
 
 /**
  * A phase-spine task, open (`TASKS.md#the-spine-editor`): the trial drawn
- * left to right in time with the selected step's fields under it, the RAM
- * meter beside it, the trial types with each one's contingency map as
- * sentences, the session's shape and blocks, and Simulate, which the header's
- * Simulate button jumps to.
+ * left to right in time with the selected step's fields and the RAM readout
+ * under it, the trial types with their shared wiring and each one's
+ * contingency map as sentences, the session's shape and blocks, and Simulate,
+ * which the header's Simulate button jumps to. Each panel shows what the task
+ * is and folds the rest: a step's unset fields sit in an Add menu, shared
+ * roles are bound once, a block's fields open on a click.
  *
  * EVERY REDRAW COMES FROM `tasks.preview`. This holds the unsaved document
  * and applies the operator's edits to it (`lib/taskdef/spine.ts`); the diagram,
@@ -67,12 +69,11 @@ export function SpineEditor({ shared, definition, rig }: { shared: EditorShared;
   const [palette, setPalette] = useState<Palette | null>(null);
   const [paletteError, setPaletteError] = useState<string | null>(null);
   const [selectedPhase, setSelectedPhase] = useState<number | null>(null);
-  const [selectedBlock, setSelectedBlock] = useState<number | null>(0);
+  const [selectedBlock, setSelectedBlock] = useState<number | null>(null);
   const [markedRow, setMarkedRow] = useState<number | null>(null);
   const markTimer = useRef<number | undefined>(undefined);
   const spineRef = useRef<HTMLDivElement>(null);
   const blocksRef = useRef<HTMLDivElement>(null);
-  const ramRef = useRef<HTMLDivElement>(null);
   const simulateRef = useRef<HTMLDivElement>(null);
   useEffect(() => () => window.clearTimeout(markTimer.current), []);
 
@@ -126,7 +127,7 @@ export function SpineEditor({ shared, definition, rig }: { shared: EditorShared;
     } else if (kind === "session") {
       blocksRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     } else if (kind === "ram") {
-      ramRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      spineRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
   }, []);
 
@@ -177,8 +178,7 @@ export function SpineEditor({ shared, definition, rig }: { shared: EditorShared;
       <ProblemLines lines={taskWide} onFix={(apply) => setDefinition(apply(definition))} />
 
       <motion.div variants={CASCADE} initial="hidden" animate="shown" className="flex flex-col gap-3 pb-4">
-        <motion.div variants={RISE} className="flex items-start gap-3">
-          <div ref={spineRef} className="min-w-0 flex-1">
+        <motion.div variants={RISE} ref={spineRef}>
             <Panel
               id="spine"
               name="Trial"
@@ -212,20 +212,15 @@ export function SpineEditor({ shared, definition, rig }: { shared: EditorShared;
                   onClearStored={clearStored}
                 />
               )}
-            </Panel>
-          </div>
-          <div ref={ramRef} className="w-[250px] shrink-0">
-            <Panel id="ram" name="RAM" note="the task's data, of the board's budget">
               <RamMeter ram={view?.ram ?? null} lines={targetLines(diagnostics, definition, "ram", null)} onFix={(apply) => setDefinition(apply(definition))} />
             </Panel>
-          </div>
         </motion.div>
 
         <motion.div variants={RISE}>
           <Panel
             id="rows"
             name="Trial types"
-            note={`${definition.rows.length} · what each presents, which channel plays each role, and what every answer means`}
+            note={`${definition.rows.length} · wiring once, then what each presents and what every answer means`}
           >
             <RowsTable
               def={definition}

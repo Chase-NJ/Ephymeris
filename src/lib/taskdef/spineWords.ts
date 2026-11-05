@@ -302,26 +302,39 @@ export type RoleScope = "shared" | "per-type";
 
 /**
  * Whether a role is the same wire in every trial type, or one each: what the
- * guide asks once and what it asks per trial type. A role the rows already
- * bind differently is per type. Otherwise an output that only Present phases
- * turn on is the stimulus, so per type; everything else (the port, the
- * light, the wells, the reward lines) is shared.
+ * Wiring line binds once, and what each trial type chooses for itself. The
+ * document decides: a role two trial types bind to different channels is per
+ * type; one every trial type binds alike, or none binds yet, is shared. There
+ * is no structural tell for the stimulus (the lab's full trial turns the
+ * sample on before the first Present), so a fresh seed starts with every role
+ * shared, and a role becomes per type the moment one trial type's channel
+ * differs.
  */
 export function roleScopes(def: SpineDefinition): Record<string, RoleScope> {
   const scopes: Record<string, RoleScope> = {};
   for (const slot of def.slots) {
     const bound = new Set(def.rows.map((r) => r.bind[slot.id]).filter((c): c is string => c !== undefined));
-    if (bound.size > 1) {
-      scopes[slot.id] = "per-type";
-      continue;
-    }
-    const output = slot.type !== "digital_in";
-    const users = def.spine.filter((p) => p.outputs?.includes(slot.id) || p.line === slot.id);
-    const onlyPresents = users.length > 0 && users.every((p) => p.phase === "present" && p.outputs?.includes(slot.id));
-    const paysSomewhere = def.rows.some((r) => Object.values(r.map ?? {}).some((e) => e.line === slot.id));
-    scopes[slot.id] = output && onlyPresents && !paysSomewhere ? "per-type" : "shared";
+    scopes[slot.id] = bound.size > 1 ? "per-type" : "shared";
   }
   return scopes;
+}
+
+/** The channel a shared role is bound to, if any trial type binds it. */
+export function sharedChannel(def: SpineDefinition, slot: string): string {
+  return def.rows.map((r) => r.bind[slot]).find((c): c is string => c !== undefined) ?? "";
+}
+
+/** Bind a role in every trial type at once; an empty channel unbinds it everywhere. */
+export function bindShared(def: SpineDefinition, slot: string, channel: string): SpineDefinition {
+  return {
+    ...def,
+    rows: def.rows.map((row) => {
+      const bind = { ...row.bind };
+      if (channel) bind[slot] = channel;
+      else delete bind[slot];
+      return { ...row, bind };
+    }),
+  };
 }
 
 export interface TimingField {

@@ -153,20 +153,30 @@ function oneLine(def: SpineDefinition, d: TaskDiagnostic): ProblemLine {
   }
 }
 
+/** The diagnostics about a role's binding: SPN101, SPN102 and SPN107 on `rows[r].bind.<slot>`. */
+const BINDING_CODES = new Set(["SPN101", "SPN102", "SPN107"]);
+
 /**
  * The problem lines for one row (`row` given), or for the task as a whole
  * (every diagnostic whose target is not a row, plus SPN103 from every row,
- * which is one line for the whole task). Order is the sidecar's.
+ * which is one line for the whole task). A binding problem on a role in
+ * `shared` is the Wiring line's (`wiringLines`), not the row's. Order is the
+ * sidecar's.
  */
 export function problemLines(
   diagnostics: readonly TaskDiagnostic[],
   def: SpineDefinition,
   rig: RigDocument | null,
   row: number | null,
+  shared: readonly string[] = [],
 ): ProblemLine[] {
   const lines: ProblemLine[] = [];
   if (row !== null) {
-    const mine = diagnostics.filter((d) => rowIndex(d) === row && d.code !== "SPN103");
+    const mine = diagnostics.filter((d) => {
+      if (rowIndex(d) !== row || d.code === "SPN103") return false;
+      const slot = boundSlot(d.location);
+      return !(slot !== null && BINDING_CODES.has(d.code) && shared.includes(slot));
+    });
     const unbound = mine.filter((d) => d.code === "SPN101" && boundSlot(d.location) !== null);
     let unboundDone = false;
     for (const d of mine) {
@@ -208,4 +218,44 @@ export function targetLines(
   index: number | null,
 ): ProblemLine[] {
   return diagnostics.filter((d) => d.target.kind === kind && d.target.index === index).map((d) => oneLine(def, d));
+}
+
+/**
+ * The Wiring line's problems: every binding problem on a shared role, said
+ * once per role whatever the number of trial types that repeat it. The
+ * unbound roles are one line naming them; a wrong channel keeps the
+ * sidecar's words, once.
+ */
+export function wiringLines(
+  diagnostics: readonly TaskDiagnostic[],
+  rig: RigDocument | null,
+  shared: readonly string[],
+): ProblemLine[] {
+  const lines: ProblemLine[] = [];
+  const mine = diagnostics.filter((d) => {
+    const slot = boundSlot(d.location);
+    return slot !== null && BINDING_CODES.has(d.code) && shared.includes(slot);
+  });
+  const unbound = mine.filter((d) => d.code === "SPN101" && /no channel$/.test(d.message));
+  const slots = [...new Set(unbound.map((d) => boundSlot(d.location)!))];
+  if (slots.length) {
+    lines.push({
+      code: "SPN101",
+      instruction: slots.length === 1 ? `Pick the channel that plays ${slots[0]}.` : `${slots.length} roles have no channel yet: ${slots.join(", ")}.`,
+      detail: [...new Set(unbound.map((d) => d.message))],
+      diagnostics: unbound,
+      fix: null,
+      link: null,
+    });
+  }
+  const seen = new Set<string>();
+  for (const d of mine) {
+    if (unbound.includes(d) || seen.has(d.message)) continue;
+    seen.add(d.message);
+    const name = /no channel '([^']+)'/.exec(d.message)?.[1];
+    const line = plain(d);
+    if (name) line.instruction = `${boundSlot(d.location)} is bound to ${channelWord(name, rig)}, which this rig does not have: pick another.`;
+    lines.push(line);
+  }
+  return lines;
 }

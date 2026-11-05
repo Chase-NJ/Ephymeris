@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import type { TaskDiagnostic } from "@/lib/ws/protocol";
 
 import type { SpineDefinition } from "./spine";
-import { problemLines, targetLines } from "./spineProblems";
+import { problemLines, targetLines, wiringLines } from "./spineProblems";
 
 function def(): SpineDefinition {
   return {
@@ -77,6 +77,22 @@ describe("a row's problems", () => {
     const [line] = problemLines(all, def(), null, 2);
     expect(line!.instruction).toBe("No block presents Odor 3: add it to a block, or remove it.");
     expect(line!.fix!.apply(def()).blocks[0]!.rows).toEqual(["row_1", "row_2", "row_3"]);
+  });
+});
+
+describe("the Wiring line's problems", () => {
+  it("take a shared role's binding problems off the row and say them once", () => {
+    const rowLines = problemLines(all, def(), null, 1, ["port"]);
+    expect(rowLines.map((l) => l.instruction)).toEqual([
+      "Name this trial type: its name titles every readout of it.",
+      "Pick the channel that plays sample.",
+    ]);
+    const wiring = wiringLines([...all, { ...all[1]!, target: { kind: "row", index: 0 }, location: "rows[0].bind.port" }], null, ["port"]);
+    expect(wiring).toHaveLength(1);
+    expect(wiring[0]!.instruction).toBe("Pick the channel that plays port.");
+    expect(wiring[0]!.diagnostics).toHaveLength(2);
+    expect(wiringLines(all, null, ["port", "sample"])[0]!.instruction).toBe("2 roles have no channel yet: port, sample.");
+    expect(wiringLines(all, null, [])).toEqual([]);
   });
 });
 

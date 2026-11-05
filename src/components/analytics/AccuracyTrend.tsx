@@ -38,14 +38,14 @@ import {
  * (`DATA.md#pooling-across-tasks`).
  *
  * The two figures are the same question asked of the *choice* and of the
- * *drop*: response accuracy counts a trial where the animal answered the
- * correct well whether or not it held long enough to earn fluid; rewarded
- * accuracy counts only the earned drop. They used to be two stacked panels
- * read by eye across a page seam; on one plot the reading is direct — the
+ * *drop*: response accuracy is legacy P(hit), the correct well answered
+ * first, held or not, over the trials answered at all, on a legacy and a spine
+ * run alike (`ANALYTICS.md#rewarded-and-response-accuracy`); rewarded
+ * accuracy counts only the earned drop, over every trial administered. The
  * response line is always the higher of the pair, and **the shaded gap
- * between them *is* the consummatory hold-failure rate**, filled in the same
- * colour the session cards give a hold failure so the behaviour keeps its
- * colour everywhere it appears.
+ * between them is what the choice did not turn into fluid**: a broken hold, a
+ * reward drawn against, or a trial not answered. It is filled in the colour
+ * the session cards give a hold failure.
  *
  * Line colours come from the summary's own vocabulary, not fresh ones:
  * rewarded is `OUTCOME_STYLE.rewarded` and response is Starlight — exactly
@@ -57,7 +57,8 @@ import {
  * own pair of lines.
  */
 
-/** Below this many administered trials the point is drawn hollow (`ANALYTICS.md#uncertainty`). */
+/** Below this many trials a point is drawn hollow (`ANALYTICS.md#uncertainty`): answered ones for the
+ *  response line, administered ones for the rewarded line. */
 const THIN = 30;
 
 /** The viewBox's y extent — a coordinate space, not a size. */
@@ -119,9 +120,9 @@ function TrendBody({
       : { x: sessionSlot(index, points.length), y: point.outcomes.pRewarded },
   );
   const responseLine: Array<Point | null> = points.map((point, index) =>
-    point.outcomes.pSide === null
+    point.outcomes.pResponse === null
       ? null
-      : { x: sessionSlot(index, points.length), y: point.outcomes.pSide },
+      : { x: sessionSlot(index, points.length), y: point.outcomes.pResponse },
   );
   const rewardedDots: Dot[] = points.flatMap((point, index) =>
     point.outcomes.pRewarded === null
@@ -135,17 +136,18 @@ function TrendBody({
         ],
   );
   const responseDots: Dot[] = points.flatMap((point, index) =>
-    point.outcomes.pSide === null
+    point.outcomes.pResponse === null
       ? []
       : [
           {
             x: sessionSlot(index, points.length),
-            y: point.outcomes.pSide,
-            hollow: point.outcomes.administered < THIN,
+            y: point.outcomes.pResponse,
+            hollow: point.outcomes.responded < THIN,
           },
         ],
   );
-  // The band between the two lines — the hold-failure rate, drawn as area so
+  // The band between the two lines — right answers not paid, and trials not
+  // answered — drawn as area so
   // it reads as a quantity rather than as a distance to be estimated. Split
   // wherever either figure is missing, like the lines themselves (`ANALYTICS.md#edge-cases`).
   const gapBands = holdGapBands(points);
@@ -289,9 +291,9 @@ function TrendBody({
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[9px] text-static/70">
           <span className="flex items-center gap-1">
             <span className="inline-block h-[3px] w-3 rounded-[1px]" style={{ background: RESPONSE_COLOR }} />
-            response — correct well answered
-            {overall.pSide !== null && (
-              <span className="tabular-nums text-static">{pct(overall.pSide)}</span>
+            response — correct well answered first, of the trials answered
+            {overall.pResponse !== null && (
+              <span className="tabular-nums text-static">{pct(overall.pResponse)}</span>
             )}
           </span>
           <span className="flex items-center gap-1">
@@ -303,10 +305,10 @@ function TrendBody({
           </span>
           <span className="flex items-center gap-1">
             <span className="inline-block size-2 rounded-[2px]" style={{ background: GAP_COLOR, opacity: 0.5 }} />
-            gap — correct but lost to the hold
-            {overall.pSide !== null && overall.pRewarded !== null && (
+            gap — answered right but not paid (a broken hold, a reward drawn against), or not answered
+            {overall.pResponse !== null && overall.pRewarded !== null && (
               <span className="tabular-nums text-static">
-                {pct(overall.pSide - overall.pRewarded)}
+                {pct(overall.pResponse - overall.pRewarded)}
               </span>
             )}
           </span>
@@ -318,18 +320,19 @@ function TrendBody({
 
         <HowToRead>
           <p>
-            Both lines share one denominator — trials whose odor was sampled to
-            completion. The response line scores the <em className="not-italic text-static">choice</em>:
-            the correct well was answered, hold or not. The rewarded line
-            scores the <em className="not-italic text-static">drop</em>: fluid actually delivered. Response is
-            always the higher of the pair, and the shaded gap between them is
-            the hold-failure rate — an animal learning the discrimination while
-            still fumbling the hold shows as the gap widening, not as either
-            line moving alone.
+            The response line scores the <em className="not-italic text-static">choice</em>: the
+            correct well answered first, hold or not, out of the trials the animal answered at all — the
+            same figure for the old tasks and the new ones. The rewarded line scores the{" "}
+            <em className="not-italic text-static">drop</em>: fluid actually delivered, out of every trial
+            whose odor was sampled. Response is always the higher of the pair, and the shaded gap between
+            them is what the choice did not turn into fluid: a broken hold, a reward drawn against, or a
+            trial not answered. An animal learning the discrimination while still fumbling the hold shows
+            as the gap widening, not as either line moving alone.
           </p>
           <p className="mt-1">
             Faint ribbons are 95% Wilson intervals; hollow dots mark sessions
-            under {THIN} administered trials — read loosely. Dashed vertical
+            under {THIN} trials — answered, for the response line; administered, for the rewarded one —
+            read loosely. Dashed vertical
             rules are where the cohort&rsquo;s dominant task changed (the strip
             above names them): a cliff at one is a task change, not forgetting.
           </p>
@@ -351,7 +354,7 @@ function holdGapBands(
   let current: Array<{ x: number; low: number; high: number }> = [];
   points.forEach((point, index) => {
     const low = point.outcomes.pRewarded;
-    const high = point.outcomes.pSide;
+    const high = point.outcomes.pResponse;
     if (low === null || high === null) {
       if (current.length >= 2) out.push(current);
       current = [];
@@ -448,17 +451,17 @@ function describePoint(
   const head =
     `${session.prefixName}_${session.sessionNumber} · ${session.date}` +
     ` · ${describeTaskMix(point.tasks, labels)}`;
-  if (outcomes.pSide === null || outcomes.pRewarded === null) {
-    return `${head}\nno administered trials — ${outcomes.aborted} aborted`;
+  if (outcomes.pResponse === null || outcomes.pRewarded === null) {
+    return `${head}\nno answered trials — ${outcomes.aborted} aborted`;
   }
   const parts = [
-    `${outcomes.administered} administered`,
-    `${pct(outcomes.pSide)} chose the correct well`,
+    `${outcomes.administered} administered, ${outcomes.responded} answered`,
+    `${pct(outcomes.pResponse)} chose the correct well`,
     `${pct(outcomes.pRewarded)} earned fluid`,
     `${outcomes.holdFailed} lost to the hold`,
   ];
-  if (outcomes.administered < THIN) {
-    parts.push(`fewer than ${THIN} administered — read loosely`);
+  if (outcomes.responded < THIN) {
+    parts.push(`fewer than ${THIN} answered — read loosely`);
   }
   return `${head}\n${parts.join(" · ")}`;
 }

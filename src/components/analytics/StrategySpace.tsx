@@ -6,7 +6,7 @@ import { PanelTitle } from "@/components/charts/PanelTitle";
 import { HowToRead } from "@/components/charts/HowToRead";
 import { useHasHighlight, useIsHighlighted } from "@/lib/analytics/context";
 import type { AnalyticsSummary, RunSummary } from "@/lib/analytics/types";
-import { SIDE_AXES, recentSessions, sideAccuracy } from "@/lib/analytics/view";
+import { SIDE_AXES, recentSessions, sideAccuracy, sideLowConfidence } from "@/lib/analytics/view";
 import {
   NoPlane,
   PLANE_VIEWBOX,
@@ -226,9 +226,7 @@ function buildPoints(summary: AnalyticsSummary): {
       y,
       slot,
       label: labelOf.get(run.sessionId) ?? "",
-      lowConfidence: run.metrics.some(
-        (m) => (m.answerSide === "left" || m.answerSide === "right") && m.lowConfidence,
-      ),
+      lowConfidence: sideLowConfidence(run, summary.minCountedTrials),
     };
     const bucket = byAnimal.get(run.animalId);
     if (bucket) bucket.push(point);

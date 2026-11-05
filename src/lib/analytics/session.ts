@@ -17,7 +17,7 @@ import type {
   RunSummary,
   TrialOutcomes,
 } from "./types";
-import { OUTCOME_STYLE, type OutcomeKey } from "./view";
+import { OUTCOME_ORDER, OUTCOME_STYLE, type OutcomeKey } from "./view";
 
 /**
  * Numeric-aware and case-insensitive, so `remy2` precedes `remy10` — a plain
@@ -233,25 +233,18 @@ export interface OutcomePart {
 }
 
 /**
- * The four outcome classes as bar segments, zero-width entries dropped. One
+ * The outcome buckets as bar segments, in `OUTCOME_ORDER`, zero-width entries dropped. One
  * definition shared by the per-odor bars, the run-level bar and the detail
  * views, so "the odor rows sum to the run bar" is true by construction.
  */
 export function outcomeParts(outcomes: TrialOutcomes): OutcomePart[] {
-  return (
-    [
-      { key: "rewarded" as const, value: outcomes.rewarded },
-      { key: "holdFailed" as const, value: outcomes.holdFailed },
-      { key: "wrongWell" as const, value: outcomes.wrongWell },
-      { key: "noResponse" as const, value: outcomes.noResponse },
-    ]
-      .filter((part) => part.value > 0)
-      .map((part) => ({
-        ...part,
-        fill: OUTCOME_STYLE[part.key].fill,
-        label: OUTCOME_STYLE[part.key].label,
-      }))
-  );
+  return OUTCOME_ORDER.map((key) => ({ key, value: outcomes[key] ?? 0 }))
+    .filter((part) => part.value > 0)
+    .map((part) => ({
+      ...part,
+      fill: OUTCOME_STYLE[part.key].fill,
+      label: OUTCOME_STYLE[part.key].label,
+    }));
 }
 
 /**

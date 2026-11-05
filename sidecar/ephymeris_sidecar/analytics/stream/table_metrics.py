@@ -166,6 +166,12 @@ def score(
     )
 
 
+def row_metric_id(row_id: str) -> str:
+    """A spine row's metric id, `replay:<row id>:correct`: its P(correct) metric,
+    its learning curve and its outcome tally (`crossover.py`) share it."""
+    return f"replay:{row_id}:{CORRECT}"
+
+
 def _correct(row: RowTally, *, metric_id: str, label: str, min_counted: int) -> MetricSummary:
     hits, counted = row.hits, row.counted
     interval = wilson_interval(hits, counted) if counted else None
@@ -190,7 +196,7 @@ def _correct(row: RowTally, *, metric_id: str, label: str, min_counted: int) -> 
 def correct_metrics(result: ReplayScore, *, min_counted: int = 10) -> list[MetricSummary]:
     """P(correct | row), one per row of the task."""
     return [
-        _correct(r, metric_id=f"replay:{r.row_id}:{CORRECT}",
+        _correct(r, metric_id=row_metric_id(r.row_id),
                  label=f"P({CORRECT} | {r.name or r.row_id})", min_counted=min_counted)
         for r in result.rows if r.row_id is not None
     ]

@@ -133,7 +133,12 @@ async def test_a_recorded_spine_run_shows_its_trial_table_and_metrics(rig: Rig) 
     assert (metric["hits"], metric["counted"], metric["triggered"], metric["excluded"]) == (2, 2, 3, 1), \
         "two held trials correct, the abort excluded"
     assert run["overall"]["counted"] == 2
-    assert run["outcomes"] is None and run["engagement"] is None, "never the legacy scorer's tallies"
+    # Its tallies come from its replay, never the legacy scorer: the tracer has
+    # no Response window, so no outcome tally, and its engagement ladder is its
+    # three trials, all poked and all reaching the odor (#167).
+    assert run["outcomes"] is None and run["conditions"] == []
+    assert (run["engagement"]["presented"], run["engagement"]["poked"], run["engagement"]["odorDelivered"]) == \
+        (3, 3, 3)
 
     tallies = run["replay"]
     assert tallies["interp"] == replay.INTERP_VERSION and tallies["trials"] == 3

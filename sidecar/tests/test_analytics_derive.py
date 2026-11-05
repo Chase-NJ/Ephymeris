@@ -1055,12 +1055,12 @@ def test_the_payload_shape_is_spelled_out() -> None:
         "wilsonLow", "windowSize",
     ]
     assert sorted(payload["outcomes"]) == [
-        "aborted", "administered", "holdFailed", "noResponse", "pRewarded",
-        "pSide", "rewarded", "rewardedHigh", "rewardedLow", "sideHigh",
-        "sideLow", "trials", "wrongWell",
+        "aborted", "administered", "falseAlarm", "holdFailed", "noResponse", "pResponse", "pRewarded",
+        "pSide", "responded", "responseHigh", "responseLow", "rewarded", "rewardedHigh", "rewardedLow",
+        "sideHigh", "sideLow", "trials", "unpaid", "withheld", "wrongWell",
     ]
     assert sorted(payload["conditions"][0]) == [
-        "label", "metricId", "outcomes", "triggerCode",
+        "answerSide", "label", "metricId", "outcomes", "triggerCode",
     ]
     assert sorted(payload["engagement"]) == [
         "engagedHigh", "engagedLow", "noPoke", "odorDelivered", "pDelivered",
@@ -1152,6 +1152,7 @@ def test_the_guides_worked_example_scores_as_printed() -> None:
     assert (outcomes.rewarded, outcomes.hold_failed, outcomes.wrong_well) == (1, 1, 1)
     assert (outcomes.no_response, outcomes.aborted, outcomes.administered) == (1, 1, 4)
     assert (outcomes.p_rewarded, outcomes.p_side) == (0.25, 0.5)
+    assert outcomes.p_response == 2 / 3, "the no-response trial leaves response accuracy's denominator"
 
     engagement = summary.engagement
     assert (engagement.presented, engagement.poked, engagement.odor_delivered) == (6, 5, 5)

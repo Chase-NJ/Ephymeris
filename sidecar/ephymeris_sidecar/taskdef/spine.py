@@ -103,6 +103,8 @@ PAIR_BYTES = 2
 #: at most `lowering.HISTORY` trials or responses, and a bag holds that many tokens.
 _WEIGHT_MAX = 1000
 _CORRECTION_MAX = 100
+#: A response port's side by its `port_slot`: the historical _L and _R families.
+_PORT_SIDES = {1: "left", 2: "right"}
 #: The longest same-side run cap: the core counts a run in a uint8_t, saturating.
 _RUN_MAX = 255
 _BIAS_WINDOW_DEFAULT = 10
@@ -253,6 +255,10 @@ def _resolve(definition: TaskDefinition) -> _Resolved:
             if kind == "in":
                 entry["activeHigh"] = channel.active_level == "high"
                 entry["debounceMs"] = int(channel.debounce_ms or 0)
+                # A response port's side, by the strobe family it reports with
+                # (`port_slot` 1 is the _L family, 2 the _R), for the strategy plane.
+                if channel.port_slot in _PORT_SIDES:
+                    entry["side"] = _PORT_SIDES[channel.port_slot]
             named = dict(channel.edges)
             for role, edge in zip(("rise", "fall") if kind == "in" else ("on", "off"),
                                   registry.edges_of(channel.type, channel.mode)):
@@ -839,7 +845,7 @@ def profile_json(definition: TaskDefinition) -> dict[str, Any]:
     snapshot: dict[str, Any] = {
         "interp": lowering.INTERP_VERSION,
         **spine.to_json(),
-        "inputs": [_public(e, ("slot", "channel", "rise", "fall")) for e in resolved.inputs],
+        "inputs": [_public(e, ("slot", "channel", "rise", "fall", "side")) for e in resolved.inputs],
         "outputs": [_public(e, ("slot", "channel", "on", "off", "drive", "params")) for e in resolved.outputs],
         "params": list(low.params) if low else [],
         # `phases` and `rows`: the phase index and the row index (into `rows`)

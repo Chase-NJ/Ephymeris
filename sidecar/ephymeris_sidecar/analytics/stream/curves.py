@@ -18,6 +18,7 @@ from . import legacy
 from .document import codes_of
 from .spine import SpineDecodeError, is_spine_run, replayed
 from .stats import _round
+from .table_metrics import row_metric_id
 from .summary import DEFAULT_MIN_COUNTED
 from .table_metrics import CORRECT, verdicts
 
@@ -86,7 +87,7 @@ def _curves(document: dict[str, Any], profile: TaskProfile | None) -> list[_Curv
             return []
         done = [t for t in result.trials if t.complete]
         return [
-            _Curve(id=f"replay:{row}:{CORRECT}", label=f"P({CORRECT} | {name or row})", window=None,
+            _Curve(id=row_metric_id(row), label=f"P({CORRECT} | {name or row})", window=None,
                    verdicts=[t.correct for t in done if t.row == row and t.correct is not None])
             for row, name in result.rows
         ]

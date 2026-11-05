@@ -694,10 +694,11 @@ def test_a_copy_that_loses_the_destination_is_left_for_a_later_start_to_undo(
         raise OSError("the drive went away")
 
     monkeypatch.setattr(move_apply, "_copy_files", copy_then_drop)
-    with pytest.raises(OSError, match="went away"):
+    with pytest.raises(move_apply.MoveRefused, match="went away. Nothing was moved.*next start"):
         lab.apply("slow1")
-    [state] = statements(lab.db).execute("SELECT state FROM animal_moves").fetchone()
+    [(state, error)] = statements(lab.db).execute("SELECT state, error FROM animal_moves").fetchall()
     assert state == "copying"
+    assert error.startswith(f"waiting for {lab.b_root}")
 
     monkeypatch.undo()  # back, but only the next start undoes it
     refused = {r["code"] for r in lab.preview("slow1").refused}

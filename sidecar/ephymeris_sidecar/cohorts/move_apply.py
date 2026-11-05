@@ -124,7 +124,8 @@ def apply(
     try:
         _copy_files(plan, on_copied)
     except Exception as exc:
-        _roll_back(db, journal, plan_files(plan), str(exc))
+        if not _roll_back(db, journal, plan_files(plan), str(exc)):
+            raise MoveRefused(plan, _sentence(exc) + LEFT_FOR_LATER) from exc
         raise
 
     failure: BaseException | None = None
@@ -147,7 +148,8 @@ def apply(
         failure = exc
     if failure is not None:
         # After the unit ended: undoing is a unit of its own.
-        _roll_back(db, journal, plan_files(plan), str(failure))
+        if not _roll_back(db, journal, plan_files(plan), str(failure)):
+            raise MoveRefused(plan, _sentence(failure) + LEFT_FOR_LATER) from failure
         raise failure
     plan = again
 
@@ -545,21 +547,36 @@ def _waiting(db: Database, journal: str, copies: list[transfer.FileCopy]) -> boo
     return True
 
 
-def _roll_back(db: Database, journal: str, files: list[dict[str, Any]], reason: str) -> None:
+#: Said when a live move fails and its undo waits for a folder out of reach.
+LEFT_FOR_LATER = (
+    " Nothing was moved; what was copied is removed at the next start that can reach both"
+    " data folders."
+)
+
+
+def _sentence(exc: BaseException) -> str:
+    return str(exc).rstrip(".") + "."
+
+
+def _roll_back(db: Database, journal: str, files: list[dict[str, Any]], reason: str) -> bool:
     """Undo a copy the records never followed: delete the destination files
     this move made — a copy that was already there before it (`present`) is
     never touched — and any `.part` left half-written. A copy may go only
     while its original is there, so while any original or copy can't be
-    reached, nothing is removed and the journal stays `copying`."""
+    reached, nothing is removed, the journal stays `copying`, and this
+    returns False."""
     copies = _copies(files, "copy")
     if _waiting(db, journal, copies):
-        return
-    transfer.undo(copies)
+        return False
+    kept = transfer.undo(copies)
+    if kept:
+        reason += f"; {len(kept)} copies kept (such as {kept[0]}), their originals gone or changed"
     with db.write() as unit:
         unit.execute(
             "UPDATE animal_moves SET state = 'rolled-back', error = ?, updated_at = ? WHERE id = ?",
             (reason[:500], _now(), journal),
         )
+    return True
 
 
 def resume(db: Database) -> int:

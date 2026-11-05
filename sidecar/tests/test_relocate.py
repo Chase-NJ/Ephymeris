@@ -681,10 +681,14 @@ def test_a_copy_left_to_a_later_start_explains_a_retry_and_does_not_hold_up_a_se
     monkeypatch.undo()  # back, but only the next start finishes it
 
     assert not relocate.moving(archive.db, archive.cohort.id)
-    for move_existing in (True, False):
-        with pytest.raises(DataFolderError, match="hasn't finished") as refused:
-            relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), move_existing)
-        assert f"waiting for {archive.old}" in str(refused.value)
+    # Its target, a folder inside it, and one around it; moving or pointing.
+    for destination in (archive.new, archive.new / "Inner", archive.new.parent):
+        for move_existing in (True, False):
+            with pytest.raises(DataFolderError, match="hasn't finished") as refused:
+                relocate.relocate_cohort(
+                    archive.db, archive.cohort.id, str(destination), move_existing
+                )
+            assert f"waiting for {archive.old}" in str(refused.value)
     assert archive.cohorts.get(archive.cohort.id).data_folder == str(archive.old)
 
 
@@ -707,6 +711,31 @@ def test_a_copy_left_to_a_later_start_does_not_hold_up_a_relocate_elsewhere(
     relocate.resume(archive.db)  # the originals are gone: it removes nothing
     assert archive.all_under(third)
     assert any(p.is_file() for p in archive.new.rglob("*")), "the undo kept what it can't check"
+    [(state, error)] = statements(archive.db).execute(
+        "SELECT state, error FROM folder_moves WHERE id = 'j'"
+    ).fetchall()
+    assert state == "rolled-back"
+    assert f"copies kept at {archive.new}" in error, "the journal says what it left"
+
+
+def test_a_move_of_animals_left_to_a_later_start_holds_up_moving_the_data(
+    archive: Archive,
+) -> None:
+    """Its undo removes a copy only while the original is where it was:
+    moving the originals would leave its copies in the other cohort for good,
+    to be adopted there. Pointing moves nothing, so it goes ahead."""
+    statements(archive.db).execute(
+        "INSERT INTO animal_moves (id, source_cohort_id, dest_cohort_id, state, plan_json,"
+        " created_at, updated_at, error) VALUES ('m', ?, 'other', 'copying', '{}', 'now', 'now',"
+        " 'waiting for D:/B')",
+        (archive.cohort.id,),
+    )
+    with pytest.raises(DataFolderError, match="animals .* hasn't finished .waiting for D:/B"):
+        relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
+    assert archive.all_under(archive.old)
+
+    relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), False)
+    assert archive.cohorts.get(archive.cohort.id).data_folder == str(archive.new)
 
 
 def test_a_copy_that_loses_the_new_folder_is_left_for_a_later_start_to_undo(

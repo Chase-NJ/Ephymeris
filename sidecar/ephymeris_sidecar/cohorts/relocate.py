@@ -205,7 +205,7 @@ def relocate_cohort(db: Database, cohort_id: str, destination: str, move_existin
             "SELECT data_folder FROM cohorts WHERE id = ?", (cohort_id,)
         ).fetchone()
         if row is not None:
-            _refuse_unfinished(q, cohort_id, target)
+            _refuse_unfinished(q, cohort_id, target, move_existing)
     if row is None:
         raise CohortNotFound(cohort_id)
     source = Path(row[0]).expanduser()
@@ -260,17 +260,11 @@ def _carry_out(
         else:
             copies = _copy_tree(source, target)
     except OSError as exc:
-        message = f"Couldn't move data to {target}: {exc}"
+        message = f"Couldn't move data to {target}: {str(exc).rstrip('.')}."
         if same_volume:
             _finish(db, journal, "rolled-back", str(exc))
-        else:
-            try:
-                undone = _undo_copy(db, journal, source, target, str(exc))
-            except OSError:  # the journal stays `copying`; the next start undoes it
-                log.exception("relocate: couldn't remove the copy at %s", target)
-                undone = False
-            if not undone:
-                message += " What was copied is removed at the next start that can reach both folders."
+        elif not _undo_copy_now(db, journal, source, target, str(exc)):
+            message += LEFT_FOR_LATER
         raise DataFolderError(message) from exc
 
     failure: BaseException | None = None
@@ -289,11 +283,9 @@ def _carry_out(
     if failure is not None:
         # The records never moved, so neither may the files.
         if not same_volume:
-            try:
-                _undo_copy(db, journal, source, target, str(failure))
-            except OSError:  # the journal stays `copying`; the next start undoes it
-                log.exception("relocate: couldn't remove the copy at %s", target)
-            raise failure
+            if _undo_copy_now(db, journal, source, target, str(failure)):
+                raise failure
+            raise DataFolderError(str(failure).rstrip(".") + "." + LEFT_FOR_LATER) from failure
         try:
             os.rename(target, source)
         except OSError:
@@ -349,9 +341,26 @@ def _undo_copy(db: Database, journal: str, source: Path, target: Path, reason: s
     returns False."""
     if _waiting(db, journal, source, target):
         return False
-    _remove_copies(source, target)
+    kept = _remove_copies(source, target)
+    if kept:
+        reason += f"; {len(kept)} copies kept at {target}, their originals gone or changed"
     _finish(db, journal, "rolled-back", reason)
     return True
+
+
+#: Said when a live copy fails and its undo waits for a folder out of reach.
+LEFT_FOR_LATER = " What was copied is removed at the next start that can reach both folders."
+
+
+def _undo_copy_now(db: Database, journal: str, source: Path, target: Path, reason: str) -> bool:
+    """`_undo_copy` on the live path, where an error removing a copy must not
+    hide the failure being undone: the journal stays `copying` for the next
+    start."""
+    try:
+        return _undo_copy(db, journal, source, target, reason)
+    except OSError:
+        log.exception("relocate: couldn't remove the copy at %s", target)
+        return False
 
 
 def _finish_deleting(
@@ -508,12 +517,17 @@ def moving(db: Database, cohort_id: str) -> bool:
         return any(state == "moving" or journal in _carrying_out for journal, state in rows)
 
 
-def _refuse_unfinished(conn: Query, cohort_id: str, destination: Path) -> None:
+def _refuse_unfinished(conn: Query, cohort_id: str, destination: Path, moving_data: bool) -> None:
     """A relocate left waiting for a folder it couldn't reach. A rename's
     records may name a folder that has moved, so nothing else may change the
     cohort's folder first. A copy's undo will remove what it copied, so no
     relocate may move into, or point at, its target; any other destination
-    is safe, and a target that never comes back must not hold the cohort."""
+    is safe, and a target that never comes back must not hold the cohort.
+
+    Likewise, for a relocate that moves data, a move of animals to or from
+    the cohort left `copying`: its undo removes a copy only while the
+    original is where it was, so moving the originals would leave its copies
+    for good, and moving its copies would carry them off unrecorded."""
     rows = conn.execute(
         "SELECT source, target, state, error FROM folder_moves WHERE cohort_id = ?"
         " AND state IN ('moving', 'copying')",
@@ -526,6 +540,19 @@ def _refuse_unfinished(conn: Query, cohort_id: str, destination: Path) -> None:
             f"An earlier move of this cohort's data from {source} to {target} hasn't finished"
             f" ({error or 'interrupted'}). Connect both folders and restart Ephymeris to"
             " finish it, then change the data folder."
+        )
+    if not moving_data:
+        return
+    move = conn.execute(
+        "SELECT error FROM animal_moves WHERE state = 'copying'"
+        " AND ? IN (source_cohort_id, dest_cohort_id) LIMIT 1",
+        (cohort_id,),
+    ).fetchone()
+    if move is not None:
+        raise DataFolderError(
+            f"An earlier move of animals to or from this cohort hasn't finished"
+            f" ({move[0] or 'interrupted'}). Connect both data folders and restart Ephymeris"
+            " to finish it, then change the data folder."
         )
 
 
@@ -606,18 +633,20 @@ def _copy_tree(source: Path, target: Path) -> list[transfer.FileCopy]:
     return transfer.copy(_copies(source, target))
 
 
-def _remove_copies(source: Path, target: Path) -> None:
+def _remove_copies(source: Path, target: Path) -> list[Path]:
     """Undo a copy. The target was empty, so everything below it is this
     relocate's: each copy whose original is still there, the same, and any
-    `.part` a crash left. Never anything that is the only copy."""
+    `.part` a crash left. Never anything that is the only copy, which it
+    returns."""
     copies: dict[Path, transfer.FileCopy] = {}
     for path in _files(target):
         dst = path
         if path.name.endswith(transfer.PART_SUFFIX) and not (source / path.relative_to(target)).exists():
             dst = path.with_name(path.name[: -len(transfer.PART_SUFFIX)])
         copies.setdefault(dst, transfer.FileCopy(source / dst.relative_to(target), dst))
-    transfer.undo(copies.values())
+    kept = transfer.undo(copies.values())
     _prune_empty_dirs(target, keep_root=True)
+    return kept
 
 
 def _delete_sources(

@@ -4,7 +4,7 @@ Three kinds of caller want a box flashed — the utility baseline's restores, th
 session's placement walk, and Debug Mode — and all of them under the same
 rules, once the box's port is free: one compile at a time, rig-wide; a session
 or Debug flash alone on the rig; restores beside one another, sharing one
-compile and uploading to their boxes at once; and never two jobs on one box.
+compile and uploading to their boxes in turn; and never two jobs on one box.
 This is the only caller of `PortManager.flash`, so the rules hold across
 callers rather than within each.
 It lives here and not in the frontend because a queue in a component dies
@@ -137,10 +137,17 @@ class SharedBuilds:
     after that the next flash compiles afresh. The upload reads the folder's
     build from `arduino-cli`'s build directory, so a compile of a folder whose
     build is still being uploaded waits for those uploads to end.
+
+    One upload at a time, rig-wide, too: six `avrdude`s at once loaded a
+    marginal USB path until a box's verify failed
+    (`docs/adr/0004-restores-upload-one-at-a-time.md`).
+    A flash waiting its turn keeps its build live, so the restores still
+    share one compile.
     """
 
     def __init__(self) -> None:
         self._compiling = asyncio.Lock()
+        self._uploading = asyncio.Lock()
         self._live: dict[str, _Build] = {}
 
     @asynccontextmanager
@@ -174,7 +181,8 @@ class SharedBuilds:
                 await live.built.wait()
                 if live.error is not None:
                     raise live.error
-            yield
+            async with self._uploading:
+                yield
         finally:
             live.users -= 1
             if not live.users:
@@ -362,7 +370,8 @@ class FlashQueue:
         """The first job, in queue order, that can run now. Jobs that can
         never run (no board, a faulted port, a wait that timed out) fail here.
 
-        A baseline job runs beside other baseline jobs. A session or Debug job
+        A baseline job runs beside other baseline jobs, though their uploads
+        take turns (`SharedBuilds`). A session or Debug job
         runs alone: it waits for the jobs under way, and once its port is free
         nothing queued behind it starts first. A box's job under way finishes
         before its next one starts, whatever their origins."""

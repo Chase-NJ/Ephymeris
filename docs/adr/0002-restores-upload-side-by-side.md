@@ -1,5 +1,7 @@
 # Restores upload side by side
 
+> Superseded in part by [ADR 0004](0004-restores-upload-one-at-a-time.md): restores still share one compile, but their uploads now take turns.
+
 The flash queue ran one flash at a time, rig-wide, because two `arduino-cli` builds at once are slower than one after the other on the lab machines, and a half-flashed pair is worse than a whole one. That made a cold start six restores in a row, about 20 s with a warm build cache, almost all of it uploads. We keep one compile at a time and let utility baseline restores upload together: restores share one compile of the box utility (`SharedBuilds`, `ports/flashing.py`) and each uploads to its own serial port at once. Session and Debug flashes still run alone.
 
 The serial rule rested on the build, and an upload builds nothing: it runs `avrdude` against the build `arduino-cli` left in its build directory. Six uploads go to six ports and share no state but that read-only file. The `arduino-cli` daemon runs concurrent `Upload` RPCs, each with its own `avrdude`; two uploads to two unresponsive ports took 1.8 s together, the same as one alone.

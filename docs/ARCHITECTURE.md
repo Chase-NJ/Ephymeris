@@ -728,15 +728,18 @@ never holds up the rest. What may run beside what:
 - **One compile at a time, rig-wide**, whoever asked: two `arduino-cli` builds at once are slower than one
   after the other on the lab machines (`SharedBuilds`).
 - **Restores run side by side** and share one compile: a flash that finds its folder's build still live at
-  the same fingerprint uploads from it, so a cold start compiles the box utility once and uploads to every
-  box at once, each upload on its own serial port. The `arduino-cli` daemon runs concurrent `Upload` calls,
-  each with its own `avrdude` ([ADR 0002](adr/0002-restores-upload-side-by-side.md)).
+  the same fingerprint uploads from it, so a cold start compiles the box utility once.
+- **One upload at a time, rig-wide**, whoever asked (`SharedBuilds`). Restores side by side each take
+  their port, then upload in turn; one waiting its turn keeps the build live, so none compiles again. Six
+  `avrdude`s at once loaded a marginal USB path until a box's verify failed
+  ([ADR 0004](adr/0004-restores-upload-one-at-a-time.md)).
 - **A session or Debug flash runs alone.** It waits for the flashes under way, and once its port is free
   nothing queued behind it starts first.
 - **One job per box.** A box's next job, of any origin, waits for the one under way there to land.
 
 Each job holds the rig definition's read side from choosing its sketch until what the board carries is
-recorded ([TASKS.md](TASKS.md#the-rig-definition)), so restores side by side are that many readers.
+recorded ([TASKS.md](TASKS.md#the-rig-definition)), so restores side by side are that many readers, and a
+waiting write waits for the last of their uploads.
 
 | Origin | Asked for by | Sketch | Port | Lands in | Pinned |
 |---|---|---|---|---|---|
@@ -884,7 +887,8 @@ flowchart TD
 ```
 
 Restores run on the same [flash queue](#the-flash-queue) as every other flash, **side by side**: a cold
-start compiles the box utility once and uploads it to every free box at once. Each box keeps one owner,
+start compiles the box utility once and uploads it to every free box, one box at a time. A box waiting its
+turn already reads as flashing, since its restore has taken the port. Each box keeps one owner,
 because each restore still takes its own port through `release_for`. A pinned box reads `pinned` even with
 its console open, because the Debug flash that pinned it ends in that console.
 

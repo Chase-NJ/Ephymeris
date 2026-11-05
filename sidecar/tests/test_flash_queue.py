@@ -3,8 +3,8 @@
 Driven over the real `PortManager` and a fake board tool that notices what runs
 beside what, because the rules here are about ports: which state a job waits
 on, which it fails on, that only one compile runs on the rig at once, that a
-session or Debug flash runs alone, and that restores upload side by side from
-one compile.
+session or Debug flash runs alone, and that restores share one compile and
+upload one at a time.
 """
 
 from __future__ import annotations
@@ -228,18 +228,25 @@ async def test_a_session_or_debug_flash_runs_alone(rig: Rig) -> None:
     ]
 
 
-async def test_restores_compile_once_and_upload_side_by_side(rig: Rig) -> None:
+async def test_restores_compile_once_and_upload_one_at_a_time(rig: Rig) -> None:
+    """Six uploads at once loaded a marginal USB path until a box's verify
+    failed (`docs/adr/0004-restores-upload-one-at-a-time.md`)."""
     gates = [rig.tool.hold(box) for box in BOXES]
     rig.queue.submit(rig.job(box, "baseline", UTILITY_PATH) for box in BOXES)
-    await rig.until(lambda: len(rig.tool.started) == len(BOXES), "every upload under way")
+    await rig.until(lambda: rig.tool.started, "the first upload")
+    for _ in range(20):
+        await asyncio.sleep(0.01)
 
-    assert rig.tool.most_uploads == len(BOXES)
+    assert len(rig.tool.started) == 1
     assert rig.tool.compiles == [UTILITY_PATH]
+    # Each restore holds its port while it waits its turn.
     assert rig.states() == {PortState.FLASHING}
 
     for gate in gates:
         gate.set()
     await rig.settle()
+    assert rig.tool.most_uploads == 1
+    assert rig.tool.compiles == [UTILITY_PATH]
     assert not rig.tool.rebuilt_under_an_upload
     assert sorted(box for box, _path, _origin in rig.flashed) == list(BOXES)
     assert all(rig.ports.carried(box).path == UTILITY_PATH for box in BOXES)
@@ -299,7 +306,8 @@ async def test_restores_queued_behind_a_debug_flash_wait_for_it(rig: Rig) -> Non
 async def test_a_compile_waits_for_uploads_of_an_older_build_of_its_folder() -> None:
     """An upload reads the folder's build from `arduino-cli`'s build
     directory: a compile of a changed folder must not rewrite it mid-upload,
-    and an upload of the same build must not compile it again."""
+    and an upload of the same build must not compile it again. Uploads take
+    turns, so the one that joined waits for the first to end."""
     builds = SharedBuilds()
     events: list[str] = []
     uploading = asyncio.Event()
@@ -322,13 +330,14 @@ async def test_a_compile_waits_for_uploads_of_an_older_build_of_its_folder() -> 
     await uploading.wait()
     joiner = asyncio.ensure_future(flash("b", "v1"))
     changed = asyncio.ensure_future(flash("c", "v2"))
-    await joiner
     await asyncio.sleep(0.01)
-    assert events == ["compile a", "upload a", "upload b", "uploaded b"]
+    assert events == ["compile a", "upload a"]
 
     finish.set()
-    await asyncio.gather(first, changed)
-    assert events[4:] == ["uploaded a", "compile c", "upload c", "uploaded c"]
+    await asyncio.gather(first, joiner, changed)
+    assert events[2:] == [
+        "uploaded a", "upload b", "uploaded b", "compile c", "upload c", "uploaded c",
+    ]
 
 
 async def test_a_busy_port_waits_without_holding_up_the_rest(rig: Rig) -> None:
@@ -530,7 +539,11 @@ async def test_a_hold_lets_every_restore_in_hand_finish(rig: Rig) -> None:
     baseline = rig.baseline()
     gates = [rig.tool.hold(box) for box in BOXES]
     baseline.ensure()
-    await rig.until(lambda: len(rig.tool.started) == len(BOXES), "every upload under way")
+    # Under way: every port taken, one uploading and the rest waiting their turn.
+    await rig.until(
+        lambda: rig.tool.started and rig.states() == {PortState.FLASHING},
+        "every restore under way",
+    )
 
     baseline.hold()
     for gate in gates:

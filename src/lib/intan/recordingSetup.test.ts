@@ -5,7 +5,9 @@ import {
   applyParsedProbeMap,
   assignPorts,
   configurePayload,
+  failedProbeMapParse,
   presentPorts,
+  probeMapWaiting,
   reconcileRows,
   recordingReadiness,
   rememberedDefaults,
@@ -14,6 +16,8 @@ import {
   type IntanFacts,
   type MappedBox,
 } from "./recordingSetup";
+import { ERR, SidecarCommandError } from "@/lib/ws/protocol";
+
 import type { ProbeMap } from "./types";
 
 /**
@@ -368,6 +372,42 @@ describe("applyParsedProbeMap", () => {
     const rows = [row(3, "Rat-07", { probeMapPath: "/maps/newer.xml", probeMap: newer })];
     expect(applyParsedProbeMap(rows, 3, "/maps/rat07.xml", { probeMap: MAP_07 })).toBe(rows);
     expect(applyParsedProbeMap(rows, 3, "/maps/rat07.xml", { error: "late failure" })).toBe(rows);
+  });
+
+  it("leaves a row waiting when the parse was cut off", () => {
+    const rows = [row(3, "Rat-07", { probeMapPath: "/maps/rat07.xml" })];
+    expect(applyParsedProbeMap(rows, 3, "/maps/rat07.xml", { cutOff: true })).toBe(rows);
+    expect(probeMapWaiting(rows[0]!)).toBe(true);
+  });
+});
+
+// A parse in flight when the sidecar disconnects must parse again on
+// reconnect; a file the sidecar refused must not be retried (Chase-NJ/Ephymeris#76).
+describe("failedProbeMapParse", () => {
+  const refused = new SidecarCommandError({ code: ERR.INTAN_NOT_READY, message: "not a probe map", detail: null });
+
+  it("cuts off a call that failed with the link down", () => {
+    expect(failedProbeMapParse(new Error("sidecar connection closed"), "reconnecting")).toEqual({ cutOff: true });
+    expect(failedProbeMapParse(new Error("sidecar is not connected"), "connecting")).toEqual({ cutOff: true });
+  });
+
+  it("keeps the sidecar's refusal, whatever the link is doing", () => {
+    expect(failedProbeMapParse(refused, "connected")).toEqual({ error: "not a probe map" });
+    expect(failedProbeMapParse(refused, "reconnecting")).toEqual({ error: "not a probe map" });
+  });
+
+  it("keeps a timeout on a live link, which nothing would retry", () => {
+    const timedOut = new Error("command timed out: intan.parseProbeMap");
+    expect(failedProbeMapParse(timedOut, "connected")).toEqual({ error: timedOut.message });
+  });
+});
+
+describe("probeMapWaiting", () => {
+  it("is a chosen map neither parsed nor refused", () => {
+    expect(probeMapWaiting(row(3, "Rat-07", { probeMapPath: "/maps/rat07.xml" }))).toBe(true);
+    expect(probeMapWaiting(row(3, "Rat-07"))).toBe(false);
+    expect(probeMapWaiting(row(3, "Rat-07", { probeMapPath: "/maps/rat07.xml", probeMap: MAP_07 }))).toBe(false);
+    expect(probeMapWaiting(row(3, "Rat-07", { probeMapPath: "/maps/rat07.xml", probeError: "bad" }))).toBe(false);
   });
 
   it("drops a reply for a row whose probe map was removed meanwhile", () => {

@@ -345,7 +345,9 @@ box the animal is on now; an animal with none remembered starts blank.
   under a chosen root (recordings are large and often live on their own drive; the shared folder name lets
   the two halves match by eye), with the defaults collapsed to one summary behind an Edit door.
 - **Boxes**: per mapped box, Record or Behavior only, its DIN, headstage port, channel range and optional
-  probe-map XML. Two boxes may share a port on disjoint ranges; an overlap is refused. A box the group's
+  probe-map XML. A chosen map shows as parsing until `intan.parseProbeMap` answers; a parse the sidecar
+  connection cut off runs again on reconnect, while a file the sidecar refused keeps its error until
+  another is chosen. Two boxes may share a port on disjoint ranges; an overlap is refused. A box the group's
   confirmed mapping doesn't have is refused before RHX is touched (`SessionLifecycle.mapped_boxes`), so
   RHX's notes always name each box's animal.
 

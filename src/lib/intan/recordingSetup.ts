@@ -5,7 +5,9 @@
  * sends. `SessionRecording` gathers the facts and renders the answers.
  */
 
-import type { BoxBinding } from "@/lib/ws/protocol";
+import { errorMessage } from "@/lib/cohorts/commands";
+import type { ConnectionStatus } from "@/lib/ws/port";
+import { SidecarCommandError, type BoxBinding } from "@/lib/ws/protocol";
 
 import type { RecordingConfigDefaults, RecordingDefaults } from "./defaults";
 import { channelRange } from "./scopeMath";
@@ -90,17 +92,42 @@ export function reconcileRows(
   return unchanged ? draftRows : next;
 }
 
-/** What `intan.parseProbeMap` answered for one path. */
-export type ProbeMapParse = { probeMap: ProbeMap } | { error: string };
+/**
+ * What `intan.parseProbeMap` answered for one path, or `cutOff` when the link
+ * dropped before it answered (`failedProbeMapParse`).
+ */
+export type ProbeMapParse = { probeMap: ProbeMap } | { error: string } | { cutOff: true };
+
+/**
+ * A row with a probe map chosen but neither parsed nor refused: one the Record
+ * step parses as soon as the sidecar is connected, and shows as parsing.
+ */
+export function probeMapWaiting(row: BoxRow): boolean {
+  return Boolean(row.probeMapPath) && !row.probeMap && !row.probeError;
+}
+
+/**
+ * A parse that failed, as its row should take it. The sidecar's refusal sticks,
+ * and so does a timeout on a live link, which nothing would retry. A call that
+ * failed with the link down got no answer at all: the client reports the drop
+ * before it fails the calls in flight, so `link` is already off `connected`,
+ * and the row is left waiting to parse again on reconnect.
+ */
+export function failedProbeMapParse(err: unknown, link: ConnectionStatus): ProbeMapParse {
+  if (!(err instanceof SidecarCommandError) && link !== "connected") return { cutOff: true };
+  return { error: errorMessage(err) };
+}
 
 /**
  * The rows with a parse of `path` applied to the row on `box` — only while
  * that row still has that path. A reply lands after the fact: meanwhile the
  * box may have gone to another animal (a swap reconciled after the parse was
  * asked for), or the operator chose another map or removed it. Those replies
- * are dropped, and the same array comes back.
+ * are dropped, and the same array comes back, as it does for a parse cut off
+ * by the link dropping, which leaves the row waiting.
  */
 export function applyParsedProbeMap(rows: BoxRow[], box: number, path: string, parsed: ProbeMapParse): BoxRow[] {
+  if ("cutOff" in parsed) return rows;
   if (!rows.some((r) => r.box === box && r.probeMapPath === path)) return rows;
   const patch =
     "probeMap" in parsed ? { probeMap: parsed.probeMap, probeError: null } : { probeMap: null, probeError: parsed.error };

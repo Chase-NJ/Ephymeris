@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { ERR, SidecarCommandError } from "@/lib/ws/protocol";
+
 import { DEFAULT_RECORDING_DEFAULTS, normalizeRecordingDefaults, type RecordingDefaults } from "./defaults";
 import {
   applyParsedProbeMap,
@@ -16,8 +18,6 @@ import {
   type IntanFacts,
   type MappedBox,
 } from "./recordingSetup";
-import { ERR, SidecarCommandError } from "@/lib/ws/protocol";
-
 import type { ProbeMap } from "./types";
 
 /**
@@ -379,6 +379,18 @@ describe("applyParsedProbeMap", () => {
     expect(applyParsedProbeMap(rows, 3, "/maps/rat07.xml", { cutOff: true })).toBe(rows);
     expect(probeMapWaiting(rows[0]!)).toBe(true);
   });
+
+  it("drops a reply for a row whose probe map was removed meanwhile", () => {
+    const rows = [row(3, "Rat-07")];
+    expect(applyParsedProbeMap(rows, 3, "/maps/rat07.xml", { probeMap: MAP_07 })).toBe(rows);
+  });
+
+  it("records why a map didn't parse on the row that asked for it", () => {
+    const rows = [row(3, "Rat-07", { probeMapPath: "/maps/broken.xml" })];
+    expect(applyParsedProbeMap(rows, 3, "/maps/broken.xml", { error: "not a probe map" })).toEqual([
+      row(3, "Rat-07", { probeMapPath: "/maps/broken.xml", probeError: "not a probe map" }),
+    ]);
+  });
 });
 
 // A parse in flight when the sidecar disconnects must parse again on
@@ -408,17 +420,5 @@ describe("probeMapWaiting", () => {
     expect(probeMapWaiting(row(3, "Rat-07"))).toBe(false);
     expect(probeMapWaiting(row(3, "Rat-07", { probeMapPath: "/maps/rat07.xml", probeMap: MAP_07 }))).toBe(false);
     expect(probeMapWaiting(row(3, "Rat-07", { probeMapPath: "/maps/rat07.xml", probeError: "bad" }))).toBe(false);
-  });
-
-  it("drops a reply for a row whose probe map was removed meanwhile", () => {
-    const rows = [row(3, "Rat-07")];
-    expect(applyParsedProbeMap(rows, 3, "/maps/rat07.xml", { probeMap: MAP_07 })).toBe(rows);
-  });
-
-  it("records why a map didn't parse on the row that asked for it", () => {
-    const rows = [row(3, "Rat-07", { probeMapPath: "/maps/broken.xml" })];
-    expect(applyParsedProbeMap(rows, 3, "/maps/broken.xml", { error: "not a probe map" })).toEqual([
-      row(3, "Rat-07", { probeMapPath: "/maps/broken.xml", probeError: "not a probe map" }),
-    ]);
   });
 });

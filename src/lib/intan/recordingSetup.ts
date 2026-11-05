@@ -109,9 +109,10 @@ export function probeMapWaiting(row: BoxRow): boolean {
 /**
  * A parse that failed, as its row should take it. The sidecar's refusal sticks,
  * and so does a timeout on a live link, which nothing would retry. A call that
- * failed with the link down got no answer at all: the client reports the drop
- * before it fails the calls in flight, so `link` is already off `connected`,
- * and the row is left waiting to parse again on reconnect.
+ * failed with the link down got no answer at all, and the row is left waiting
+ * to parse again on reconnect. Read `link` in the rejection: `client.ts`'s
+ * `onclose` fails the calls in flight and then leaves `connected` in the same
+ * task, so the rejection, a microtask, sees the drop.
  */
 export function failedProbeMapParse(err: unknown, link: ConnectionStatus): ProbeMapParse {
   if (!(err instanceof SidecarCommandError) && link !== "connected") return { cutOff: true };

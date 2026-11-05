@@ -114,6 +114,7 @@ class Rig:
             sessions=self.sessions,
             rig=self.lifecycle,
             on_changed=self.changes,
+            broadcast=broadcast,
         )
         self.service = AnalyticsService(
             db=db,
@@ -290,7 +291,7 @@ async def test_a_stray_file_is_adopted_for_a_former_member(rig: Rig) -> None:
         encoding="utf-8",
     )
 
-    result = await rig.service.rescan(rig.cohort.id)
+    result = await rig.archive.rescan(rig.cohort.id)
 
     assert [o["animalId"] for o in result["orphans"]] == ["a1"]
 
@@ -317,7 +318,7 @@ async def test_a_former_members_name_on_the_roster_wins_adoption(rig: Rig) -> No
         encoding="utf-8",
     )
 
-    result = await rig.service.rescan(rig.cohort.id)
+    result = await rig.archive.rescan(rig.cohort.id)
 
     assert [o["animalId"] for o in result["orphans"]] == ["a1-new"]
 
@@ -676,7 +677,7 @@ async def test_rescan_finds_a_file_no_run_record_points_at(rig: Rig) -> None:
         encoding="utf-8",
     )
 
-    result = await rig.service.rescan(rig.cohort.id)
+    result = await rig.archive.rescan(rig.cohort.id)
     assert result["scanned"] == 2
     assert len(result["orphans"]) == 1
     assert result["orphans"][0]["animalId"] == "a2", "matched to remy2 by name"
@@ -693,7 +694,7 @@ async def test_rescan_keeps_an_unmatched_file_rather_than_guessing(rig: Rig) -> 
         encoding="utf-8",
     )
 
-    result = await rig.service.rescan(rig.cohort.id)
+    result = await rig.archive.rescan(rig.cohort.id)
     orphan = result["orphans"][0]
     assert orphan["animalId"] is None
     assert orphan["animalName"] == "someone-else"
@@ -710,7 +711,7 @@ async def test_rescan_does_not_fabricate_session_rows(rig: Rig) -> None:
     )
 
     before = len(rig.sessions.list_sessions(rig.cohort.id))
-    await rig.service.rescan(rig.cohort.id)
+    await rig.archive.rescan(rig.cohort.id)
     assert len(rig.sessions.list_sessions(rig.cohort.id)) == before
 
 
@@ -720,7 +721,7 @@ async def test_rescan_ignores_files_outside_a_behavior_json_folder(rig: Rig) -> 
     stray.parent.mkdir(parents=True, exist_ok=True)
     stray.write_text("{}", encoding="utf-8")
 
-    result = await rig.service.rescan(rig.cohort.id)
+    result = await rig.archive.rescan(rig.cohort.id)
     assert result["scanned"] == 0
 
 
@@ -741,7 +742,7 @@ async def test_a_deleted_session_stops_appearing_after_a_rescan(rig: Rig) -> Non
     assert before["counts"]["decoded"] == 2
 
     shutil.rmtree(rig.sessions.get_session(session).folder_path)
-    result = await rig.service.rescan(rig.cohort.id)
+    result = await rig.archive.rescan(rig.cohort.id)
 
     assert result["pruned"] == {"runs": 2, "sessions": 1, "adopted": 0}
     after = await rig.service.summary(rig.cohort.id)
@@ -759,7 +760,7 @@ async def test_pruning_clears_the_cached_summary_too(rig: Rig) -> None:
     assert rig.profiles.load_cached([run_id])
 
     shutil.rmtree(rig.sessions.get_session(session).folder_path)
-    await rig.service.rescan(rig.cohort.id)
+    await rig.archive.rescan(rig.cohort.id)
 
     assert rig.profiles.load_cached([run_id]) == {}
 
@@ -774,7 +775,7 @@ async def test_a_run_whose_file_went_but_whose_folder_stayed_keeps_its_session(
     lost = rig.add_run(session, "a2", HIT_1 * 5)
     Path(rig.sessions.runs_for(session)[1].file_path).unlink()
 
-    result = await rig.service.rescan(rig.cohort.id)
+    result = await rig.archive.rescan(rig.cohort.id)
 
     assert result["pruned"]["runs"] == 1
     assert result["pruned"]["sessions"] == 0
@@ -793,7 +794,7 @@ async def test_an_aborted_session_survives_while_its_folder_does(rig: Rig) -> No
     )
     rig.sessions.set_status(aborted.id, "aborted")
 
-    result = await rig.service.rescan(rig.cohort.id)
+    result = await rig.archive.rescan(rig.cohort.id)
 
     assert result["pruned"]["sessions"] == 0
     assert len(rig.sessions.list_sessions(rig.cohort.id, include_aborted=True)) == 1
@@ -806,11 +807,11 @@ async def test_an_open_session_is_never_pruned(rig: Rig) -> None:
         rig.cohort.id, rig.prefix, "3", "2026-07-24", str(rig.root / "nope" / "gone")
     )
 
-    result = await rig.service.rescan(rig.cohort.id)
+    result = await rig.archive.rescan(rig.cohort.id)
     assert result["pruned"]["sessions"] == 0
 
     rig.sessions.set_status(open_session.id, "running")
-    result = await rig.service.rescan(rig.cohort.id)
+    result = await rig.archive.rescan(rig.cohort.id)
     assert result["pruned"]["sessions"] == 0
     assert rig.sessions.get_session(open_session.id).status == "running"
 
@@ -827,7 +828,7 @@ async def test_a_recoverable_run_is_not_pruned(rig: Rig) -> None:
     tsv.write_text("# rat: remy1\n101\t0\n", encoding="utf-8")
     path.unlink()
 
-    result = await rig.service.rescan(rig.cohort.id)
+    result = await rig.archive.rescan(rig.cohort.id)
 
     assert result["pruned"]["runs"] == 0
     assert [r.id for r in rig.sessions.runs_for(session)] == [run_id]
@@ -843,7 +844,7 @@ async def test_a_run_with_no_recorded_path_is_not_pruned(rig: Rig) -> None:
             sketch_path=str(rig.sketch), file_path=None, started_at="t",
         )
     )
-    result = await rig.service.rescan(rig.cohort.id)
+    result = await rig.archive.rescan(rig.cohort.id)
     assert result["pruned"]["runs"] == 0
     assert len(rig.sessions.runs_for(session)) == 1
 
@@ -857,7 +858,7 @@ async def test_an_unreachable_data_folder_prunes_nothing(rig: Rig) -> None:
     await rig.service.summary(rig.cohort.id)
     shutil.rmtree(rig.root)
 
-    result = await rig.service.rescan(rig.cohort.id)
+    result = await rig.archive.rescan(rig.cohort.id)
 
     assert result["folderMissing"] is True
     assert result["pruned"] == {"runs": 0, "sessions": 0, "adopted": 0}
@@ -872,7 +873,7 @@ async def test_a_read_only_rescan_prunes_nothing(rig: Rig) -> None:
     rig.add_run(session, "a1", HIT_1 * 5)
     shutil.rmtree(rig.sessions.get_session(session).folder_path)
 
-    result = await rig.service.rescan(rig.cohort.id, adopt_orphans=False)
+    result = await rig.archive.rescan(rig.cohort.id, adopt_orphans=False)
 
     assert result["pruned"] == {"runs": 0, "sessions": 0, "adopted": 0}
     assert len(rig.sessions.runs_for(session)) == 1
@@ -900,7 +901,7 @@ async def test_a_record_on_an_unmounted_volume_is_left_alone(rig: Rig) -> None:
         )
     )
 
-    result = await rig.service.rescan(rig.cohort.id)
+    result = await rig.archive.rescan(rig.cohort.id)
 
     assert result["pruned"]["runs"] == 0
     assert len(rig.sessions.runs_for(session)) == 1
@@ -968,7 +969,7 @@ async def test_recent_sessions_marks_adopted_folders_recorded(rig: Rig) -> None:
     before = await rig.service.recent_sessions()
     assert [s["recorded"] for s in before["sessions"]] == [False]
 
-    result = await rig.service.rescan(rig.cohort.id)
+    result = await rig.archive.rescan(rig.cohort.id)
     assert result["adopted"] == 1
 
     after = await rig.service.recent_sessions()

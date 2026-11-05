@@ -3,6 +3,12 @@ import { Check, CircleAlert, FolderOpen, Loader2, RefreshCw } from "lucide-react
 
 import { Button } from "@/components/common/controls";
 import { springPanel } from "@/lib/motion";
+import {
+  BACKUP_TONE_COLOR,
+  DEFERRED_DETAIL,
+  backupTone,
+  type SyncError,
+} from "@/lib/backup/report";
 import type { BackupStatus, SyncResult } from "@/lib/backup/useBackupStatus";
 
 /**
@@ -22,24 +28,11 @@ export function BackupStatusNote({
   status: BackupStatus;
   onSync: () => void;
   canSync: boolean;
-  syncError: string | null;
+  syncError: SyncError | null;
   lastSync: SyncResult | null;
 }) {
-  const tone =
-    status.state === "failed" || syncError
-      ? "error"
-      : status.state === "ok"
-        ? "ok"
-        : status.state === "pending"
-          ? "warning"
-          : "neutral";
-
-  const color = {
-    error: "var(--color-status-error)",
-    warning: "var(--color-status-warning)",
-    ok: "var(--color-status-ok)",
-    neutral: "var(--color-static)",
-  }[tone];
+  const tone = backupTone(status, syncError);
+  const color = BACKUP_TONE_COLOR[tone];
 
   return (
     <motion.div
@@ -83,7 +76,7 @@ function Body({
   lastSync,
 }: {
   status: BackupStatus;
-  syncError: string | null;
+  syncError: SyncError | null;
   lastSync: SyncResult | null;
 }) {
   if (!status.configured) {
@@ -96,8 +89,8 @@ function Body({
     );
   }
 
-  if (syncError) {
-    return <span className="text-starlight">Sync failed: {syncError}</span>;
+  if (syncError && !syncError.refused) {
+    return <span className="text-starlight">Sync failed: {syncError.message}</span>;
   }
 
   if (status.syncing) {
@@ -111,6 +104,28 @@ function Body({
         <span className="block text-static">
           Session data is still being saved locally. Retrying every{" "}
           {Math.round(status.intervalSeconds)}s.
+        </span>
+      </span>
+    );
+  }
+
+  // Refused, not failed: the target is as the sidecar last reported it.
+  if (syncError) {
+    return <span className="text-static">Sync not started: {syncError.message}</span>;
+  }
+
+  if (status.state === "deferred") {
+    return (
+      <span className="text-starlight">
+        Database copy deferred.
+        <span className="block text-static">
+          {DEFERRED_DETAIL} Session files are mirroring as usual.
+          {lastSync && (
+            <>
+              {" "}Last sync copied{" "}
+              <span className="font-mono text-starlight">{lastSync.copied}</span>.
+            </>
+          )}
         </span>
       </span>
     );

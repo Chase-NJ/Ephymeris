@@ -72,7 +72,7 @@ async def test_a_recovered_file_of_a_recorded_session_is_filed_under_it(rig: Rig
     sid = rig.add_session("12", DAY)
     rig.add_run(sid, "a1", HIT_1)
     path = _recovered_file(rig, "12", "remy2")
-    await rig.service.rescan(rig.cohort.id)
+    await rig.archive.rescan(rig.cohort.id)
 
     view = rig.archive.view(rig.cohort.id)
     assert [s.id for s in view.sessions] == [sid]
@@ -89,7 +89,7 @@ async def test_a_recovered_file_of_another_session_keeps_its_own(rig: Rig) -> No
     sid = rig.add_session("12", DAY)
     rig.add_run(sid, "a1", HIT_1)
     _recovered_file(rig, "13", "remy2")
-    await rig.service.rescan(rig.cohort.id)
+    await rig.archive.rescan(rig.cohort.id)
 
     view = rig.archive.view(rig.cohort.id)
     [recovered] = view.recovered
@@ -102,7 +102,7 @@ async def test_an_aborted_record_never_owns_a_recovered_file(rig: Rig) -> None:
     sid = rig.add_session("12", DAY)
     rig.sessions.set_status(sid, "aborted")
     _recovered_file(rig, "12", "remy2")
-    await rig.service.rescan(rig.cohort.id)
+    await rig.archive.rescan(rig.cohort.id)
 
     for include_aborted in (False, True):
         view = rig.archive.view(rig.cohort.id, include_aborted=include_aborted)
@@ -117,7 +117,7 @@ async def test_a_filtered_summary_leaves_a_recovered_clock_where_it_was(
     summary to one animal must not end the session at that animal's run."""
     legacy.add_legacy_run("remy1", HIT_1 * 5, time="120022")  # a 9 s stream
     legacy.add_legacy_run("remy2", HIT_1 * 8, time="120100")  # 15 s, ends last
-    await legacy.service.rescan(legacy.cohort.id)
+    await legacy.archive.rescan(legacy.cohort.id)
     whole = await legacy.service.summary(legacy.cohort.id)
     assert whole["sessions"][0]["clockEndedAt"] == "2026-06-16T12:01:15.000"
 
@@ -143,7 +143,7 @@ async def test_a_run_recorded_while_a_rescan_walks_counts_once(
         return walk(folder)
 
     monkeypatch.setattr(reader, "walk_session_files", finalized_mid_walk)
-    await rig.service.rescan(rig.cohort.id)
+    await rig.archive.rescan(rig.cohort.id)
 
     view = rig.archive.view(rig.cohort.id)
     assert [run.id for run in view.runs] == [f"r-{sid[:6]}-a1"]
@@ -155,9 +155,9 @@ async def test_a_writer_is_refused_while_the_archive_is_held(rig: Rig) -> None:
     """A rescan, a tidy, a relocate, a move and a recover each refuse rather than queue."""
     async with rig.archive.exclusive():
         with pytest.raises(ArchiveBusy):
-            await rig.service.rescan(rig.cohort.id)
+            await rig.archive.rescan(rig.cohort.id)
         with pytest.raises(ArchiveBusy):
-            await rig.service.tidy(rig.cohort.id, apply=False, today=DAY)
+            await rig.archive.tidy(rig.cohort.id, apply=False, today=DAY)
         with pytest.raises(ArchiveBusy):
             await rig.archive.relocate(rig.cohort.id, str(rig.root / "elsewhere"), True)
         with pytest.raises(ArchiveBusy):
@@ -181,7 +181,7 @@ async def test_a_write_hears_the_rig_as_it_stands_once_it_holds_the_archive(rig:
     release.set()
     await holder
     with pytest.raises(RigInUse):
-        await rig.service.rescan(rig.cohort.id)
+        await rig.archive.rescan(rig.cohort.id)
     with pytest.raises(RigInUse):
         await rig.archive.recover(rig.cohort.id)
     assert rig.changes == []
@@ -191,11 +191,11 @@ async def test_a_tidy_leaves_the_session_holding_the_rig_when_it_runs(rig: Rig) 
     """An empty record a tidy would delete, held by the time the tidy holds
     the archive."""
     held = rig.add_session("12", DAY)
-    preview = await rig.service.tidy(rig.cohort.id, apply=False, today=DAY)
+    preview = await rig.archive.tidy(rig.cohort.id, apply=False, today=DAY)
     assert [e["session"]["sessionId"] for e in preview["empty"]] == [held]
 
     rig.lifecycle.held = held
-    plan = await rig.service.tidy(rig.cohort.id, apply=True, today=DAY)
+    plan = await rig.archive.tidy(rig.cohort.id, apply=True, today=DAY)
     assert plan["empty"] == []
     assert rig.sessions.get_session(held).id == held
 
@@ -203,13 +203,13 @@ async def test_a_tidy_leaves_the_session_holding_the_rig_when_it_runs(rig: Rig) 
 async def test_every_write_is_heard_once_when_it_changed_something(rig: Rig) -> None:
     """`on_changed` is the one place an archive write is followed up; a
     preview, or a walk that found nothing new, tells it nothing."""
-    await rig.service.tidy(rig.cohort.id, apply=False, today=DAY)
-    await rig.service.rescan(rig.cohort.id)
+    await rig.archive.tidy(rig.cohort.id, apply=False, today=DAY)
+    await rig.archive.rescan(rig.cohort.id)
     assert rig.changes == []
 
     _recovered_file(rig, "13", "remy2")
-    await rig.service.rescan(rig.cohort.id)
-    await rig.service.tidy(rig.cohort.id, apply=True, today=DAY)
+    await rig.archive.rescan(rig.cohort.id)
+    await rig.archive.tidy(rig.cohort.id, apply=True, today=DAY)
     await rig.archive.relocate(rig.cohort.id, str(rig.root), False)
     assert rig.changes == [ArchiveChange(cohort_ids=frozenset({rig.cohort.id}))] * 3
 

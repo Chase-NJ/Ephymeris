@@ -120,6 +120,9 @@ class BackupManager:
         #: this stretch of deferrals; and whether that has been warned about.
         self._db_deferred_since: float | None = None
         self._db_deferral_warned = False
+        #: A copy was deferred and none has been made since. Between passes
+        #: the debounce can make the copy not yet due; it is still owed.
+        self._db_owed = False
 
     # --- lifecycle --------------------------------------------------------
 
@@ -160,6 +163,8 @@ class BackupManager:
 
         self._last_error = None
         self._state = "disabled" if target is None else "pending"
+        self._db_owed = False
+        self._db_deferred_since, self._db_deferral_warned = None, False
         if target is None:
             log.info("backup directory cleared; mirroring is off")
         else:
@@ -266,34 +271,43 @@ class BackupManager:
                     # Don't drop a finalized file because the share blinked.
                     self.enqueue(source)
 
+        deferred = False
         try:
-            await self._back_up_database(target)
+            deferred = await self._back_up_database(target)
         except OSError as exc:
             failures.append(f"{DB_MIRROR_NAME}: {exc}")
 
-        await self._record_pass(copied, failures)
+        await self._record_pass(copied, failures, deferred)
 
-    async def _record_pass(self, copied: int, failures: list[str]) -> None:
+    async def _record_pass(self, copied: int, failures: list[str], deferred: bool) -> None:
         previous_state, previous_error = self._state, self._last_error
         self._mirrored += copied
 
+        error = None
         if failures:
-            self._state = "failed"
-            self._last_error = failures[0] if len(failures) == 1 else (
+            error = failures[0] if len(failures) == 1 else (
                 f"{failures[0]} (and {len(failures) - 1} more)"
             )
-            log.warning("backup mirroring failed: %s", self._last_error)
-        else:
-            self._state = "ok"
-            self._last_error = None
-            self._last_success_at = datetime.now(timezone.utc).isoformat(
-                timespec="seconds"
-            )
+            log.warning("backup mirroring failed: %s", error)
+        self._settle(error, deferred)
 
         # Publish on a state change or on any real work, not on every quiet
         # tick — six idle boxes shouldn't produce an event every ten seconds.
         if self._state != previous_state or self._last_error != previous_error or copied:
             await self._publish()
+
+    def _settle(self, error: str | None, deferred: bool) -> None:
+        """Set the state a pass or sync ended in (`DATA.md#failures`)."""
+        self._last_error = error
+        if error is not None:
+            self._state = "failed"
+        elif deferred:
+            self._state = "deferred"
+        else:
+            self._state = "ok"
+            self._last_success_at = datetime.now(timezone.utc).isoformat(
+                timespec="seconds"
+            )
 
     def _roots(self) -> list[str]:
         try:
@@ -309,18 +323,29 @@ class BackupManager:
             marked = self._db_dirty_at
         return marked is not None and (time.monotonic() - marked) >= self._db_debounce
 
-    async def _back_up_database(self, target: Path) -> None:
+    async def _back_up_database(self, target: Path) -> bool:
+        """Copy the database if it is due; True while a deferred copy is owed."""
         if not self._db_due():
-            return
+            return self._db_owed
         with self._lock:
             marked = self._db_dirty_at
         try:
             await asyncio.to_thread(self._write_db_backup, target)
         except WriteInProgress:
             # Not a failure of the target: the mark stays, and the next pass
-            # snapshots once the write has ended.
+            # snapshots once the write has ended. A "Sync now" copying in the
+            # meantime may have cleared it; restore it, or the owed copy would
+            # read deferred with nothing left to retry it.
+            with self._lock:
+                if self._db_dirty_at is None:
+                    self._db_dirty_at = marked
             self._note_deferred()
-            return
+            return True
+        self._note_copied(marked)
+        return False
+
+    def _note_copied(self, marked: float | None) -> None:
+        self._db_owed = False
         self._db_deferred_since, self._db_deferral_warned = None, False
         with self._lock:
             # A commit landing during the copy re-dirties it; only clear the
@@ -329,6 +354,7 @@ class BackupManager:
                 self._db_dirty_at = None
 
     def _note_deferred(self) -> None:
+        self._db_owed = True
         now = time.monotonic()
         if self._db_deferred_since is None:
             self._db_deferred_since = now
@@ -408,44 +434,45 @@ class BackupManager:
         self._syncing = True
         await self._publish()
         try:
-            roots = await asyncio.to_thread(self._roots)
-            result = await asyncio.to_thread(self._walk_and_copy, roots, target)
-            self.mark_db_dirty()
-            try:
-                await asyncio.to_thread(self._write_db_backup, target)
-            except WriteInProgress:
-                # The mark set above stays and a later pass copies it, but this
-                # sync did not: say so rather than report it done.
-                result["failed"] += 1
-                result["errors"].append(
-                    f"{DB_MIRROR_NAME}: a write was still open; the next pass copies it"
-                )
-            except OSError as exc:
-                result["failed"] += 1
-                result["errors"].append(f"{DB_MIRROR_NAME}: {exc}")
-            else:
-                with self._lock:
-                    self._db_dirty_at = None
-        finally:
-            self._syncing = False
-
-        self._mirrored += result["copied"]
-        if result["failed"]:
-            self._state = "failed"
-            self._last_error = result["errors"][0]
-        else:
-            self._state = "ok"
-            self._last_error = None
-            self._last_success_at = datetime.now(timezone.utc).isoformat(
-                timespec="seconds"
+            result = await self._sync_into(target)
+            self._mirrored += result["copied"]
+            self._settle(
+                result["errors"][0] if result["failed"] else None,
+                deferred=result["deferred"] > 0,
             )
-        await self._publish()
+        finally:
+            # On every way out: the sidecar replays its last `backup.status`
+            # on connect, and one still saying syncing would keep Sync disabled.
+            self._syncing = False
+            await self._publish()
         log.info(
-            "backup sync: %d copied, %d already current, %d failed",
+            "backup sync: %d copied, %d already current, %d failed, %d deferred",
             result["copied"],
             result["skipped"],
             result["failed"],
+            result["deferred"],
         )
+        return result
+
+    async def _sync_into(self, target: Path) -> dict[str, Any]:
+        """The archive walk, then the database copy, as one `SyncResult`."""
+        roots = await asyncio.to_thread(self._roots)
+        result = await asyncio.to_thread(self._walk_and_copy, roots, target)
+        self.mark_db_dirty()
+        with self._lock:
+            marked = self._db_dirty_at
+        try:
+            await asyncio.to_thread(self._write_db_backup, target)
+        except WriteInProgress:
+            # The mark set above stays and a later pass copies it, but this
+            # sync did not: say so, as a deferral rather than a failure.
+            self._note_deferred()
+            result["deferred"] += 1
+        except OSError as exc:
+            result["failed"] += 1
+            result["errors"].append(f"{DB_MIRROR_NAME}: {exc}")
+        else:
+            self._note_copied(marked)
         return result
 
     def _walk_and_copy(self, roots: Iterable[str], target: Path) -> dict[str, Any]:
@@ -478,6 +505,7 @@ class BackupManager:
             "copied": copied,
             "skipped": skipped,
             "failed": failed,
+            "deferred": 0,
             "errors": errors,
             "directory": str(target),
         }

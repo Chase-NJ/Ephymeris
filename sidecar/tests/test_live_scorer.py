@@ -97,7 +97,7 @@ def test_a_dead_scorer_is_reported_down_and_never_raises(scorer) -> None:  # noq
     scorer.submit("k2", header_of(document), document["ts_data"], 1,
                   on_result=later.on_result, on_down=later.on_down)
     later.wait(lambda: later.down)
-    assert later.scored == [] and later.down[0] == "the live scorer stopped"
+    assert later.scored == [] and later.down[0] == scorer_module.STOPPED
     assert "unavailable" not in later.down[0], "the reason is the cause: the UI says what it costs"
 
 
@@ -176,6 +176,28 @@ def test_a_scorer_that_cannot_start_is_down_at_once(monkeypatch) -> None:  # noq
     got.wait(lambda: got.down)
     assert "no processes left" in got.down[0]
     made.stop()
+
+
+def test_a_child_seen_dead_by_the_sender_is_down_for_the_same_reason(monkeypatch) -> None:  # noqa: ANN001
+    """Whichever thread sees the child die first, the webview shows one reason."""
+    gone = threading.Event()
+
+    class ClosedPipe:
+        def send(self, _message) -> None:  # noqa: ANN001
+            raise OSError(232, "The pipe is being closed")
+
+    class SilentPipe:
+        def recv(self):  # noqa: ANN201
+            gone.wait()
+            raise EOFError
+
+    monkeypatch.setattr(scorer_module.LiveScorer, "_start", lambda _self: (ClosedPipe(), SilentPipe(), None))
+    made = scorer_module.LiveScorer()
+    got = Results()
+    made.submit("k1", {"x": 1}, [], 0, on_result=got.on_result, on_down=got.on_down)
+    got.wait(lambda: got.down)
+    gone.set()
+    assert got.down == [scorer_module.STOPPED]
 
 
 def test_stopping_never_waits_on_a_busy_scorer() -> None:

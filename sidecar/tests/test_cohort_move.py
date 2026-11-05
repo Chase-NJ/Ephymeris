@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from ephymeris_sidecar.analytics import AnalyticsService, CohortArchive
+from ephymeris_sidecar.analytics import CohortArchive
 from ephymeris_sidecar.analytics.repository import AnalyticsRepository, CacheKey, CachedRun
 from ephymeris_sidecar.cohorts import move_apply, relocate
 from ephymeris_sidecar.cohorts.db import Database
@@ -490,20 +490,14 @@ def test_files_the_other_machine_already_moved_are_followed_not_copied(lab: Lab)
 def test_after_a_move_neither_rescan_prunes_or_adopts(lab: Lab) -> None:
     import asyncio
 
-    async def broadcast(_message: dict) -> None:
-        return None
-
     archive = CohortArchive(
         db=lab.db, cohorts=lab.cohorts, sessions=lab.sessions,
         rig=Lifecycle(), on_changed=Changes(),
     )
-    service = AnalyticsService(
-        db=lab.db, cohorts=lab.cohorts, sessions=lab.sessions, broadcast=broadcast, archive=archive
-    )
     lab.apply("slow1")
 
     for cohort in (lab.a.id, lab.b.id):
-        result = asyncio.run(service.rescan(cohort))
+        result = asyncio.run(archive.rescan(cohort))
         assert result["adopted"] == 0, cohort
         assert result["pruned"] == {"runs": 0, "sessions": 0, "adopted": 0}, cohort
 
@@ -623,6 +617,141 @@ def test_a_resume_that_cannot_reach_the_originals_leaves_the_journal_to_retry(
     assert not any("slow1" in f for f in lab.files(lab.a_root))
     [state] = statements(lab.db).execute("SELECT state FROM animal_moves").fetchone()
     assert state == "done"
+
+
+def test_a_resume_that_cannot_reach_the_copies_leaves_the_journal_to_retry(
+    lab: Lab, power_cut, unreachable_volume, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#68, the reverse of B18: with the destination's folder unreachable, no
+    copy could be read, so every original was kept, and the move still went
+    `done`. It stays `committed` instead."""
+    power_cut("unlink", lab.a_root)  # the first original to go
+    with pytest.raises(SystemExit):
+        lab.apply("slow1")
+
+    unreachable_volume(lab.b_root)
+    move_apply.resume(lab.db)
+    [state] = statements(lab.db).execute("SELECT state FROM animal_moves").fetchone()
+    assert state == "committed"
+
+    monkeypatch.undo()  # the share answers again (and every other fake goes)
+    assert any("slow1" in f for f in lab.files(lab.a_root)), "nothing was deleted"
+
+    move_apply.resume(lab.db)
+
+    assert not any("slow1" in f for f in lab.files(lab.a_root))
+    [state] = statements(lab.db).execute("SELECT state FROM animal_moves").fetchone()
+    assert state == "done"
+
+
+def test_a_finish_left_to_a_later_start_holds_up_moving_its_copies_on(
+    lab: Lab, power_cut, unreachable_volume, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """It deletes an original only while its copy is where it put it. Taking
+    the copies on to a third cohort would leave the originals, records gone,
+    for a rescan to adopt back into the source."""
+    power_cut("unlink", lab.a_root)
+    with pytest.raises(SystemExit):
+        lab.apply("slow1")
+    unreachable_volume(lab.a_root)
+    move_apply.resume(lab.db)
+    monkeypatch.undo()  # back, but only the next start finishes it
+
+    onward = MoveRequest(lab.b.id, ["slow1"], lab.a.id)
+    assert "unfinished-move" in {r["code"] for r in move_apply.preview(lab.db, onward).refused}
+    with pytest.raises(move_apply.MoveRefused, match="hasn't finished .waiting for"):
+        move_apply.apply(lab.db, onward)
+
+
+def test_a_commit_that_fails_with_the_undo_waiting_keeps_the_refusals_reasons(
+    lab: Lab, unreachable_volume, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The dialog shows the refusal's plan; the note that a later start
+    removes the copy is said once."""
+    plan_move = move_apply.plan_move
+    calls = []
+
+    def changed_on_commit(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        plan = plan_move(*args, **kwargs)
+        calls.append(plan)
+        if len(calls) == 2:  # the commit's re-plan
+            plan.refuse("changed", "A session was recorded meanwhile.")
+            unreachable_volume(lab.b_root)
+        return plan
+
+    monkeypatch.setattr(move_apply, "plan_move", changed_on_commit)
+    with pytest.raises(move_apply.MoveRefused) as refused:
+        lab.apply("slow1")
+
+    assert refused.value.plan is calls[1]
+    assert str(refused.value).count("Nothing was moved") == 1
+    assert "next start that can reach both" in str(refused.value)
+    [state] = statements(lab.db).execute("SELECT state FROM animal_moves").fetchone()
+    assert state == "copying"
+
+
+@pytest.mark.parametrize("side", ["a_root", "b_root"])
+def test_a_copying_resume_that_cannot_reach_a_side_leaves_the_journal_to_retry(
+    lab: Lab, power_cut, unreachable_volume, monkeypatch: pytest.MonkeyPatch, side: str
+) -> None:
+    """#67 for a move: with either folder unreachable, the undo kept every
+    copy it couldn't check and still marked the move `rolled-back`, leaving
+    them in the destination for good. It stays `copying` instead."""
+    before = lab.files(lab.a_root)
+    power_cut("copy2", lab.b_root, nth=2)
+    with pytest.raises(SystemExit):
+        lab.apply("slow1")
+
+    unreachable_volume(getattr(lab, side))
+    move_apply.resume(lab.db)
+    [state] = statements(lab.db).execute("SELECT state FROM animal_moves").fetchone()
+    assert state == "copying"
+
+    monkeypatch.undo()
+    assert lab.files(lab.b_root), "nothing was undone"
+
+    move_apply.resume(lab.db)
+
+    assert lab.files(lab.b_root) == set()
+    assert lab.files(lab.a_root) == before
+    [state] = statements(lab.db).execute("SELECT state FROM animal_moves").fetchone()
+    assert state == "rolled-back"
+
+
+def test_a_copy_that_loses_the_destination_is_left_for_a_later_start_to_undo(
+    lab: Lab, unreachable_volume, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The live path: the destination drops mid-copy, so the undo can't check
+    what it copied, and a later move between the two is refused until a
+    start undoes it. Otherwise that move would take this one's copies as
+    already there, and this undo would later remove them from under its
+    records."""
+    copy_files = move_apply._copy_files
+
+    def copy_then_drop(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        copy_files(*args, **kwargs)
+        unreachable_volume(lab.b_root)
+        raise OSError("the drive went away")
+
+    monkeypatch.setattr(move_apply, "_copy_files", copy_then_drop)
+    with pytest.raises(move_apply.MoveRefused, match="went away. Nothing was moved.*next start"):
+        lab.apply("slow1")
+    [(state, error)] = statements(lab.db).execute("SELECT state, error FROM animal_moves").fetchall()
+    assert state == "copying"
+    assert error.startswith(f"waiting for {lab.b_root}")
+
+    monkeypatch.undo()  # back, but only the next start undoes it
+    refused = {r["code"] for r in lab.preview("slow1").refused}
+    assert refused == {"unfinished-move"}
+    with pytest.raises(move_apply.MoveRefused, match="hasn't finished"):
+        lab.apply("slow1")
+
+    move_apply.resume(lab.db)
+
+    assert lab.files(lab.b_root) == set()
+    lab.apply("slow1")
+    assert not any("slow1" in f for f in lab.files(lab.a_root))
+    assert all(Path(p).is_file() for _, p in lab.runs(lab.b.id).values())
 
 
 def test_records_changing_under_the_copy_abandon_the_move(lab: Lab) -> None:

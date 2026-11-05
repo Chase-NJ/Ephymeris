@@ -480,7 +480,8 @@ class IntanService:
                 self._trouble(_stopped_in_rhx(self._run_mode))
             else:
                 writes = await self._try_adopt()
-                if not writes:
+                # Unless End closed the run, or something else confirmed it, during the read.
+                if not writes and self._recording is recording and not self._run_confirmed:
                     self._trouble(_not_this_run(writes, recording))
         elif self._state in ("disconnected", "error"):
             self._recording = None
@@ -979,12 +980,13 @@ class IntanService:
     async def _try_adopt(self) -> bool | None:
         """Pick an open run back up if RHX is writing its file (`_rhx_writes`'s
         answer is returned). Never adopted, a recording restarted by hand is
-        never stopped as ours."""
+        never stopped as ours. Nothing is picked up once End has closed the run,
+        or something else confirmed it, during the stamp read."""
         recording = self._recording
         if recording is None:
             return False
         writes = await self._rhx_writes(recording)
-        if writes:
+        if writes and self._recording is recording and not self._run_confirmed:
             self._run_confirmed = True
             self._set_state("stopping" if self._waiting_on else "recording", None)
             await self._open_streams()

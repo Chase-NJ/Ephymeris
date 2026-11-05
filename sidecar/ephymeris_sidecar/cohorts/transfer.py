@@ -101,30 +101,35 @@ def copy(
     return done
 
 
-def undo(files: Iterable[FileCopy]) -> None:
+def undo(files: Iterable[FileCopy]) -> list[Path]:
     """Remove copies the records never followed, and any `.part` left half
     written. Only the caller's own copies: never pass a destination file that
-    was there before the transfer."""
+    was there before the transfer. Returns the copies it kept: those whose
+    original is gone or changed, any it couldn't read or remove, and any
+    `.part` it couldn't remove."""
+    kept: list[Path] = []
     for f in files:
         try:
             part_of(f.dst).unlink(missing_ok=True)
         except OSError:
-            pass
+            kept.append(part_of(f.dst))
         # The original must still be there, the same: the one rule that
         # makes undoing safe. Read it even with a known hash, or a copy of
         # content the original no longer has would go.
         original = digest(f.src)
         copied = digest(f.dst)
-        if (
-            original is not None
-            and copied is not None
-            and copied[1] == original[1]
-            and f.sha256 in (None, original[1])
-        ):
+        if copied is None:
+            if f.dst.exists():  # there, but unreadable
+                kept.append(f.dst)
+            continue
+        if original is not None and copied[1] == original[1] and f.sha256 in (None, original[1]):
             try:
                 f.dst.unlink()
+                continue
             except OSError as exc:
                 log.warning("transfer: couldn't remove copy %s: %s", f.dst, exc)
+        kept.append(f.dst)
+    return kept
 
 
 def delete_originals(files: Iterable[FileCopy]) -> set[Path]:

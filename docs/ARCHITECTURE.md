@@ -1562,7 +1562,16 @@ path for them. A `diverged` run shows its divergence in the warning colour, with
 refused start leaves the last run on screen. A port entering `IN_SESSION` (a real transition, not the
 connect replay) clears that box. Debug Mode's `port.telemetry` going from not running to running, which
 the sidecar sends only once a `START` is on the wire (and replays on connect while that run lasts),
-clears that box. A confirmed mapping clears every
+clears that box. That replay adds no point to the box's history: after a connect, and until the reply
+to its `sessions.active` (which the sidecar sends only once the replay is out), the first payload for a
+run already on screen that repeats what the store holds is taken as the snapshot. A payload that differs
+adds its point: trials scored while disconnected or, with several Debug runs, a snapshot built before a
+batch that overtook it. The replay sends a payload for every Debug run still armed, so a box the store
+shows running that no payload mentions by that reply has no run: it ended, or its port left `PASSTHROUGH`,
+while the window was disconnected. The store marks it not running (Debug Mode stops offering End) and
+keeps its numbers on screen; the next arm clears them as above. A refused `sessions.active` also ends the
+replay; a timeout or a dropped connection does not, and the box keeps running until the next connect.
+A confirmed mapping clears every
 box: the `ActiveSessions` payload carries `confirmations`, which `sessions.confirmMapping` increments, and
 the store clears on a value it has not seen. `session.lifecycle` broadcasts and `sessions.active` answers
 both count, so a mapping confirmed while a window was disconnected clears it on reconnect. The first answer
@@ -1731,7 +1740,7 @@ own chunk, costs nothing until the first export, and a failure to load it loses 
 | `rig/` | The rig definition: `registry.py` (channel and strobe registries, context-local hypotheticals), `definition.py` (impact check, writes, the read/write lock), `schema/` (including the default vocabulary seed), `hardware/` pinouts, `paths.py` | [TASKS.md](TASKS.md#the-rig-definition) |
 | `strobes/` | The machine's strobe vocabulary: `store.py` (`<data_dir>/strobes/vocabulary.json`, seeding, every edit, import merge), `usage.py` (firmware references, the cached archive scan) | [TASKS.md](TASKS.md#strobe-vocabulary) |
 | `hardware/` | The operator's channel set and pin map: `store.py` (load, validate, save), `service.py` (located problems) | [TASKS.md](TASKS.md#rig-wiring) |
-| `analytics/` | `archive.py` (the cohort archive: recorded and recovered sessions in one read, and the one way to write it: the archive lock, the rig asked under it, `on_changed`), `scoring.py` (`RunScorer`: the profile ladder, scoring, the cache and its version), `stream/` (pure: the trial definition and every metric, profile inference, false starts), `reader.py`, `repository.py`, `service.py` | [ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#the-folder-at-a-glance), [DATA.md](DATA.md#the-cohort-archive), [DATA.md](DATA.md#caching) |
+| `analytics/` | `archive.py` (the cohort archive: recorded and recovered sessions in one read, and the one way to write it: the archive lock, the rig asked under it, `on_changed`; rescan and tidy), `walk.py` (the rescan's and tidy's disk questions, adoption matching and ids), `scoring.py` (`RunScorer`: the profile ladder, scoring, the cache and its version), `stream/` (pure: the trial definition and every metric, profile inference, false starts), `reader.py`, `repository.py`, `service.py` | [ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#the-folder-at-a-glance), [DATA.md](DATA.md#the-cohort-archive), [DATA.md](DATA.md#caching) |
 | `backup/` | `manager.py` (the mirror), `paths.py` (cohort-anchored paths) | [DATA.md](DATA.md#backup-mirroring) |
 | `logbook/` | The session log: `models.py`, `repository.py`, `service.py`, `diff.py` (what changed), `mirror.py` (`notes.md`) | [DATA.md](DATA.md#the-session-log) |
 | `intan/` | `client.py`, `streams.py`, `analysis.py`, `probemap.py`, `service.py` | [RECORDING.md](RECORDING.md) |

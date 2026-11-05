@@ -56,8 +56,9 @@ The [worked example](#a-worked-example) shows all of it on thirty strobes.
 | [`reader.py`](reader.py) | Finds and opens run files; decides `missing` or `unreadable` |
 | [`scoring.py`](scoring.py) | Picks the profile for each run ([the ladder](#which-profile-decodes-a-run)), scores it, and caches the result |
 | [`repository.py`](repository.py) | The profile snapshots and the cache tables |
-| [`service.py`](service.py) | The `analytics.*` commands the app calls |
-| [`archive.py`](archive.py) | A cohort's sessions and runs as one read, and the lock that guards it ([DATA.md](../../../docs/DATA.md#the-cohort-archive)) |
+| [`service.py`](service.py) | The `analytics.*` reads the app calls: the summary, series and recent sessions |
+| [`archive.py`](archive.py) | A cohort's sessions and runs as one read, the lock that guards it, and every write under it, rescan and tidy included ([DATA.md](../../../docs/DATA.md#the-cohort-archive)) |
+| [`walk.py`](walk.py) | What a rescan and a tidy ask the disk, and how a rescan matches a stray file to an animal and names its row |
 
 ## From a session file to a number
 
@@ -868,8 +869,12 @@ are keyed by run id, which for an adopted run is the id its cohort holds it unde
 adoption](../../../docs/DATA.md#orphan-adoption)), so a decision survives a rescan. When a rescan prunes a
 run's row and adopts the run afresh under a new id (its file refiled, and the row held under its stem-only
 id or under the id of the cohort a [move](../../../docs/DATA.md#moving-animals-between-cohorts) brought it
-from) the ruling moves to the new row (`_earlier_ids`, `store_adopted`). It never moves off an id a row
-still holds, and a cohort reading a run it already holds never takes another cohort's ruling.
+from) the ruling moves to the new row (`_earlier_ids`, `store_adopted`). That holds whether the run is
+adopted again by the rescan that pruned it or, its file away for that whole rescan, by a later one. It
+never moves off an id a row still holds, and a cohort reading a run it already holds never takes another
+cohort's ruling. Only the ids of cohorts a move brought the run from are tried, followed through every
+move and kept after such a cohort is deleted, and never the id of one whose folder still holds the file,
+which may read the run again under the id it ruled on.
 
 | Where | What a false start does there |
 |---|---|

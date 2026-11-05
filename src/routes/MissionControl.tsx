@@ -15,6 +15,7 @@ import { Button } from "@/components/common/controls";
 import { CarryForwardPanel } from "@/components/logbook/CarryForwardPanel";
 import { QuickNote } from "@/components/logbook/QuickNote";
 import { WrapUpLog } from "@/components/logbook/WrapUpLog";
+import { BACKUP_TONE_COLOR, backupPill } from "@/lib/backup/report";
 import { useBackupStatus } from "@/lib/backup/useBackupStatus";
 import { RatPlacementBanner } from "@/components/sessions/RatPlacementBanner";
 import { ReturnChecklist } from "@/components/sessions/ReturnChecklist";
@@ -870,18 +871,14 @@ function BackupPill() {
   const { status } = useBackupStatus();
   if (!status.configured) return null;
 
-  const failed = status.state === "failed";
+  const pill = backupPill(status);
   return (
     <span
       className="font-mono text-[11px]"
-      style={{ color: failed ? "var(--color-status-error)" : "var(--color-static)" }}
-      title={
-        failed
-          ? (status.lastError ?? "The backup directory isn't writable.")
-          : `Mirroring to ${status.directory}`
-      }
+      style={{ color: BACKUP_TONE_COLOR[pill.tone] }}
+      title={pill.title}
     >
-      {failed ? "backup failing" : "backup ok"}
+      {pill.text}
     </span>
   );
 }

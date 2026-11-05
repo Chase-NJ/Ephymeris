@@ -15,7 +15,8 @@ So the paths move with the files, in the order that makes it safe:
   are what's behind.
 * **Another volume** — a verified copy (`transfer`, the animal move's too),
   commit the records, then delete the originals. A crash while copying is
-  undone, after the commit finished.
+  undone, after the commit finished, each by the first start that can reach
+  both folders.
 
 Neither starts while a session of the cohort is open, and the copy checks
 again at commit: a session recorded while it ran has its files at the old
@@ -202,6 +203,8 @@ def relocate_cohort(db: Database, cohort_id: str, destination: str, move_existin
         row = q.execute(
             "SELECT data_folder FROM cohorts WHERE id = ?", (cohort_id,)
         ).fetchone()
+        if row is not None:
+            _refuse_unfinished(q, cohort_id)
     if row is None:
         raise CohortNotFound(cohort_id)
     source = Path(row[0]).expanduser()
@@ -257,10 +260,12 @@ def _carry_out(
         else:
             copies = _copy_tree(source, target)
     except OSError as exc:
-        if not same_volume:
-            _remove_copies(source, target)
-        _finish(db, journal, "rolled-back", str(exc))
-        raise DataFolderError(f"Couldn't move data to {target}: {exc}") from exc
+        message = f"Couldn't move data to {target}: {exc}"
+        if same_volume:
+            _finish(db, journal, "rolled-back", str(exc))
+        elif not _undo_copy(db, journal, source, target, str(exc)):
+            message += " What was copied is removed at the next start that can reach both folders."
+        raise DataFolderError(message) from exc
 
     failure: BaseException | None = None
     try:
@@ -277,11 +282,14 @@ def _carry_out(
         failure = exc
     if failure is not None:
         # The records never moved, so neither may the files.
+        if not same_volume:
+            try:
+                _undo_copy(db, journal, source, target, str(failure))
+            except OSError:  # the journal stays `copying`; the next start undoes it
+                log.exception("relocate: couldn't remove the copy at %s", target)
+            raise failure
         try:
-            if same_volume:
-                os.rename(target, source)
-            else:
-                _remove_copies(source, target)
+            os.rename(target, source)
         except OSError:
             log.exception("relocate: couldn't put %s back at %s", target, source)
         _finish(db, journal, "rolled-back", str(failure))
@@ -295,7 +303,11 @@ def _carry_out(
 
 def resume(db: Database) -> int:
     """Finish or undo every relocate a crash interrupted. Run once at start-up,
-    before anything may read or rescan the archive."""
+    before anything may read or rescan the archive.
+
+    A journal whose old or new folder is out of reach keeps its state: what
+    is there can't be told apart from what isn't, so neither the undo nor
+    the finish can act on it. The next start that reaches both does."""
     with db.read() as q:
         rows = q.execute(
             "SELECT id, cohort_id, source, target, state FROM folder_moves"
@@ -304,6 +316,8 @@ def resume(db: Database) -> int:
     for journal, cohort_id, source_s, target_s, state in rows:
         source, target = Path(source_s), Path(target_s)
         if state == "moving":
+            if _waiting(db, journal, source, target):
+                continue
             if not source.exists() and target.exists():
                 # The originals' stats went with the crash, so the keys stay
                 # as they were; a rename keeps mtimes, so they still hold.
@@ -315,12 +329,23 @@ def resume(db: Database) -> int:
                 _finish(db, journal, "rolled-back", "interrupted before the folder moved")
         elif state == "copying":
             log.warning("relocate %s: interrupted while copying; removing the copy", journal)
-            _remove_copies(source, target)
-            _finish(db, journal, "rolled-back", "interrupted while copying")
+            _undo_copy(db, journal, source, target, "interrupted while copying")
         else:
             log.warning("relocate %s: interrupted after it committed; finishing", journal)
             _finish_deleting(db, journal, source, target)
     return len(rows)
+
+
+def _undo_copy(db: Database, journal: str, source: Path, target: Path, reason: str) -> bool:
+    """Before the commit: remove the copy and mark the journal `rolled-back`.
+    Whether a copy may go depends on its original, so while either folder is
+    out of reach nothing is removed, the journal stays `copying`, and this
+    returns False."""
+    if _waiting(db, journal, source, target):
+        return False
+    _remove_copies(source, target)
+    _finish(db, journal, "rolled-back", reason)
+    return True
 
 
 def _finish_deleting(
@@ -331,17 +356,28 @@ def _finish_deleting(
     copies: list[transfer.FileCopy] | None = None,
 ) -> None:
     """After the commit: delete the originals and mark the journal `done`.
-    While the old folder is out of reach nothing there can be deleted, or
-    told apart from deleted, so the journal stays `committed` and the next
-    start that can see it finishes."""
-    if out_of_reach(source):
-        log.warning(
-            "relocate %s: %s can't be reached; its originals wait for the next start",
-            journal, source,
-        )
+    An original goes only while its copy is there, so while either folder is
+    out of reach nothing is deleted, the journal stays `committed`, and the
+    next start that can see both finishes."""
+    if _waiting(db, journal, source, target):
         return
     _delete_sources(source, target, copies)
     _finish(db, journal, "done")
+
+
+def _waiting(db: Database, journal: str, source: Path, target: Path) -> bool:
+    """Whether the old or the new folder is out of reach. If so, the journal
+    keeps its state and its `error` says which folder it waits for."""
+    unreached = next((p for p in (source, target) if out_of_reach(p)), None)
+    if unreached is None:
+        return False
+    log.warning("relocate %s: %s can't be reached; left for the next start", journal, unreached)
+    with db.write() as unit:
+        unit.execute(
+            "UPDATE folder_moves SET error = ?, updated_at = ? WHERE id = ?",
+            (f"waiting for {unreached}"[:500], _now(), journal),
+        )
+    return True
 
 
 def out_of_reach(path: Path) -> bool:
@@ -450,16 +486,38 @@ def moving(db: Database, cohort_id: str) -> bool:
     session must not be set up in it: its folder would be made at the old
     place while the records move to the new one.
 
-    A `committed` relocate counts only while this process is still carrying
-    it out (`_carrying_out`); one a crash left is finished by the next
-    start's `resume`, and the cohort must not wait for it."""
+    A `copying` or `committed` relocate counts only while this process is
+    still carrying it out (`_carrying_out`). One an earlier process left,
+    waiting for a folder `resume` couldn't reach, is finished or undone by a
+    later start, and the cohort must not wait for it: a copy left to undo
+    has not moved the records, and one left to finish has moved them all. A
+    `moving` one may have renamed the folder the records still name, so it
+    always counts."""
     with db.read() as q:
         rows = q.execute(
             "SELECT id, state FROM folder_moves WHERE cohort_id = ?"
             " AND state IN ('moving', 'copying', 'committed')",
             (cohort_id,),
         ).fetchall()
-        return any(state != "committed" or journal in _carrying_out for journal, state in rows)
+        return any(state == "moving" or journal in _carrying_out for journal, state in rows)
+
+
+def _refuse_unfinished(conn: Query, cohort_id: str) -> None:
+    """A relocate an earlier start left to undo or finish, with a folder it
+    couldn't reach. Another would copy into, or name, what that one has yet
+    to clean up."""
+    row = conn.execute(
+        "SELECT source, target, error FROM folder_moves WHERE cohort_id = ?"
+        " AND state IN ('moving', 'copying') LIMIT 1",
+        (cohort_id,),
+    ).fetchone()
+    if row is not None:
+        source, target, error = row
+        raise DataFolderError(
+            f"An earlier move of this cohort's data from {source} to {target} hasn't finished"
+            f" ({error or 'interrupted'}). Connect both folders and restart Ephymeris to"
+            " finish it, then change the data folder."
+        )
 
 
 def _refuse_open_sessions(conn: Query, cohort_id: str) -> None:

@@ -625,6 +625,59 @@ def test_a_resume_that_cannot_reach_the_originals_leaves_the_journal_to_retry(
     assert state == "done"
 
 
+def test_a_resume_that_cannot_reach_the_copies_leaves_the_journal_to_retry(
+    lab: Lab, power_cut, unreachable_volume, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#68, the reverse of B18: with the destination's folder unreachable, no
+    copy could be read, so every original was kept, and the move still went
+    `done`. It stays `committed` instead."""
+    power_cut("unlink", lab.a_root)  # the first original to go
+    with pytest.raises(SystemExit):
+        lab.apply("slow1")
+
+    unreachable_volume(lab.b_root)
+    move_apply.resume(lab.db)
+    [state] = statements(lab.db).execute("SELECT state FROM animal_moves").fetchone()
+    assert state == "committed"
+
+    monkeypatch.undo()  # the share answers again (and every other fake goes)
+    assert any("slow1" in f for f in lab.files(lab.a_root)), "nothing was deleted"
+
+    move_apply.resume(lab.db)
+
+    assert not any("slow1" in f for f in lab.files(lab.a_root))
+    [state] = statements(lab.db).execute("SELECT state FROM animal_moves").fetchone()
+    assert state == "done"
+
+
+@pytest.mark.parametrize("side", ["a_root", "b_root"])
+def test_a_copying_resume_that_cannot_reach_a_side_leaves_the_journal_to_retry(
+    lab: Lab, power_cut, unreachable_volume, monkeypatch: pytest.MonkeyPatch, side: str
+) -> None:
+    """#67 for a move: with either folder unreachable, the undo kept every
+    copy it couldn't check and still marked the move `rolled-back`, leaving
+    them in the destination for good. It stays `copying` instead."""
+    before = lab.files(lab.a_root)
+    power_cut("copy2", lab.b_root, nth=2)
+    with pytest.raises(SystemExit):
+        lab.apply("slow1")
+
+    unreachable_volume(getattr(lab, side))
+    move_apply.resume(lab.db)
+    [state] = statements(lab.db).execute("SELECT state FROM animal_moves").fetchone()
+    assert state == "copying"
+
+    monkeypatch.undo()
+    assert lab.files(lab.b_root), "nothing was undone"
+
+    move_apply.resume(lab.db)
+
+    assert lab.files(lab.b_root) == set()
+    assert lab.files(lab.a_root) == before
+    [state] = statements(lab.db).execute("SELECT state FROM animal_moves").fetchone()
+    assert state == "rolled-back"
+
+
 def test_records_changing_under_the_copy_abandon_the_move(lab: Lab) -> None:
     def record_once_copied(done: int, total: int) -> None:
         if done < total:

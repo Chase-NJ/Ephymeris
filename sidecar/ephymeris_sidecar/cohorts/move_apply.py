@@ -8,8 +8,9 @@ The order is what makes it safe, and every step is idempotent:
 2. **Copy.** Every file to its destination, verified (`transfer`, the
    relocate's too): through `<name>.part`, fsync'd, renamed into place,
    re-read and hash-checked. Nothing in the database
-   changes here, so a crash leaves the source exactly as it was — the start-up
-   pass deletes the copies this move made and marks it `rolled-back`.
+   changes here, so a crash leaves the source exactly as it was — the first
+   start that can reach both folders deletes the copies this move made and
+   marks it `rolled-back`.
 3. **Commit.** One transaction: the record half is re-planned against the
    database as it is *now*, and abandoned if it no longer matches what was
    copied; otherwise every record moves and the journal says `committed`.
@@ -17,7 +18,8 @@ The order is what makes it safe, and every step is idempotent:
    at a file that exists.
 4. **Clean up.** Each original whose hash still matches is deleted, emptied
    folders are removed bottom-up with `rmdir` (never `rmtree`), and the
-   journal says `done`. A crash here is finished at the next start.
+   journal says `done`. A crash here is finished at the next start that can
+   reach both folders.
 
 Synchronous throughout; the analytics service runs it in a worker thread under
 its lock, so no rescan, tidy or summary index sees a move half-done.
@@ -444,16 +446,12 @@ def _clean_up(
 ) -> None:
     """Delete the originals the commit made redundant, and the folders that
     leaves empty. A file whose content changed since it was planned is left
-    where it is — it is not the file that was copied. While any original
-    can't be reached, nothing is deleted and the journal stays `committed`
-    for the next start: an unreadable original is not a deleted one."""
+    where it is — it is not the file that was copied. While any original or
+    copy can't be reached, nothing is deleted and the journal stays
+    `committed` for the next start: an unreadable original is not a deleted
+    one, and an unreadable copy is not a missing one."""
     copies = _copies(files, "copy", "present")
-    unreached = next((f.src for f in copies if relocate.out_of_reach(f.src)), None)
-    if unreached is not None:
-        log.warning(
-            "move %s: %s can't be reached; its originals are left for the next start",
-            journal, unreached,
-        )
+    if _waiting(db, journal, copies):
         return
     touched = transfer.delete_originals(copies)
     _remove_emptied(db, touched, source_folder, source_id)
@@ -508,11 +506,33 @@ def _remove_emptied(db: Database, format_dirs: set[Path], source_folder: str, so
                 break
 
 
+def _waiting(db: Database, journal: str, copies: list[transfer.FileCopy]) -> bool:
+    """Whether any original or copy is out of reach. If so, the journal keeps
+    its state and its `error` says what it waits for."""
+    unreached = next(
+        (p for f in copies for p in (f.src, f.dst) if relocate.out_of_reach(p)), None
+    )
+    if unreached is None:
+        return False
+    log.warning("move %s: %s can't be reached; left for the next start", journal, unreached)
+    with db.write() as unit:
+        unit.execute(
+            "UPDATE animal_moves SET error = ?, updated_at = ? WHERE id = ?",
+            (f"waiting for {unreached}"[:500], _now(), journal),
+        )
+    return True
+
+
 def _roll_back(db: Database, journal: str, files: list[dict[str, Any]], reason: str) -> None:
     """Undo a copy the records never followed: delete the destination files
     this move made — a copy that was already there before it (`present`) is
-    never touched — and any `.part` left half-written."""
-    transfer.undo(_copies(files, "copy"))
+    never touched — and any `.part` left half-written. A copy may go only
+    while its original is there, so while any original or copy can't be
+    reached, nothing is removed and the journal stays `copying`."""
+    copies = _copies(files, "copy")
+    if _waiting(db, journal, copies):
+        return
+    transfer.undo(copies)
     with db.write() as unit:
         unit.execute(
             "UPDATE animal_moves SET state = 'rolled-back', error = ?, updated_at = ? WHERE id = ?",

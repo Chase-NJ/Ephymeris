@@ -19,6 +19,7 @@ import json
 import logging
 import sqlite3
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -436,11 +437,14 @@ async def test_a_backup_meeting_a_write_left_open_defers_rather_than_waits(
         # Free the stuck backup thread (it holds the lock) before failing.
         end_the_open_write(db, "ROLLBACK")
         pytest.fail("the database backup waited forever on a write left open")
-    assert manager.status()["state"] == "ok", "a deferred copy is not a failed one"
+    status = manager.status()
+    assert status["state"] == "deferred", "a deferred copy is not a failed one"
+    assert status["lastError"] is None
 
     end_the_open_write(db, "COMMIT")
     await manager._pass()
     assert mirrored(mirror) == ["open", "x"], "copied once the write ended"
+    assert manager.status()["state"] == "ok"
 
 
 @pytest.mark.asyncio
@@ -487,21 +491,128 @@ async def test_a_copy_deferred_too_long_is_warned_about_once(
 
 
 @pytest.mark.asyncio
-async def test_a_sync_now_that_meets_an_open_write_says_the_database_was_not_copied(
+async def test_a_sync_now_that_meets_an_open_write_reports_the_database_deferred(
     db: Database, tmp_path: Path
 ) -> None:
     """"Sync now" is how an operator proves the target works
-    (`DATA.md#no-automatic-backfill`); it must not report a database copy it
-    deferred as done (`DATA.md#the-database-copy`)."""
+    (`DATA.md#no-automatic-backfill`); a database copy it deferred is neither
+    done nor a fault of the target (`DATA.md#the-database-copy`)."""
     manager = make_manager(db, [], db_debounce=3600.0)
     await manager.configure(str(tmp_path / "mirror"))
     leave_a_write_open(db)
 
     result = await asyncio.wait_for(manager.sync_now(), timeout=3.0)
 
-    assert result["failed"] == 1
-    assert DB_MIRROR_NAME in result["errors"][0]
-    assert manager.status()["state"] == "failed"
+    assert (result["deferred"], result["failed"], result["errors"]) == (1, 0, [])
+    status = manager.status()
+    assert status["state"] == "deferred"
+    assert (status["lastError"], status["lastSuccessAt"]) == (None, None)
+    end_the_open_write(db, "ROLLBACK")
+
+
+@pytest.mark.asyncio
+async def test_a_deferred_copy_still_owed_reads_deferred_while_not_yet_due(
+    db: Database, tmp_path: Path
+) -> None:
+    """A pass inside the debounce after a deferred sync copies a live file but
+    not the database: the copy is still owed, so it must not read ok."""
+    root = tmp_path / "Batch A"
+    root.mkdir()
+    live = root / "a.tsv"
+    live.write_text("221\t0\n", encoding="utf-8")
+    manager = make_manager(db, [str(root)], db_debounce=3600.0)
+    await manager.configure(str(tmp_path / "mirror"))
+    manager.track(live)
+    leave_a_write_open(db)
+    await asyncio.wait_for(manager.sync_now(), timeout=3.0)
+
+    live.write_text("221\t0\n222\t1000\n", encoding="utf-8")
+    await manager._pass()
+
+    status = manager.status()
+    assert (status["state"], status["lastSuccessAt"]) == ("deferred", None)
+    end_the_open_write(db, "ROLLBACK")
+
+
+@pytest.mark.asyncio
+async def test_a_repoint_starts_a_new_deferral_stretch(
+    db: Database, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A new target has none of the old one's history, deferrals included."""
+    manager = make_manager(db, [], db_debounce=0.0, db_defer_warn=0.0)
+    await manager.configure(str(tmp_path / "a"))
+    leave_a_write_open(db)
+    with caplog.at_level(logging.WARNING, logger="ephymeris_sidecar.backup.manager"):
+        await asyncio.wait_for(manager._pass(), timeout=3.0)
+        await manager.configure(str(tmp_path / "b"))
+        assert manager.status()["state"] == "pending"
+        await asyncio.wait_for(manager._pass(), timeout=3.0)
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 2, "the new target's deferral is warned about afresh"
+    end_the_open_write(db, "ROLLBACK")
+
+
+@pytest.mark.asyncio
+async def test_a_commit_during_a_sync_copy_stays_owed_a_copy(
+    db: Database, tmp_path: Path
+) -> None:
+    """"Sync now" clears only the mark it acted on, as a pass does."""
+    manager = make_manager(db, [], db_debounce=0.0)
+    await manager.configure(str(tmp_path / "mirror"))
+    copy = manager._write_db_backup
+
+    def copy_then_commit(target: Path) -> None:
+        copy(target)
+        time.sleep(0.01)  # a later monotonic stamp than the mark acted on
+        manager.mark_db_dirty()
+
+    manager._write_db_backup = copy_then_commit  # type: ignore[method-assign]
+    await manager.sync_now()
+
+    assert manager._db_due(), "the commit that landed during the copy is still owed one"
+
+
+@pytest.mark.asyncio
+async def test_a_pass_that_fails_and_defers_reads_failed(db: Database, tmp_path: Path) -> None:
+    """A real target fault outranks a deferral in a background pass too (`DATA.md#failures`)."""
+    root = tmp_path / "Batch A"
+    root.mkdir()
+    (root / "a.json").write_text("{}", encoding="utf-8")
+    blocker = tmp_path / "blocker"
+    blocker.write_text("", encoding="utf-8")
+    manager = make_manager(db, [str(root)], db_debounce=0.0)
+    await manager.configure(str(blocker))
+    manager.enqueue(root / "a.json")
+    leave_a_write_open(db)
+
+    await asyncio.wait_for(manager._pass(), timeout=3.0)
+
+    status = manager.status()
+    assert status["state"] == "failed"
+    assert "a.json" in status["lastError"]
+    end_the_open_write(db, "ROLLBACK")
+
+
+@pytest.mark.asyncio
+async def test_a_sync_now_that_fails_and_defers_reads_failed(
+    db: Database, tmp_path: Path
+) -> None:
+    """A real target fault outranks a deferral (`DATA.md#failures`)."""
+    root = tmp_path / "Batch A"
+    root.mkdir()
+    (root / "a.json").write_text("{}", encoding="utf-8")
+    blocker = tmp_path / "blocker"
+    blocker.write_text("", encoding="utf-8")
+    manager = make_manager(db, [str(root)], db_debounce=3600.0)
+    await manager.configure(str(blocker))
+    leave_a_write_open(db)
+
+    result = await asyncio.wait_for(manager.sync_now(), timeout=3.0)
+
+    assert (result["failed"], result["deferred"]) == (1, 1)
+    status = manager.status()
+    assert status["state"] == "failed"
+    assert status["lastError"] == result["errors"][0]
     end_the_open_write(db, "ROLLBACK")
 
 

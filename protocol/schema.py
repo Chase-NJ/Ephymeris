@@ -363,11 +363,12 @@ SHAPES = (
     # Backup Directory mirroring (DATA.md#backup-mirroring)
     Shape(
         "BackupState",
-        lit("disabled", "pending", "ok", "failed"),
+        lit("disabled", "pending", "ok", "deferred", "failed"),
         doc='`pending` = directory set but no pass has completed yet, distinct '
         "from `ok` (a pass succeeded) and `failed` (the last pass didn't) — a "
         "freshly set, unreachable network path must not read as healthy "
-        "before its first pass.",
+        "before its first pass. `deferred` = no failure, but a database copy "
+        "deferred behind an open write is still owed (`DATA.md#failures`).",
     ),
     Shape(
         "BackupStatus",
@@ -390,9 +391,17 @@ SHAPES = (
             f("copied", INT),
             f("skipped", INT, doc="Already current — not an error."),
             f("failed", INT),
-            f("errors", ListOf(STR)),
+            f(
+                "deferred",
+                INT,
+                doc="Copies postponed rather than failed: the database copy "
+                "behind an open write, which a later pass makes. Never counted "
+                "in `failed` or listed in `errors`.",
+            ),
+            f("errors", ListOf(STR), doc="The first few failed copies; a deferral is not one."),
             f("directory", STR),
         ),
+        doc="What `backup.syncNow` did.",
     ),
     # Cohorts (DATA.md#cohorts-animals-and-groups)
     Shape("Sex", lit("M", "F", "unknown")),

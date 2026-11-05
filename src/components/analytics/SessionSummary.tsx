@@ -241,7 +241,7 @@ function Headline({ runs }: { runs: RunSummary[] }) {
           </span>{" "}
           ·{" "}
           <span style={{ color: "var(--color-starlight)" }}>
-            {pooled.pSide === null ? "—" : pct(pooled.pSide)} correct side
+            {pooled.pResponse === null ? "—" : pct(pooled.pResponse)} response
           </span>
         </>
       ) : profiles.size > 1 ? (

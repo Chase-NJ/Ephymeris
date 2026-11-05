@@ -244,6 +244,9 @@ export function outcomeParts(outcomes: TrialOutcomes): OutcomePart[] {
       { key: "holdFailed" as const, value: outcomes.holdFailed },
       { key: "wrongWell" as const, value: outcomes.wrongWell },
       { key: "noResponse" as const, value: outcomes.noResponse },
+      { key: "unpaid" as const, value: outcomes.unpaid ?? 0 },
+      { key: "withheld" as const, value: outcomes.withheld ?? 0 },
+      { key: "falseAlarm" as const, value: outcomes.falseAlarm ?? 0 },
     ]
       .filter((part) => part.value > 0)
       .map((part) => ({

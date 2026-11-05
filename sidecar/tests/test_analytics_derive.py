@@ -1055,12 +1055,12 @@ def test_the_payload_shape_is_spelled_out() -> None:
         "wilsonLow", "windowSize",
     ]
     assert sorted(payload["outcomes"]) == [
-        "aborted", "administered", "holdFailed", "noResponse", "pRewarded",
-        "pSide", "rewarded", "rewardedHigh", "rewardedLow", "sideHigh",
-        "sideLow", "trials", "wrongWell",
+        "aborted", "administered", "falseAlarm", "holdFailed", "noResponse", "pResponse", "pRewarded",
+        "pSide", "responded", "responseHigh", "responseLow", "rewarded", "rewardedHigh", "rewardedLow",
+        "sideHigh", "sideLow", "trials", "unpaid", "withheld", "wrongWell",
     ]
     assert sorted(payload["conditions"][0]) == [
-        "label", "metricId", "outcomes", "triggerCode",
+        "answerSide", "label", "metricId", "outcomes", "triggerCode",
     ]
     assert sorted(payload["engagement"]) == [
         "engagedHigh", "engagedLow", "noPoke", "odorDelivered", "pDelivered",

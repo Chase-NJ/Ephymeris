@@ -6,7 +6,7 @@ import { PanelTitle } from "@/components/charts/PanelTitle";
 import { LINK_STROKE } from "@/components/chrome/constellationStyle";
 import { useAnalyticsStore, useIsHighlighted, usePinnedAnimal } from "@/lib/analytics/context";
 import type { AnalyticsSummary } from "@/lib/analytics/types";
-import { chronological, pickMetric } from "@/lib/analytics/view";
+import { chronological, responseAccuracyOf } from "@/lib/analytics/view";
 
 /**
  * The roster, grouped, with each animal's trend (`DATA.md#analytics-views`).
@@ -223,8 +223,8 @@ function Sparkline({ values, color }: { values: number[]; color: string }) {
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
 /**
- * Every animal's whole history — all tasks, each run at its pooled overall
- * accuracy (`ANALYTICS.md#pooled-accuracy`). The sparkline answers "which way is this going", and a
+ * Every animal's whole history — all tasks, each run at its response accuracy
+ * (`responseAccuracyOf`), one figure across the cutover. The sparkline answers "which way is this going", and a
  * history that silently skipped every session on another task would answer it
  * about a different animal than the one in the room.
  */
@@ -237,10 +237,8 @@ function buildTrends(summary: AnalyticsSummary): Map<string, number[]> {
     );
     const values: number[] = [];
     for (const run of runs) {
-      const metric = pickMetric(run, null);
-      if (metric?.pSession !== null && metric?.pSession !== undefined) {
-        values.push(metric.pSession);
-      }
+      const p = responseAccuracyOf(run);
+      if (p !== null) values.push(p);
     }
     out.set(animal.id, values);
   }

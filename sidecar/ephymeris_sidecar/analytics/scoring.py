@@ -892,6 +892,9 @@ def _canary_runs(
             # A spine run replay scores, and the same run with one output moved.
             ("spine-replayed", nothing, _spine_canary()),
             ("spine-diverged", nothing, _spine_canary(diverge=True)),
+            # A two-row 2AFC window, holds and omissions: the legacy-shaped
+            # tallies a spine run gets for the cross-session panels (#167).
+            ("spine-2afc", nothing, _afc_canary()),
             # A trace-conditioning run with licks: its phase-window rates.
             ("spine-trace", nothing, _trace_canary()),
             # The same with CS- on a lick sensor of its own: each row is scored
@@ -972,6 +975,61 @@ def _spine_canary(*, diverge: bool = False) -> dict[str, Any]:
         "ts_data": [[code[n], t] for t, n in pokes] + [[code["END_SESSION"], 20000]],
     }
     return _predicted(doc, code["REWARD_ON"] if diverge else None)
+
+
+def _afc_canary() -> dict[str, Any]:
+    """A two-row 2AFC spine run for the canary, self-contained like
+    `_spine_canary`: odor 1 pays at the right well and odor 2 at the left, each
+    held, with a random animal (`stream/simulate.py`, seeded) answering, so its
+    tally holds rewarded trials, wrong wells and omissions, and each row names
+    its side. Its stream is the simulator's, so a change to the simulated
+    animal moves the canary too: one archive re-read, never a wrong number."""
+    from .stream import simulate
+
+    phases = [
+        {"phase": "wait", "on": "port", "outputs": ["cue"]},
+        {"phase": "present", "outputs": ["cue", "sample"], "ms": 500, "abortOnRelease": "port"},
+        {"phase": "response", "responses": ["left", "right"], "ms": 2000, "holdMs": 100},
+        {"phase": "outcome", "ms": 0},
+        {"phase": "iti", "ms": 1000},
+    ]
+
+    def row(row_id: str, odor: str, right: str, wrong: str) -> dict[str, Any]:
+        return {"id": row_id, "name": row_id, "bind": {"port": "port", "left": "left", "right": "right",
+                                                       "cue": "cue", "sample": odor, "reward": "reward"},
+                "map": {right: {"outcome": "correct", "line": "reward", "rewardPermille": 1000, "hold": True},
+                        wrong: {"outcome": "wrong_response"}, "timeout": {"outcome": "omission"}}}
+
+    rows = [row("odor_1", "odor_1", "right", "left"), row("odor_2", "odor_2", "left", "right")]
+    blocks = [{"id": "b1", "rows": ["odor_1", "odor_2"], "trials": 20}]
+    low = lowering.lower(phases, ["port", "left", "right"], ["cue", "sample", "reward"], rows=rows, blocks=blocks)
+    inputs = [{"slot": slot, "channel": channel, "rise": f"{channel.upper()}_ENTER",
+               "fall": f"{channel.upper()}_EXIT", **({"side": channel} if channel in ("left", "right") else {})}
+              for slot, channel in low.inputs]
+    outputs = [{"slot": slot, "channel": channel, "on": f"{channel.upper()}_ON", "off": f"{channel.upper()}_OFF"}
+               for slot, channel in low.outputs]
+    names = ["START_SESSION", "TRIAL_START", "END_SESSION", "BLOCK_START",
+             *(i[k] for i in inputs for k in ("rise", "fall")), *(o[k] for o in outputs for k in ("on", "off"))]
+    code = {name: n + 1 for n, name in enumerate(names)}
+    values = {"T1": 500, "T2": 2000, "H2": 100, "T3": 0, "T4": 1000, "BN1": 20}
+    config = [{"metadataKey": f"p_{key.lower()}", "wireKey": key, "label": key, "type": "int",
+               "default": values.get(key, 100 if key.startswith("RW") else 1000)} for key in low.params]
+    snapshot = {
+        "taskName": "Score canary 2AFC", "kind": "behavior", "config": config, "liveMetrics": [],
+        "strobes": {str(c): n for n, c in code.items()},
+        "spine": {
+            "interp": spine_stream.rp.INTERP_VERSION, "spine": phases, "rows": rows, "blocks": blocks,
+            "inputs": inputs, "outputs": outputs, "params": list(low.params),
+            "table": {"states": [list(s) for s in low.states], "edges": [list(e) for e in low.edges],
+                      "phases": list(low.phases), "rows": list(low.rows),
+                      "blocks": [list(b) for b in low.blocks], "entries": [list(e) for e in low.entries],
+                      "overrides": [], "skipped": low.skipped, "hits": low.hits},
+            "structural": {"sessionStart": "START_SESSION", "trialStart": "TRIAL_START",
+                           "sessionEnd": "END_SESSION", "blockStart": "BLOCK_START"},
+        },
+    }
+    doc = simulate.simulate(snapshot, simulate.Animal("random"), 167).document
+    return {**doc, "rat": "canary"}
 
 
 def _trace_canary(*, split: bool = False) -> dict[str, Any]:

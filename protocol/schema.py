@@ -1214,6 +1214,20 @@ SHAPES = (
             f("rewardedHigh", nullable(FLOAT)),
             f("sideLow", nullable(FLOAT)),
             f("sideHigh", nullable(FLOAT)),
+            f("unpaid", INT, doc="A spine run's right answer whose reward was drawn against; 0 on a legacy run."),
+            f("withheld", INT, doc="A spine run's no-go withhold, a hit; 0 on a legacy run, which cannot tell it "
+              "from no response."),
+            f("falseAlarm", INT, doc="A spine run's no-go false alarm, a miss; 0 on a legacy run."),
+            f("responded", INT, doc="Every answer, right or wrong: rewarded + holdFailed + unpaid + withheld + "
+              "wrongWell + falseAlarm. No response and aborts are left out."),
+            f(
+                "pResponse",
+                nullable(FLOAT),
+                doc="Response accuracy, legacy P(hit)'s figure on both kinds of run: the right well first, hold or "
+                "not, over `responded` (`ANALYTICS.md#rewarded-and-response-accuracy`). Null when nothing was answered.",
+            ),
+            f("responseLow", nullable(FLOAT)),
+            f("responseHigh", nullable(FLOAT)),
         ),
         doc="What actually happened per trial (`ANALYTICS.md#how-a-strobe-stream-is-scored`). Distinct "
         "from the declared metrics, which are reward-*unconditional* — they "
@@ -1264,12 +1278,18 @@ SHAPES = (
             f("label", STR),
             f(
                 "triggerCode",
-                INT,
+                nullable(INT),
                 doc="The code that opens this condition's trials — what splits "
                 "the tally. Two metrics sharing one legitimately cover the "
-                "same trials.",
+                "same trials. Null for a spine row, which no onset code opens.",
             ),
             f("outcomes", Ref("TrialOutcomes")),
+            f(
+                "answerSide",
+                nullable(STR),
+                doc="A spine row's one right answer's side, `left` or `right`, from its snapshot; null otherwise "
+                "(a legacy condition's side is its metric's `answerSide`).",
+            ),
         ),
         doc="TrialOutcomes restricted to one declared condition "
         "(`ANALYTICS.md#how-a-strobe-stream-is-scored`), in authored liveMetrics order; the "

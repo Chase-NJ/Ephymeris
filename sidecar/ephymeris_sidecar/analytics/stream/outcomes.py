@@ -71,6 +71,30 @@ class TrialOutcomes:
     #: never poked at all never reaches an odor onset and is not counted here,
     #: or anywhere.
     aborted: int = 0
+    #: Spine runs only (#167): the right response, its reward drawn against, so
+    #: no fluid; a no-go row's withhold (a hit) and its false alarm (a miss).
+    #: A legacy run cannot tell these apart and leaves them 0.
+    unpaid: int = 0
+    withheld: int = 0
+    false_alarm: int = 0
+
+    @property
+    def response_hits(self) -> int:
+        """The trials answered right: the right well first, hold or not, paid
+        or not, and a no-go row's withhold."""
+        return self.rewarded + self.hold_failed + self.unpaid + self.withheld
+
+    @property
+    def responded(self) -> int:
+        """The trials response accuracy is over: every answer, right or wrong.
+        No response and an abort are left out, as legacy P(hit) leaves them."""
+        return self.response_hits + self.wrong_well + self.false_alarm
+
+    @property
+    def p_response(self) -> float | None:
+        """**Response accuracy**: legacy P(hit)'s figure, on a legacy and a
+        spine run alike (`ANALYTICS.md#rewarded-and-response-accuracy`)."""
+        return self.response_hits / self.responded if self.responded else None
 
     @property
     def p_rewarded(self) -> float | None:
@@ -85,6 +109,7 @@ class TrialOutcomes:
     def to_json(self) -> dict[str, Any]:
         rewarded_interval = wilson_interval(self.rewarded, self.administered)
         side_interval = wilson_interval(self.rewarded + self.hold_failed, self.administered)
+        response_interval = wilson_interval(self.response_hits, self.responded)
         return {
             "trials": self.trials,
             "administered": self.administered,
@@ -99,6 +124,13 @@ class TrialOutcomes:
             "rewardedHigh": _round(rewarded_interval[1] if rewarded_interval else None),
             "sideLow": _round(side_interval[0] if side_interval else None),
             "sideHigh": _round(side_interval[1] if side_interval else None),
+            "unpaid": self.unpaid,
+            "withheld": self.withheld,
+            "falseAlarm": self.false_alarm,
+            "responded": self.responded,
+            "pResponse": _round(self.p_response),
+            "responseLow": _round(response_interval[0] if response_interval else None),
+            "responseHigh": _round(response_interval[1] if response_interval else None),
         }
 
 
@@ -121,8 +153,13 @@ class ConditionOutcomes:
 
     metric_id: str
     label: str
-    trigger_code: int
+    #: None for a spine row, which no onset code opens.
+    trigger_code: int | None
     outcomes: TrialOutcomes
+    #: The side its one right answer is on, `left` or `right`, for a spine row
+    #: whose snapshot says so; None otherwise (a legacy condition's side is its
+    #: metric's `answerSide`).
+    answer_side: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -130,6 +167,7 @@ class ConditionOutcomes:
             "label": self.label,
             "triggerCode": self.trigger_code,
             "outcomes": self.outcomes.to_json(),
+            "answerSide": self.answer_side,
         }
 
 

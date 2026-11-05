@@ -292,12 +292,41 @@ export function sideAccuracy(
 ): { p: number | null; counted: number } {
   let hits = 0;
   let counted = 0;
+  // A spine run's rows carry their side and their response accuracy's counts
+  // (#167); its metrics are P(correct), which scores omissions and broken holds
+  // as misses, so it is placed by its rows instead, on the legacy figure.
+  const rows = (run.conditions ?? []).filter((c) => c.answerSide != null);
+  if (rows.length > 0) {
+    for (const row of rows) {
+      if (row.answerSide !== side) continue;
+      hits += responseHits(row.outcomes);
+      counted += row.outcomes.responded;
+    }
+    return { p: counted > 0 ? hits / counted : null, counted };
+  }
   for (const metric of run.metrics) {
     if (metric.id === OVERALL_ID || metric.answerSide !== side) continue;
     hits += metric.hits;
     counted += metric.counted;
   }
   return { p: counted > 0 ? hits / counted : null, counted };
+}
+
+/** The right answers of a tally: the right well, hold or not, paid or not, and a withhold. */
+function responseHits(o: { rewarded: number; holdFailed: number; unpaid: number; withheld: number }): number {
+  return o.rewarded + o.holdFailed + o.unpaid + o.withheld;
+}
+
+/**
+ * A run's response accuracy for the animal rail's sparkline: legacy P(hit)'s
+ * figure on a legacy and a spine run alike (`ANALYTICS.md#rewarded-and-response-accuracy`),
+ * so the line reads one thing across the cutover. A run with no outcome
+ * tally (a task with no Response window, or a profile that declares none)
+ * falls back to its pooled overall.
+ */
+export function responseAccuracyOf(run: RunSummary): number | null {
+  if (run.outcomes) return run.outcomes.pResponse;
+  return (run.overall ?? pickMetric(run, null))?.pSession ?? null;
 }
 
 /** The strategy space's fixed axes: x = left well, y = right well. */
@@ -430,6 +459,10 @@ export const OUTCOME_STYLE = {
   holdFailed: { fill: "var(--color-status-warning)", label: "correct well, no hold" },
   wrongWell: { fill: "var(--color-status-error)", label: "wrong well" },
   noResponse: { fill: "var(--color-halo)", label: "no response" },
+  // A spine run's own (#167); 0 on every legacy run.
+  unpaid: { fill: "var(--color-ion)", label: "correct, reward drawn against" },
+  withheld: { fill: "var(--color-pulsar)", label: "withheld (no-go)" },
+  falseAlarm: { fill: "var(--color-nebula)", label: "false alarm (no-go)" },
 } as const;
 
 export type OutcomeKey = keyof typeof OUTCOME_STYLE;
@@ -445,6 +478,16 @@ export interface PooledOutcomes {
   wrongWell: number;
   noResponse: number;
   aborted: number;
+  /** A spine run's unpaid right answers, withholds and false alarms (#167). */
+  unpaid: number;
+  withheld: number;
+  falseAlarm: number;
+  /** Every answer, right or wrong: response accuracy's denominator. */
+  responded: number;
+  /** Response accuracy: the right answers over `responded` — legacy P(hit). */
+  pResponse: number | null;
+  responseLow: number | null;
+  responseHigh: number | null;
   /** rewarded / administered — null when nothing was administered. */
   pRewarded: number | null;
   /** (rewarded + holdFailed) / administered. Always ≥ pRewarded. */
@@ -468,6 +511,13 @@ export const NO_OUTCOMES: PooledOutcomes = {
   wrongWell: 0,
   noResponse: 0,
   aborted: 0,
+  unpaid: 0,
+  withheld: 0,
+  falseAlarm: 0,
+  responded: 0,
+  pResponse: null,
+  responseLow: null,
+  responseHigh: null,
   pRewarded: null,
   pSide: null,
   rewardedLow: null,
@@ -521,12 +571,20 @@ export function poolOutcomes(runs: RunSummary[]): PooledOutcomes {
     total.wrongWell += outcomes.wrongWell;
     total.noResponse += outcomes.noResponse;
     total.aborted += outcomes.aborted;
+    total.unpaid += outcomes.unpaid ?? 0;
+    total.withheld += outcomes.withheld ?? 0;
+    total.falseAlarm += outcomes.falseAlarm ?? 0;
+    total.responded += outcomes.responded ?? 0;
   }
   if (!any || total.administered === 0) return total;
   const rewarded = wilsonInterval(total.rewarded, total.administered);
   const side = wilsonInterval(total.rewarded + total.holdFailed, total.administered);
+  const response = wilsonInterval(responseHits(total), total.responded);
   return {
     ...total,
+    pResponse: total.responded > 0 ? responseHits(total) / total.responded : null,
+    responseLow: response ? response[0] : null,
+    responseHigh: response ? response[1] : null,
     pRewarded: total.rewarded / total.administered,
     pSide: (total.rewarded + total.holdFailed) / total.administered,
     rewardedLow: rewarded ? rewarded[0] : null,
@@ -690,15 +748,15 @@ export const REWARDED_ACCURACY: AccuracyReading = {
 };
 
 /**
- * The correct well was answered, whether or not the hold earned the drop —
- * the choice rather than the consummatory act. Always ≥ rewarded accuracy,
- * and the figure the declared metrics themselves score
- * (`ANALYTICS.md#rewarded-and-response-accuracy`).
+ * The correct well answered first, whether or not the hold earned the drop —
+ * the choice rather than the consummatory act — over the trials answered at
+ * all: legacy P(hit)'s figure, on a legacy and a spine run alike, so the line
+ * reads one thing across the cutover (`ANALYTICS.md#rewarded-and-response-accuracy`).
  */
 export const RESPONSE_ACCURACY: AccuracyReading = {
-  value: (o) => o.pSide,
-  low: (o) => o.sideLow,
-  high: (o) => o.sideHigh,
+  value: (o) => o.pResponse,
+  low: (o) => o.responseLow,
+  high: (o) => o.responseHigh,
 };
 
 /**

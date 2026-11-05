@@ -1224,6 +1224,25 @@ export interface TrialOutcomes {
   rewardedHigh: number | null;
   sideLow: number | null;
   sideHigh: number | null;
+  /** A spine run's right answer whose reward was drawn against; 0 on a legacy run. */
+  unpaid: number;
+  /** A spine run's no-go withhold, a hit; 0 on a legacy run, which cannot tell it from no response. */
+  withheld: number;
+  /** A spine run's no-go false alarm, a miss; 0 on a legacy run. */
+  falseAlarm: number;
+  /**
+   * Every answer, right or wrong: rewarded + holdFailed + unpaid + withheld + wrongWell +
+   * falseAlarm. No response and aborts are left out.
+   */
+  responded: number;
+  /**
+   * Response accuracy, legacy P(hit)'s figure on both kinds of run: the right well first, hold or
+   * not, over `responded` (`ANALYTICS.md#rewarded-and-response-accuracy`). Null when nothing was
+   * answered.
+   */
+  pResponse: number | null;
+  responseLow: number | null;
+  responseHigh: number | null;
 }
 
 /**
@@ -1273,10 +1292,15 @@ export interface ConditionOutcomes {
   label: string;
   /**
    * The code that opens this condition's trials — what splits the tally. Two metrics sharing one
-   * legitimately cover the same trials.
+   * legitimately cover the same trials. Null for a spine row, which no onset code opens.
    */
-  triggerCode: number;
+  triggerCode: number | null;
   outcomes: TrialOutcomes;
+  /**
+   * A spine row's one right answer's side, `left` or `right`, from its snapshot; null otherwise
+   * (a legacy condition's side is its metric's `answerSide`).
+   */
+  answerSide: string | null;
 }
 
 /**

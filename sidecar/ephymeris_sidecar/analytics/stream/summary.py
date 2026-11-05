@@ -16,7 +16,7 @@ from typing import Any
 
 from ...tasks.profile import TaskProfile
 from .document import _duration_ms, codes_of
-from . import legacy, rates, table_metrics
+from . import crossover, legacy, rates, table_metrics
 from .spine import Divergence, Replayed, SpineDecodeError, is_spine_run, replayed
 from .spine import trial_table as spine_table
 from .engagement import TrialEngagement, tally_engagement
@@ -161,10 +161,15 @@ def _replay_summary(document: dict[str, Any], base: dict[str, Any], min_counted:
         return RunSummary(status="diverged", detail=result.divergence.detail,
                           divergence=result.divergence, **base)
     score = replay_score(result, min_counted)
+    # The legacy shapes, so the cross-session panels read it as a legacy run (#167).
+    outcomes, conditions, engagement = crossover.tallies(result, document["task_profile"]["spine"])
     return RunSummary(
         status="ok",
         metrics=table_metrics.correct_metrics(score, min_counted=min_counted),
         overall=table_metrics.overall_correct(score, min_counted=min_counted),
+        outcomes=outcomes,
+        conditions=conditions,
+        engagement=engagement,
         replay=score,
         **base,
     )

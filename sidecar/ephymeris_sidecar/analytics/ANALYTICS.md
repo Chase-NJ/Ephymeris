@@ -289,12 +289,19 @@ flowchart TD
     sampled -->|"no"| aborted["aborted"]
 ```
 
-`administered` (odor sampled to completion: every trial but `aborted`) is the denominator:
+`administered` (odor sampled to completion: every trial but `aborted`) is the denominator of two of the
+three figures:
 
 - **Rewarded accuracy** (`pRewarded`) = `rewarded / administered`. Conservative.
-- **Response accuracy** (`pSide` on the wire) = `(rewarded + holdFailed) / administered`: the correct side
-  was chosen, held or not. **Always ≥ rewarded accuracy; the gap is the consummatory hold-failure rate**,
-  a real behaviour.
+- **Response accuracy** (`pResponse`) = `(rewarded + holdFailed + unpaid + withheld) / responded`, where
+  `responded` adds `wrongWell` and `falseAlarm`: the correct answer first, held or not, **over the trials
+  answered at all**. No response and an abort are left out, exactly as the conditions' hit rates leave them,
+  so it is legacy P(hit)'s figure, on a legacy and a [spine run](#a-spine-run-on-the-cross-session-panels)
+  alike. The Accuracy panel's response line and the animal rail's sparkline plot it. Always ≥ rewarded
+  accuracy; the gap is what the choice did not turn into fluid: a broken hold, a reward drawn against, or
+  a trial not answered.
+- **Side accuracy** (`pSide`) = `(rewarded + holdFailed) / administered`: the correct side over every trial
+  administered, a no response counting against it.
 
 Each has its own Wilson interval. Three deliberate choices:
 
@@ -313,12 +320,51 @@ Each has its own Wilson interval. Three deliberate choices:
 >   has poked and held, so an ignored trial produces no boundary and appears nowhere, not even as
 >   `aborted`. **Every figure here is conditioned on engagement**; the [engagement
 >   ladder](#engagement-ladder) measures it.
-> - **A no-go trial, withheld or answered, lands in `no response`** in the outcome tally: the correct
+> - **On a legacy run, a no-go trial, withheld or answered, lands in `no response`** in the outcome tally (a
+>   spine run has its own [withheld and false-alarm buckets](#a-spine-run-on-the-cross-session-panels)): the correct
 >   answer looks exactly like a non-response from the strobes, a false alarm at a port has no fluid or
->   error evidence, and the tally has no withheld or false-alarm bucket. P(withhold) is not
+>   error evidence, and a legacy run fills no withheld or false-alarm bucket. P(withhold) is not
 >   affected, because it is a per-condition metric ([above](#trials-hits-misses-and-exclusions)) that
 >   scores a withhold as a hit and a poke at any port as a miss. The trial table
 >   [flags such a trial](#legacy-no-go-runs-are-flagged) rather than give it a class.
+
+### A spine run on the cross-session panels
+
+A spine run has no reward or onset codes to classify, so `stream/crossover.py` fills the same
+`outcomes`, `conditions` and `engagement` from its [replayed trial table](#the-trial-table) and its own
+snapshot, and the cross-session panels read it as they read a legacy run.
+
+A trial is **right** when its `response` is the row's one response mapped `correct`; a row with none or
+several (a bandit's) is read by its class. So a broken hold at the wrong well is a wrong well, as the
+first well poked decides legacy P(hit).
+
+| Trial | Bucket |
+|---|---|
+| `correct`, right, paid | rewarded |
+| `correct`, right, its reward drawn against | **unpaid** (spine only) |
+| `hold_broken`, right | hold failed |
+| `hold_broken` or `correct` at the wrong well, `wrong_response` | wrong well |
+| `omission` | no response |
+| `withheld` | **withheld** (spine only): a hit |
+| `false_alarm` | **false alarm** (spine only): a miss |
+| `abort_during_sampling` | aborted |
+| `abort_before_stimulus` | counted in no tally, only on the engagement ladder |
+
+- **Only a spine with a Response window has `outcomes` and `conditions`**; a Pavlovian or ratio task
+  answers nothing, so they are `null` and empty, as for a profile with no reward vocabulary.
+- **`conditions` are the task's rows**, each `replay:<row id>:correct`, its `triggerCode` null (no onset
+  code opens a row) and its `answerSide` the side its right answer is on, from the snapshot: a response
+  port's `port_slot` 1 is `left` and 2 `right` (`TASKS.md#the-snapshot`). The strategy plane places a
+  spine run by its rows' response accuracy at each side.
+- **`engagement`**: `presented` is every complete trial, `poked` each that entered the phase after the
+  spine's engaging Wait (its first, before its first Present), and `odorDelivered` each that entered its
+  first Present. Null for a spine with no such Wait and Present.
+
+> [!CAUTION]
+> **Engagement reads a trial's phase entries**, the one place outside the trial table's own metrics that
+> reads a phase's position: a spine run strobes no light or poke code to delimit a presentation by. A
+> lazy no-poke and a release before the odor are both `abort_before_stimulus`, and only the phase the
+> trial reached tells them apart.
 
 ### Per-condition tally
 

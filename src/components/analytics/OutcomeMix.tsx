@@ -46,7 +46,9 @@ const PLOT_PX = 132;
 
 /** Stack order, bottom to top — rewarded sits on the baseline so its share
  *  reads against the same edge as the rewarded line's y axis. */
-const STACK: readonly OutcomeKey[] = ["rewarded", "holdFailed", "wrongWell", "noResponse"];
+const STACK: readonly OutcomeKey[] = [
+  "rewarded", "unpaid", "holdFailed", "withheld", "wrongWell", "falseAlarm", "noResponse",
+];
 
 export function OutcomeMix(props: {
   summary: AnalyticsSummary;

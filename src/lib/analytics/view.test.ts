@@ -17,6 +17,9 @@ import type { AnalyticsSummary, ProfileGroup, RunSummary } from "./types";
 import {
   pooledAxis,
   recentSessions,
+  poolOutcomes,
+  RESPONSE_ACCURACY,
+  responseAccuracyOf,
   sideAccuracy,
   strategyAxes,
   strategyProfiles,
@@ -229,6 +232,47 @@ describe("sideAccuracy", () => {
   it("is null when nothing was answered at that well", () => {
     const oneSided = { metrics: [metric("o1", "right")] } as unknown as RunSummary;
     expect(sideAccuracy(oneSided, "left")).toEqual({ p: null, counted: 0 });
+  });
+});
+
+describe("a spine run on the cross-session panels (#167)", () => {
+  const tally = (over: Partial<Record<string, number>>) =>
+    ({
+      trials: 0, administered: 0, rewarded: 0, holdFailed: 0, wrongWell: 0, noResponse: 0, aborted: 0,
+      unpaid: 0, withheld: 0, falseAlarm: 0, responded: 0, pResponse: null, ...over,
+    }) as never;
+  const spine = {
+    metrics: [{ ...OVERALL }],
+    conditions: [
+      { metricId: "replay:r1:correct", label: "Odor 1", triggerCode: null, answerSide: "right",
+        outcomes: tally({ rewarded: 8, holdFailed: 1, unpaid: 1, wrongWell: 2, responded: 12 }) },
+      { metricId: "replay:r2:correct", label: "Odor 2", triggerCode: null, answerSide: "left",
+        outcomes: tally({ rewarded: 3, wrongWell: 1, responded: 4 }) },
+    ],
+  } as unknown as RunSummary;
+
+  it("places a spine run on the strategy plane by its rows' response accuracy", () => {
+    expect(sideAccuracy(spine, "right")).toEqual({ p: 10 / 12, counted: 12 });
+    expect(sideAccuracy(spine, "left")).toEqual({ p: 3 / 4, counted: 4 });
+  });
+
+  it("pools response accuracy as legacy P(hit): no response and aborts left out", () => {
+    const runs = [
+      { outcomes: tally({ trials: 12, administered: 12, rewarded: 6, holdFailed: 2, wrongWell: 2, noResponse: 2,
+                          responded: 10 }) },
+      { outcomes: tally({ trials: 6, administered: 6, rewarded: 2, unpaid: 1, withheld: 1, falseAlarm: 1,
+                          noResponse: 1, responded: 5 }) },
+    ] as unknown as RunSummary[];
+    const pooled = poolOutcomes(runs);
+    expect(pooled.responded).toBe(15);
+    expect(pooled.pResponse).toBe(12 / 15);
+    expect(RESPONSE_ACCURACY.value(pooled)).toBe(12 / 15);
+  });
+
+  it("gives a run's sparkline its response accuracy, falling back to its overall", () => {
+    expect(responseAccuracyOf({ outcomes: tally({ pResponse: 0.75 }), overall: { pSession: 0.5 } } as never))
+      .toBe(0.75);
+    expect(responseAccuracyOf({ outcomes: null, overall: { pSession: 0.5 }, metrics: [] } as never)).toBe(0.5);
   });
 });
 

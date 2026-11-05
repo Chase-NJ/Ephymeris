@@ -932,8 +932,8 @@ The profile's `spine` key is everything replay needs that the run's own header d
 - the definition's slots, phases, rows and blocks;
 - the table exactly as lowered, with its `interp`, and per state its phase index (`table.phases`, null for the pick state) and its row index into `rows` (`table.rows`, null for the pick state and the ends the rows share). The trial table reads these; the board never does;
 - the table's counter, `table.counter`: `{min, max, ratios}`, the parameter slots of a Counter's N (255 for none) and its compiled ratios, or null for a spine with no Counter;
-- the table's blocks, `table.blocks`, `table.entries`, `table.overrides`, `table.skipped` and `table.hits` (the classes a criterion passes over and counts as correct, bit c−1 for class c): each `InterpBlock`, `InterpEntry` and `InterpOverride` as a list, in `BoxInterp.h`'s field order ([Blocks](#blocks)). Replay reads each trial's block id from the snapshot's `blocks[]` by the index the core reports;
-- each bit's channel and edge code **names**, and for a [driven output](#driven-outputs) its `drive` and the wire keys of its `params`;
+- the table's blocks, `table.blocks`, `table.entries`, `table.overrides`, `table.skipped` and `table.hits` (the classes a criterion passes over and counts as correct, bit c−1 for class c), `table.repeatAborts` and `table.lazy`: each `InterpBlock`, `InterpEntry` and `InterpOverride` as a list, in `BoxInterp.h`'s field order ([Blocks](#blocks)). Replay reads each trial's block id from the snapshot's `blocks[]` by the index the core reports;
+- each bit's channel and edge code **names**, and for a [driven output](#driven-outputs) its `drive` and the wire keys of its `params`; a response port's input carries its `side`, `left` or `right` by its channel's `port_slot` (1 and 2), which the [cross-session panels](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#a-spine-run-on-the-cross-session-panels) read;
 - each parameter slot's wire key;
 - the structural code names.
 

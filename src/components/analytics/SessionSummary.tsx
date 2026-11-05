@@ -14,7 +14,7 @@ import type {
   RunSummary,
   SessionListItem,
 } from "@/lib/analytics/types";
-import { OUTCOME_STYLE, poolOutcomes } from "@/lib/analytics/view";
+import { OUTCOME_ORDER, OUTCOME_STYLE, poolOutcomes } from "@/lib/analytics/view";
 import { springSnappy } from "@/lib/motion";
 
 /**
@@ -262,7 +262,7 @@ const CARD_GRID = {
 function Legend() {
   return (
     <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-halo pt-2 font-mono text-[9px] text-static/70">
-      {Object.entries(OUTCOME_STYLE).map(([key, style]) => (
+      {OUTCOME_ORDER.map((key) => [key, OUTCOME_STYLE[key]] as const).map(([key, style]) => (
         <span key={key} className="flex items-center gap-1">
           <span
             className="inline-block size-2 rounded-[2px]"

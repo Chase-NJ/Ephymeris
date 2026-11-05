@@ -57,7 +57,8 @@ import {
  * own pair of lines.
  */
 
-/** Below this many administered trials the point is drawn hollow (`ANALYTICS.md#uncertainty`). */
+/** Below this many trials a point is drawn hollow (`ANALYTICS.md#uncertainty`): answered ones for the
+ *  response line, administered ones for the rewarded line. */
 const THIN = 30;
 
 /** The viewBox's y extent — a coordinate space, not a size. */

@@ -359,9 +359,10 @@ first well poked decides legacy P(hit).
   code opens a row) and its `answerSide` the side its right answer is on, from the snapshot: a response
   port's `port_slot` 1 is `left` and 2 `right` (`TASKS.md#the-snapshot`). The strategy plane places a
   spine run by its rows' response accuracy at each side.
-- **`engagement`**: `presented` is every complete trial, `poked` each that entered the phase after the
-  spine's engaging Wait (its first, before its first Present), and `odorDelivered` each that entered its
-  first Present. Null for a spine with no such Wait and Present.
+- **`engagement`**: `presented` is every complete trial, `poked` each that entered any phase after the
+  spine's engaging Wait (its first, before its first Present) and before its ITI, and `odorDelivered` each
+  that entered its first Present or any phase after it, before the ITI. An early end and a penalty are
+  ITI copies, so a timed-out Wait is never poked. Null for a spine with no such Wait and Present.
 
 > [!CAUTION]
 > **Engagement reads a trial's phase entries**, the one place outside the trial table's own metrics that

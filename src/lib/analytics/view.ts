@@ -485,10 +485,12 @@ export const OUTCOME_STYLE = {
   wrongWell: { fill: "var(--color-status-error)", label: "wrong well" },
   noResponse: { fill: "var(--color-halo)", label: "no response" },
   // A spine run's own (#167); 0 on every legacy run. Coloured by what each
-  // means: no fluid for a right answer (as a broken hold), a no-go hit, a miss.
-  unpaid: { fill: "var(--color-status-warning)", label: "correct, not paid" },
+  // means, a paler tint of its neighbour's so the two read as separate
+  // segments: no fluid for a right answer (as a broken hold), a no-go hit, a
+  // no-go miss (as a wrong well).
+  unpaid: { fill: "color-mix(in srgb, var(--color-status-warning) 55%, transparent)", label: "correct, not paid" },
   withheld: { fill: "var(--color-pulsar)", label: "withheld (no-go)" },
-  falseAlarm: { fill: "var(--color-status-error)", label: "false alarm (no-go)" },
+  falseAlarm: { fill: "color-mix(in srgb, var(--color-status-error) 55%, transparent)", label: "false alarm (no-go)" },
 } as const;
 
 /** The order every stacked outcome bar draws its buckets in: right answers first, then misses. */

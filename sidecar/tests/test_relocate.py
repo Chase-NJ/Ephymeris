@@ -290,6 +290,39 @@ def test_a_failed_commit_puts_the_files_back(archive: Archive, volume: str) -> N
     assert archive.journal() == "rolled-back"
 
 
+def test_a_folder_that_cannot_be_put_back_is_rolled_forward_at_the_next_start(
+    archive: Archive, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The commit fails and so does the rename back: the folder is at the
+    target while every record names the source. The journal stays `moving`, so
+    no session is set up meanwhile and the next start finishes the move."""
+    statements(archive.db).execute(
+        "CREATE TEMP TRIGGER refuse_commit BEFORE UPDATE OF data_folder ON cohorts"
+        " BEGIN SELECT RAISE(ABORT, 'disk full'); END"
+    )
+    rename = os.rename
+
+    def no_way_back(src, dst) -> None:
+        if Path(src) == archive.new:
+            raise OSError(errno.EACCES, "Access is denied", str(src))
+        rename(src, dst)
+
+    monkeypatch.setattr(os, "rename", no_way_back)
+    with pytest.raises(sqlite3.IntegrityError, match="disk full"):
+        relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
+
+    assert not archive.old.exists() and archive.new.is_dir()
+    assert archive.journal() == "moving"
+    assert relocate.moving(archive.db, archive.cohort.id)
+
+    monkeypatch.undo()
+    statements(archive.db).execute("DROP TRIGGER refuse_commit")
+    assert relocate.resume(archive.db) == 1
+    assert archive.all_under(archive.new), archive.stored_paths()
+    assert archive.cohorts.get(archive.cohort.id).data_folder == str(archive.new)
+    assert archive.journal() == "done"
+
+
 # --- freshness keys and durability ----------------------------------------------------
 
 

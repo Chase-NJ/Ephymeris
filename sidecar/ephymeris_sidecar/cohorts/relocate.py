@@ -277,6 +277,7 @@ def _carry_out(
         failure = exc
     if failure is not None:
         # The records never moved, so neither may the files.
+        state = "rolled-back"
         try:
             if same_volume:
                 os.rename(target, source)
@@ -284,7 +285,12 @@ def _carry_out(
                 _remove_copies(source, target)
         except OSError:
             log.exception("relocate: couldn't put %s back at %s", target, source)
-        _finish(db, journal, "rolled-back", str(failure))
+            if same_volume:
+                # The folder stays at the target while every record names the
+                # source. Left `moving`, the journal holds sessions off and
+                # the next start's `resume` rolls the records forward.
+                state = "moving"
+        _finish(db, journal, state, str(failure))
         raise failure
 
     if not same_volume:

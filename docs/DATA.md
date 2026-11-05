@@ -224,7 +224,7 @@ Relocating is a separate action, `cohorts.setDataFolder` (`relocate`), with two 
 
 | Destination | How | A crash in between |
 |---|---|---|
-| Same volume | One atomic `rename` of the folder, then the records in one transaction | The folder is demonstrably at the target, so the records are rolled forward at the next start |
+| Same volume | One atomic `rename` of the folder, then the records in one transaction | The folder is demonstrably at the target, so the records are rolled forward at the next start. A failed commit renames the folder back; if that fails too, the journal stays `moving`, which refuses `sessions.create` for the cohort until the next start rolls the records forward the same way |
 | Another volume | A [verified copy](#verified-transfer) of every file, then the records, then each original whose copy is in place | Undone while copying; finished after the commit, by the first start that can reach the old folder |
 
 The cache and adoption rows [carry their freshness keys](#caching) to the moved files, so nothing that was fresh is re-read. Where each recorded group run told RHX to save (`recording_json`) moves too when it lies inside the folder, as the default `<session folder>/ephys` does, whichever cohort the session now belongs to: [a move of animals](#moving-animals-between-cohorts) leaves a recording in the source's folder. A save location elsewhere is left alone. Every column that stores such a path is listed once, in `cohorts/db.py`'s `DATA_PATHS`; a test fails when a column that could hold a path is in neither it nor `OTHER_PATHS`, or when a relocate leaves one behind.

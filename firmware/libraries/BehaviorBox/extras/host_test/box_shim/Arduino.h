@@ -15,7 +15,8 @@
       "\r\n", as on an AVR), so STATUS lines and the
       self-test's prose confirmations can both be asserted;
     * millis() advances on every delay(), so timed loops terminate instead of
-      spinning forever.
+      spinning forever, and bb_onPinRead lets a test script an input against
+      that clock (the IR beams the trial runner polls).
 
   bb_realTiming(baud) makes the time the sketch itself spends real: Serial
   writes fill a 64-byte TX buffer that drains at the baud rate, and a write
@@ -109,8 +110,17 @@ inline void noTone(unsigned pin)
 {
   if (pin < (unsigned)BB_MAX_PIN) { bb_tone[pin] = 0; bb_pinValue[pin] = 0; bb_wrote((int)pin, 0); }
 }
+// Consulted first on every read when a test sets it, so an IR beam can follow
+// a script against millis() (test_trial_stream.cpp); -1 falls through to the
+// pin table.
+static int (*bb_onPinRead)(int pin) = nullptr;
 inline int digitalRead(int pin)
 {
+  if (bb_onPinRead)
+  {
+    int scripted = bb_onPinRead(pin);
+    if (scripted >= 0) return scripted;
+  }
   return (pin >= 0 && pin < BB_MAX_PIN) ? bb_pinValue[pin] : 1;
 }
 

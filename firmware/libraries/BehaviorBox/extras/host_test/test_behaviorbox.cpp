@@ -543,16 +543,17 @@ int main() {
     assert(p.odorPokeHold==500 && p.fluidWellPoll==2000);        // holds, via row 0
     assert(p.trialSeed==2147483646UL); }                         // and START carried only the seed
 
-  // --- INTERP and FREE_RAM: announced before READY, so the run can record which
-  //     interpreter it ran under and the RAM its build left free. This firmware
-  //     is interpreter 1; a host build has no RAM to measure and reports 0.
-  { assert(BOX_INTERP == 1);
+  // --- INTERP, FREE_RAM and STREAM: announced before READY, so the run can
+  //     record which interpreter it ran under, the RAM its build left free and
+  //     which stream grammar to decode. This firmware is interpreter 1 speaking
+  //     grammar 2; a host build has no RAM to measure and reports 0.
+  { assert(BOX_INTERP == 1 && BOX_STREAM == 2);
     _serialOutLen = 0; _serialOut[0] = '\0';
     announceReady();
-    assert(strcmp(_serialOut, "INTERP=1\r\nFREE_RAM=0\r\nREADY\r\n") == 0);
+    assert(strcmp(_serialOut, "INTERP=1\r\nFREE_RAM=0\r\nSTREAM=2\r\nREADY\r\n") == 0);
     _serialOutLen = 0; _serialOut[0] = '\0';
-    announceReadyAs(7);
-    assert(strncmp(_serialOut, "INTERP=7\r\n", 10) == 0); }
+    announceReadyAs(7);                                                // a spine board: no STREAM line
+    assert(strcmp(_serialOut, "INTERP=7\r\nFREE_RAM=0\r\nREADY\r\n") == 0); }
 
   // --- readLineInto: what a sketch's char cmd[SET_LINE_MAX] keeps whole ---
   //

@@ -17,7 +17,8 @@ non-contiguous and non-patterned (101-109 and 114-116, then 221-226, 233-234,
 242-258, 262, 357, 369), and pins are whatever the box was wired to, so anything
 that COMPUTES either rather than looking it up is wrong by construction. The odor
 onsets are the sharpest case: odor 9 is 109 and odor 10 is 114, because 110-113
-are retired codes 29 recorded sessions contain.
+held the dummy solenoid clicks when the onsets were issued, and a code is never
+renumbered, not even after the numbers it stepped over were freed.
 """
 
 from __future__ import annotations
@@ -204,8 +205,8 @@ class Vocabulary:
 
         Live AND retired, sorted by code: this is what a task profile's
         `strobes` map is filled from, and a legacy run replayed through a
-        current profile should read "DUMMY_SOLENOID_CLICK_1", which is an
-        explanation, rather than "Strobe 110", which is a question.
+        current profile should read "END_CORRECT_ITI", which is an
+        explanation, rather than "Strobe 242", which is a question.
         """
         merged = {e.code: e.name for e in self._by_name.values()}
         merged.update(self._retired)

@@ -60,8 +60,8 @@ export function rowsOf(vocabulary: StrobeVocabulary): StrobeRow[] {
  *
  * ONE TABLE, FILTERED, rather than a live table and a retired one stacked: a
  * retired code sits where its number does, between the live codes it was
- * issued among, so the gap it leaves in a run (110–113 in the odor onsets) is
- * in the place a reader goes looking for it.
+ * issued among (242 and 243 among the trial runner's), so the gap it leaves
+ * in a run is in the place a reader goes looking for it.
  */
 export function StrobeTable({
   rows,

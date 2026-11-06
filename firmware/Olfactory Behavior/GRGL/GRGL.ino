@@ -21,6 +21,11 @@ Purpose:
       what lets one flashed binary serve six boxes running the same task with
       different reward volumes.
 
+  What it prints is stream grammar 2 (BehaviorBox.h, docs/TASKS.md#stream-grammar):
+  every trial opens with a header naming its row and the answer it rewards,
+  carries exactly one outcome code, and closes with END_TRIAL -- so a reader
+  decodes each trial without matching patterns, whatever happened in it.
+
   Features, all of them driven by the profile rather than by this file:
   - anti-bias selection (uniform or weighted within a side), or a
     block-shuffled weighted pool
@@ -170,20 +175,24 @@ void loop()
     return;
   }
 
+  /* Every trial is framed the same way whatever happens in it (stream grammar
+     2, BehaviorBox.h): the header names the row before the odor is primed, the
+     runner strobes the timeline and one outcome, and the footer says whether
+     the same trial comes back (INVALID_TRIAL) and closes it (END_TRIAL). */
 #if BOX_SELECTION_MODE == BOX_SELECT_POOL
   /* The sequence was drawn at START; walk it. No policy: a pool task has no
      anti-bias estimate, no escalating abstention penalty and no correction
      budgets, and advances on any COMPLETED trial. */
-  if (runTrial(*trials[currentTrial], params, clock, nullptr, currentTrial))
+  const TrialType &trial = *trials[currentTrial];
+  emitTrialHeader(clock, trial);
+  bool advanced = runTrial(trial, params, clock, nullptr, currentTrial);
+  emitTrialFooter(clock, !advanced); // an abort repeats the same slot
+  if (advanced)
   {
     currentTrial++;                   // Advance only on a completed trial
     applyStage(params, currentTrial); // Ramp holds/windows for the new count
     if (currentTrial >= params.numTrials)
       endCurrentSession();
-  }
-  else
-  {
-    recordEvent(BF_INVALID_TRIAL); // Trial aborted -- repeat the same slot
   }
 #else
   /* Anti-bias and weighted anti-bias both land here; the two selectors differ
@@ -194,20 +203,21 @@ void loop()
   if (currentTrialPtr == nullptr)
     currentTrialPtr = selector.selectNext();
 
-  if (runTrial(*currentTrialPtr, params, clock, &policy, currentTrial))
+  emitTrialHeader(clock, *currentTrialPtr);
+  bool advanced = runTrial(*currentTrialPtr, params, clock, &policy, currentTrial);
+  emitTrialFooter(clock, !advanced); // an abort or a correction repeats the same side
+  if (advanced)
   {
     currentTrial++;                   // Advance only on a completed/advancing trial
     applyStage(params, currentTrial); // Ramp holds/windows for the new count
     // Consume this side's leading correction budget. A correction REPEAT returns
-    // false above and never reaches here, so it doesn't consume budget.
-    correction.onAdvance(currentTrialPtr->correctWell == rightWell);
+    // false above and never reaches here, so it doesn't consume budget. A no-go
+    // row has no side and no budget.
+    if (currentTrialPtr->isGo)
+      correction.onAdvance(currentTrialPtr->correctWell == rightWell);
     currentTrialPtr = nullptr; // force a fresh selection next loop
     if (currentTrial >= params.numTrials)
       endCurrentSession();
-  }
-  else
-  {
-    recordEvent(BF_INVALID_TRIAL); // Trial aborted -- repeat the same side
   }
 #endif
 }

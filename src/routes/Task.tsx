@@ -329,10 +329,10 @@ function FirstTask({ onStart }: { onStart: () => void }) {
           No tasks on this rig yet
         </h2>
         <p className="mt-1.5 text-[12px] leading-relaxed text-static">
-          A task starts from a seed spine — 2AFC, go/no-go, DNMS, trace or a
-          ratio schedule: name each trial type, pick the channels it uses, then
-          change whatever else differs. It reads the wiring from the Rig tab, so
-          set that up first.
+          A task is a trial table: name each trial type, pick the odor line it
+          presents and the well that answers it, then expose the parameters you
+          mean to tune. It reads the wiring from the Rig tab, so set that up
+          first.
         </p>
       </div>
       <Button variant="primary" onClick={onStart}>

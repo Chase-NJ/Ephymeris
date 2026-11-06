@@ -95,6 +95,13 @@ export interface StrobeVocab {
   endCorrect: string | undefined;
   endIncorrect: string | undefined;
   invalid: string | undefined;
+  /** Stream grammar 2 (`TASKS.md#stream-grammar`): the header that opens a
+   *  trial, the footer that closes every trial, the verdict of a rewarded go
+   *  trial, and the sampling release's own code. */
+  trialStart: string | undefined;
+  endTrial: string | undefined;
+  correct: string | undefined;
+  odorUnpokeEarlySampling: string | undefined;
 }
 
 /** Build the vocabulary from a profile's `strobes` map (code → name). */
@@ -125,6 +132,10 @@ export function vocabFrom(strobes: Record<string, string>): StrobeVocab {
     endCorrect: at("END_CORRECT_ITI"),
     endIncorrect: at("END_INCORRECT_ITI"),
     invalid: at("INVALID_TRIAL"),
+    trialStart: at("TRIAL_START"),
+    endTrial: at("END_TRIAL"),
+    correct: at("CORRECT"),
+    odorUnpokeEarlySampling: at("ODOR_UNPOKE_EARLY_SAMPLING"),
   };
 }
 
@@ -133,7 +144,7 @@ export function vocabIsUsable(vocab: StrobeVocab): boolean {
   return (
     vocab.odorOn.size > 0 &&
     Boolean(vocab.pokeL || vocab.pokeR) &&
-    Boolean(vocab.endCorrect || vocab.endIncorrect)
+    Boolean(vocab.endCorrect || vocab.endIncorrect || vocab.endTrial)
   );
 }
 
@@ -164,7 +175,9 @@ export function advance(
     const { code, at } = log[i]!;
 
     // --- trial boundaries ---------------------------------------------
-    if (code === vocab.endCorrect || code === vocab.endIncorrect) {
+    // Grammar 1 closes a completed trial with one of the two ITI codes;
+    // grammar 2 closes every trial, aborted ones included, with END_TRIAL.
+    if (code === vocab.endCorrect || code === vocab.endIncorrect || code === vocab.endTrial) {
       sawAny = true;
       trials.push({
         index: trials.length + 1,
@@ -175,6 +188,14 @@ export function advance(
         outcome: pending.outcome ?? "abstained",
         hold: pending.hold,
       });
+      pending = EMPTY_PENDING;
+      continue;
+    }
+
+    // A grammar-2 header: whatever a cut-off trial left behind belongs to no
+    // record, so the new trial starts clean.
+    if (code === vocab.trialStart) {
+      sawAny = true;
       pending = EMPTY_PENDING;
       continue;
     }
@@ -194,9 +215,16 @@ export function advance(
       continue;
     }
 
-    if (code === vocab.odorUnpokeEarly) {
+    if (code === vocab.odorUnpokeEarly || code === vocab.odorUnpokeEarlySampling) {
       sawAny = true;
       if (pending.outcome === null) pending = { ...pending, outcome: "hold-fail" };
+      continue;
+    }
+
+    // Grammar 2's verdict on a rewarded go trial, strobed before the fluid.
+    if (code === vocab.correct) {
+      sawAny = true;
+      pending = { ...pending, outcome: "earned" };
       continue;
     }
 

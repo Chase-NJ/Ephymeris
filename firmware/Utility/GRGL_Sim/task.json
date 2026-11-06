@@ -330,18 +330,30 @@
   "liveMetrics": [
     {
       "id": "p_r_odor1",
-      "label": "P(R | Odor 1)",
+      "label": "P(correct | Odor 1)",
       "trigger": "ODOR_1_ON",
-      "success": "WATER_POKE_R",
-      "alternate": "WATER_POKE_L",
+      "success": "CORRECT",
+      "alternate": [
+        "WATER_POKE_ERROR_L",
+        "WATER_POKE_ERROR_R",
+        "WATER_UNPOKE_EARLY_L",
+        "WATER_UNPOKE_EARLY_R",
+        "RESP_OMIT"
+      ],
       "windowSize": 20
     },
     {
       "id": "p_l_odor3",
-      "label": "P(L | Odor 3)",
+      "label": "P(correct | Odor 3)",
       "trigger": "ODOR_3_ON",
-      "success": "WATER_POKE_L",
-      "alternate": "WATER_POKE_R",
+      "success": "CORRECT",
+      "alternate": [
+        "WATER_POKE_ERROR_L",
+        "WATER_POKE_ERROR_R",
+        "WATER_UNPOKE_EARLY_L",
+        "WATER_UNPOKE_EARLY_R",
+        "RESP_OMIT"
+      ],
       "windowSize": 20
     }
   ]

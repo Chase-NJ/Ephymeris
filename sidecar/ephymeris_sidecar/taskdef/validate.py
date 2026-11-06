@@ -19,6 +19,7 @@ rather than a warning:
   TSK111  two conditions sharing a name        -> two curves, one title
   TSK113  a go condition paying 0 ms           -> a dry well scored as rewarded
   TSK114  an onset code not its line's own      -> a condition labelled as another odor
+  TSK115  a row with no TRIAL_TYPE code         -> a trial header nothing can decode
 
 A spine task (`model.Spine`) is judged by `spine.py` instead, as SPN101-SPN112.
 
@@ -111,9 +112,35 @@ def validate(definition: TaskDefinition) -> list[Diagnostic]:
     vocab = registry.vocabulary()
 
     out.extend(_trial_problems(definition, channels, vocab))
+    out.extend(_type_code_problems(definition, channels, vocab))
     out.extend(_reward_problems(definition))
     out.extend(_pool_problems(definition))
     out.extend(_stage_problems(definition))
+    return out
+
+
+def _type_code_problems(definition, channels, vocab) -> list[Diagnostic]:
+    """Every presentable row needs `TRIAL_TYPE_<slot>` in the vocabulary: it
+    is the row's code in every trial header (`TASKS.md#stream-grammar`), and
+    the generated table names it by name, so a missing one is a `BF_*` the
+    build cannot define. Slots count the rows the generator emits, as the
+    table does."""
+    out: list[Diagnostic] = []
+    slot = 0
+    for i, trial in enumerate(definition.trials):
+        if rows.resolve_row(trial, channels, vocab) is None:
+            continue
+        name = f"TRIAL_TYPE_{slot + 1}"
+        if name not in vocab:
+            out.append(Diagnostic(
+                f"trials[{i}]",
+                f"the vocabulary declares no {name}, the code that names row "
+                f"{slot + 1} in every trial's header. Add it on the Strobes page "
+                f"(at {400 + slot + 1} if that number is free) before this table "
+                "can be built.",
+                "TSK115",
+            ))
+        slot += 1
     return out
 
 

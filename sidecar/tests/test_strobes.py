@@ -88,11 +88,13 @@ def test_a_start_adds_the_codes_a_newer_build_ships_and_only_once(tmp_path):
     plan = vocab_store.catch_up()
     assert plan is not None and plan.skipped == []
     added = {a["name"]: a["code"] for a in plan.adds}
-    assert set(added) == _shipped_in(3)
+    assert set(added) == _shipped_in(3) | _shipped_in(4)
     shipped = registry.Vocabulary(seed())
     assert all(shipped.code_of(n) == c for n, c in added.items()), "at the shipped numbers"
     doc = vocab_store.load_strict()
-    assert doc[strobe_store.SHIPPED_SINCE] == 3 and "TRIAL_START" in doc["codes"]
+    assert doc[strobe_store.SHIPPED_SINCE] == 4 and "TRIAL_START" in doc["codes"]
+    assert "END_TRIAL" in doc["codes"]
+    assert "END_CORRECT_ITI" not in doc["codes"], "retired in the default: a start adds, never reinstates"
 
     stamp = doc["edited_at"]
     again = vocab_store.catch_up()
@@ -104,28 +106,28 @@ def test_a_code_removed_after_catching_up_never_comes_back(tmp_path):
     vocab_store = strobe_store.VocabularyStore(tmp_path)
     assert vocab_store.ensure_seeded()
     doc = vocab_store.load_strict()
-    assert doc[strobe_store.SHIPPED_SINCE] == 3, "seeding records the generation it copied"
-    vocab_store.save(strobe_store.remove(doc, "OUTCOME_WITHHELD", sessions_containing=0))
+    assert doc[strobe_store.SHIPPED_SINCE] == 4, "seeding records the generation it copied"
+    vocab_store.save(strobe_store.remove(doc, "END_TRIAL", sessions_containing=0))
 
     plan = vocab_store.catch_up()
     assert plan is not None and plan.adds == []
-    assert "OUTCOME_WITHHELD" not in vocab_store.load_strict()["codes"]
+    assert "END_TRIAL" not in vocab_store.load_strict()["codes"]
 
 
 def test_a_shipped_number_taken_here_is_skipped_and_the_rest_are_added(tmp_path):
     vocab_store = strobe_store.VocabularyStore(tmp_path)
     vocab_store.root.mkdir(parents=True)
-    taken = registry.Vocabulary(seed()).code_of("OUTCOME_CORRECT")
+    taken = registry.Vocabulary(seed()).code_of("CORRECT")
     doc = strobe_store.add(_seeded_at_generation(2), "LASER_ON", taken, rationale="mine first")
     vocab_store.path.write_text(json.dumps(doc))
 
     plan = vocab_store.catch_up()
     assert plan is not None
-    assert [s["name"] for s in plan.skipped] == ["OUTCOME_CORRECT"]
-    assert {a["name"] for a in plan.adds} == _shipped_in(3) - {"OUTCOME_CORRECT"}
+    assert [s["name"] for s in plan.skipped] == ["CORRECT"]
+    assert {a["name"] for a in plan.adds} == (_shipped_in(3) | _shipped_in(4)) - {"CORRECT"}
     stored = vocab_store.load_strict()
     assert stored["codes"]["LASER_ON"]["code"] == taken, "the machine's own code keeps its number"
-    assert stored[strobe_store.SHIPPED_SINCE] == 3, "asked once here; from now on the editor asks"
+    assert stored[strobe_store.SHIPPED_SINCE] == 4, "asked once here; from now on the editor asks"
     later = vocab_store.catch_up()
     assert later is not None and later.adds == [] and later.skipped == []
 
@@ -140,7 +142,7 @@ def test_a_damaged_document_is_not_caught_up(tmp_path):
 
 def test_the_watermark_stays_on_this_machine():
     doc = strobe_store.apply_catch_up(seed(), seed(), strobe_store.plan_catch_up(seed(), seed()))
-    assert doc[strobe_store.SHIPPED_SINCE] == 3
+    assert doc[strobe_store.SHIPPED_SINCE] == 4
     assert strobe_store.SHIPPED_SINCE not in strobe_store.export_document(doc)
 
 
@@ -189,9 +191,9 @@ def test_a_damaged_document_refuses_edits_but_still_decodes(tmp_path):
 
 def test_validation_catches_a_number_issued_twice_across_live_and_retired():
     doc = seed()
-    doc["codes"]["NEW_THING"] = {"code": 110, "rationale": "x"}  # 110 is retired
+    doc["codes"]["NEW_THING"] = {"code": 242, "rationale": "x"}  # 242 is retired
     problems = strobe_store.validate(doc)
-    assert any(msg.startswith("110 is already") for _loc, msg in problems)
+    assert any(msg.startswith("242 is already") for _loc, msg in problems)
 
 
 def test_a_version_2_export_is_read_as_version_3():
@@ -223,9 +225,9 @@ def test_add_issues_a_free_code_and_records_who_added_it():
     ("name", "code", "fragment"),
     [
         ("LIGHTS_ON", 300, "already code 222"),
-        ("DUMMY_SOLENOID_CLICK_1", 300, "Reinstate it"),
+        ("END_CORRECT_ITI", 300, "Reinstate it"),
         ("LASER_ON", 222, "it is LIGHTS_ON"),
-        ("LASER_ON", 110, "it is DUMMY_SOLENOID_CLICK_1"),
+        ("LASER_ON", 242, "it is END_CORRECT_ITI"),
         ("LASER_ON", 50, "reserved"),
         ("LASER_ON", 1000, "outside"),
         ("BF_LASER_ON", 300, "without the BF_ prefix"),
@@ -281,8 +283,8 @@ def test_remove_frees_the_number_when_nothing_ever_recorded_it():
     doc = strobe_store.remove(seed(), "ODOR_12_ON", sessions_containing=0)
     assert registry.Vocabulary(doc).is_free(116)
     # A retired code that turns out never to have been recorded may go too.
-    doc = strobe_store.remove(seed(), "DUMMY_SOLENOID_CLICK_4", sessions_containing=0)
-    assert registry.Vocabulary(doc).is_free(113)
+    doc = strobe_store.remove(seed(), "END_INCORRECT_ITI", sessions_containing=0)
+    assert registry.Vocabulary(doc).is_free(243)
 
 
 # --------------------------------------------------------------------------- #
@@ -330,7 +332,7 @@ def test_an_import_with_any_conflict_writes_nothing():
 def test_the_registry_reads_whatever_document_is_installed():
     install(strobe_store.add(seed(), "LASER_ON", 300, rationale="x"))
     assert registry.vocabulary().code_of("LASER_ON") == 300
-    assert registry.vocabulary().code_map()[110] == "DUMMY_SOLENOID_CLICK_1"
+    assert registry.vocabulary().code_map()[242] == "END_CORRECT_ITI"
 
 
 def test_every_generated_header_defines_every_live_code_and_no_retired_one():
@@ -342,7 +344,7 @@ def test_every_generated_header_defines_every_live_code_and_no_retired_one():
         assert "#define BF_LASER_ON 300" in header
         assert "#define BF_LIGHTS_ON 222" in header
         assert "BF_ODOR_12_ON" not in header
-        assert "BF_DUMMY_SOLENOID_CLICK_1" not in header
+        assert "BF_END_CORRECT_ITI" not in header
         assert f"Strobes: vocabulary {registry.vocabulary().content_hash()}" in header
 
 

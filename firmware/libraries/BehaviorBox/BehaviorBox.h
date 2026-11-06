@@ -125,14 +125,26 @@ struct TrialType
       the same line may pay different volumes -- a newly introduced odor is
       typically paid more than a learned one. */
   int rewardTime;
+  /*  The code that names this row in every trial's header (stream grammar 2,
+      emitTrialHeader() below): BF_TRIAL_TYPE_<slot+1>, which the generated
+      TaskTrials.h writes from the vocabulary by NAME. Never computed from the
+      slot here -- a code is only ever looked up (BoxStrobes.h). 0 means the
+      row was built by hand without one, which the generated table never is. */
+  const int typeCode;
 
   TrialType(bool isGo, int odorPin, int correctWell, int rewardIndex,
-            int odorOnCode, int fluidEventCode, int stopFluidCode, int rewardTime)
+            int odorOnCode, int fluidEventCode, int stopFluidCode, int rewardTime,
+            int typeCode = 0)
       : isGo(isGo), odorPin(odorPin), correctWell(correctWell),
         rewardIndex(rewardIndex), odorOnCode(odorOnCode),
         fluidEventCode(fluidEventCode), stopFluidCode(stopFluidCode),
-        rewardTime(rewardTime) {}
+        rewardTime(rewardTime), typeCode(typeCode) {}
 };
+
+/*  The trial table can name at most this many rows: TRIAL_TYPE_1..99 are the
+    header codes the vocabulary reserves for them (401..499). The generated
+    TaskTrials.h static_asserts against it. */
+#define BOX_TRIAL_TYPE_LIMIT 99
 
 /* Lets a task manipulate the proportion of each trial type it administers.
    Used by the block-shuffled generateTrials() below (pool-mode tasks). */
@@ -838,6 +850,15 @@ inline bool escalationArmed(const TaskParams &p, int completedTrials)
     be confused in a recorded run. */
 #define BOX_INTERP 1
 
+/*  Which strobe-stream grammar this trial runner emits, announced as
+    `STREAM=<n>` beside INTERP so the app can pick its decoder
+    (docs/TASKS.md#stream-grammar). Grammar 2: every trial is a header
+    (TRIAL_START, its side, its type code), the timeline runTrial() strobes,
+    exactly one outcome code, INVALID_TRIAL when the same trial comes back, and
+    END_TRIAL. Grammar 1 was the stream before this header existed, closed by
+    END_CORRECT_ITI / END_INCORRECT_ITI, which nothing emits any more. */
+#define BOX_STREAM 2
+
 /*  The running audit of what the SET lines delivered: how many keys the board
     accepted, and the CRC-32 of those tokens exactly as received, joined by single
     spaces, in the order received. The host computes the same two numbers over
@@ -1163,29 +1184,38 @@ inline int boxFreeRam()
 inline int boxFreeRam() { return BOX_HOST_FREE_RAM; }
 #endif
 
-/*  void announceReadyAs(int interp, bool tickPulse) ->
-    The handshake's opening lines: `INTERP=<n>`, `FREE_RAM=<n>`, `SYNC=TICK`
-    when `tickPulse`, then `READY`. In this order so the host has them all
-    before it is told it may send anything. `interp` names what runs the task:
-    BOX_INTERP for the trial runner here, the state-table core's INTERP_VERSION
-    for a spine task (BoxSpine.h). `tickPulse` says the sync line pulses once
-    per tick that strobes rather than once per strobe, as the spine's runner
-    does; a board that says nothing pulses per strobe, as every board flashed
-    before the spine pulsed per tick does (RECORDING.md#firmware-pulse). */
-inline void announceReadyAs(int interp, bool tickPulse = false)
+/*  void announceReadyAs(int interp, bool tickPulse, int stream) ->
+    The handshake's opening lines: `INTERP=<n>`, `FREE_RAM=<n>`, `STREAM=<n>`
+    when `stream` is set, `SYNC=TICK` when `tickPulse`, then `READY`. In this
+    order so the host has them all before it is told it may send anything.
+    `interp` names what runs the task: BOX_INTERP for the trial runner here,
+    the state-table core's INTERP_VERSION for a spine task (BoxSpine.h).
+    `tickPulse` says the sync line pulses once per tick that strobes rather
+    than once per strobe, as the spine's runner does; a board that says nothing
+    pulses per strobe, as every board flashed before the spine pulsed per tick
+    does (RECORDING.md#firmware-pulse). `stream` names the strobe-stream
+    grammar the trial runner emits (BOX_STREAM); a board that says nothing
+    emits grammar 1, as every board flashed before the header existed does. */
+inline void announceReadyAs(int interp, bool tickPulse = false, int stream = 0)
 {
   char buf[24];
   snprintf(buf, sizeof(buf), "INTERP=%d", interp);
   Serial.println(buf);
   snprintf(buf, sizeof(buf), "FREE_RAM=%d", boxFreeRam());
   Serial.println(buf);
+  if (stream > 0)
+  {
+    snprintf(buf, sizeof(buf), "STREAM=%d", stream);
+    Serial.println(buf);
+  }
   if (tickPulse)
     Serial.println("SYNC=TICK");
   Serial.println("READY");
 }
 
-/*  void announceReady() -> announceReadyAs(BOX_INTERP), for the trial runner. */
-inline void announceReady() { announceReadyAs(BOX_INTERP); }
+/*  void announceReady() -> announceReadyAs(BOX_INTERP, false, BOX_STREAM), for
+    the trial runner, which speaks stream grammar BOX_STREAM. */
+inline void announceReady() { announceReadyAs(BOX_INTERP, false, BOX_STREAM); }
 
 /*  void applyRewardTimes(const TaskParams&, TrialType*, int) ->
     Copy every reward volume the host sent (RW<i+1> >= 0) onto slot i of the
@@ -1608,8 +1638,8 @@ struct TrialPolicy
     by comparing it back against standardITI. That worked only because the three
     delays were compiled-in and happened to differ. They are operator-typed now:
     an operator who sets errorDelay to the same value as standardITI would make
-    every error emit BF_END_CORRECT_ITI and clear the abstention escalator, with
-    nothing anywhere reporting a problem. */
+    every error clear the abstention escalator, with nothing anywhere reporting
+    a problem. */
 enum TrialOutcome
 {
   OUTCOME_CORRECT,   // held the correct well, or correctly withheld on a no-go
@@ -1644,20 +1674,27 @@ inline void deliverReward(const TrialType &trial, const TaskParams &p, TrialCloc
   emitStrobe(clock, trial.stopFluidCode);  // log fluid stop
 }
 
-/*  Poll the fluid wells after successful odor sampling and classify the outcome. */
+/*  Poll the fluid wells after successful odor sampling and classify the outcome.
+
+    `completedTrials` is the advancing-trial count, which breaks a simultaneous
+    L/R beam break: right first on an even count, left on an odd one. It used
+    to be a coin flip from the session RNG, which made the RNG's state depend
+    on the animal's pokes; now trial selection is the RNG's only consumer, so
+    a seed replays the same trial order whatever the animal did. */
 inline TrialOutcome checkResponse(const TrialType &trial, const TaskParams &p,
-                                  TrialClock &clock, TrialPolicy *policy)
+                                  TrialClock &clock, TrialPolicy *policy,
+                                  int completedTrials)
 {
   if (trial.isGo)
   {
     unsigned long pollStart = millis();
     int pokedWell = SENTINEL;
-    /* Randomize the tie-break only where both sides are live. A simultaneous
+    /* Alternate the tie-break only where both sides are live. A simultaneous
        L/R beam break otherwise always resolves right, which on a two-sided task
        is a systematic bias. On a one-sided shaping pool it is just the original
-       fixed order, and randomizing there would turn a correct double-break into
-       a coin flip -- so shaping (no policy) keeps right-first. */
-    bool rightFirst = (policy != nullptr) ? (random(0, 2) == 0) : true;
+       fixed order, and alternating there would turn a correct double-break into
+       an error every other trial -- so shaping (no policy) keeps right-first. */
+    bool rightFirst = (policy != nullptr) ? (completedTrials % 2 == 0) : true;
 
     while (millis() - pollStart < p.fluidWellPoll)
     { // 1. Poll both wells (tie broken by the order above)
@@ -1681,9 +1718,8 @@ inline TrialOutcome checkResponse(const TrialType &trial, const TaskParams &p,
     }
 
     if (pokedWell == SENTINEL)
-    { /* Say so. END_INCORRECT_ITI is reached by three different outcomes, so
-         without this the class is recoverable only from the PRECEDING strobe --
-         and an omission has none. */
+    { /* The trial's outcome code: an omission has no response strobe, so
+         without this it would be the one trial with no outcome at all. */
       emitStrobe(clock, BF_RESP_OMIT);
       return OUTCOME_ERROR; // 2. No response within the window
     }
@@ -1700,6 +1736,7 @@ inline TrialOutcome checkResponse(const TrialType &trial, const TaskParams &p,
       return OUTCOME_HOLD_FAIL;
     }
 
+    emitStrobe(clock, BF_CORRECT);  // the outcome, before the fluid it earns
     deliverReward(trial, p, clock); // 4. Held -- deliver reward
     while (digitalRead(pokedWell) == LOW) // Await well unpoke
       delay(p.pollingRate);
@@ -1715,14 +1752,19 @@ inline TrialOutcome checkResponse(const TrialType &trial, const TaskParams &p,
     unsigned long pollStart = millis(); // NO-GO -> poll both wells for nogoWellPoll
     while (millis() - pollStart < p.nogoWellPoll)
     {
+      /* A poke is the response, and the false alarm it makes is the outcome:
+         the same two strobes a go trial's wrong well emits, so every answered
+         trial reads response-then-outcome whatever its type. */
       if (digitalRead(rightWell) == LOW)
       {
         emitStrobe(clock, BF_WATER_POKE_R);
+        emitStrobe(clock, BF_WATER_POKE_ERROR_R);
         return OUTCOME_ERROR; // Responded on a no-go
       }
       if (digitalRead(leftWell) == LOW)
       {
         emitStrobe(clock, BF_WATER_POKE_L);
+        emitStrobe(clock, BF_WATER_POKE_ERROR_L);
         return OUTCOME_ERROR; // Responded on a no-go
       }
       delay(p.pollingRate);
@@ -1736,8 +1778,18 @@ inline TrialOutcome checkResponse(const TrialType &trial, const TaskParams &p,
 /*  bool runTrial(...) ->
     Run one trial. Returns true when the trial ADVANCES the session, false when
     the caller should re-present the same trial (an abort, or an under-budget
-    correction error). `completedTrials` is the advancing-trial count, used only
-    to decide whether the lazy penalty may escalate yet. */
+    correction error). `completedTrials` is the advancing-trial count: it
+    decides whether the lazy penalty may escalate yet, and breaks a double
+    beam break (checkResponse).
+
+    THE STREAM IT EMITS is the trial's timeline in time order, each moment
+    present only if reached, and exactly one outcome code, stamped when the
+    trial was scored (stream grammar 2, docs/TASKS.md#stream-grammar). The
+    header before it and the footer after it are the caller's
+    (emitTrialHeader / emitTrialFooter below), because only the loop knows
+    which row it scheduled and whether it will come back. The three aborts --
+    LAZY_RAT, ODOR_UNPOKE_EARLY, ODOR_UNPOKE_EARLY_SAMPLING -- are each a
+    timeline moment AND the trial's outcome, emitted once. */
 inline bool runTrial(const TrialType &trial, TaskParams &p, TrialClock &clock,
                      TrialPolicy *policy, int completedTrials)
 {
@@ -1755,7 +1807,9 @@ inline bool runTrial(const TrialType &trial, TaskParams &p, TrialClock &clock,
       digitalWrite(trial.odorPin, LOW);
       emitStrobe(clock, BF_LAZY_RAT);
       emitStrobe(clock, BF_LIGHTS_OFF);
-      if (policy && policy->selector) // abstention feeds the bias estimate too
+      // Abstention feeds the bias estimate too -- on a go row. A no-go row has
+      // no side, so it never moves the estimate.
+      if (policy && policy->selector && trial.isGo)
         policy->selector->recordAbstention(trial.correctWell == rightWell);
       if (policy && policy->abstention)
         delay(policy->abstention->nextDelay(escalationArmed(p, completedTrials)));
@@ -1777,7 +1831,7 @@ inline bool runTrial(const TrialType &trial, TaskParams &p, TrialClock &clock,
     digitalWrite(trial.odorPin, LOW);
     emitStrobe(clock, BF_ODOR_UNPOKE_EARLY);
     emitStrobe(clock, BF_LIGHTS_OFF);
-    if (policy && policy->selector) // poke-and-bail still counts as not-engaging
+    if (policy && policy->selector && trial.isGo) // poke-and-bail still counts as not-engaging
       policy->selector->recordAbstention(trial.correctWell == rightWell);
     delay(p.noPokeHoldTimeout);
     return false; // Error 2: didn't hold before the vac closed
@@ -1791,9 +1845,11 @@ inline bool runTrial(const TrialType &trial, TaskParams &p, TrialClock &clock,
     digitalWrite(trialLight, LOW);
     digitalWrite(trial.odorPin, LOW);
     digitalWrite(vac, LOW);
-    emitStrobe(clock, BF_ODOR_UNPOKE_EARLY);
+    // Its own code: the odor was delivered and left before it was sampled, which
+    // the pre-odor bail above never is.
+    emitStrobe(clock, BF_ODOR_UNPOKE_EARLY_SAMPLING);
     emitStrobe(clock, BF_LIGHTS_OFF);
-    if (policy && policy->selector)
+    if (policy && policy->selector && trial.isGo)
       policy->selector->recordAbstention(trial.correctWell == rightWell);
     delay(p.noPokeHoldTimeout);
     return false; // Error 3: didn't sample long enough
@@ -1809,26 +1865,53 @@ inline bool runTrial(const TrialType &trial, TaskParams &p, TrialClock &clock,
 
   digitalWrite(trialLight, LOW);
   emitStrobe(clock, BF_LIGHTS_OFF);
-  TrialOutcome outcome = checkResponse(trial, p, clock, policy); // 10. Outcome
-  delay(outcomeDelay(outcome, p));                               // 11. Its delay
+  TrialOutcome outcome = checkResponse(trial, p, clock, policy, completedTrials); // 10. Outcome
+  delay(outcomeDelay(outcome, p));                                               // 11. Its delay
 
   if (outcome == OUTCOME_CORRECT)
   {
-    emitStrobe(clock, BF_END_CORRECT_ITI);
     if (policy && policy->abstention)
       policy->abstention->reset(); // only a completed CORRECT trial clears it
     return true;
   }
 
-  emitStrobe(clock, BF_END_INCORRECT_ITI);
   /* Per-side correction: while THIS side is still under its leading budget, an
-     incorrect response repeats the same trial (return false -> the caller logs
-     BF_INVALID_TRIAL and re-presents the same side). Past that side's budget,
-     advance regardless of correctness. A sketch with no correction policy
-     (shaping) advances on any completed trial, as it always has. */
-  if (policy && policy->correction)
+     incorrect response repeats the same trial (return false -> the caller's
+     footer carries BF_INVALID_TRIAL and re-presents the same side). Past that
+     side's budget, advance regardless of correctness. A sketch with no
+     correction policy (shaping) advances on any completed trial, as it always
+     has, and a no-go row never repeats: it has no side to correct. */
+  if (policy && policy->correction && trial.isGo)
     return !policy->correction->shouldRepeat(trial.correctWell == rightWell);
   return true;
+}
+
+/*  void emitTrialHeader(TrialClock&, const TrialType&) ->
+    The three codes that open every trial (stream grammar 2): TRIAL_START,
+    stamped when the row is chosen and before the odor is primed; which answer
+    the row rewards (TRIAL_GO_LEFT / TRIAL_GO_RIGHT / TRIAL_NO_GO); and the
+    row's own TRIAL_TYPE code. The loop emits it just before runTrial(), so a
+    reader of the stream knows the trial's answer before anything happened. */
+inline void emitTrialHeader(TrialClock &clock, const TrialType &trial)
+{
+  emitStrobe(clock, BF_TRIAL_START);
+  if (!trial.isGo)
+    emitStrobe(clock, BF_TRIAL_NO_GO);
+  else
+    emitStrobe(clock, trial.correctWell == rightWell ? BF_TRIAL_GO_RIGHT : BF_TRIAL_GO_LEFT);
+  emitStrobe(clock, trial.typeCode);
+}
+
+/*  void emitTrialFooter(TrialClock&, bool repeats) ->
+    What closes every trial, after its ITI, timeout or penalty has been served:
+    INVALID_TRIAL when the next trial re-presents this one (an abort, or an
+    error a correction budget repeats), then END_TRIAL always. The loop emits
+    it right after runTrial() returns, with `repeats` = !advanced. */
+inline void emitTrialFooter(TrialClock &clock, bool repeats)
+{
+  if (repeats)
+    emitStrobe(clock, BF_INVALID_TRIAL);
+  emitStrobe(clock, BF_END_TRIAL);
 }
 
 #endif // BEHAVIOR_BOX_H

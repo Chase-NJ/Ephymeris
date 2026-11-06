@@ -12,6 +12,7 @@ Everything between "a box runs firmware that emits strobes" and "the app draws i
   - [Counts that move with their key lists](#counts-that-move-with-their-key-lists)
   - [Reward volume on the trial type](#reward-volume-on-the-trial-type)
   - [Selection modes](#selection-modes)
+  - [Stream grammar](#stream-grammar)
   - [Compiling and the host tests](#compiling-and-the-host-tests)
 - [Sketch library](#sketch-library)
   - [Library roots](#library-roots)
@@ -83,7 +84,7 @@ Everything between "a box runs firmware that emits strobes" and "the app draws i
   - [Trial types](#trial-types)
   - [Trial generation](#trial-generation)
   - [Ramp](#ramp)
-  - [Parameter dial](#parameter-dial)
+  - [Parameters](#parameters)
 - [Writing a new sketch](#writing-a-new-sketch)
   - [Authoring steps](#authoring-steps)
   - [Verify](#verify)
@@ -196,12 +197,59 @@ What each reads — the editor's [trial generation](#trial-generation) panel mir
 
 The three values are themselves guarded in `BehaviorBox.h`. A header that once omitted them made `#if BOX_SELECTION_MODE == BOX_SELECT_POOL` evaluate as `0 == 0`.
 
+### Stream grammar
+
+The trial runner frames every trial the same way whatever happens in it, so a reader decodes a trial by splitting and reading, never by matching a pattern against the names. This is **stream grammar 2**; a board announces the grammar it speaks as `STREAM=2` before `READY` ([Confirming the parameters](#confirming-the-parameters)), the run's file records it as `stream` ([DATA.md](DATA.md#the-json-document)), and Analytics picks its decoder by it ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#stream-grammar-2)). A board that announces nothing emits **grammar 1**, the stream every run before the header existed carries, which still decodes.
+
+A session is `START_SESSION` (t = 0) … `END_SESSION`. Between them every trial is, by vocabulary name:
+
+| Part | Codes | Meaning |
+|---|---|---|
+| Header | `TRIAL_START` | Stamped when the row is chosen, before its odor is primed |
+| | `TRIAL_GO_LEFT` / `TRIAL_GO_RIGHT` / `TRIAL_NO_GO` | The answer the row rewards |
+| | `TRIAL_TYPE_<n>` | The row's 1-based slot in the trial table, at code 400 + n |
+| Timeline | `LIGHTS_ON`, `ODOR_POKE`, `ODOR_<n>_ON`, `ODOR_OFF`, `ODOR_UNPOKE`, `LIGHTS_OFF`, `WATER_POKE_L/R`, `FLUID_L/R`, `STOP_FLUID_G_L/R`, `WATER_UNPOKE_L/R` | The trial's moments in time order, each present only if reached |
+| Outcome | exactly one of `CORRECT`, `WATER_POKE_ERROR_L/R`, `WATER_UNPOKE_EARLY_L/R`, `RESP_OMIT`, `WATER_POKE_NONE`, `LAZY_RAT`, `ODOR_UNPOKE_EARLY`, `ODOR_UNPOKE_EARLY_SAMPLING` | How the trial was scored, stamped when it was |
+| Footer | `INVALID_TRIAL` | Only when the next trial re-presents this one: an abort, or an error a correction budget repeats |
+| | `END_TRIAL` | After the ITI, timeout or penalty, always |
+
+The outcomes, grouped: a sampled go trial is `CORRECT` (held the correct well; just before `FLUID_*`), `WATER_POKE_ERROR_*` (the wrong well), `WATER_UNPOKE_EARLY_*` (the correct well, hold not met) or `RESP_OMIT` (no well within the window); a no-go trial is `WATER_POKE_NONE` (withheld, correct) or `WATER_POKE_ERROR_*` (poked that well: a false alarm); an abort, the odor never fully sampled, is `LAZY_RAT` (no odor poke), `ODOR_UNPOKE_EARLY` (left before odor delivery) or `ODOR_UNPOKE_EARLY_SAMPLING` (left during sampling). The three aborts are a timeline moment and the outcome at once, emitted once, before `LIGHTS_OFF`. A trial is **administered** when it carries an odor-on code; the three aborts are the unsampled trials.
+
+The reference sequences, after the header (`extras/host_test/test_trial_stream.cpp` holds the runner to them, and `tests/test_grammar2.py` the decoder):
+
+```text
+Correct                      LIGHTS_ON ODOR_POKE ODOR_n_ON ODOR_OFF ODOR_UNPOKE LIGHTS_OFF WATER_POKE_x CORRECT FLUID_x STOP_FLUID_G_x WATER_UNPOKE_x END_TRIAL
+Wrong well                   … LIGHTS_OFF WATER_POKE_y WATER_POKE_ERROR_y END_TRIAL
+Hold failed                  … LIGHTS_OFF WATER_POKE_x WATER_UNPOKE_EARLY_x END_TRIAL
+No response                  … LIGHTS_OFF RESP_OMIT END_TRIAL
+No-go withheld               … LIGHTS_OFF WATER_POKE_NONE END_TRIAL
+No-go poked                  … LIGHTS_OFF WATER_POKE_y WATER_POKE_ERROR_y END_TRIAL
+Lazy                         LIGHTS_ON LAZY_RAT LIGHTS_OFF INVALID_TRIAL END_TRIAL
+Early unpoke, before odor    LIGHTS_ON ODOR_POKE ODOR_UNPOKE_EARLY LIGHTS_OFF INVALID_TRIAL END_TRIAL
+Early unpoke, sampling       LIGHTS_ON ODOR_POKE ODOR_n_ON ODOR_UNPOKE_EARLY_SAMPLING LIGHTS_OFF INVALID_TRIAL END_TRIAL
+```
+
+An `INVALID_TRIAL` also precedes `END_TRIAL` on an error trial a correction budget repeats. What changed from grammar 1:
+
+- **The response is one code**, `WATER_POKE_L/R`, on every trial where a well was poked, and the outcome follows it: on a wrong well `WATER_POKE_ERROR_*`, and on a no-go poke the same, where grammar 1 emitted the poke alone.
+- **`CORRECT`** is emitted on a correct go trial before the fluid codes. The verdict is a code of its own, so a reader never scores a trial by the first well poked.
+- **Every trial has the footer.** Grammar 1 closed a completed trial with `END_CORRECT_ITI` / `END_INCORRECT_ITI` and an abort with `INVALID_TRIAL` alone; both terminators are retired, emitted by nothing, and reserved by the archive ([Strobe vocabulary](#strobe-vocabulary)).
+- **`ODOR_UNPOKE_EARLY_SAMPLING`** is the sampling release's own code; `ODOR_UNPOKE_EARLY` now means only the pre-odor release.
+- **No-go rows never feed the anti-bias estimate and never repeat as correction trials**: they have no side.
+- **Determinism.** The session RNG's only consumer is trial selection. A simultaneous break of both well beams, which a coin flip from the RNG used to break, alternates by completed-trial parity (right on an even count); a one-sided pool keeps right first, as it always did. The seed is still echoed at session start ([SEED](#seed)).
+
+**The codes are names, looked up.** `TRIAL_TYPE_<n>` sits at 400 + n, and the generated `TaskTrials.h` writes `BF_TRIAL_TYPE_<slot+1>` into each row as its `typeCode`, the same way it writes the row's onset: the firmware computes no code from a slot, `TaskPins.h` defines every one, and the table is held to `BOX_TRIAL_TYPE_LIMIT` (99 rows, 401–499) by a `static_assert`. The vocabulary declares `TRIAL_TYPE_1`–`TRIAL_TYPE_12`, one per odor line the shipped channel set binds; a thirteenth presentable row is `TSK115` until the code is added on the Strobes page.
+
+**Where the grammar is emitted.** `emitTrialHeader()` and `emitTrialFooter()` in `BehaviorBox.h` frame `runTrial()`, called by the sketch loop (`GRGL.ino`) around every trial, in both the pool and the anti-bias paths; `runTrial()` and `checkResponse()` emit the timeline and the one outcome. `GRGL_Sim` prints the same grammar, so the app can be exercised without a box.
+
+**A profile's metrics read the grammar its sketch emits.** A generated profile scores `CORRECT` as the hit and the error outcomes as the misses ([Live metric entries](#live-metric-entries)); a profile saved before the grammar scores the first well poked, which a grammar-2 stream still carries. A grammar-2 profile paired with a board that announces no `STREAM` (one flashed before the grammar) is logged at start: its live P(correct) never moves until the box is reflashed, though the run is written whole and Analytics scores it by its pokes ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#stream-grammar-2)).
+
 ### Compiling and the host tests
 
 > [!CAUTION]
-> **`arduino-cli compile` will not tell you about a type error.** The AVR core builds with `-fpermissive -w`, so passing a `const TrialType*` where an `int` is expected is a warning the build then suppresses: you get a size report and exit 0 on wrong code. `GRGL_Sim` once compiled clean against a changed `AntiBiasSelector` signature while reading a truncated pointer as its trial count. After any shared-signature change, compile every sketch with `--warnings all` **and** run the host tests (`libraries/BehaviorBox/extras/host_test/run.sh` and `run_box.sh`), which build without `-fpermissive` and are the strictest check available.
+> **`arduino-cli compile` will not tell you about a type error.** The AVR core builds with `-fpermissive -w`, so passing a `const TrialType*` where an `int` is expected is a warning the build then suppresses: you get a size report and exit 0 on wrong code. `GRGL_Sim` once compiled clean against a changed `AntiBiasSelector` signature while reading a truncated pointer as its trial count. After any shared-signature change, compile every sketch with `--warnings all` **and** run the host tests (`libraries/BehaviorBox/extras/host_test/run.sh`, `run_box.sh` and `run_stream.sh`), which build without `-fpermissive` and are the strictest check available.
 
-The host tests compile `BehaviorBox.h` off-target against a minimal `Arduino.h` shim. They do not replace a real AVR compile and flash.
+The host tests compile `BehaviorBox.h` off-target against a minimal `Arduino.h` shim. They do not replace a real AVR compile and flash. `run_stream.sh` drives every outcome through `emitTrialHeader()`, `runTrial()` and `emitTrialFooter()` on the instrumented shim, scripting the three IR beams against its clock, and holds each to its [reference sequence](#stream-grammar), one outcome code per trial and `END_TRIAL` last.
 
 `run_interp.sh` tests `BoxInterp.h`, the phase interpreter's pure core ([ADR 0003](adr/0003-phase-spine-task-model.md)), which includes no Arduino header and needs no shim. `run_diff.sh` is the **differential test**: it runs that core and its Python port, `analytics/stream/replay.py`, over generated state tables and randomized input logs, and fails on the first tick where their actions differ. It then changes the Python tie rule and expects a difference, so a run that generates too few ties fails rather than passing on nothing. Change the header and the port together; the header documents the table format and the tick rules for both. A third of the differential test's tables are lowered by the generator itself (`taskdef/lowering.py`), so the tables a saved spine task compiles are held to both interpreters. They have every phase of the palette (Holds, Waits on either edge, aborts on either edge, Counters over a fixed, drawn or progressive N, Response windows and contingency maps) and several rows, and the raw tables have pick, counter and last-trial states. Both families have blocks of every selection and end rule, loops, corrections and overrides, and a third of the generator's tables are four named tasks run at their own settings with an animal that answers correctly nine times in ten and lets one Wait in five time out (an abort): a reversal on 8 of 10, a bandit looping between blocks of 40–60, a shuffle bag and anti-bias. The reversal, the bandit and the bag must each switch blocks in some case. More self-checks: each of the uniform, weighted, bag and anti-bias draws, the N rule, a drawn N, the criterion, `next`, correction, the compiled error set, the criterion's skipped aborts and overrides, changed one at a time, must be caught by the raw tables and by the generator's; with the pick draw mirrored, the raw tables must differ (the generator's picks all draw by their block's selection); with every RNG draw reflected, the generator's tables alone must differ; and a counter that exits one press late, or a progressive step that never advances, must each be caught by both. Some of the generator's tables drive outputs, a bit per row ([Driven outputs](#driven-outputs)). Last, **pulse trains**: the C side steps `interp_train_high()` on every tick of a train and replay works each pulse out by arithmetic (`replay.train_pulses`), over every rate from 1 to 100 Hz, and every edge's tick must agree; with replay's rises rounded up instead of down, they must differ.
 
@@ -354,9 +402,13 @@ Mission Control's strobe console, `liveTrials.ts`'s `vocabFrom` and the [state m
 ### Live metric entries
 
 ```jsonc
-{ "id": "p_r_odor1", "label": "P(R | Odor 1)",
-  "trigger": "ODOR_1_ON", "success": "WATER_POKE_R", "alternate": "WATER_POKE_L", "windowSize": 20 }
+{ "id": "p_r_odor1", "label": "P(correct | Odor 1)",
+  "trigger": "ODOR_1_ON", "success": "CORRECT",
+  "alternate": ["WATER_POKE_ERROR_L", "WATER_POKE_ERROR_R", "WATER_UNPOKE_EARLY_L", "WATER_UNPOKE_EARLY_R", "RESP_OMIT"],
+  "windowSize": 20 }
 ```
+
+That is what the generator writes for a go type under [stream grammar 2](#stream-grammar): the trigger stays the onset code (one line carries one type, so it names the type exactly, and it is what the diagram, inference and the archive key a condition on), and the verdict is the trial's one outcome code, `CORRECT` the hit and the error outcomes the misses, so a hold failure is a miss. A no-go type scores `WATER_POKE_NONE` against the two `WATER_POKE_ERROR_*` codes. A profile written before the grammar (`"success": "WATER_POKE_R"`, `"alternate": "WATER_POKE_L"`) still loads and still scores: the first well poked, reward-unconditional.
 
 Each code is named, and resolved against the vocabulary at load; a name that is not a live code raises. The numeric keys (`triggerCode`, `successCode`, `alternateCode`) still parse, because every recorded snapshot carries them, and `to_json` always writes numbers — so the two spellings of one metric hash the same. A metric with a single alternate writes `alternateCode` alone; one with several also writes `alternateCodes`.
 
@@ -440,6 +492,7 @@ Four answers, nothing derivable (`taskdef/model.py`):
 | `selectionMode` | `antibias`, `weighted` or `pool` ([Selection modes](#selection-modes)) |
 | `stages[]` | The ramp, at least one row |
 | `params{}` | Only what **diverges** from the field catalogue's default |
+| `exposed[]` | The parameters the editor shows and the Start dialog offers, by `metadataKey` ([Parameters](#parameters)). Empty on a new task: everything hidden, at its default |
 
 Plus `id`, `name` (becomes the sketch folder and must be a legal folder name), `category`, `legacyNames` and `notes`.
 
@@ -465,7 +518,7 @@ A definition stores **channel names and strobe code names, never pins or numbers
 
 **Reward volume and weight live on the row, never in `params`.** The generator reads `reward_time`/`weight` off each `TrialTypeDef` and emits `RW<i+1>`/`PW<i+1>` from the same loop that emits `kTrials[i]`, so a `params["reward_time_1"]` or `params["pool_weight_1"]` is accepted and ignored. The editor offers these only on the row and never writes them into `params` (`isRowOwnedField`, `src/lib/taskdef/lines.ts`). A value on the row is a property of that condition: two conditions paying from one fluid line can pay differently, and deleting the row takes its volume with it.
 
-**A new task starts from a seed spine, never from a preset** ([The spine editor](#the-spine-editor)). A seed carries phases and no names: its rows are unnamed and bound to no channel. What a preset would seed that matters most is a condition's *name*, which differs on every bench, and a guessed name is wrong for everyone but its author. The lab's real historical definitions survive as test data in `sidecar/tests/fixtures/task_definitions.py`, each transcribed from the sketch it replaced — a generator change that breaks one breaks something the lab actually ran.
+**A new task starts empty, never from a preset** ([Editor](#editor)): one blank row, a one-row ramp, nothing pinned and nothing exposed. What a preset would seed that matters most is a condition's *name*, which differs on every bench, and a guessed name is wrong for everyone but its author. The lab's real historical definitions survive as test data in `sidecar/tests/fixtures/task_definitions.py`, each transcribed from the sketch it replaced — a generator change that breaks one breaks something the lab actually ran. A spine task from a seed is behind a development flag ([The spine editor](#the-spine-editor)).
 
 ### The field catalogue
 
@@ -493,6 +546,7 @@ A definition stores **channel names and strobe code names, never pins or numbers
 | `TSK112` | An onset code no live metric scores — **derived client-side** in `routes/TaskEditor.tsx` | The condition silently drops out of the diagram |
 | **`TSK113`** | **A go condition paying 0 ms** | A dry well every readout scores as rewarded |
 | **`TSK114`** | **An onset code that is not its line's declared one** ([Onset codes](#onset-codes)) | Every session records one bottle under another's name |
+| `TSK115` | A presentable row past the `TRIAL_TYPE_<n>` codes the vocabulary declares ([Stream grammar](#stream-grammar)) | A `BF_TRIAL_TYPE_<n>` the build cannot define |
 
 > [!CAUTION]
 > **`TSK103`, `TSK105`, `TSK109`, `TSK113` and `TSK114` produce plausible wrong data rather than a failure.** Read them first.
@@ -954,7 +1008,7 @@ It rides in the `# task_profile:` header line of every run's `.tsv` ([DATA.md](D
 | `SPN101` | A slot bound to no channel, or to one this rig lacks | A role with no pin |
 | `SPN102` | A channel whose type or mode is not the slot's, or the sync line | A sensor driven as a valve; a laser train held on as a level; a pulse in a recording |
 | **`SPN103`** | **A channel edge with no live code.** The shipped channel set names none, so the rig's first wiring save issues them ([Edge codes](#edge-codes)) | An edge recorded as a number nothing decodes |
-| `SPN104` | The vocabulary lacks `START_SESSION`, `BLOCK_START`, `TRIAL_START`, `END_SESSION` or one of the eight [outcome codes](#the-runner). A machine seeded before one existed gets it at its next start ([Strobe vocabulary](#strobe-vocabulary)); it stays missing only when its shipped number is taken here or it was removed, and then it is added on Task > Strobes, at the number the shipped vocabulary gives it (`rig/schema/strobe_vocab.default.json`) | A stream with no trials in it, or a folder that does not compile |
+| `SPN104` | The vocabulary lacks `START_SESSION`, `BLOCK_START`, `TRIAL_START`, `END_SESSION` or one of the eight [outcome codes](#the-runner). **The shipped vocabulary declares `BLOCK_START` and the outcome codes no longer** (withdrawn on 2026-11-06 while the spine is in development, so [stream grammar 2](#stream-grammar) could take the names it wanted): a machine that runs a spine task adds them on Task > Strobes, where `tests/fixtures/spine.py` puts them at 271–279. `TRIAL_START` is shared with the trial runner, at 220 | A stream with no trials in it, or a folder that does not compile |
 | `SPN105` | A spine of the wrong shape: an unknown phase, no ITI or not last, a slot of the wrong direction, a missing duration, a slot called `timeout`, a mode on a slot that is not a `digital_out` or one other than `train`, an Outcome whose `line` is not a level output slot, more than one Outcome; a Wait, Hold or Counter whose `on` is not an input slot, a `watch` naming a slot that is not an input or one twice, a Wait `edge` other than `enter` or `exit`, an abort on a slot that is not an input; a Counter with neither or both of `count` and `ratios`, a count outside 1–10000, a `countMax` below `count` or beside `ratios`, more than 254 ratios or one outside 1–10000, `endsSession` without `timeoutMs`, more than one Counter, stored `params` whose `counter_<i>_count_max` would run below `counter_<i>_count`; a window whose `responses` are not distinct input slots, more than one window, a window not followed by exactly one Outcome, an Outcome after a window that names its own `line`; with several rows, a first phase that is an Outcome; a table over 254 states or more than 32 input or output bits, or a task whose states, edge rows, parameters, channels, ratios, blocks and driven outputs take more than 5000 B of RAM | A table the interpreter cannot walk, or a board with too little RAM left for its stack |
 | `SPN106` | No row or no block; a row or block id that is not lower case or not its own; a block that draws no row, a row twice or a row the task lacks; a row no block draws; an unknown `select`; `weights` that do not line up with the rows, or that a uniform block would not read; a weight out of range, or a bag over 32 tokens; a block `trials`, `trialsMax`, criterion, `correction` or `biasWindow` out of range; a `correctionAfter` naming a class that is not one, or `correct`, or given with no `correction`; a `next` that names no block; a `phaseMs` entry on a phase with no duration; an anti-bias block with a row that has no one response mapped `correct`; stored `params` whose pair runs high below low; two rows whose parameters would share a metadata key; a reward time or probability out of range. Also, without blocking the table, a session only End Session can end: blocks that loop or never end, with no `sessionTrials` | What the session cannot run, or a parameter the board would clamp |
 | `SPN107` | Two slots on one channel, in one row or across rows | One pin, two roles |
@@ -1190,7 +1244,7 @@ Each machine owns one vocabulary document, `<data_dir>/strobes/vocabulary.json`,
 
 | Consumer | How it gets the codes |
 |---|---|
-| Firmware | `TaskPins.h` defines `BF_<NAME> <code>` for every live code, in every generated task folder and every rebuilt bundled sketch (`generate._strobe_lines`). `BoxStrobes.h` defines none and `#error`s without them |
+| Firmware | `TaskPins.h` defines `BF_<NAME> <code>` for every live code, in every generated task folder and every rebuilt bundled sketch (`generate._strobe_lines`); `TaskTrials.h` names each row's onset and `TRIAL_TYPE_<slot>` codes ([Stream grammar](#stream-grammar)). `BoxStrobes.h` defines none and `#error`s without them |
 | Task profiles | `load_profile` fills `strobes` from it ([Strobes](#strobes)); `liveMetrics` name their codes |
 | The app | `registry.vocabulary()`, over the wire as `strobes.get` and `strobes.updated` |
 
@@ -1200,8 +1254,9 @@ The page is `/task/strobes`. It lives on the Task tab rather than Rig because a 
 
 ![The Strobe vocabulary page: a code band from 0 to 999 showing the reserved range, the live onset run 101–116 with the retired 110–113 gap, and the live codes from 221 to 369; below it the filtered code table with ODOR_3_ON selected, and a detail panel giving its meaning, the two sketches that name it, the archive check, and Retire and Remove](images/task-strobes.webp)
 
-*The band makes the numbering visible: the odor onsets run 101–109 then 114–116, stepping over the
-retired 110–113, which is why a code is always looked up by name.*
+*The band makes the numbering visible: the odor onsets run 101–109 then 114–116, stepping over 110–113,
+which is why a code is always looked up by name. The screenshot shows 110–113 retired; they were freed on
+2026-11-06 and are a free stretch now, and the onsets were not renumbered to close the gap.*
 
 ### Append only
 
@@ -1241,7 +1296,7 @@ Vocabularies are per machine, so a lab with two rigs keeps them in step by **Exp
 
 A declared code that nothing can emit is a name in every picker that no session will contain; an emitted code the vocabulary lacks would arrive as an unlabelled number. The second is now impossible for named codes — the generated header is the only definition, so firmware naming an undeclared code does not compile. The first is checked two ways:
 
-- **The shipped default** is pinned by `tests/test_taskdef.py` against `firmware/`: every `BF_*` the library and bundled sketches name is a live default code, and every default code is either named there or is a stimulus onset (`_<n>_ON`) the trial table can bind to a line. The two deliberate non-emitters in `BehaviorBox.h` — `shutdownHardware()` (runs before the clock is stamped and in utility sketches) and `flashLight()` (one `LIGHTS_OFF` per blink would bury the real light edges) — carry comments saying why.
+- **The shipped default** is pinned by `tests/test_taskdef.py` against `firmware/`: every `BF_*` the library and bundled sketches name is a live default code (except `BoxSpine.h`'s `BLOCK_START` and outcome codes, withdrawn while the spine is in development), and every default code is either named there, a stimulus onset (`_<n>_ON`) the trial table can bind to a line, or a `TRIAL_TYPE_<n>` row code it writes. The two deliberate non-emitters in `BehaviorBox.h` — `shutdownHardware()` (runs before the clock is stamped and in utility sketches) and `flashLight()` (one `LIGHTS_OFF` per blink would bury the real light edges) — carry comments saying why.
 - **A code added on a machine** cannot be tested; its detail panel says "nothing on this machine names it — no firmware emits it yet" until a sketch does. Add the code first, then write `BF_<NAME>` into the firmware.
 
 ### Port slots
@@ -1339,6 +1394,7 @@ sequenceDiagram
     participant Board as Mega2560
     Board-->>Host: INTERP=1 (a spine task: INTERP=8)
     Board-->>Host: FREE_RAM=n
+    Board-->>Host: STREAM=2 (the trial runner only)
     Board-->>Host: SYNC=TICK (a spine task only)
     Board-->>Host: READY
     Host->>Board: BEGIN
@@ -1360,6 +1416,7 @@ sequenceDiagram
 - **`START SEED=<n>`** is sent only after the answer clears. It carries the seed and nothing else ([SEED](#seed)); the board clamps and applies ramp row 0 then.
 - **`INTERP=<n>`** is printed before `READY` and names the firmware interpreter, in one numbering space: `1` is `BehaviorBox.h`'s trial runner (GRGL), `2` to `7` are versions of the state-table interpreter that runs a [spine task](#the-runner) (`BoxInterp.h`'s `INTERP_VERSION`, which a spine board announces as `7`). The run's `.tsv` header records it as `# interp: <n>` ([DATA.md](DATA.md#the-tsv-log)), so the header alone tells a spine run from a legacy one; a board that announced none leaves the line out. Replay runs only the state-table versions and refuses `1`.
 - **`FREE_RAM=<n>`** follows it: the bytes of RAM free between the heap and the stack, measured in `setup()` with the sketch's tables already resident (`boxFreeRam()` in `BehaviorBox.h`). The header records it as `# free_ram: <n>`, and the `.json` as `free_ram`. A host build has no RAM to measure and reports a fixed value.
+- **`STREAM=<n>`** follows, from the trial runner only: which [stream grammar](#stream-grammar) it emits (`BOX_STREAM`, 2). The header records it as `# stream: <n>`, and the `.json` as `stream`; a board that says nothing emits grammar 1, as every GRGL board flashed before the grammar does, and a spine board never says it. Never hashed: a fact about the build.
 - **`SYNC=TICK`** follows, from a spine board only: its sync line pulses once per tick that strobes, not once per strobe ([RECORDING.md](RECORDING.md#firmware-pulse)). The header records it as `# sync: tick`, and the `.json` as `sync`; a board that says nothing pulses per strobe, and its header has no `sync` line. `INTERP` does not change with it: the pulse is the hardware layer's, and replay never sees it.
 
 The start is refused, with nothing started and the port in `ERROR` until acknowledged, on any of:
@@ -1400,7 +1457,7 @@ Both are SHA-256 over canonical JSON (`sort_keys`, compact separators), truncate
 
 | | `profile_hash` | `params_hash` |
 |---|---|---|
-| Input | the serialized profile — `taskName`, `kind`, the full `config` array **including presentation keys** (`group`, `label`, `unit`, `help`, ranges), `liveMetrics` (as codes), `controls`, `legacyNames`, and `telemetry`/`identify` when present — **not** `strobes`. A [spine task](#spine-tasks)'s profile is hashed for its behaviour only ([below](#a-spine-tasks-hash-covers-behaviour-only)) | one run's merged parameter values, keyed by `metadataKey` |
+| Input | the serialized profile — `taskName`, `kind`, the full `config` array **including presentation keys** (`group`, `label`, `unit`, `help`, ranges), `liveMetrics` (as codes), `controls`, `legacyNames`, and `telemetry`/`identify` when present — **not** `strobes`, and **not** `exposed` ([Parameters](#parameters)). A [spine task](#spine-tasks)'s profile is hashed for its behaviour only ([below](#a-spine-tasks-hash-covers-behaviour-only)) | one run's merged parameter values, keyed by `metadataKey` |
 | `None` input | n/a | returns `None` — a run with no recorded parameters is not a run recorded with none |
 | Stored on | `task_profiles.hash` (content-addressed) | `session_animal_runs.params_hash`, beside `config_json` |
 
@@ -1409,7 +1466,7 @@ Both are SHA-256 over canonical JSON (`sort_keys`, compact separators), truncate
 
 What this rests on:
 
-- **Anything in `to_json` moves `profile_hash`** (on a spine task, anything not on [the unhashed list](#a-spine-tasks-hash-covers-behaviour-only)), and a moved hash permanently splits a task's runs in Analytics (old hashes cannot be recomputed). This is why the diagram is derived rather than declared, why the parameter dial's tab fold is the app's rather than the profile's ([Parameter dial](#parameter-dial)), and why `group` must not be re-filed in `fields.py` casually. Editing a saved trial-table task — renaming a condition, which renames its metric label — is a new declaration and correctly a new hash. So is a generator change that alters what every regenerated `task.json` contains; earlier runs then group separately and still decode by their own snapshot.
+- **Anything in `to_json` moves `profile_hash`** (on a spine task, anything not on [the unhashed list](#a-spine-tasks-hash-covers-behaviour-only)), and a moved hash permanently splits a task's runs in Analytics (old hashes cannot be recomputed). This is why the diagram is derived rather than declared, why the parameters panel's group fold is the app's rather than the profile's ([Parameters](#parameters)), why `exposed` is left out of the hash, and why `group` must not be re-filed in `fields.py` casually. Editing a saved trial-table task — renaming a condition, which renames its metric label — is a new declaration and correctly a new hash. So is a generator change that alters what every regenerated `task.json` contains; earlier runs then group separately and still decode by their own snapshot.
 - **`strobes` is left out** because a loaded profile's map is the machine's whole vocabulary: hashing it would split every task's history the first time anyone added a code, and codes are never renumbered, so the map says nothing about comparability. Stored hashes were re-keyed once when this changed (`cohorts/db.py` `_to_v13`, [DATA.md](DATA.md#changing-the-schema)).
 - **`to_json` must round-trip through `parse_profile` byte-for-byte.** A finalized session file embeds its profile ([DATA.md](DATA.md#per-animal-files)); if the round trip drifts, a copied run lands under a different hash than its origin.
 - **`intan_*` fields are core, not config** (`CORE_METADATA_KEYS`), so they stay out of `params_hash`: two runs of one tuning are comparable whether or not one was recorded.
@@ -1461,11 +1518,11 @@ Every behaviour sketch runs one shared `runTrial()`, so the topology is identica
 | `start` "Light" → `await-poke` "Poke" | always | `LIGHTS_ON`, `ODOR_POKE` |
 | `lazy` "No poke" (abort) | `LAZY_RAT` | `LAZY_RAT` |
 | the odor node | conditions exist | every condition's onset name |
-| `abort-pre-odor` "Let go", `abort-sampling` "Left early" | `ODOR_UNPOKE_EARLY` (one code, two edges, told apart by whether an onset preceded) | none |
+| `abort-pre-odor` "Let go", `abort-sampling` "Left early" | `ODOR_UNPOKE_EARLY` (one code, two edges, told apart by whether an onset preceded) | none; `ODOR_UNPOKE_EARLY_SAMPLING` puts the token on "Left early" ([Stream grammar](#stream-grammar)) |
 | `sample` "Unpoke" | always | `ODOR_UNPOKE` |
 | `lights-off` "Light off" | `LIGHTS_OFF` (else the answer comes straight off `sample`) | `LIGHTS_OFF` |
 | `choice` "Answer" | always | `WATER_POKE_L`, `WATER_POKE_R` |
-| `iti` | always | `WATER_UNPOKE_L/R`, `END_CORRECT_ITI`, `END_INCORRECT_ITI` |
+| `iti` | always | `WATER_UNPOKE_L/R`, `END_CORRECT_ITI`, `END_INCORRECT_ITI`, `END_TRIAL` |
 | `repeat` (abort) | any abort exists | `INVALID_TRIAL` |
 
 Outcomes, best to worst, each with exactly one inbound edge (never a condition × outcome cross product):
@@ -1518,7 +1575,7 @@ The conditions are **one node carrying `variants`**, drawn as a tick strip, not 
 > [!CAUTION]
 > **`correctWellOf` reads `successCode` only and returns `null` whenever it cannot prove an answer.** Falling back to `alternateCode` prints a confident lie: a no-go type's alternates are every response port (the generator's `_enter_codes`, `infer.no_go_alternates`), so the fallback renders "Odor 4 → left well" for a condition whose answer is to poke nothing. It is the only figure the diagram *adds* rather than rearranges, so it is the only one that can be false.
 
-**`liveConditionId`** walks the strobe tail newest-first and **stops at a trial boundary** (`LIGHTS_ON`, `INVALID_TRIAL`, the ITI and session codes), so a previous trial's odor never leaks into the current pre-odor phase. It returns a condition, **`unlisted`** (the box announced an odor the profile does not declare — almost always the `liveMetrics` gate having dropped a trial type), or `null` (no odor yet this trial). It **never falls back to `conditions[0]`**: a wrong condition looks exactly like a right one. `unlisted` exists because collapsing turned a missing arm (a visibly missing node) into a nameless absence; the Task tab makes the same finding at edit time as `TSK112`.
+**`liveConditionId`** walks the strobe tail newest-first and **stops at a trial boundary** (`LIGHTS_ON`, `INVALID_TRIAL`, the ITI and session codes, and grammar 2's `TRIAL_START` and `END_TRIAL`), so a previous trial's odor never leaks into the current pre-odor phase. It returns a condition, **`unlisted`** (the box announced an odor the profile does not declare — almost always the `liveMetrics` gate having dropped a trial type), or `null` (no odor yet this trial). It **never falls back to `conditions[0]`**: a wrong condition looks exactly like a right one. `unlisted` exists because collapsing turned a missing arm (a visibly missing node) into a nameless absence; the Task tab makes the same finding at edit time as `TSK112`.
 
 ### Live token
 
@@ -1540,20 +1597,22 @@ The Task tab answers *what the animal does*; the Rig tab answers *what this box 
 
 ### Landing
 
-`/task` (`routes/Task.tsx`) lists this rig's saved tasks (`TaskRow`; a spine task is labelled by its rows, never a selection mode, from `TaskEntry.spine`), with open, **Duplicate**, delete and create, which opens the seed chooser ([The spine editor](#the-spine-editor)); a door to the strobe vocabulary; and `LibraryStatusNote`, since a damaged install is the one thing that stops a task existing at all. Duplicate opens an **unsaved** copy named clear of every saved task (`GRGL copy`, `GRGL copy 2`) and **drops `legacyNames`**: a legacy name resolves to one sketch, so a copy carrying it would silently take over or lose the historical runs it decodes.
+`/task` (`routes/Task.tsx`) lists this rig's saved tasks (`TaskRow`; a spine task is labelled by its rows, never a selection mode, from `TaskEntry.spine`), with open, **Duplicate**, delete and create, which opens a fresh trial-table task ([Editor](#editor); the seed chooser of [the spine editor](#the-spine-editor) only behind its development flag); a door to the strobe vocabulary; and `LibraryStatusNote`, since a damaged install is the one thing that stops a task existing at all. Duplicate opens an **unsaved** copy named clear of every saved task (`GRGL copy`, `GRGL copy 2`) and **drops `legacyNames`**: a legacy name resolves to one sketch, so a copy carrying it would silently take over or lose the historical runs it decodes.
 
 ![The Task tab: a + New task row, then three saved tasks — 4-Odor Discrimination (weighted, 4 conditions, no ramp), Shaping - Both Sides (pool, 5 stages) and 2-Odor Discrimination (anti-bias, 5 stages) — each marked ready, with the Strobes door below](images/task-landing.webp)
 
 ### Editor
 
-`/task/:taskId` (`routes/TaskEditor.tsx`) opens a trial-table task as a [telemetry display](ARCHITECTURE.md#telemetry-panels) in one frame: the derived **state machine** front and centre with every **trial type** beneath it, and beside them the **parameter dial** and **trial generation**. The diagram is the fastest check that an edit did what was meant, so it is never off screen. **Every redraw comes from `tasks.preview`**: the diagram is derived from the profile the *current* definition compiles to, and validation needs the wiring, which the frontend does not hold.
+`/task/:taskId` (`routes/TaskEditor.tsx`) opens a trial-table task as a [telemetry display](ARCHITECTURE.md#telemetry-panels) in one frame: the derived **state machine** front and centre with every **trial type** beneath it, and beside them the **parameters** panel and **trial generation**. `/task/new` is a fresh task (`freshTask`: one blank row, a one-row ramp, nothing pinned or exposed); the spine editor's seed chooser opens there only when `localStorage["ephymeris:spineEditor"]` is `"1"` (`lib/taskdef/devFlags.ts`), since the spine has not run on a real box. The diagram is the fastest check that an edit did what was meant, so it is never off screen. **Every redraw comes from `tasks.preview`**: the diagram is derived from the profile the *current* definition compiles to, and validation needs the wiring, which the frontend does not hold.
 
-- **The header** (`editor/EditorHeader.tsx`): the way back, the task's glyph and name, a **Problems** popover (every diagnostic grouped by where it lives; each one jumps to its row, the dial's Holds stop or the generation panel), the **Details** popover (category, legacy names, notes — `TaskDetailsBody`, opened once on a new task because the category decides the sketch folder), then Revert and Save.
-- **One link, read from every end.** A planet, the generation panel or a machine chip lights the states it tunes; hovering a state lights its planet; a trial row or a composition segment lights its condition's tick. A chip or state click opens its home. The machine's own condition list is off here (`conditionRail={false}`): the trial rows are the accessible condition list.
+- **The header** (`editor/EditorHeader.tsx`): the way back, the task's glyph and name, a **Problems** popover (every diagnostic grouped by where it lives; each one jumps to its row or the generation panel; the ramp is always on screen), the **Details** popover (category, legacy names, notes — `TaskDetailsBody`, opened once on a new task because the category decides the sketch folder), then Revert and Save.
+- **One link, read from every end.** A parameter group, the generation panel or a machine chip lights the states it tunes; hovering a state lights its group's header; a trial row or a composition segment lights its condition's tick. A chip or state click opens its home: the generation panel, or the parameters picker on that group. The machine's own condition list is off here (`conditionRail={false}`): the trial rows are the accessible condition list.
 - **The machine draws itself on** left to right on first sight (a `DrawOn` clip wipe, each state fading in as the wipe reaches it), and a small flat dot rides the rewarded trial from start to ITI (`happyPath`, `spinePath`). The dot is not the live token: it has no ring, and it is hidden under reduced motion and whenever anything is lit.
-- **The machine has a floor and the page bends around it** (`lib/tasks/editorLayout.ts`). It is never drawn narrower than `EDITOR_MIN_W` and never scaled. **Split**: the machine and trial types in the main column, the dial and generation in an aside. **Stacked** — when the aside would squeeze the machine below its floor, as on the app's minimum window — the aside's panels move under the trial types and the page scrolls. Panels carry `layoutId`s, so they travel between homes on a spring, and the drawing's layout width moves in `WIDTH_STEP`s that glide (`useGlidingWidth`).
+- **The machine has a floor and the page bends around it** (`lib/tasks/editorLayout.ts`). It is never drawn narrower than `EDITOR_MIN_W` and never scaled. **Split**: the machine and trial types in the main column, the parameters and generation in an aside. **Stacked** — when the aside would squeeze the machine below its floor, as on the app's minimum window — the aside's panels move under the trial types and the page scrolls. Panels carry `layoutId`s, so they travel between homes on a spring, and the drawing's layout width moves in `WIDTH_STEP`s that glide (`useGlidingWidth`).
 
 ![The task editor for 4-Odor Discrimination: Details at the top, the state machine across the left, four trial types below it (Sandalwood, Orange, Cedar and Lemon, each with its odor line, well, fluid line, reward and weight), the Parameters dial on Session at the top right, and Trial generation set to Weighted below it](images/task-editor.webp)
+
+*The screenshot predates the parameters panel: the dial at the top right is now the Parameters panel of [Parameters](#parameters).*
 
 ### Trial types
 
@@ -1571,28 +1630,26 @@ The Task tab answers *what the animal does*; the Rig tab answers *what this box 
 
 `editor/GenerationPanel.tsx` makes how the next trial is chosen a choice of its own: the three modes as one control, a sentence on how each draws and a ✓/✗ row of what it does (`lib/taskdef/selection.ts`, a hand mirror of the [selection modes](#selection-modes)), and a **composition strip** — the session the mode would deal, each condition in its colour; two side halves for the anti-bias modes, one bar for the pool, never-presented types as outlines after it.
 
-Below sit the groups that are selection policy: **Anti-bias selection**, **Trial pool** (the block size) and **Correction trials** (the firmware runs correction budgets as policy, and the pool has none). A group the mode never reads folds to one dimmed "not used in pool" line that still opens, so its values survive switching back; a field the mode skips inside a live group (the escalation fields under pool, the no-go window outside it) is dimmed with a note. Table-level `TSK109` shows here.
+The groups that are selection policy — **Anti-bias selection**, **Trial pool** (the block size) and **Correction trials** (the firmware runs correction budgets as policy, and the pool has none) — are parameters like any other, exposed through the [parameters](#parameters) picker; a field the mode skips (the escalation fields under pool, the no-go window outside it, a whole group the pool never reads) is dimmed there with a note (`lib/taskdef/selection.ts`). Table-level `TSK109` shows here.
 
 <img src="images/task-generation.webp" alt="The Trial generation panel set to Weighted: the mode switch, the hint and its facts, the composition strip split into right and left halves by row weight, Trial pool folded as not used in weighted, and the Correction trials and Anti-bias selection fields" width="360">
 
 ### Ramp
 
-The ramp is the dial's **Holds & shaping** stop (`editor/StageList.tsx`): one compact row per stage — the trial it engages at, odor hold, well hold, response window, odor port window — with the timeline strip once there is more than one stage. Row 0 has no "engages at"; a new row is seeded from the row before it, never from a defaults table, so no stage appears carrying numbers nobody chose. Each added stage costs five tokens, which the parameter block spreads over more `SET` lines; there is no total to exhaust.
+The ramp is the parameters panel's **Holds & shaping** section (`editor/StageList.tsx`), always on screen: one compact row per stage — the trial it engages at, odor hold, well hold, response window, odor port window — with the timeline strip once there is more than one stage. Row 0 has no "engages at"; a new row is seeded from the row before it, never from a defaults table, so no stage appears carrying numbers nobody chose. Each added stage costs five tokens, which the parameter block spreads over more `SET` lines; there is no total to exhaust.
 
 <img src="images/task-ramp.webp" alt="The Parameters dial turned to Holds &amp; shaping for 2-Odor Discrimination: a timeline of five stages engaging at trials 0, 15, 30, 50 and 80, and one row per stage with its odor hold, well hold, response window and port window, above the note that each stage costs five parameters" width="385">
 
-### Parameter dial
+### Parameters
 
-`editor/ParameterOrrery.tsx`: the task's parameter categories as planets on an **orbit** — the upper half of a tilted ellipse with a fixed zenith marker. Selecting one (click, arrow keys, Home/End, or one wheel step per gesture) turns the whole orbit on one spring until it sits at the zenith, and its fields slide in from the direction of travel. Geometry is `lib/tasks/orrery.ts`. A planet with values this task pins carries a small moon; one with problems a red ring. Under reduced motion the orbit jumps.
+`editor/ParameterPanel.tsx`: the parameters this task **exposes**, as plain fields grouped the way the profile groups them, and the ramp.
 
-**Stops are tabs, not groups** (`topology.ts`'s `tabOf`, `dialTabs`):
+**Everything starts hidden.** A task's parameters are all at their defaults and none is on screen. **Add parameter** opens a searchable picker (`lib/taskdef/exposure.ts`) listing every parameter by `group` in trial order with its current value and its default, a pinned value marked; clicking one exposes it, and an exposed one has a one-click **reset and hide** that drops its override and takes it off the page. Only exposed parameters are drawn, as a numeric input with its unit, a toggle or a select, with the profile's `min`/`max` enforced on the field (`common/FieldRow.tsx`); a field the selection mode never reads is dimmed with a note. The list is saved with the task as `exposed` ([What a definition holds](#what-a-definition-holds)), generated into `task.json` as `exposed`, and read by the Start dialog, which offers those parameters and no others ([Three layer merge](#three-layer-merge), `sessions/TaskConfigForm.tsx`); a hand-written profile, which declares no list, offers every field as it always did.
 
-| Home | Groups |
-|---|---|
-| Dial: Session, Trial timing, Abstention penalty | their own group |
-| Dial: Holds & shaping | `Holds & windows`, `Stage n` |
-| Trial generation panel | `Anti-bias selection`, `Trial pool`, `Correction trials` |
-| Trial rows | `Reward volume` (and the pool weights, which are row-owned) |
+> [!IMPORTANT]
+> **Exposure is presentation; the wire never changes.** A hidden parameter is still sent on the `SET` lines at its default, exactly as before, and `exposed` is left out of `profile_hash`, so exposing a field splits no history.
+
+The row-owned fields (reward volume, pool weight) are never in the picker: they live on the trial rows. Groups keep the profile's own names; the machine's chips fold a few into one home (`topology.ts`'s `tabOf`: the ramp's `Stage n` groups under **Holds & shaping**, the selection groups under **Trial generation**).
 
 > [!IMPORTANT]
 > **The fold is the app's, never the profile's.** `group` rides in `ConfigField.to_json` and therefore inside `profile_hash`, so re-filing a field in `fields.py` would give every regenerated `task.json` a new hash and split each task's runs. `QUICK_TUNE_GROUPS` (the groups the mapping step promotes) and the mode scope in `selection.ts` rest on the same reasoning. Anything comparing a tab against a node's `governedBy` folds through `tabOf` first (`nodesGovernedByTab`); the machine's chips fold the same way (`holds`, `selection`).

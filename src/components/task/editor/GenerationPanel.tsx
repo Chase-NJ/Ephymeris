@@ -1,23 +1,14 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { Check, ChevronRight, Minus, TriangleAlert } from "lucide-react";
-import { useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { Check, Minus, TriangleAlert } from "lucide-react";
+import { useRef, type KeyboardEvent } from "react";
 
-import { ConfigFields } from "@/components/sessions/ConfigFields";
 import { colorForIndex } from "@/lib/analytics/view";
 import type { RigDocument } from "@/lib/hardware/types";
 import { springPanel, springSnappy } from "@/lib/motion";
-import { isRowOwnedField } from "@/lib/taskdef/lines";
-import {
-  SELECTION_MODES,
-  compositionOf,
-  groupUnused,
-  inactiveNote,
-  modeInfo,
-} from "@/lib/taskdef/selection";
+import { SELECTION_MODES, compositionOf, modeInfo } from "@/lib/taskdef/selection";
 import { channelLabel, diagnosticsAt } from "@/lib/taskdef/types";
 import type { SelectionMode, TaskDiagnostic, TrialTypeDef } from "@/lib/taskdef/types";
-import { GENERATION_TAB, groupsOfTab } from "@/lib/tasks/topology";
-import type { TaskProfile } from "@/lib/ws/protocol";
+import { GENERATION_TAB } from "@/lib/tasks/topology";
 
 import { Panel } from "./Panel";
 
@@ -27,45 +18,33 @@ import { Panel } from "./Panel";
  *
  * The mode, a sentence on how it draws, what it does and does not do, and the
  * session it would deal — the composition strip, each condition in its own
- * colour. Below, the settings that belong to selection: the anti-bias side
- * draw, the pool's block size, and the correction budgets (selection policy in
- * the firmware). A group the mode never reads folds to one dimmed line and
- * still opens, so its values survive a switch back.
+ * colour. The settings that belong to selection (the anti-bias side draw, the
+ * pool's block size, the correction budgets) are parameters like any other:
+ * exposed through the Parameters panel's picker, where a field the mode never
+ * reads is dimmed with a note (`TASKS.md#parameters`).
  */
 export function GenerationPanel({
-  profile,
-  config,
-  baseline,
   trials,
   mode,
   rig,
   diagnostics,
   lit,
   onMode,
-  onParams,
   onHover,
   onHoverCondition,
   conditionOfRow,
 }: {
-  profile: TaskProfile | null;
-  config: Record<string, unknown>;
-  baseline: Record<string, unknown>;
   trials: TrialTypeDef[];
   mode: SelectionMode;
   rig: RigDocument | null;
   diagnostics: TaskDiagnostic[];
   lit: boolean;
   onMode: (mode: SelectionMode) => void;
-  onParams: (next: Record<string, unknown>) => void;
   onHover: (tab: string | null) => void;
   onHoverCondition: (conditionId: string | null) => void;
   conditionOfRow: (row: number) => string | null;
 }) {
   const info = modeInfo(mode);
-  const groups = useMemo(() => {
-    const declared = new Set((profile?.config ?? []).map((f) => f.group).filter(Boolean) as string[]);
-    return groupsOfTab(GENERATION_TAB, declared);
-  }, [profile]);
   const tableProblems = diagnosticsAt(diagnostics, "trials").filter(
     (d) => d.location === "trials" && d.code === "TSK109",
   );
@@ -126,20 +105,6 @@ export function GenerationPanel({
           </span>
         </p>
       ))}
-
-      <div className="scrollbar-slim -mr-2 flex min-h-0 flex-col gap-2 overflow-y-auto pr-2">
-        {groups.map((group) => (
-          <GroupFields
-            key={group}
-            group={group}
-            mode={mode}
-            profile={profile}
-            config={config}
-            baseline={baseline}
-            onParams={onParams}
-          />
-        ))}
-      </div>
     </Panel>
   );
 }
@@ -265,80 +230,5 @@ function CompositionStrip({
         )}
       </div>
     </div>
-  );
-}
-
-/** One selection group: its fields, or one dimmed line when the mode ignores it. */
-function GroupFields({
-  group,
-  mode,
-  profile,
-  config,
-  baseline,
-  onParams,
-}: {
-  group: string;
-  mode: SelectionMode;
-  profile: TaskProfile | null;
-  config: Record<string, unknown>;
-  baseline: Record<string, unknown>;
-  onParams: (next: Record<string, unknown>) => void;
-}) {
-  const unused = groupUnused(mode, group);
-  const [open, setOpen] = useState(false);
-  const visible = !unused || open;
-  const hasFields = (profile?.config ?? []).some((f) => f.group === group && !isRowOwnedField(f.metadataKey));
-  if (!hasFields) return null;
-
-  return (
-    <section className="flex flex-col gap-1.5">
-      <button
-        type="button"
-        disabled={!unused}
-        onClick={() => setOpen((v) => !v)}
-        className={`flex items-center gap-1 border-b border-halo/60 pb-0.5 text-left font-mono text-[9px] tracking-[0.16em] uppercase ${
-          unused ? "text-static/50 hover:text-static" : "cursor-default text-static/80"
-        }`}
-      >
-        {unused && (
-          <motion.span animate={{ rotate: open ? 90 : 0 }} transition={springSnappy} className="flex">
-            <ChevronRight size={10} strokeWidth={1.75} />
-          </motion.span>
-        )}
-        {group}
-        {unused && (
-          <span className="ml-auto normal-case tracking-normal">
-            not used in {modeInfo(mode).label.toLowerCase()}
-          </span>
-        )}
-      </button>
-      <AnimatePresence initial={false}>
-        {visible && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: unused ? 0.5 : 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={springSnappy}
-            className="overflow-hidden"
-          >
-            <ConfigFields
-              profile={profile}
-              config={config}
-              baseline={baseline}
-              onChange={onParams}
-              only={group}
-              quiet
-              fieldFilter={(f) => !isRowOwnedField(f.metadataKey)}
-              // A folded group is dimmed whole; inside a live one, a field
-              // the mode skips is dimmed on its own with its note.
-              inactive={(f) => (unused ? null : inactiveNote(mode, f))}
-              // The block size is advanced on every profile; while the pool
-              // is the mode that reads it, it is the pool's one front-row knob.
-              isAdvanced={(f) => (f.metadataKey === "block_size" ? mode !== "pool" : Boolean(f.advanced))}
-            />
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </section>
   );
 }

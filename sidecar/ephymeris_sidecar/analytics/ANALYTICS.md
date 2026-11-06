@@ -694,6 +694,65 @@ both in no response. Its row's `outcome` is therefore **null**, never `omission`
 carries `no-go-outcomes`. Its `correct` keeps the condition's verdict (`WATER_POKE_NONE` a hit, a port poke a
 miss), so P(withhold) is unchanged. An abort (it left the odor port early) is known, and keeps its class.
 
+## Stream grammar 2
+
+A board flashed with [stream grammar 2](../../../docs/TASKS.md#stream-grammar) frames every trial the same way:
+a header (`TRIAL_START`, the side the row rewards, its `TRIAL_TYPE_<n>` code), the timeline, exactly one
+outcome code, `INVALID_TRIAL` when the same trial comes back, and `END_TRIAL`. **The grammar-2 decoder**
+([`stream/grammar2.py`](stream/grammar2.py), `table_of`) reads such a run by splitting on the header and
+reading, never by matching a pattern against the names, into the same rows a legacy run has, so every figure
+below is read off the table as it is for a legacy run. The legacy decoder is untouched.
+
+**Which decoder reads a run** (`grammar2.grammar_of`): the `stream` the board announced before `READY`, when
+the file records one ([DATA.md](../../../docs/DATA.md#the-json-document)); otherwise the codes, a stream
+closed by grammar 1's terminators (`END_CORRECT_ITI`, `END_INCORRECT_ITI`) being grammar 1 whatever else it
+carries, one with the header and the footer (`TRIAL_START` and `END_TRIAL`) being grammar 2, and anything
+else the archive's grammar 1, a snapshot-less spine stream included, since the spine opens its trials with
+the same `TRIAL_START`. Every run recorded
+before the grammar decodes exactly as it did (`tests/test_legacy_pin.py`, `tests/test_legacy_corpus.py`).
+
+| Column | A grammar-2 run's value |
+|---|---|
+| `index`, `atMs` | Row order; the header's ms from the run's earliest strobe |
+| `row`, `rowName` | The condition whose trigger the trial carries: the first `liveMetrics` entry whose trigger (the onset code, or a type code) appears in it. Null for a trial that never reached its odor |
+| `response`, `responseMs`, `latencyMs` | The first `WATER_POKE_L/R`, its ms, and **the reaction time**: `ODOR_UNPOKE` to that poke. Null for a trial with no poke |
+| `outcome`, `outcomeMs` | The trial's one outcome code, in the spine's classes: `correct`, `wrong_response`, `hold_broken`, `omission`, `withheld`, `false_alarm` (a `WATER_POKE_ERROR_*` inside a no-go trial), `abort_before_stimulus` (`LAZY_RAT`, `ODOR_UNPOKE_EARLY`), `abort_during_sampling` (`ODOR_UNPOKE_EARLY_SAMPLING`); its ms |
+| `correct` | **Read from the outcome**, as a spine row's is: `correct` and `withheld` right, the errors wrong, the aborts null. So a hold failure is wrong here, where a legacy `correct` counts it right |
+| `rewarded`, `rewardLine`, `rewardMs` | `CORRECT` with a `FLUID_*`; that strobe's name; `STOP_FLUID_G_*` minus `FLUID_*` |
+| `correction` | True when the trial re-presents an error (the previous trial's footer carried `INVALID_TRIAL` after an error outcome); false after an abort or an advance |
+| `complete` | The trial reached `END_TRIAL`; false only for a cut-off last trial |
+| `presented` | The trial lit the light |
+| `scores` | The profile's metric verdicts, from `MetricAccumulator` fed the whole stream, so live ≡ offline still holds; a generated profile's verdict is the outcome's, a grammar-1 profile's the first well poked |
+
+Its `TrialTable` has `kind` `grammar2`, no `phases`, and `gaps` `phase-entries` and `input-counts` only: the
+grammar can always say the rest. A condition's `answerSide` is read from its trials' headers, by majority.
+
+The figures, from the rows: `metrics` and `overall` exactly as a legacy table's, from `scores`; `outcomes` and
+`conditions` from each trial's one outcome, in the buckets the spine's crossover files them in (`withheld`
+and `false_alarm` now filled, an abort before the stimulus in no tally, as a lazy trial never was);
+`engagement` from the strobes that say so (the light, the odor poke, the onset); the tape with `withheld` and
+`false-alarm` beside the five legacy outcomes; `series` and the strategy walk as a legacy run's.
+
+**A profile reads the grammar its sketch emits.** A generated profile scores `CORRECT` as the hit and the
+error outcomes as the misses ([TASKS.md](../../../docs/TASKS.md#live-metric-entries)); a profile from before
+the grammar scores the first well poked, which a grammar-2 stream still carries, reward-unconditional. The one
+mismatch that matters is a grammar-2 profile over a grammar-1 run: a pre-app archive run resolves to the
+bundled GRGL profile through `legacyNames` and carries no snapshot, and scored as declared it would count
+nothing, since `CORRECT` never comes. So the scorer **re-expresses** such a profile for a grammar-1 run
+(`grammar2.for_grammar_1`, in `scoring._scorable`): each `CORRECT` condition becomes the metric the archive
+always had, the first well poked, with its side read from the stream the way [inference](#which-profile-decodes-a-run)
+reads it, and its id, label and window kept; a no-go condition misses at either well's poke. The numbers are
+the ones the archive always reported, which `tests/test_legacy_corpus.py` holds them to.
+
+> [!CAUTION]
+> **A grammar-2 `correct` and a legacy `correct` disagree on a hold failure**, for the reason the spine's
+> does: compare across the cutover by `outcome` class, or by `correct` knowing it means "answered the right
+> side" on a legacy run and "earned the outcome" on a grammar-2 one.
+
+Inference reads both grammars: a withhold vote (`WATER_POKE_NONE`, which only a no-go trial emits) is
+weighed against the go-only evidence (a reward or an early release), never against error votes, because a
+grammar-2 board answers a no-go false alarm with the well's error code.
+
 ## Which profile decodes a run
 
 `profileSource` on each run says which declaration decoded it:

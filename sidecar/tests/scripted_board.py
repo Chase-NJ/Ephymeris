@@ -266,17 +266,18 @@ class Bench:
 
     async def run_handshake(
         self, box: int, seed: int | None = None, interp: int | None = None,
-        free_ram: int | None = None, sync: str | None = None,
+        free_ram: int | None = None, sync: str | None = None, stream: int | None = None,
     ) -> ScriptedBoard:
         """Play a board through READY, the `SET` handshake, and SEED when given.
         Without a SEED the handshake resolves on the first strobe, or when the
-        SEED window closes. `interp`, `free_ram` and `sync` (`SYNC=<sync>`) are
-        announced before READY when given, as the firmware does."""
+        SEED window closes. `interp`, `free_ram`, `stream` and `sync`
+        (`SYNC=<sync>`) are announced before READY when given, as the firmware does."""
         board = await self.wait_for_board(box)
         board.seed_on_start = seed
         await board.said(
             *([f"INTERP={interp}"] if interp is not None else []),
             *([f"FREE_RAM={free_ram}"] if free_ram is not None else []),
+            *([f"STREAM={stream}"] if stream is not None else []),
             *([f"SYNC={sync}"] if sync is not None else []),
             "READY",
         )

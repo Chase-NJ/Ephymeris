@@ -871,6 +871,15 @@ SHAPES = (
                 "edge code names, and each parameter slot's wire key. Absent on every other "
                 "profile.",
             ),
+            f(
+                "exposed",
+                ListOf(STR),
+                optional=True,
+                doc="The parameters a generated task shows in its editor and offers in the "
+                "Start dialog, by `metadataKey` (`TASKS.md#parameters`); the rest stay at "
+                "their defaults, unseen, and still ride the `SET` lines. Absent on a "
+                "hand-written profile, which offers every field. Never hashed.",
+            ),
         ),
         doc="Parsed from the sketch's `task.json` sibling "
         "(`TASKS.md#task-profile`); passed through verbatim — the sidecar "
@@ -1684,7 +1693,10 @@ SHAPES = (
             ),
             f(
                 "outcome",
-                lit("rewarded", "hold-failed", "wrong-well", "no-response", "aborted"),
+                lit("rewarded", "hold-failed", "wrong-well", "no-response", "aborted",
+                    "withheld", "false-alarm"),
+                doc="The last two only on a stream-grammar-2 run, whose no-go trials say "
+                "which they were (`ANALYTICS.md#stream-grammar-2`).",
             ),
             f(
                 "atMs",
@@ -1766,7 +1778,9 @@ SHAPES = (
     Shape(
         "TrialTable",
         obj(
-            f("kind", lit("replay", "legacy"), doc="Read off a replay, or by the legacy decoder."),
+            f("kind", lit("replay", "legacy", "grammar2"),
+              doc="Read off a replay, by the legacy decoder, or off a stream-grammar-2 run's "
+              "headers and outcome codes (`ANALYTICS.md#stream-grammar-2`)."),
             f("phases", ListOf(STR), doc="Each phase's kind, in spine order, for labels only. "
               "Empty for a legacy run."),
             f(

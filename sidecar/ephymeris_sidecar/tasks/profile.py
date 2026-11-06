@@ -70,6 +70,9 @@ CORE_METADATA_KEYS = frozenset(
         "channel_set_hash_version",
         # The board's free RAM with its tables loaded, announced beside `interp`.
         "free_ram",
+        # The strobe-stream grammar the board announced as `STREAM=<n>`
+        # (`TASKS.md#stream-grammar`): a property of the build, not the tuning.
+        "stream",
         # The run's own profile snapshot, written after the task fields — a
         # field of this name would be silently replaced by it.
         "task_profile",
@@ -344,6 +347,12 @@ class TaskProfile:
     #: through verbatim; `taskdef/spine.py` writes it. None on every other
     #: profile, whose `to_json` (and so `profile_hash`) it leaves untouched.
     spine: dict[str, Any] | None = None
+    #: The parameters the Start dialog offers, by `metadataKey`
+    #: (`TASKS.md#parameters`): a generated task's choice. None on a profile
+    #: that declares none (a hand-written `task.json`), which offers every
+    #: field. Written by `to_json` and left out of `profile_hash`: what is
+    #: shown is presentation, and exposing a field must split no history.
+    exposed: list[str] | None = None
 
     def to_json(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -363,6 +372,8 @@ class TaskProfile:
             out["identify"] = self.identify.to_json()
         if self.spine is not None:
             out["spine"] = self.spine
+        if self.exposed is not None:
+            out["exposed"] = list(self.exposed)
         return out
 
     @property
@@ -404,6 +415,7 @@ def profile_hash(profile: TaskProfile) -> str:
     """
     declaration = profile.to_json()
     declaration.pop("strobes", None)
+    declaration.pop("exposed", None)
     if profile.spine is not None:
         declaration = behaviour_of(declaration)
     canonical = json.dumps(declaration, sort_keys=True, separators=(",", ":"))
@@ -604,7 +616,17 @@ def parse_profile(raw: Any, vocabulary: Vocabulary | None = None) -> TaskProfile
         identify=_parse_identify(raw.get("identify")),
         legacy_names=_parse_legacy_names(raw.get("legacyNames")),
         spine=_parse_spine(raw.get("spine")),
+        exposed=_parse_exposed(raw.get("exposed")),
     )
+
+
+def _parse_exposed(raw: Any) -> list[str] | None:
+    """`exposed` as a list of keys, None when the profile has none."""
+    if raw is None:
+        return None
+    if not isinstance(raw, list) or any(not isinstance(key, str) for key in raw):
+        raise TaskProfileError("exposed must be a list of metadataKey strings")
+    return list(dict.fromkeys(raw))
 
 
 def _parse_spine(raw: Any) -> dict[str, Any] | None:

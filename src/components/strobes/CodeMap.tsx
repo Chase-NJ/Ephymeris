@@ -8,10 +8,11 @@ import { inRanges } from "./StrobeTable";
  * Every code the wire can carry, 0–999, as one band.
  *
  * WHY A PICTURE AND NOT A LIST OF RANGES. The numbering is the hazard: the odor
- * onsets run 101–109 and then 114–116 because 110–113 are retired, and a list
- * of free ranges ("117–220, 227–232, …") hides exactly that. On the band the
- * retired block is a visible gap in the onset run, and a free stretch is a
- * place you can point at. Clicking one opens Add with that number filled in.
+ * onsets run 101–109 and then 114–116 because 110–113 were taken when they
+ * were issued (and are free again now), and a list of free ranges hides
+ * exactly that. On the band a gap in a run is visible, a retired code keeps
+ * its place, and a free stretch is a place you can point at. Clicking one
+ * opens Add with that number filled in.
  *
  * Four states, four fills, no gradients: live codes in pulsar (the one accent),
  * retired in static (still reserved, no longer emitted), the reserved range in

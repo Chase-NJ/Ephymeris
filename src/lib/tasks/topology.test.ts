@@ -16,7 +16,6 @@ import { code, STROBES, tail } from "./__fixtures__/vocabulary";
 import {
   armsCongruent,
   correctWellOf,
-  dialTabs,
   GENERATION_TAB,
   groupsOfTab,
   happyPath,
@@ -277,6 +276,10 @@ describe("liveConditionId", () => {
     expect(read("ODOR_3_ON", "ODOR_UNPOKE", "END_CORRECT_ITI", "LIGHTS_ON", "ODOR_POKE")).toBeNull();
     expect(read("ODOR_3_ON", "INVALID_TRIAL", "LIGHTS_ON")).toBeNull();
     expect(read("ODOR_3_ON", "END_INCORRECT_ITI", "LIGHTS_ON", "ODOR_POKE")).toBeNull();
+    // Stream grammar 2 closes every trial with END_TRIAL and opens the next
+    // with its header, before the light.
+    expect(read("ODOR_3_ON", "CORRECT", "END_TRIAL", "TRIAL_START", "TRIAL_GO_RIGHT")).toBeNull();
+    expect(read("ODOR_3_ON", "END_TRIAL", "TRIAL_START", "TRIAL_GO_LEFT", "TRIAL_TYPE_2", "LIGHTS_ON")).toBeNull();
   });
 
   it("is null before the first odor, and on an abort that never got one", () => {
@@ -378,28 +381,6 @@ describe("parameter tabs", () => {
       "Anti-bias selection",
     ]);
     expect(groupsOfTab("Session", declared)).toEqual(["Session"]);
-  });
-
-  it("gives the dial the four stops a generated profile declares, in trial order", () => {
-    const declared = [
-      "Anti-bias selection",
-      "Stage 1",
-      "Reward volume",
-      "Abstention penalty",
-      "Correction trials",
-      "Trial timing",
-      "Stage 0",
-      "Trial pool",
-      "Session",
-      "Something a future profile invents",
-    ];
-    expect(dialTabs(declared)).toEqual([
-      "Session",
-      "Trial timing",
-      HOLDS_TAB,
-      "Abstention penalty",
-      "Something a future profile invents",
-    ]);
   });
 
   it("lights a folded tab from any of the groups it swallowed", () => {

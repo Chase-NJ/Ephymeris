@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 from ...tasks.profile import TaskProfile
-from . import legacy
+from . import grammar2, legacy
 from .document import codes_of
 from .spine import SpineDecodeError, is_spine_run, replayed
 from .stats import _round
@@ -93,6 +93,10 @@ def _curves(document: dict[str, Any], profile: TaskProfile | None) -> list[_Curv
         ]
     if profile is None or not profile.live_metrics:
         return []
+    if grammar2.is_grammar2_run(document, profile):
+        table2 = grammar2.table_of(document, profile)
+        return [_Curve(id=c.id, label=c.label, window=c.window, verdicts=grammar2.verdicts(table2, c.id))
+                for c in table2.conditions]
     table = legacy.table_of(document, profile)
     return [_Curve(id=c.id, label=c.label, window=c.window, verdicts=verdicts(table, c.id))
             for c in table.conditions]
@@ -251,7 +255,10 @@ def strategy_trail(
     """
     if profile is None or is_spine_run(document):
         return []
-    table = legacy.table_of(document, profile)
+    # A grammar-2 table carries the same verdict order and gives each condition
+    # the side its headers said, so the walk reads it as a legacy table.
+    table = (grammar2.table_of(document, profile) if grammar2.is_grammar2_run(document, profile)
+             else legacy.table_of(document, profile))
     axes = _axes(table.conditions)
     if axes is None:
         return []

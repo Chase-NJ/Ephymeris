@@ -208,6 +208,9 @@ _WIRE_OUTCOME = {
     "wrong_well": "wrong-well",
     "no_response": "no-response",
     "aborted": "aborted",
+    # A grammar-2 run's no-go trials say which they were (`grammar2.py`).
+    "withheld": "withheld",
+    "false_alarm": "false-alarm",
 }
 
 
@@ -313,7 +316,13 @@ def conditions_of(codes: list[int], profile: TaskProfile | None) -> list[Conditi
 
 
 def trials_of(document: dict[str, Any], profile: TaskProfile | None) -> list[TrialRecord]:
-    """A legacy run's per-trial tape. `[]` for a spine run: its trial table is its tape."""
+    """A legacy run's per-trial tape. `[]` for a spine run: its trial table is its tape.
+    A grammar-2 run's tape is its trial table's outcome column, bucketed as
+    the tally buckets it."""
     if spine.is_spine_run(document):
         return []
+    from . import grammar2  # here: grammar2 reads this module's shapes
+
+    if grammar2.is_grammar2_run(document, profile):
+        return grammar2.tape_of(grammar2.table_of(document, profile))
     return tape_of(decode.table_of(document, profile))

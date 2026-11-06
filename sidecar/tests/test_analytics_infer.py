@@ -103,16 +103,18 @@ def test_no_onsets_means_no_profile() -> None:
     assert infer.infer_profile([]) is None
 
 
-def test_retired_codes_are_not_conditions() -> None:
-    """110–113 are the dummy solenoid clicks 29 real sessions contain. They sit
-    in the retired registry — a legacy stream carries them BETWEEN trials, and
-    treating one as a condition would shred every real trial's scoring."""
-    strobes = REWARDED_1 + [110, 112] + REWARDED_3
+def test_retired_and_unknown_codes_are_not_conditions() -> None:
+    """A legacy stream carries codes BETWEEN trials that are no condition: the
+    retired grammar-1 terminators, and 110-113, the dummy solenoid clicks 29
+    real sessions contain, freed from the vocabulary on 2026-11-06. Treating
+    one as a condition would shred every real trial's scoring."""
+    strobes = REWARDED_1 + [242, 110, 112] + REWARDED_3
     profile = infer.infer_profile(strobes)
     assert profile is not None
     assert sorted(m.trigger_code for m in profile.live_metrics) == [101, 103]
-    # ...but their names still label the raw log.
-    assert profile.strobes[110].startswith("DUMMY_SOLENOID")
+    # A retired name still labels the raw log; a freed number is a bare number.
+    assert profile.strobes[242] == "END_CORRECT_ITI"
+    assert 110 not in profile.strobes
 
 
 def test_lights_on_is_not_a_condition() -> None:
@@ -195,33 +197,47 @@ NO_GO_SESSION = (
     + WITHHELD_5 * 3 + FALSE_ALARM_5_L * 2 + FALSE_ALARM_5_R * 2
 )
 
+#: The same session as a grammar-2 board emits it (`TASKS.md#stream-grammar`):
+#: the verdict is an outcome code after the response. A generated profile
+#: scores that code; inference, which must read the archive, still scores the
+#: poke, which the stream carries too.
+CORRECT, ERROR_L, ERROR_R = SEED.code_of("CORRECT"), SEED.code_of("WATER_POKE_ERROR_L"), SEED.code_of("WATER_POKE_ERROR_R")
+REWARDED_1_G2 = [101, 226, 249, CORRECT, 253, 357]
+REWARDED_3_G2 = [103, 226, 248, CORRECT, 252, 369]
+FALSE_ALARM_5_L_G2 = [ODOR_5, UNPOKE, POKE_L, ERROR_L]
+FALSE_ALARM_5_R_G2 = [ODOR_5, UNPOKE, POKE_R, ERROR_R]
+NO_GO_SESSION_G2 = (
+    REWARDED_1_G2 * 2 + REWARDED_3_G2 * 2
+    + WITHHELD_5 * 3 + FALSE_ALARM_5_L_G2 * 2 + FALSE_ALARM_5_R_G2 * 2
+)
+
 
 def test_a_no_go_false_alarm_at_either_port_is_a_miss() -> None:
     """The bug: a no-go metric's alternate was ONE port, so a poke at the other
     matched neither code, the trial was excluded, and P(withhold) was inflated.
-    Both profiles must count all seven trials, three of them correct."""
-    doc = document(NO_GO_SESSION)
+    Both profiles must count all seven trials, three of them correct -- the
+    generated one from the false-alarm codes, the inferred one from the pokes."""
     inferred_profile = infer.infer_profile(NO_GO_SESSION)
     assert inferred_profile is not None
-    for profile in (declared_with_a_no_go(), inferred_profile):
-        summary = stream.summarize(doc, profile)
+    for profile, codes in ((declared_with_a_no_go(), NO_GO_SESSION_G2),
+                           (inferred_profile, NO_GO_SESSION), (inferred_profile, NO_GO_SESSION_G2)):
+        summary = stream.summarize(document(codes), profile)
         withhold = next(m for m in summary.metrics if "withhold" in m.label)
         assert (withhold.hits, withhold.counted, withhold.excluded) == (3, 7, 0)
         assert withhold.p_session == 3 / 7
 
 
 def test_generated_and_inferred_profiles_score_a_no_go_stream_identically() -> None:
-    """The equality pin, for a stream that includes a no-go condition."""
-    doc = document(NO_GO_SESSION)
+    """The equality pin, for a grammar-2 stream that includes a no-go
+    condition. The two profiles are not the same document any more -- the
+    generated one scores the outcome codes, inference the pokes -- but on a
+    stream where every answered trial reached its outcome they count the same
+    trials the same way."""
+    doc = document(NO_GO_SESSION_G2)
     declared = stream.summarize(doc, declared_with_a_no_go())
-    inferred = stream.summarize(doc, infer.infer_profile(NO_GO_SESSION))
+    inferred = stream.summarize(doc, infer.infer_profile(NO_GO_SESSION_G2))
 
     assert declared.status == inferred.status == "ok"
-    # The two profiles are the same document, down to the order of the alternates.
-    inferred_profile = infer.infer_profile(NO_GO_SESSION)
-    assert [m.alternate_codes for m in declared_with_a_no_go().live_metrics] == [
-        m.alternate_codes for m in inferred_profile.live_metrics
-    ]
     # Both list conditions in onset order: odor 1, odor 3, odor 5.
     assert len(declared.metrics) == len(inferred.metrics) == 3
     for twin, metric in zip(declared.metrics, inferred.metrics):

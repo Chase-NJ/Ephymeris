@@ -16,7 +16,7 @@ from typing import Any
 
 from ...tasks.profile import TaskProfile
 from .document import _duration_ms, codes_of
-from . import crossover, legacy, rates, table_metrics
+from . import crossover, grammar2, legacy, rates, table_metrics
 from .spine import Divergence, Replayed, SpineDecodeError, is_spine_run, replayed
 from .spine import trial_table as spine_table
 from .engagement import TrialEngagement, tally_engagement
@@ -130,6 +130,22 @@ def summarize(
     if profile is None or not profile.live_metrics:
         return RunSummary(status="no-metrics", **base)
 
+    # A grammar-2 run is read off its headers and outcome codes
+    # (`ANALYTICS.md#stream-grammar-2`); its metrics are the same accumulators.
+    if grammar2.is_grammar2_run(document, profile):
+        table2 = grammar2.table_of(document, profile)
+        metrics = table_metrics.legacy_metrics(table2, min_counted=min_counted)
+        return RunSummary(
+            status="ok",
+            metrics=metrics,
+            overall=table_metrics.legacy_overall(metrics, min_counted=min_counted),
+            outcomes=grammar2.tally_outcomes(table2),
+            conditions=grammar2.tally_conditions(table2),
+            engagement=grammar2.tally_engagement(table2),
+            excluded_by_default=profile.kind == "utility",
+            **base,
+        )
+
     table = legacy.table_of(document, profile)
     metrics = table_metrics.legacy_metrics(table, min_counted=min_counted)
     return RunSummary(
@@ -219,5 +235,8 @@ def trial_table_of(document: dict[str, Any], profile: TaskProfile | None) -> dic
     (`DATA.md#caching`)."""
     if is_spine_run(document):
         return spine_table(document)
+    if grammar2.is_grammar2_run(document, profile):
+        table2 = grammar2.table_of(document, profile)
+        return table2.to_json() if table2.conditions else None
     table = legacy.table_of(document, profile)
     return table.to_json() if table.conditions else None

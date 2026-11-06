@@ -28,8 +28,18 @@
     "numbers were reclaimed that way: the port-slot families for response ports 3-7,",
     "and three codes belonging to a task-graph interpreter that was removed. A code",
     "emitted ONCE, to a file that still exists, can never be reclaimed on any argument",
-    "at all -- it goes to `retired` instead, which is what happened to the",
-    "dummy-solenoid clicks below.",
+    "at all -- it goes to `retired` instead, which is where stream grammar 1's two",
+    "terminators sit below.",
+    "",
+    "ONE EXCEPTION WAS MADE, ONCE, on 2026-11-06, while the lab had no ephys",
+    "recordings and could change its behaviour firmware freely: the dummy-solenoid",
+    "clicks (110-113, in 29 sessions from June 2026) were removed from `retired` and",
+    "are free again, and the phase spine's ten codes (TRIAL_START at 270, BLOCK_START",
+    "and the eight OUTCOME_* codes at 271-279, never recorded on a real box) were",
+    "withdrawn so stream grammar 2 could be issued under the names it wanted. The",
+    "spine strobes TRIAL_START at its new number, 220; BLOCK_START and the outcome",
+    "codes are added on the Strobes page by a machine that runs a spine task, until",
+    "the spine is ready and ships them again (docs/adr/0005).",
     "",
     "ORIGIN. 'firmware' codes were numbered by ~4 years of this lab's recorded",
     "sessions before the app existed; 'ephymeris' codes were declared by the app;",
@@ -45,8 +55,16 @@
     "lines and a profile that binds line 7 emits one the moment it runs.",
     "",
     "ODOR ONSETS RUN 101-109 AND THEN 114-116, and the jump is the sharpest reason",
-    "nothing may compute a code from an index. 110-113 are retired -- the dummy",
-    "solenoid clicks, in 29 recorded sessions -- so odor 9 is 109 and odor 10 is 114.",
+    "nothing may compute a code from an index. 110-113 held the dummy-solenoid clicks",
+    "and are free again (above); the onsets were never renumbered to close the gap,",
+    "so odor 9 is 109 and odor 10 is 114, and 110-113 will mean whatever is issued",
+    "there next.",
+    "",
+    "A TRIAL TYPE'S CODE IS LOOKED UP TOO. TRIAL_TYPE_<n> sits at 400 + n and names",
+    "slot n of the trial table in every trial's header (stream grammar 2,",
+    "docs/TASKS.md#stream-grammar); the generated TaskTrials.h writes BF_TRIAL_TYPE_<n>",
+    "into each row by name. Twelve are declared, one per odor line the shipped",
+    "channel set binds; a further line gets the next number on the Strobes page.",
     "",
     "PORT SLOTS. `port_slots` below maps a response port's slot number to the six",
     "codes it reports with. There are TWO, because the trial runner has two:",
@@ -116,7 +134,7 @@
       "emitted_on": "entry to the broken-hold penalty",
       "paired_with": "LIGHTS_OFF",
       "pair_order": "ODOR_UNPOKE_EARLY first",
-      "rationale": "A commitment or sampling hold released early. Emitted from two sites in runTrial() (the pre-odor hold and the sampling hold) with the same code, so the code alone does not tell them apart. Whether an odor-on code preceded it separates them: taskGraph in topology.ts draws two abort nodes from that; the engagement ladder in analytics/stream/engagement.py isolates only the pre-odor release (poked minus odor delivered); a sampling release is counted as TrialOutcomes.aborted."
+      "rationale": "The commitment (pre-odor) hold released early. In stream grammar 1 runTrial() emitted this from two sites, the pre-odor hold and the sampling hold, and whether an odor-on code preceded told them apart: taskGraph in topology.ts draws two abort nodes from that; the engagement ladder in analytics/stream/engagement.py isolates only the pre-odor release (poked minus odor delivered); a sampling release is counted as TrialOutcomes.aborted. In grammar 2 the sampling release has its own code, ODOR_UNPOKE_EARLY_SAMPLING, and this one means only the pre-odor release: a timeline moment and the trial's outcome at once, emitted once, before LIGHTS_OFF."
     },
     "ODOR_UNPOKE": {
       "code": 226,
@@ -138,22 +156,8 @@
       "code": 234,
       "origin": "firmware",
       "since": 1,
-      "emitted_on": "entry to the invalid terminal",
-      "rationale": "The counter does not advance and the same trial binding is re-presented, so an unsampled trial never enters the record as a choice. Emitted by the sketch loop today, not by runTrial()."
-    },
-    "END_CORRECT_ITI": {
-      "code": 242,
-      "origin": "firmware",
-      "since": 1,
-      "emitted_on": "entry to the correct terminal",
-      "rationale": "Scores correct, advances the counter, clears penalty escalation. Kept distinct from END_INCORRECT_ITI so reinforcement rate and timeout cost are separable."
-    },
-    "END_INCORRECT_ITI": {
-      "code": 243,
-      "origin": "firmware",
-      "since": 1,
-      "emitted_on": "entry to the incorrect terminal",
-      "rationale": "Reached by every non-correct outcome of checkResponse() -- wrong port, omission, response-hold failure, and a response on a no-go trial -- so outcome class is NOT recoverable from this code alone. It is recoverable from the preceding strobe, which is exactly why the invariant matters."
+      "emitted_on": "the trial footer, before END_TRIAL, when the next trial re-presents this one: an abort, or an error a correction budget repeats",
+      "rationale": "The counter does not advance and the same trial is re-presented, so an unsampled trial never enters the record as a choice. In stream grammar 2 it is the footer's repeat flag (think TRIAL_REPEAT; the name is historical and never reissued) and END_TRIAL always follows it; in grammar 1 it closed an aborted trial by itself. Emitted by emitTrialFooter() in BehaviorBox.h, not by runTrial()."
     },
     "END_SESSION": {
       "code": 246,
@@ -355,104 +359,196 @@
       "rationale": "Stimulus identity for odor line 12. Twelve lines have always existed in the pinout but only six could announce an onset, so lines 7-12 were plumbed and unusable as discriminanda. Numbered to continue 101-106 as closely as the reserved block allows -- see ODOR_10_ON for the gap."
     },
     "TRIAL_START": {
-      "code": 270,
+      "code": 220,
       "origin": "ephymeris",
-      "since": 3,
-      "emitted_on": "entry to a spine task's first state: the start of every trial",
+      "since": 4,
+      "emitted_on": "the trial runner scheduling a row, before its odor is primed: the first code of every trial",
       "emitted_by": [
         "behaviorbox"
       ],
-      "rationale": "A structural code of the phase spine (docs/adr/0003-phase-spine-task-model.md#the-strobe-stream): the stream otherwise carries only channel edges, so this is what divides it into trials. Emitted by BoxSpine.h at the tick the interpreter enters a state flagged INTERP_STARTS_TRIAL. A spine session opens and closes with the existing START_SESSION and END_SESSION, which mean the same events. Numbered apart from the lowest free codes, which a channel-set save issues to edges, so a machine that already issued edge codes can add it at this same number."
+      "rationale": "Stream grammar 2 (docs/TASKS.md#stream-grammar): every trial the trial runner emits is a header (TRIAL_START, its side, its TRIAL_TYPE code), the timeline runTrial() strobes, exactly one outcome code, INVALID_TRIAL when the same trial comes back, and END_TRIAL. This opens the header, so a reader splits the stream into trials on it and never matches a pattern. The phase spine strobes the same event under the same name, so a spine run opens its trials with this code too. Emitted by emitTrialHeader() in BehaviorBox.h."
     },
-    "BLOCK_START": {
-      "code": 271,
+    "ODOR_UNPOKE_EARLY_SAMPLING": {
+      "code": 227,
       "origin": "ephymeris",
-      "since": 3,
-      "emitted_on": "the first trial of each block of a spine task, just before its TRIAL_START",
+      "since": 4,
+      "emitted_on": "the sampling hold released early: the odor was delivered and the animal left before it was sampled",
       "emitted_by": [
         "behaviorbox"
       ],
-      "rationale": "A structural code of the phase spine (docs/adr/0003-phase-spine-task-model.md#the-strobe-stream), which lists it beside TRIAL_START. Emitted by BoxSpine.h at the tick the interpreter starts a block (INTERP_ACT_BLOCK_START): the session's first trial, and the first trial after a block's end rule is met. Replay predicts it from the table, so a block switch is part of the checksum, and a reader of the .tsv or a recording sees switches without replaying. Numbered next to TRIAL_START for the same reason: a machine that already issued edge codes can add it at this same number."
+      "rationale": "The second of runTrial()'s two early releases, with a code of its own. ODOR_UNPOKE_EARLY (225) once served both sites and the two were told apart by whether an odor-on code preceded; in grammar 2 each abort is the trial's one outcome code, so this release names itself. 225 now means only the pre-odor release. A timeline moment and the outcome at once, emitted once, before LIGHTS_OFF.",
+      "paired_with": "LIGHTS_OFF",
+      "pair_order": "ODOR_UNPOKE_EARLY_SAMPLING first"
     },
-    "OUTCOME_CORRECT": {
-      "code": 272,
+    "TRIAL_GO_LEFT": {
+      "code": 230,
       "origin": "ephymeris",
-      "since": 3,
-      "emitted_on": "the tick a spine trial enters its marked state, when its outcome class is correct: last in that tick, after the outputs",
+      "since": 4,
+      "emitted_on": "the trial header, after TRIAL_START: the scheduled row rewards the left well",
       "emitted_by": [
         "behaviorbox"
       ],
-      "rationale": "An outcome code of the phase spine (docs/adr/0005-spine-runs-strobe-each-trials-outcome.md), one per outcome class, in the order of taskdef/lowering.py's OUTCOME_CLASSES. Emitted by BoxSpine.h once per trial a spine run marks, from the states the interpreter entered; replay predicts it, so a trial's class is part of the checksum and a reader of the .tsv or a recording sees each verdict without replaying. Analysis still scores by replay and never reads it. The eight are numbered together after TRIAL_START and BLOCK_START, apart from the lowest free codes a channel-set save issues to edges, so a machine that already issued edge codes can add each at this same number."
+      "rationale": "Stream grammar 2 (docs/TASKS.md#stream-grammar): every trial the trial runner emits is a header (TRIAL_START, its side, its TRIAL_TYPE code), the timeline runTrial() strobes, exactly one outcome code, INVALID_TRIAL when the same trial comes back, and END_TRIAL. The header's second code says what the trial's correct answer is before the animal has done anything, so the per-trial table reads the side from the stream rather than from a profile."
     },
-    "OUTCOME_WRONG_RESPONSE": {
-      "code": 273,
+    "TRIAL_GO_RIGHT": {
+      "code": 231,
       "origin": "ephymeris",
-      "since": 3,
-      "emitted_on": "the tick a spine trial enters its marked state, when its outcome class is wrong_response: last in that tick, after the outputs",
+      "since": 4,
+      "emitted_on": "the trial header, after TRIAL_START: the scheduled row rewards the right well",
       "emitted_by": [
         "behaviorbox"
       ],
-      "rationale": "An outcome code of the phase spine (docs/adr/0005-spine-runs-strobe-each-trials-outcome.md), one per outcome class, in the order of taskdef/lowering.py's OUTCOME_CLASSES. Emitted by BoxSpine.h once per trial a spine run marks, from the states the interpreter entered; replay predicts it, so a trial's class is part of the checksum and a reader of the .tsv or a recording sees each verdict without replaying. Analysis still scores by replay and never reads it. The eight are numbered together after TRIAL_START and BLOCK_START, apart from the lowest free codes a channel-set save issues to edges, so a machine that already issued edge codes can add each at this same number."
+      "rationale": "Stream grammar 2 (docs/TASKS.md#stream-grammar): every trial the trial runner emits is a header (TRIAL_START, its side, its TRIAL_TYPE code), the timeline runTrial() strobes, exactly one outcome code, INVALID_TRIAL when the same trial comes back, and END_TRIAL. See TRIAL_GO_LEFT."
     },
-    "OUTCOME_HOLD_BROKEN": {
-      "code": 274,
+    "TRIAL_NO_GO": {
+      "code": 232,
       "origin": "ephymeris",
-      "since": 3,
-      "emitted_on": "the tick a spine trial enters its marked state, when its outcome class is hold_broken: last in that tick, after the outputs",
+      "since": 4,
+      "emitted_on": "the trial header, after TRIAL_START: the scheduled row is answered by withholding",
       "emitted_by": [
         "behaviorbox"
       ],
-      "rationale": "An outcome code of the phase spine (docs/adr/0005-spine-runs-strobe-each-trials-outcome.md), one per outcome class, in the order of taskdef/lowering.py's OUTCOME_CLASSES. Emitted by BoxSpine.h once per trial a spine run marks, from the states the interpreter entered; replay predicts it, so a trial's class is part of the checksum and a reader of the .tsv or a recording sees each verdict without replaying. Analysis still scores by replay and never reads it. The eight are numbered together after TRIAL_START and BLOCK_START, apart from the lowest free codes a channel-set save issues to edges, so a machine that already issued edge codes can add each at this same number."
+      "rationale": "Stream grammar 2 (docs/TASKS.md#stream-grammar): every trial the trial runner emits is a header (TRIAL_START, its side, its TRIAL_TYPE code), the timeline runTrial() strobes, exactly one outcome code, INVALID_TRIAL when the same trial comes back, and END_TRIAL. A no-go row has no side: it never feeds the anti-bias estimate and never repeats as a correction trial, and this is how a reader knows that WATER_POKE_ERROR_L/R inside it is a false alarm rather than a wrong well."
     },
-    "OUTCOME_OMISSION": {
-      "code": 275,
+    "CORRECT": {
+      "code": 244,
       "origin": "ephymeris",
-      "since": 3,
-      "emitted_on": "the tick a spine trial enters its marked state, when its outcome class is omission: last in that tick, after the outputs",
+      "since": 4,
+      "emitted_on": "the correct well held to the end of its hold: the outcome of a rewarded go trial, just before FLUID_L/R",
       "emitted_by": [
         "behaviorbox"
       ],
-      "rationale": "An outcome code of the phase spine (docs/adr/0005-spine-runs-strobe-each-trials-outcome.md), one per outcome class, in the order of taskdef/lowering.py's OUTCOME_CLASSES. Emitted by BoxSpine.h once per trial a spine run marks, from the states the interpreter entered; replay predicts it, so a trial's class is part of the checksum and a reader of the .tsv or a recording sees each verdict without replaying. Analysis still scores by replay and never reads it. The eight are numbered together after TRIAL_START and BLOCK_START, apart from the lowest free codes a channel-set save issues to edges, so a machine that already issued edge codes can add each at this same number."
+      "rationale": "Stream grammar 2 (docs/TASKS.md#stream-grammar): every trial the trial runner emits is a header (TRIAL_START, its side, its TRIAL_TYPE code), the timeline runTrial() strobes, exactly one outcome code, INVALID_TRIAL when the same trial comes back, and END_TRIAL. The one outcome code a go trial earns. Emitted by checkResponse() before deliverReward(), so the verdict precedes the fluid it pays; analysis scores P(correct) from it and never from a WATER_POKE_L/R following an odor code. A withheld no-go's outcome stays WATER_POKE_NONE."
     },
-    "OUTCOME_WITHHELD": {
-      "code": 276,
+    "END_TRIAL": {
+      "code": 245,
       "origin": "ephymeris",
-      "since": 3,
-      "emitted_on": "the tick a spine trial enters its marked state, when its outcome class is withheld: last in that tick, after the outputs",
+      "since": 4,
+      "emitted_on": "the end of every trial, after its ITI, timeout or penalty has been served: the last code of the footer",
       "emitted_by": [
         "behaviorbox"
       ],
-      "rationale": "An outcome code of the phase spine (docs/adr/0005-spine-runs-strobe-each-trials-outcome.md), one per outcome class, in the order of taskdef/lowering.py's OUTCOME_CLASSES. Emitted by BoxSpine.h once per trial a spine run marks, from the states the interpreter entered; replay predicts it, so a trial's class is part of the checksum and a reader of the .tsv or a recording sees each verdict without replaying. Analysis still scores by replay and never reads it. The eight are numbered together after TRIAL_START and BLOCK_START, apart from the lowest free codes a channel-set save issues to edges, so a machine that already issued edge codes can add each at this same number."
+      "rationale": "Stream grammar 2 (docs/TASKS.md#stream-grammar): every trial the trial runner emits is a header (TRIAL_START, its side, its TRIAL_TYPE code), the timeline runTrial() strobes, exactly one outcome code, INVALID_TRIAL when the same trial comes back, and END_TRIAL. Replaces END_CORRECT_ITI and END_INCORRECT_ITI (retired below), which closed only completed trials and carried the verdict a dedicated outcome code now carries. An aborted trial is closed by it too, after INVALID_TRIAL. Emitted by emitTrialFooter() in BehaviorBox.h."
     },
-    "OUTCOME_FALSE_ALARM": {
-      "code": 277,
+    "TRIAL_TYPE_1": {
+      "code": 401,
       "origin": "ephymeris",
-      "since": 3,
-      "emitted_on": "the tick a spine trial enters its marked state, when its outcome class is false_alarm: last in that tick, after the outputs",
+      "since": 4,
+      "emitted_on": "the trial header, after the side code: the scheduled row is slot 1 of the trial table",
       "emitted_by": [
         "behaviorbox"
       ],
-      "rationale": "An outcome code of the phase spine (docs/adr/0005-spine-runs-strobe-each-trials-outcome.md), one per outcome class, in the order of taskdef/lowering.py's OUTCOME_CLASSES. Emitted by BoxSpine.h once per trial a spine run marks, from the states the interpreter entered; replay predicts it, so a trial's class is part of the checksum and a reader of the .tsv or a recording sees each verdict without replaying. Analysis still scores by replay and never reads it. The eight are numbered together after TRIAL_START and BLOCK_START, apart from the lowest free codes a channel-set save issues to edges, so a machine that already issued edge codes can add each at this same number."
+      "rationale": "The row's own code, 400 + its 1-based slot in the trial table (kTrials[0]), so the per-trial table knows the type with no pattern matching. The generated TaskTrials.h writes BF_TRIAL_TYPE_<slot> into each row BY NAME, and the firmware never computes it. Twelve are declared because the trial-table editor binds one row per odor line and the shipped channel set has twelve lines; a thirteenth line gets TRIAL_TYPE_13 at 413 on the Strobes page, and the runner caps the table at 99 rows (401..499)."
     },
-    "OUTCOME_ABORT_BEFORE_STIMULUS": {
-      "code": 278,
+    "TRIAL_TYPE_2": {
+      "code": 402,
       "origin": "ephymeris",
-      "since": 3,
-      "emitted_on": "the tick a spine trial enters its marked state, when its outcome class is abort_before_stimulus: last in that tick, after the outputs",
+      "since": 4,
+      "emitted_on": "the trial header, after the side code: the scheduled row is slot 2 of the trial table",
       "emitted_by": [
         "behaviorbox"
       ],
-      "rationale": "An outcome code of the phase spine (docs/adr/0005-spine-runs-strobe-each-trials-outcome.md), one per outcome class, in the order of taskdef/lowering.py's OUTCOME_CLASSES. Emitted by BoxSpine.h once per trial a spine run marks, from the states the interpreter entered; replay predicts it, so a trial's class is part of the checksum and a reader of the .tsv or a recording sees each verdict without replaying. Analysis still scores by replay and never reads it. The eight are numbered together after TRIAL_START and BLOCK_START, apart from the lowest free codes a channel-set save issues to edges, so a machine that already issued edge codes can add each at this same number."
+      "rationale": "The row's own code, 400 + its 1-based slot in the trial table (kTrials[1]), so the per-trial table knows the type with no pattern matching. The generated TaskTrials.h writes BF_TRIAL_TYPE_<slot> into each row BY NAME, and the firmware never computes it. Twelve are declared because the trial-table editor binds one row per odor line and the shipped channel set has twelve lines; a thirteenth line gets TRIAL_TYPE_13 at 413 on the Strobes page, and the runner caps the table at 99 rows (401..499)."
     },
-    "OUTCOME_ABORT_DURING_SAMPLING": {
-      "code": 279,
+    "TRIAL_TYPE_3": {
+      "code": 403,
       "origin": "ephymeris",
-      "since": 3,
-      "emitted_on": "the tick a spine trial enters its marked state, when its outcome class is abort_during_sampling: last in that tick, after the outputs",
+      "since": 4,
+      "emitted_on": "the trial header, after the side code: the scheduled row is slot 3 of the trial table",
       "emitted_by": [
         "behaviorbox"
       ],
-      "rationale": "An outcome code of the phase spine (docs/adr/0005-spine-runs-strobe-each-trials-outcome.md), one per outcome class, in the order of taskdef/lowering.py's OUTCOME_CLASSES. Emitted by BoxSpine.h once per trial a spine run marks, from the states the interpreter entered; replay predicts it, so a trial's class is part of the checksum and a reader of the .tsv or a recording sees each verdict without replaying. Analysis still scores by replay and never reads it. The eight are numbered together after TRIAL_START and BLOCK_START, apart from the lowest free codes a channel-set save issues to edges, so a machine that already issued edge codes can add each at this same number."
+      "rationale": "The row's own code, 400 + its 1-based slot in the trial table (kTrials[2]), so the per-trial table knows the type with no pattern matching. The generated TaskTrials.h writes BF_TRIAL_TYPE_<slot> into each row BY NAME, and the firmware never computes it. Twelve are declared because the trial-table editor binds one row per odor line and the shipped channel set has twelve lines; a thirteenth line gets TRIAL_TYPE_13 at 413 on the Strobes page, and the runner caps the table at 99 rows (401..499)."
+    },
+    "TRIAL_TYPE_4": {
+      "code": 404,
+      "origin": "ephymeris",
+      "since": 4,
+      "emitted_on": "the trial header, after the side code: the scheduled row is slot 4 of the trial table",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "The row's own code, 400 + its 1-based slot in the trial table (kTrials[3]), so the per-trial table knows the type with no pattern matching. The generated TaskTrials.h writes BF_TRIAL_TYPE_<slot> into each row BY NAME, and the firmware never computes it. Twelve are declared because the trial-table editor binds one row per odor line and the shipped channel set has twelve lines; a thirteenth line gets TRIAL_TYPE_13 at 413 on the Strobes page, and the runner caps the table at 99 rows (401..499)."
+    },
+    "TRIAL_TYPE_5": {
+      "code": 405,
+      "origin": "ephymeris",
+      "since": 4,
+      "emitted_on": "the trial header, after the side code: the scheduled row is slot 5 of the trial table",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "The row's own code, 400 + its 1-based slot in the trial table (kTrials[4]), so the per-trial table knows the type with no pattern matching. The generated TaskTrials.h writes BF_TRIAL_TYPE_<slot> into each row BY NAME, and the firmware never computes it. Twelve are declared because the trial-table editor binds one row per odor line and the shipped channel set has twelve lines; a thirteenth line gets TRIAL_TYPE_13 at 413 on the Strobes page, and the runner caps the table at 99 rows (401..499)."
+    },
+    "TRIAL_TYPE_6": {
+      "code": 406,
+      "origin": "ephymeris",
+      "since": 4,
+      "emitted_on": "the trial header, after the side code: the scheduled row is slot 6 of the trial table",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "The row's own code, 400 + its 1-based slot in the trial table (kTrials[5]), so the per-trial table knows the type with no pattern matching. The generated TaskTrials.h writes BF_TRIAL_TYPE_<slot> into each row BY NAME, and the firmware never computes it. Twelve are declared because the trial-table editor binds one row per odor line and the shipped channel set has twelve lines; a thirteenth line gets TRIAL_TYPE_13 at 413 on the Strobes page, and the runner caps the table at 99 rows (401..499)."
+    },
+    "TRIAL_TYPE_7": {
+      "code": 407,
+      "origin": "ephymeris",
+      "since": 4,
+      "emitted_on": "the trial header, after the side code: the scheduled row is slot 7 of the trial table",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "The row's own code, 400 + its 1-based slot in the trial table (kTrials[6]), so the per-trial table knows the type with no pattern matching. The generated TaskTrials.h writes BF_TRIAL_TYPE_<slot> into each row BY NAME, and the firmware never computes it. Twelve are declared because the trial-table editor binds one row per odor line and the shipped channel set has twelve lines; a thirteenth line gets TRIAL_TYPE_13 at 413 on the Strobes page, and the runner caps the table at 99 rows (401..499)."
+    },
+    "TRIAL_TYPE_8": {
+      "code": 408,
+      "origin": "ephymeris",
+      "since": 4,
+      "emitted_on": "the trial header, after the side code: the scheduled row is slot 8 of the trial table",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "The row's own code, 400 + its 1-based slot in the trial table (kTrials[7]), so the per-trial table knows the type with no pattern matching. The generated TaskTrials.h writes BF_TRIAL_TYPE_<slot> into each row BY NAME, and the firmware never computes it. Twelve are declared because the trial-table editor binds one row per odor line and the shipped channel set has twelve lines; a thirteenth line gets TRIAL_TYPE_13 at 413 on the Strobes page, and the runner caps the table at 99 rows (401..499)."
+    },
+    "TRIAL_TYPE_9": {
+      "code": 409,
+      "origin": "ephymeris",
+      "since": 4,
+      "emitted_on": "the trial header, after the side code: the scheduled row is slot 9 of the trial table",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "The row's own code, 400 + its 1-based slot in the trial table (kTrials[8]), so the per-trial table knows the type with no pattern matching. The generated TaskTrials.h writes BF_TRIAL_TYPE_<slot> into each row BY NAME, and the firmware never computes it. Twelve are declared because the trial-table editor binds one row per odor line and the shipped channel set has twelve lines; a thirteenth line gets TRIAL_TYPE_13 at 413 on the Strobes page, and the runner caps the table at 99 rows (401..499)."
+    },
+    "TRIAL_TYPE_10": {
+      "code": 410,
+      "origin": "ephymeris",
+      "since": 4,
+      "emitted_on": "the trial header, after the side code: the scheduled row is slot 10 of the trial table",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "The row's own code, 400 + its 1-based slot in the trial table (kTrials[9]), so the per-trial table knows the type with no pattern matching. The generated TaskTrials.h writes BF_TRIAL_TYPE_<slot> into each row BY NAME, and the firmware never computes it. Twelve are declared because the trial-table editor binds one row per odor line and the shipped channel set has twelve lines; a thirteenth line gets TRIAL_TYPE_13 at 413 on the Strobes page, and the runner caps the table at 99 rows (401..499)."
+    },
+    "TRIAL_TYPE_11": {
+      "code": 411,
+      "origin": "ephymeris",
+      "since": 4,
+      "emitted_on": "the trial header, after the side code: the scheduled row is slot 11 of the trial table",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "The row's own code, 400 + its 1-based slot in the trial table (kTrials[10]), so the per-trial table knows the type with no pattern matching. The generated TaskTrials.h writes BF_TRIAL_TYPE_<slot> into each row BY NAME, and the firmware never computes it. Twelve are declared because the trial-table editor binds one row per odor line and the shipped channel set has twelve lines; a thirteenth line gets TRIAL_TYPE_13 at 413 on the Strobes page, and the runner caps the table at 99 rows (401..499)."
+    },
+    "TRIAL_TYPE_12": {
+      "code": 412,
+      "origin": "ephymeris",
+      "since": 4,
+      "emitted_on": "the trial header, after the side code: the scheduled row is slot 12 of the trial table",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "The row's own code, 400 + its 1-based slot in the trial table (kTrials[11]), so the per-trial table knows the type with no pattern matching. The generated TaskTrials.h writes BF_TRIAL_TYPE_<slot> into each row BY NAME, and the firmware never computes it. Twelve are declared because the trial-table editor binds one row per odor line and the shipped channel set has twelve lines; a thirteenth line gets TRIAL_TYPE_13 at 413 on the Strobes page, and the runner caps the table at 99 rows (401..499)."
     }
   },
   "port_slots": {
@@ -503,25 +599,15 @@
       "rather than 'unknown code' -- a distinction that matters, because one is",
       "explained and the other is a question."
     ],
-    "DUMMY_SOLENOID_CLICK_1": {
-      "code": 110,
-      "seen_in": "GRGL_2-Odor, June 2026, 29 sessions",
-      "rationale": "Dummy solenoid click. Emitted between a terminal and the next LIGHTS_ON to mask the audible cue of the real odor valve, so a subject could not use valve noise to predict the trial."
+    "END_CORRECT_ITI": {
+      "code": 242,
+      "seen_in": "every GRGL session recorded before stream grammar 2 (November 2026)",
+      "rationale": "Scores correct, advances the counter, clears penalty escalation. Kept distinct from END_INCORRECT_ITI so reinforcement rate and timeout cost are separable. Retired with stream grammar 2: END_TRIAL closes every trial and a dedicated outcome code carries the verdict, so nothing emits this any more. The app still decodes a recorded stream that ends its trials with it (grammar 1)."
     },
-    "DUMMY_SOLENOID_CLICK_2": {
-      "code": 111,
-      "seen_in": "as above",
-      "rationale": "See DUMMY_SOLENOID_CLICK_1."
-    },
-    "DUMMY_SOLENOID_CLICK_3": {
-      "code": 112,
-      "seen_in": "as above",
-      "rationale": "See DUMMY_SOLENOID_CLICK_1."
-    },
-    "DUMMY_SOLENOID_CLICK_4": {
-      "code": 113,
-      "seen_in": "as above",
-      "rationale": "See DUMMY_SOLENOID_CLICK_1."
+    "END_INCORRECT_ITI": {
+      "code": 243,
+      "seen_in": "every GRGL session recorded before stream grammar 2 (November 2026)",
+      "rationale": "Reached by every non-correct outcome of checkResponse() -- wrong port, omission, response-hold failure, and a response on a no-go trial -- so outcome class is NOT recoverable from this code alone. It is recoverable from the preceding strobe, which is exactly why the invariant matters. Retired with stream grammar 2: END_TRIAL closes every trial and a dedicated outcome code carries the verdict, so nothing emits this any more. The app still decodes a recorded stream that ends its trials with it (grammar 1)."
     }
   }
 }

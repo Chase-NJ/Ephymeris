@@ -38,6 +38,7 @@ from ..tasks import profile as task_profile
 from ..taskdef import lowering
 from ..tasks.profile import TaskProfile
 from . import reader, stream
+from .stream import grammar2
 from .stream.legacy import infer
 from .stream import spine as spine_stream
 from .repository import AnalyticsRepository, CachedRun, CacheKey
@@ -544,7 +545,7 @@ resolved: _Resolved, document: dict[str, Any], pass_: _Pass
         and resolved.profile is not None
         and resolved.profile.live_metrics
     ):
-        return _scorable(resolved.profile, pass_), resolved.source, resolved.digest
+        return _scorable(resolved.profile, document, pass_), resolved.source, resolved.digest
 
     embedded = task_profile.embedded_profile(document)
     if embedded is not None and embedded.live_metrics:
@@ -552,10 +553,10 @@ resolved: _Resolved, document: dict[str, Any], pass_: _Pass
         # the run was configured from, recorded at the time of the run. It
         # arrived by a different road than the database's copy; when both
         # exist they are the same bytes and the cheaper road is taken above.
-        return _scorable(embedded, pass_), "snapshot", pass_.digest(embedded)
+        return _scorable(embedded, document, pass_), "snapshot", pass_.digest(embedded)
 
     if resolved.profile is not None and resolved.profile.live_metrics:
-        return _scorable(resolved.profile, pass_), resolved.source, resolved.digest
+        return _scorable(resolved.profile, document, pass_), resolved.source, resolved.digest
     sketch = document.get("sketch")
     inferred = infer.infer_profile(
         stream.codes_of(document),
@@ -567,10 +568,14 @@ resolved: _Resolved, document: dict[str, Any], pass_: _Pass
     return inferred, "inferred", pass_.digest(inferred)
 
 
-def _scorable(profile: TaskProfile, pass_: _Pass) -> TaskProfile:
+def _scorable(profile: TaskProfile, document: dict[str, Any], pass_: _Pass) -> TaskProfile:
     """The copy of a declared profile that is scored: a no-go metric widened
-    to every response port (`infer.widen_no_go`). Never the stored profile, or
-    its digest and its snapshot would move."""
+    to every response port (`infer.widen_no_go`), and a profile that reads
+    stream grammar 2 re-expressed for a grammar-1 run
+    (`grammar2.for_grammar_1`, `ANALYTICS.md#stream-grammar-2`). Never the
+    stored profile, or its digest and its snapshot would move."""
+    if not grammar2.is_grammar2_run(document, profile):
+        profile = grammar2.for_grammar_1(profile, stream.codes_of(document), pass_.vocabulary)
     return infer.widen_no_go(profile, pass_.vocabulary)
 
 
@@ -863,6 +868,46 @@ def _canary_runs(
 
     unclean = document(session[: len(session) // 2], stop_reason="host stopped")
     del unclean["trial_seed"]
+
+    # A stream-grammar-2 run (`ANALYTICS.md#stream-grammar-2`): every outcome
+    # once, read off the headers and outcome codes by a generated-style profile.
+    def g2(header: str, *rest: str) -> list[int]:
+        return [code("TRIAL_START"), code(header), *(code(n) for n in rest), code("END_TRIAL")]
+
+    sampled_1 = ("LIGHTS_ON", "ODOR_POKE", "ODOR_1_ON", "ODOR_OFF", "ODOR_UNPOKE", "LIGHTS_OFF")
+    sampled_3 = ("LIGHTS_ON", "ODOR_POKE", "ODOR_3_ON", "ODOR_OFF", "ODOR_UNPOKE", "LIGHTS_OFF")
+    sampled_5 = ("LIGHTS_ON", "ODOR_POKE", "ODOR_5_ON", "ODOR_OFF", "ODOR_UNPOKE", "LIGHTS_OFF")
+    grammar2_session = (
+        g2("TRIAL_GO_RIGHT", "TRIAL_TYPE_1", *sampled_1, "WATER_POKE_R", "CORRECT", "FLUID_R",
+           "STOP_FLUID_G_R", "WATER_UNPOKE_R") * 4
+        + g2("TRIAL_GO_RIGHT", "TRIAL_TYPE_1", *sampled_1, "WATER_POKE_L", "WATER_POKE_ERROR_L")
+        + g2("TRIAL_GO_RIGHT", "TRIAL_TYPE_1", *sampled_1, "WATER_POKE_R", "WATER_UNPOKE_EARLY_R")
+        + g2("TRIAL_GO_RIGHT", "TRIAL_TYPE_1", *sampled_1, "RESP_OMIT")
+        + g2("TRIAL_GO_LEFT", "TRIAL_TYPE_2", *sampled_3, "WATER_POKE_L", "CORRECT", "FLUID_L",
+             "STOP_FLUID_G_L", "WATER_UNPOKE_L") * 3
+        + g2("TRIAL_GO_LEFT", "TRIAL_TYPE_2", *sampled_3, "WATER_POKE_R", "WATER_POKE_ERROR_R", "INVALID_TRIAL")
+        + g2("TRIAL_NO_GO", "TRIAL_TYPE_3", *sampled_5, "WATER_POKE_NONE") * 2
+        + g2("TRIAL_NO_GO", "TRIAL_TYPE_3", *sampled_5, "WATER_POKE_L", "WATER_POKE_ERROR_L")
+        + g2("TRIAL_GO_RIGHT", "TRIAL_TYPE_1", "LIGHTS_ON", "LAZY_RAT", "LIGHTS_OFF", "INVALID_TRIAL")
+        + g2("TRIAL_GO_LEFT", "TRIAL_TYPE_2", "LIGHTS_ON", "ODOR_POKE", "ODOR_UNPOKE_EARLY", "LIGHTS_OFF",
+             "INVALID_TRIAL")
+        + g2("TRIAL_GO_RIGHT", "TRIAL_TYPE_1", "LIGHTS_ON", "ODOR_POKE", "ODOR_1_ON",
+             "ODOR_UNPOKE_EARLY_SAMPLING", "LIGHTS_OFF", "INVALID_TRIAL")
+    )
+    errors = ["WATER_POKE_ERROR_L", "WATER_POKE_ERROR_R", "WATER_UNPOKE_EARLY_L", "WATER_UNPOKE_EARLY_R",
+              "RESP_OMIT"]
+    grammar2_declared = task_profile.parse_profile({
+        **declared,
+        "liveMetrics": [
+            {"id": "p_correct_1", "label": "P(correct | Odor 1)", "triggerCode": code("ODOR_1_ON"),
+             "successCode": code("CORRECT"), "alternateCodes": [code(n) for n in errors], "windowSize": 5},
+            {"id": "p_correct_2", "label": "P(correct | Odor 3)", "triggerCode": code("ODOR_3_ON"),
+             "successCode": code("CORRECT"), "alternateCodes": [code(n) for n in errors], "windowSize": 5},
+            {"id": "p_withhold_3", "label": "P(withhold | Odor 5)", "triggerCode": code("ODOR_5_ON"),
+             "successCode": code("WATER_POKE_NONE"),
+             "alternateCodes": [code("WATER_POKE_ERROR_L"), code("WATER_POKE_ERROR_R")], "windowSize": 5},
+        ],
+    })
     return [
         (name, resolved, doc, seed)
         for name, resolved, doc in [
@@ -903,6 +948,14 @@ def _canary_runs(
             # A spine snapshot carrying every word `tasks/behaviour.py` leaves out:
             # its scored digest is `profile_hash`'s behaviour projection, so
             # leaving any one word in, or a row unkeyed, moves this.
+            # A grammar-2 run by the board's word, by its codes alone, and the
+            # same stream read by a profile from before the grammar.
+            ("grammar2", held(grammar2_declared, "snapshot"), document(grammar2_session, stream=2, interp=1)),
+            ("grammar2-by-codes", held(grammar2_declared, "snapshot"), document(grammar2_session, interp=1)),
+            ("grammar2-old-profile", held(snapshot, "snapshot"), document(grammar2_session, stream=2, interp=1)),
+            # ...and a grammar-2 profile over the archive's grammar-1 stream,
+            # re-expressed by the first well poked (`grammar2.for_grammar_1`).
+            ("grammar2-profile-on-grammar1", held(grammar2_declared, "snapshot"), document(session)),
             ("spine-run-rows", nothing, document(session, interp=spine_stream.rp.INTERP_VERSION, **{
                 task_profile.SNAPSHOT_KEY: {
                     **declared,

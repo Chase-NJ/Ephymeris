@@ -11,6 +11,7 @@ import {
   withoutOverrides,
   type TaskProfile,
 } from "@/lib/sessions/types";
+import { offeredKeys } from "@/lib/taskdef/exposure";
 import { QUICK_TUNE_GROUPS } from "@/lib/tasks/topology";
 
 /**
@@ -44,6 +45,11 @@ import { QUICK_TUNE_GROUPS } from "@/lib/tasks/topology";
  * the quick strip *removes* its groups from the long list rather than
  * repeating them, because a field shown twice in one form reads as two
  * settings even while shared state keeps them honest.
+ *
+ * **It offers only what the task exposes** (`TASKS.md#parameters`): a
+ * generated profile carries `exposed`, and the fields outside it stay at
+ * their defaults, unseen, and still ride the `SET` lines. A profile with no
+ * such list (a hand-written `task.json`) offers every field, as before.
  */
 export function TaskConfigForm({
   profile,
@@ -69,6 +75,10 @@ export function TaskConfigForm({
     onOverridesChange(editedOverrides(overrides, config, next));
   const onReset = (keys: string[]) => onOverridesChange(withoutOverrides(overrides, keys));
 
+  const offered = offeredKeys(profile);
+  const isOffered = (f: { metadataKey: string }) => offered === null || offered.has(f.metadataKey);
+  const offeredFields = profile.config.filter(isOffered);
+
   const overridden = profile.config.filter(
     (f) => f.metadataKey in config && !Object.is(config[f.metadataKey], baseline[f.metadataKey]),
   ).length;
@@ -78,7 +88,7 @@ export function TaskConfigForm({
   // pool weights, which do nothing there) would render as a header over a
   // disclosure. A profile with none renders exactly the old single list.
   const promoted = QUICK_TUNE_GROUPS.filter((group) =>
-    profile.config.some((field) => field.group === group && !field.advanced),
+    offeredFields.some((field) => field.group === group && !field.advanced),
   );
   // The header's second glance: how many of the overrides are quick-tune ones,
   // so "2 overridden" on a collapsed card already says whether it is the usual
@@ -113,7 +123,11 @@ export function TaskConfigForm({
                     ? " · quick tune"
                     : ""
               }`
-            : `${profile.config.length} parameters`}
+            : offered === null
+              ? `${profile.config.length} parameters`
+              : offered.size === 0
+                ? "all parameters at their defaults"
+                : `${offered.size} offered · ${profile.config.length - offered.size} at defaults`}
         </span>
       </button>
 
@@ -134,6 +148,12 @@ export function TaskConfigForm({
                 cap. The hairline edges are what make a list cut mid-field read
                 as a scroll region rather than a clipping bug. */}
             <div className="my-1 max-h-[min(46vh,380px)] overflow-y-auto border-y border-halo py-2 pr-1">
+              {offered !== null && offered.size === 0 && (
+                <p className="px-1 py-2 text-[11px] leading-relaxed text-static">
+                  This task exposes no parameters: every value is the task's default and is sent as it
+                  is. Expose one in the task editor to tune it per animal here.
+                </p>
+              )}
               {promoted.length > 0 && (
                 <div className="mb-3">
                   {/* A matte left rule, not a glow: promoted is an ordering
@@ -159,6 +179,7 @@ export function TaskConfigForm({
                             onReset={onReset}
                             disabled={disabled}
                             only={group}
+                            fieldFilter={isOffered}
                           />
                         </section>
                       ))}
@@ -180,6 +201,7 @@ export function TaskConfigForm({
                 onReset={onReset}
                 disabled={disabled}
                 exclude={promoted}
+                fieldFilter={isOffered}
               />
             </div>
           </motion.div>

@@ -9,8 +9,8 @@ import type { StageRow, TaskDiagnostic } from "@/lib/taskdef/types";
 
 /**
  * The shaping ramp — how strictness arrives, and over how many trials. The
- * parameter dial's "Holds & shaping" stop (`TASKS.md#parameter-dial`), drawn
- * as a compact row per stage to fit the dial's column.
+ * parameters panel's "Holds & shaping" section (`TASKS.md#parameters`), drawn
+ * as a compact row per stage to fit the panel's column.
  *
  * FOUR VALUES, DECLARED PER ROW, NEVER ONCE. The firmware rewrites all four
  * from `stage[]` on every completed trial, so a single field per value would

@@ -20,10 +20,11 @@ export const STROBES: Record<string, string> = Object.fromEntries([
     .map(([name, e]) => [String(e.code), name]),
 ]);
 
-/** A live code's number. Throws on a name the vocabulary does not hold. */
+/** A code's number, live or retired (a recorded stream carries both). Throws
+ *  on a name the vocabulary does not hold. */
 export function code(name: string): number {
-  const entry = live[name];
-  if (!entry) throw new Error(`${name} is not in the default strobe vocabulary`);
+  const entry = live[name] ?? (retired[name] as Entry | undefined);
+  if (!entry || Array.isArray(entry)) throw new Error(`${name} is not in the default strobe vocabulary`);
   return entry.code;
 }
 

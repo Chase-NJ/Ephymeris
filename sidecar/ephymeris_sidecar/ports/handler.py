@@ -50,6 +50,10 @@ SEED_RE = re.compile(r"^SEED\t(\d+)$")
 #: (`TASKS.md#confirming-the-parameters`).
 INTERP_RE = re.compile(r"^INTERP=(\d+)$")
 FREE_RAM_RE = re.compile(r"^FREE_RAM=(\d+)$")
+#: Announced before `READY` by the trial runner: which strobe-stream grammar it
+#: emits (`TASKS.md#stream-grammar`), so the app picks its decoder. A board that
+#: says nothing emits grammar 1.
+STREAM_RE = re.compile(r"^STREAM=(\d+)$")
 #: Announced before `READY` by a sketch whose sync line pulses once per tick
 #: that strobes, not once per strobe: the spine's runner (`RECORDING.md#firmware-pulse`).
 SYNC_RE = re.compile(r"^SYNC=([A-Z]+)$")
@@ -65,6 +69,9 @@ class Announced:
     #: How the sync line pulses, lowercased: `"tick"`, or None for a board that
     #: said nothing and so pulses once per strobe.
     sync: str | None = None
+    #: Which stream grammar the trial runner emits (`STREAM=<n>`), or None for
+    #: a board that said nothing: grammar 1, or a spine board.
+    stream: int | None = None
 
     @property
     def tick_pulsed(self) -> bool:
@@ -564,10 +571,13 @@ class PortHandler:
             interp = INTERP_RE.match(text)
             free_ram = FREE_RAM_RE.match(text)
             sync = SYNC_RE.match(text)
+            stream_grammar = STREAM_RE.match(text)
             if interp:
                 shake.announced = replace(shake.announced, interp=int(interp.group(1)))
             elif free_ram:
                 shake.announced = replace(shake.announced, free_ram=int(free_ram.group(1)))
+            elif stream_grammar:
+                shake.announced = replace(shake.announced, stream=int(stream_grammar.group(1)))
             elif sync:
                 shake.announced = replace(shake.announced, sync=sync.group(1).lower())
             elif text.upper() == READY_TOKEN:

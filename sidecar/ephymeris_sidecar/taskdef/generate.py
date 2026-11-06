@@ -92,6 +92,11 @@ def profile_json(definition: TaskDefinition) -> dict[str, Any]:
         "config": config,
         "liveMetrics": _live_metrics(definition, channels, vocab),
         "legacyNames": list(definition.legacy_names),
+        # Which parameters the Start dialog offers (`TASKS.md#parameters`). Left
+        # out of `profile_hash`, so exposing one splits no history; a key the
+        # catalogue no longer declares is dropped here, not carried.
+        "exposed": [key for key in dict.fromkeys(definition.exposed)
+                    if any(f["metadataKey"] == key for f in config)],
     }
 
 
@@ -258,8 +263,28 @@ _STAGE_ATTR = {
 }
 
 
+#: The outcome codes that score a go trial wrong (stream grammar 2,
+#: `TASKS.md#stream-grammar`): the wrong well, the correct well let go of
+#: early, and no well at all. A no-go trial is wrong at either well: its false
+#: alarm is the same error code a go trial's wrong well emits.
+GO_ERROR_OUTCOMES = ("WATER_POKE_ERROR_L", "WATER_POKE_ERROR_R", "WATER_UNPOKE_EARLY_L",
+                     "WATER_UNPOKE_EARLY_R", "RESP_OMIT")
+NO_GO_ERROR_OUTCOMES = ("WATER_POKE_ERROR_L", "WATER_POKE_ERROR_R")
+
+
 def _live_metrics(definition, channels, vocab) -> list[dict[str, Any]]:
-    """One rolling P(correct | stimulus) per go trial type.
+    """One rolling P(correct | stimulus) per trial type, scored on the trial's
+    outcome code.
+
+    THE TRIGGER IS THE ONSET CODE, as it always was: one odor line carries one
+    trial type (`TSK105`), so the onset names the type exactly, and it is what
+    `topology.ts` keys a condition on, what inference reads, and what the
+    archive's own metrics open on. THE VERDICT IS THE OUTCOME CODE (stream
+    grammar 2): `CORRECT` is the hit, and the error outcomes are the misses,
+    so a hold failure is a miss here where a grammar-1 metric, scored on the
+    first well poked, counted it a hit (`ANALYTICS.md#stream-grammar-2`). The
+    header's `TRIAL_TYPE_<n>` code is what the per-trial table reads the slot
+    from; the metric does not need it.
 
     ALSO THE GATE ON THE STATE-MACHINE DRAWING. `topology.ts` gives a stimulus
     an arm only when a live metric scores it, precisely so that a profile
@@ -269,8 +294,13 @@ def _live_metrics(definition, channels, vocab) -> list[dict[str, Any]]:
 
     A no-go type is scored against `WATER_POKE_NONE`, which is the same
     arrangement: the withhold arm appears only when something scores it.
+
+    A profile generated before grammar 2 scored `WATER_POKE_L/R` as the hit;
+    that profile still scores a grammar-2 stream, which carries the poke too.
     """
     out: list[dict[str, Any]] = []
+    if "CORRECT" not in vocab:
+        return out
     for i, trial in enumerate(definition.trials):
         # A row the trial table drops is a row that never runs, so it gets no
         # metric and, through it, no arm in the state-machine drawing.
@@ -287,13 +317,11 @@ def _live_metrics(definition, channels, vocab) -> list[dict[str, Any]]:
         if not trial.is_go:
             if "WATER_POKE_NONE" not in vocab:
                 continue
-            # The alternate is "answered at all": the trial is already wrong
-            # the moment ANY port is chosen, so every response port's enter
-            # code scores the miss. One port would leave a poke at another
-            # matching nothing, and the trial would drop out of the
-            # denominator as if it were never answered.
-            answered = _enter_codes(channels, vocab)
-            if not answered:
+            # The alternate is "answered at all": a no-go trial is already
+            # wrong the moment ANY well is chosen, and the runner says so with
+            # that well's error code right after the poke.
+            answered = [name for name in NO_GO_ERROR_OUTCOMES if name in vocab]
+            if len(answered) != len(NO_GO_ERROR_OUTCOMES):
                 continue
             out.append({
                 "id": f"p_withhold_{i + 1}",
@@ -305,17 +333,15 @@ def _live_metrics(definition, channels, vocab) -> list[dict[str, Any]]:
             })
             continue
 
-        port, slot = row.port, row.slot
-        success = vocab.get(slot["enter_code"])
-        alternate = _other_enter_code(channels, vocab, port.name)
-        if success is None or alternate is None:
+        errors = [name for name in GO_ERROR_OUTCOMES if name in vocab]
+        if len(errors) != len(GO_ERROR_OUTCOMES):
             continue
         out.append({
             "id": f"p_correct_{i + 1}",
-            "label": f"P({port.name.replace('_', ' ')} | {stimulus})",
+            "label": f"P(correct | {stimulus})",
             "trigger": onset.name,
-            "success": success.name,
-            "alternate": alternate,
+            "success": "CORRECT",
+            "alternate": errors,
             "windowSize": 20,
         })
     return out
@@ -457,9 +483,9 @@ def _strobe_lines(vocab: registry.Vocabulary) -> list[str]:
         "",
         "/*  The strobe vocabulary (TASKS.md#strobe-vocabulary), every live code.",
         "    Never derived from an index -- the odor onsets run 101-109 and then",
-        "    114-116, because 110-113 are retired codes a recorded session",
-        "    contains. Retired codes are not defined, so firmware that emits one",
-        "    does not compile. */",
+        "    114-116, because 110-113 were taken when they were issued, and a",
+        "    code is never renumbered. Retired codes are not defined, so firmware",
+        "    that emits one does not compile. */",
     ]
     lines += [f"#define BF_{e.name} {e.code}" for e in sorted(vocab, key=lambda e: e.code)]
     return lines
@@ -580,7 +606,8 @@ def _onset_macro(trial: TrialTypeDef) -> str:
     An earlier version derived `BF_ODOR_<n>_ON` from the emitter's position and
     was wrong twice over: the position came from a pin-sorted list, and the
     codes are not contiguous anyway -- the onsets run 101-109 and then 114-116,
-    with four retired numbers in the gap. What the operator picked is a NAME;
+    with four numbers in the gap that were taken when they were issued. What
+    the operator picked is a NAME;
     this passes it through.
     """
     return f"BF_{trial.onset_strobe}"
@@ -597,17 +624,19 @@ def task_trials_h(definition: TaskDefinition) -> str:
         "#ifndef TASK_TRIALS_H",
         "#define TASK_TRIALS_H",
         "",
-        "/*  THE ORDER IS THE CONTRACT: slot i is poolWeights[i] (wire key PW<i+1>)",
-        "    and rewardTimes[i] (wire key RW<i+1>). Reordering silently re-weights",
-        "    a pool task and re-pays every condition, so the app emits this table",
-        "    and both key lists from one pass over one list.",
+        "/*  THE ORDER IS THE CONTRACT: slot i is poolWeights[i] (wire key PW<i+1>),",
+        "    rewardTimes[i] (wire key RW<i+1>) and the row's header code",
+        "    BF_TRIAL_TYPE_<i+1>. Reordering silently re-weights a pool task,",
+        "    re-pays every condition and renames every trial in the stream, so the",
+        "    app emits this table and both key lists from one pass over one list.",
         "",
-        "    NOT const: each row's last argument is its reward volume, the",
-        "    profile's default, and applyRewardTimes() overwrites it from the",
-        "    SET lines before the first trial. */",
+        "    NOT const: each row's reward volume is the profile's default, and",
+        "    applyRewardTimes() overwrites it from the SET lines before the first",
+        "    trial. */",
         "static TrialType kTrials[] = {",
     ]
 
+    table_slot = 0  # the row's position in kTrials[]: what its header code names
     for trial in definition.trials:
         # `resolve_row` is the one place that decides a row is dropped: the
         # validator's TSK108 asks it too, so the two cannot disagree.
@@ -616,6 +645,8 @@ def task_trials_h(definition: TaskDefinition) -> str:
             continue
         odor_index = row.odor_index
         onset = _onset_macro(trial)
+        type_code = _type_macro(table_slot)
+        table_slot += 1
 
         if trial.is_go:
             port, reward_index, slot = row.port, row.reward_index, row.slot
@@ -627,14 +658,14 @@ def task_trials_h(definition: TaskDefinition) -> str:
                 f"    /* {label} */",
                 "    TrialType(true, "
                 f"Odors[{odor_index}], {well}, {reward_index}, "
-                f"{onset}, {fluid_code}, {stop_code}, {trial.reward_time}),",
+                f"{onset}, {fluid_code}, {stop_code}, {trial.reward_time}, {type_code}),",
             ]
         else:
             label = trial.label or f"{trial.odor_channel} -> withhold"
             lines += [
                 f"    /* {label} (no-go: no correct port, no reward) */",
                 "    TrialType(false, "
-                f"Odors[{odor_index}], {SENTINEL}, {SENTINEL}, {onset}, 0, 0, 0),",
+                f"Odors[{odor_index}], {SENTINEL}, {SENTINEL}, {onset}, 0, 0, 0, {type_code}),",
             ]
 
     lines += [
@@ -643,16 +674,35 @@ def task_trials_h(definition: TaskDefinition) -> str:
         "static const int kTrialCount = (int)(sizeof(kTrials) / sizeof(kTrials[0]));",
         "",
         "/*  The table cannot outgrow the arrays that index it -- poolWeights[] and",
-        "    the selector's side lists are both BOX_MAX_TRIAL_TYPES long. Emitted",
-        "    together, so this only fires on a hand edit; it fires at build time,",
-        "    which is the point. */",
+        "    the selector's side lists are both BOX_MAX_TRIAL_TYPES long -- nor the",
+        "    header codes that name its rows (TRIAL_TYPE_1..99). Emitted together,",
+        "    so this only fires on a hand edit; it fires at build time, which is",
+        "    the point. */",
         "static_assert(kTrialCount <= BOX_MAX_TRIAL_TYPES,",
         '              "more trial types than BOX_MAX_TRIAL_TYPES");',
+        "static_assert(kTrialCount <= BOX_TRIAL_TYPE_LIMIT,",
+        '              "more trial types than TRIAL_TYPE codes");',
         "",
         "#endif // TASK_TRIALS_H",
         "",
     ]
     return "\n".join(lines)
+
+
+def _type_macro(slot_index: int) -> str:
+    """`BF_TRIAL_TYPE_<slot+1>`: the row's code in every trial header, by name.
+
+    The vocabulary keeps `TRIAL_TYPE_<n>` at 400 + n, and the firmware never
+    computes it (`TASKS.md#stream-grammar`). A slot past what the vocabulary
+    declares is `TSK115`, reported by the validator; here it is written as the
+    name it would have, so the build says so too (an undefined `BF_*`).
+    """
+    return f"BF_{type_name(slot_index)}"
+
+
+def type_name(slot_index: int) -> str:
+    """The vocabulary name of trial-table slot `slot_index` (0-based)."""
+    return f"TRIAL_TYPE_{slot_index + 1}"
 
 
 def task_spine_h(definition: TaskDefinition) -> str:

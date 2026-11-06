@@ -190,6 +190,7 @@ name outputs by their Rig channel name, case-insensitively:
 # Off-target host tests: the strictest type check the firmware gets
 sh firmware/libraries/BehaviorBox/extras/host_test/run.sh       # the library
 sh firmware/libraries/BehaviorBox/extras/host_test/run_box.sh   # the box utility
+sh firmware/libraries/BehaviorBox/extras/host_test/run_stream.sh # every outcome's strobe sequence
 sh firmware/libraries/BehaviorBox/extras/host_test/run_interp.sh  # the interpreter core
 sh firmware/libraries/BehaviorBox/extras/host_test/run_diff.sh    # the core against the Python replay
 sh firmware/libraries/BehaviorBox/extras/host_test/run_spine.sh   # the spine runner around the core
@@ -210,6 +211,14 @@ script's header carries the `cl` line.
 > warning: you get a size report and exit 0 on code that is wrong. That is how `GRGL_Sim` once kept
 > compiling against a changed `AntiBiasSelector` signature while reading a pointer as a trial count.
 > After changing anything shared, compile with `--warnings all` **and** run the host tests.
+
+## What the trial runner prints
+
+Every trial is framed the same way, whatever happens in it: a header naming the row and the answer it
+rewards, the timeline, exactly one outcome code, `INVALID_TRIAL` when the same trial comes back, and
+`END_TRIAL`. That is **stream grammar 2**, announced as `STREAM=2` before `READY`; the reference sequences,
+the outcome set and what changed from grammar 1 are in [TASKS.md › Stream grammar](../docs/TASKS.md#stream-grammar),
+and `run_stream.sh` holds `runTrial()` to them.
 
 ## Adding or changing a sketch
 

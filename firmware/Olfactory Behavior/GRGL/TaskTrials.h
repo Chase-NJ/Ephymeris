@@ -16,9 +16,10 @@
   A checkout compiles and runs exactly that with no app involved.
 
   THE ORDER IS THE CONTRACT. Slot i here is `poolWeights[i]` (wire key PW<i+1>)
-  AND `rewardTimes[i]` (wire key RW<i+1>), so reordering the table silently
-  re-weights a pool task and re-pays every condition. The generator emits the
-  table and both key lists together; a hand edit must too.
+  AND `rewardTimes[i]` (wire key RW<i+1>) AND the row's header code
+  BF_TRIAL_TYPE_<i+1>, so reordering the table silently re-weights a pool task,
+  re-pays every condition and renames every trial in the stream. The generator
+  emits the table and both key lists together; a hand edit must too.
 */
 
 #ifndef TASK_TRIALS_H
@@ -36,7 +37,8 @@ static TrialType kTrials[] = {
         BF_ODOR_1_ON,      // stimulus onset
         BF_FLUID_R,        // reward delivered
         BF_STOP_FLUID_G_R, // reward line closed
-        100                // reward volume (ms open); RW1 overrides
+        100,               // reward volume (ms open); RW1 overrides
+        BF_TRIAL_TYPE_1    // the row's code in every trial header
         ),
     TrialType(
         true,
@@ -46,7 +48,8 @@ static TrialType kTrials[] = {
         BF_ODOR_3_ON,
         BF_FLUID_L,
         BF_STOP_FLUID_G_L,
-        100                // RW2 overrides
+        100,               // RW2 overrides
+        BF_TRIAL_TYPE_2
         ),
 };
 
@@ -61,5 +64,10 @@ static_assert(kTrialCount <= BOX_MAX_TRIAL_TYPES,
               "more trial types than BOX_MAX_TRIAL_TYPES -- raise it in "
               "TaskPins.h, or the pool weights, the reward volumes and the "
               "side lists cannot address them all");
+/*  And never more rows than the stream can name: TRIAL_TYPE_1..99 are the
+    header codes the vocabulary keeps for them (BehaviorBox.h). */
+static_assert(kTrialCount <= BOX_TRIAL_TYPE_LIMIT,
+              "more trial types than TRIAL_TYPE codes -- the stream cannot name "
+              "row 100");
 
 #endif // TASK_TRIALS_H

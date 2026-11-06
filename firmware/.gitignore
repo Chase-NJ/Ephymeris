@@ -10,6 +10,7 @@ build/
 # Host compile-check binaries (libraries/BehaviorBox/extras/host_test/run*.sh,
 # and the MSVC equivalents a Windows machine produces)
 libraries/**/extras/host_test/test
+libraries/**/extras/host_test/test_stream
 libraries/**/extras/host_test/test_box
 libraries/**/extras/host_test/test_interp
 libraries/**/extras/host_test/interp_driver

@@ -455,7 +455,10 @@ GRGL_DIR = Path(__file__).resolve().parents[2] / "firmware" / "Olfactory Behavio
 
 # Odor 1 rewards the right well (249), odor 3 the left (248) — GRGL's shipped
 # profile. Two hits, one miss, one abstention, then the board's own end strobe.
-STREAM = [221, 101, 249, 103, 248, 101, 248, 103, 101, 249, 246]
+#: Stream grammar 2: each trial's verdict is its outcome code (CORRECT, or a
+#: wrong well's error), never the poke. Odor 1: hit, miss, hit; odor 3: hit,
+#: then one trial nothing answered.
+STREAM = [221, 101, 249, 244, 103, 248, 244, 101, 248, 257, 103, 101, 249, 244, 246]
 
 
 def rx(*codes: int) -> list[OutputLine]:

@@ -2,6 +2,8 @@
 status: accepted
 ---
 
+> **2026-11-06:** the eight outcome codes and `BLOCK_START` were withdrawn from the shipped vocabulary while the spine is in development (no spine run has been recorded on a real box), so that [stream grammar 2](../TASKS.md#stream-grammar) could be issued under the names it wanted; `TRIAL_START` moved to 220, shared with the trial runner. The decision below stands; a machine that runs a spine task adds the codes on the Strobes page until the spine ships them again.
+
 # A spine run strobes each trial's outcome class
 
 [ADR 0003](0003-phase-spine-task-model.md#the-strobe-stream) left outcome codes out of a spine run's stream: the board strobes what it observed and what it did, and replay supplies the meaning. That keeps the stream honest, but a spine `.tsv` is unreadable without replay. A script cannot count a session's correct trials, a Debug Mode run (which has no live replay) shows no verdict, and a recording has no event at the moment a trial was decided. GRGL's stream has all three, through codes such as `RESP_OMIT` and `END_CORRECT_ITI`. We decided that **every trial a spine run marks strobes its outcome class**, as one of eight fixed, lab-wide codes, and that **replay predicts them**. This adds a verdict to the stream without anyone having to trust it.

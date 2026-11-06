@@ -444,6 +444,7 @@ Each session folder that has a log gets a `notes.md` beside its format folders: 
   "trial_seed": 288577176,
   "host_seed": 288577176,
   "interp": 1,
+  "stream": 2,
   "free_ram": 6000,              // ← illustrative; no Mega figure is recorded here
   "channel_set_hash": "3f0c9a17b2d4e588",
   "channel_set_hash_version": 2,
@@ -465,6 +466,7 @@ Each session folder that has a log gets a `notes.md` beside its format folders: 
 | `trial_seed` | What the **board** reported on its `SEED` line; absent if it never sent one |
 | `host_seed` | What the **app** put on the `START` line. Differs from `trial_seed` only if the firmware ignored it |
 | `interp` | The firmware interpreter the board announced as `INTERP=<n>` before `READY` ([TASKS.md](TASKS.md#confirming-the-parameters)), which says which number is which. Absent when it announced none. Describes the build, not the tuning, so it is never hashed |
+| `stream` | The strobe-stream grammar the board announced as `STREAM=<n>` before `READY` ([TASKS.md](TASKS.md#stream-grammar)): what picks the decoder ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#stream-grammar-2)). Absent when it announced none: every run recorded before the grammar, and every spine run. A fact about the build; never hashed |
 | `free_ram` | The bytes of RAM the board reported free with its tables loaded, announced as `FREE_RAM=<n>` beside `interp`. Every sketch built on `BehaviorBox.h` announces it, GRGL included, so new GRGL runs carry it too; runs recorded before it existed lack it. A header line like the rest: recovery reads it back like any `# key: value`, and nothing that scores or groups a run reads it. Never hashed, for the same reason |
 | `sync` | `"tick"` when the board announced `SYNC=TICK` before `READY`: its sync line pulsed once per tick that strobed, so every strobe of a tick shares one edge ([RECORDING.md](RECORDING.md#firmware-pulse)). Absent, the line pulsed once per strobe: every GRGL run, and every spine run from a board flashed before the tick pulse. What offline alignment against RHX's files must read before pairing edges with strobes. Never hashed, for the same reason as `interp` |
 | `channel_set_hash` | `ChannelSet.content_hash()` of the channel set the run's sketch was generated against ([TASKS.md](TASKS.md#registry-rules)), read at mapping inside the rig definition's read hold: no wiring or vocabulary write lands between it and the end of the session. Always a string, even when every digit is numeric. Describes the rig, not the tuning, so it is never hashed |
@@ -472,7 +474,7 @@ Each session folder that has a log gets a `notes.md` beside its format folders: 
 | `intan_*` | Present only inside a recording ([RECORDING.md](RECORDING.md#what-is-written)) |
 | `n_events` | `len(ts_data)` |
 | `ts_data` | `[code, timestamp_ms]` pairs exactly as the board sent them — ms since **that animal's own** session start, never re-based to wall clock |
-| `derived` | A [spine run](TASKS.md#spine-tasks)'s trial table, replayed from everything above ([below](#the-derived-trial-table)). The other nested value, and always last. Absent on a legacy or profile-less run |
+| `derived` | A [spine run](TASKS.md#spine-tasks)'s trial table, replayed from everything above, or a [stream-grammar-2](TASKS.md#stream-grammar) run's per-trial table, read off its headers and outcome codes ([below](#the-derived-trial-table)). The other nested value, and always last. Absent on a grammar-1 run |
 
 > [!CAUTION]
 > **Task fields are merged flat at the top level**, not under a `config` key. A profile whose `metadataKey` matched a core field would silently overwrite it, so `parse_profile` rejects any `metadataKey` in `tasks/profile.py`'s `CORE_METADATA_KEYS`. The set includes `task_profile` (the writer sets the snapshot after the task fields) and the `intan_*` fields; add any new core field to it.
@@ -487,6 +489,7 @@ A live append-only log, not a serialization of the document:
 # session_id: 2O-Bdisc_25
 # sketch: GRGL
 # interp: 1
+# stream: 2
 # free_ram: 6000
 # channel_set_hash: 3f0c9a17b2d4e588
 # channel_set_hash_version: 2
@@ -531,7 +534,7 @@ A profile-less sketch writes no snapshot: an empty one would claim a declaration
 
 ### The derived trial table
 
-A [spine run](TASKS.md#spine-tasks)'s `.json` and `.mat` carry its [trial table](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#the-trial-table) as a convenience for the lab's own scripts: what replay reads off the run, written once so a script need not replay it. `sessions/derived.py` builds it from `spine.replayed`, in the same replay Analytics runs.
+A [spine run](TASKS.md#spine-tasks)'s `.json` and `.mat` carry its [trial table](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#the-trial-table) as a convenience for the lab's own scripts: what replay reads off the run, written once so a script need not replay it. `sessions/derived.py` builds it from `spine.replayed`, in the same replay Analytics runs. A [stream-grammar-2](TASKS.md#stream-grammar) run carries its per-trial table the same way, read off its headers and outcome codes by `analytics/stream/grammar2.py`'s `rows_of` ([below](#a-grammar-2-runs-table)).
 
 ```jsonc
 "derived": {
@@ -552,6 +555,26 @@ A [spine run](TASKS.md#spine-tasks)'s `.json` and `.mat` carry its [trial table]
 - **`replay_version`** is `analytics/stream/spine.py`'s `REPLAY_VERSION`. It moves whenever a run's trial table would. `test_the_replay_version_pins_the_trial_table` pins a fingerprint of fixed runs' tables, so a change that misses the bump fails there. It is not `SCORE_VERSION`: the [cache](#caching) never holds a trial table.
 - **Strings are escaped in the `.mat` where they must be.** A character outside the BMP in a row, channel or phase name is written as its JSON escape ([the mat mirror](#the-mat-mirror)), so it never costs the run its `.mat`.
 - **Written at clean finalization** ([built once at the end](#built-once-at-the-end)) and by [crash recovery](#crash-recovery), where a crashed run's table runs through its last strobe and its last trial is `complete: false`. **Rewritten only by [Re-derive](#re-derive).**
+
+#### A grammar-2 run's table
+
+```jsonc
+"derived": {
+  "status": "ok", "detail": null, "interp": 1, "replay_version": 3,
+  "grammar": 2,             // the mark: this block's rows are a grammar-2 run's
+  "phases": [],
+  "trials": [{"index": 0, "type_slot": 1, "odor_line": 1, "side": "right", "sampled": true,
+              "outcome": "CORRECT", "outcome_class": "correct", "correct": true, "response": "right",
+              "reaction_ms": 412, "repeat": false,
+              "start_ms": 0, "light_on_ms": 1000, "odor_poke_ms": 1310, "odor_on_ms": 1810, "odor_off_ms": 2310,
+              "odor_unpoke_ms": 2460, "response_ms": 2872, "outcome_ms": 3072, "end_ms": 7320}]
+}
+```
+
+- **The columns are `grammar2.TrialRow`'s fields**, written by walking the dataclass as a spine run's are: the row's slot and odor line, the side the header named (`left`, `right` or `no_go`), whether odor was delivered, the outcome code's name and its class, `correct` (null for an abort), the well first poked, the reaction time (`ODOR_UNPOKE` to that poke), the repeat flag (`INVALID_TRIAL` in the footer), and the timestamp of each moment reached, null for one not. Times are ms from the run's earliest strobe.
+- **`grammar`** is 2 and only present on such a block; a spine run's struct keeps the exact fields it always had. `interp` is the header's, `replay_version` the same stamp, since Re-derive judges both kinds of block by it.
+- **Read with the run's own snapshot** when the file embeds one, else this machine's vocabulary with the conditions inferred from the stream, as scoring falls back to ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#which-profile-decodes-a-run)).
+- **The `.mat`** is the same N×1 struct array (`struct2table(S.derived.trials)`), with `grammar` a `double` beside `status`.
 
 **In the `.mat`**, `derived` is a scalar struct. `derived.trials` is an **N×1 struct array**, one element per trial, so `T = struct2table(S.derived.trials)` gives one row per trial and `S.derived.trials(5).outcome` reads one. Each element's `input_counts` and `scores` are K×1 struct arrays, and `phases` is a 1×P cell of char. Each field's class comes from its type: a number is a `double`, a bool a `logical` (a bool that may be null, such as `correct`, a `double` 1, 0 or `NaN`), a string `char`, and a list of numbers a 1×K `double` row. An empty `trials` is a 0×1 struct that keeps its fields.
 

@@ -38,7 +38,8 @@ export interface TrialTypeDef {
   /** A channel NAME, resolved against the rig's wiring — never a pin. */
   odorChannel: string;
   /** A vocabulary code NAME. Never derived from an odor index: the onsets run
-   *  101-109 and then 114-116, because 110-113 are retired. */
+   *  101-109 and then 114-116, because 110-113 were taken when they were
+   *  issued, and a code is never renumbered. */
   onsetStrobe: string;
   isGo: boolean;
   /** null on a no-go type only, where withholding is the correct answer. */
@@ -71,6 +72,11 @@ export type SelectionMode = "antibias" | "pool" | "weighted";
 
 export interface TaskDefinition extends TaskBase {
   selectionMode: SelectionMode;
+  /** The parameters this task shows and offers at session start, by
+   *  `metadataKey` (`TASKS.md#parameters`). The rest stay at their defaults,
+   *  unseen, and still ride the `SET` lines. Absent on a task saved before
+   *  the list existed, which reads as none. */
+  exposed?: string[];
   trials: TrialTypeDef[];
   /** Always at least one row. An empty ramp is not "no ramp" — it is a task
    *  with no holds at all, which the firmware cannot express. */

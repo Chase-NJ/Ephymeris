@@ -1,24 +1,32 @@
-"""A spine run's derived trial table, written into its `.json` and `.mat`
+"""A run's derived trial table, written into its `.json` and `.mat`
 (`DATA.md#the-derived-trial-table`).
 
-Finalization and recovery replay a spine run once (`analytics/stream/spine.py`'s
-`replayed`) and write what it gives into the document as one block, last:
+Finalization and recovery derive it once and write what it gives into the
+document as one block, last. A spine run's is its replay
+(`analytics/stream/spine.py`'s `replayed`):
 
     "derived": {"status": "ok", "detail": null, "interp": 6, "replay_version": 3,
                 "phases": [...], "trials": [{"index": 0, "at_ms": 0, ...}, ...]}
 
 stamped with the `INTERP` the run was replayed under and `spine.REPLAY_VERSION`.
 A diverged or unreplayable run gets the block with its status, why, and no
-trials; a legacy or profile-less run gets none. **The app never reads it**:
-`analytics/reader.py` drops it, and Analytics replays. Re-derive
-(`rederive_cohort`) rewrites it, and nothing else, after the replay changes.
+trials. A stream-grammar-2 run's is its per-trial table, read off its headers
+and outcome codes (`analytics/stream/grammar2.py`'s `rows_of`):
 
-A trial row is written by walking `ReplayTrial`'s dataclass fields, so a column
-added there is written here with no change. Its `.mat` class comes from each
-field's type hint (`_kind`): a number is a `double` (null is `NaN`, never `[]`,
-so `[trials.latency_ms]` stays one value per trial), a bool a `logical`, a
-string `char` (null is `''`), a tuple of numbers a row vector, and a tuple of
-dataclasses an N×1 struct array.
+    "derived": {"status": "ok", "detail": null, "interp": 1, "replay_version": 3,
+                "grammar": 2, "phases": [],
+                "trials": [{"index": 0, "type_slot": 1, "side": "right", ...}, ...]}
+
+A grammar-1 or profile-less run gets none. **The app never reads it**:
+`analytics/reader.py` drops it, and Analytics decodes afresh. Re-derive
+(`rederive_cohort`) rewrites it, and nothing else, after the decoder changes.
+
+A trial row is written by walking the row dataclass's fields (`ReplayTrial`,
+or a grammar-2 run's `TrialRow`), so a column added there is written here with
+no change. Its `.mat` class comes from each field's type hint (`_kind`): a
+number is a `double` (null is `NaN`, never `[]`, so `[trials.latency_ms]` stays
+one value per trial), a bool a `logical`, a string `char` (null is `''`), a
+tuple of numbers a row vector, and a tuple of dataclasses an N×1 struct array.
 
 numpy is imported on use only (`DATA.md#the-mat-mirror`).
 """
@@ -36,8 +44,11 @@ from pathlib import Path
 from typing import Any
 
 from ..analytics import reader
-from ..analytics.stream import spine
+from ..analytics.stream import grammar2, spine
 from ..analytics.stream import trial_table as tt
+from ..analytics.stream.legacy import infer
+from ..rig import registry
+from ..tasks import profile as task_profile
 from ..tasks.profile import DERIVED_KEY
 
 log = logging.getLogger(__name__)
@@ -47,21 +58,42 @@ log = logging.getLogger(__name__)
 
 
 def derive(document: dict[str, Any]) -> dict[str, Any] | None:
-    """The derived block for a run's document, or None for a run replay does
-    not describe: a legacy run, or one with no profile. Replays it once.
+    """The derived block for a run's document, or None for a run neither replay
+    nor the grammar-2 decoder describes: a grammar-1 run. Decodes it once.
 
-    A stored block in `document` is never read: the run is replayed afresh.
+    A stored block in `document` is never read: the run is decoded afresh.
     """
-    if not spine.is_spine_run(document):
+    if spine.is_spine_run(document):
+        try:
+            result = spine.replayed(document)
+        except spine.SpineDecodeError as exc:
+            interp = document.get("interp")
+            return _block("unreplayable", str(exc), interp if _is_int(interp) else None, (), ())
+        if result.divergence is not None:
+            return _block("diverged", result.divergence.detail, result.interp, result.phases, ())
+        return _block("ok", None, result.interp, result.phases, result.trials)
+    profile = _profile_for(document)
+    if not grammar2.is_grammar2_run(document, profile):
         return None
-    try:
-        result = spine.replayed(document)
-    except spine.SpineDecodeError as exc:
-        interp = document.get("interp")
-        return _block("unreplayable", str(exc), interp if _is_int(interp) else None, (), ())
-    if result.divergence is not None:
-        return _block("diverged", result.divergence.detail, result.interp, result.phases, ())
-    return _block("ok", None, result.interp, result.phases, result.trials)
+    interp = document.get("interp")
+    block = _block("ok", None, interp if _is_int(interp) else None, (), grammar2.rows_of(document, profile))
+    return {**block, "grammar": grammar2.GRAMMAR_2, "phases": [], "trials": block["trials"]}
+
+
+def _profile_for(document: dict[str, Any]) -> task_profile.TaskProfile | None:
+    """The names a grammar-2 run is read with: its own snapshot
+    (`DATA.md#the-embedded-task-profile`), else this machine's vocabulary with
+    the conditions inferred from the stream, as scoring falls back to."""
+    embedded = task_profile.embedded_profile(document)
+    if embedded is not None:
+        return embedded
+    return infer.infer_profile(reader_codes(document), vocabulary=registry.vocabulary())
+
+
+def reader_codes(document: dict[str, Any]) -> list[int]:
+    from ..analytics.stream import codes_of
+
+    return codes_of(document)
 
 
 def with_derived(document: dict[str, Any]) -> dict[str, Any]:
@@ -91,6 +123,12 @@ def _block(status: str, detail: str | None, interp: int | None, phases: Any, tri
         "phases": [str(p) for p in phases],
         "trials": [_plain(t) for t in trials],
     }
+
+
+def row_class(block: dict[str, Any]) -> type:
+    """The dataclass a block's rows were written from: a grammar-2 run's
+    `TrialRow`, else the replay's `ReplayTrial`."""
+    return grammar2.TrialRow if block.get("grammar") == grammar2.GRAMMAR_2 else tt.ReplayTrial
 
 
 def _plain(value: Any) -> Any:
@@ -165,14 +203,19 @@ def to_matlab(block: dict[str, Any]) -> dict[str, Any]:
     cells = np.empty((1, len(phases)), dtype=object)
     for i, phase in enumerate(phases):
         cells[0, i] = _mat(_Kind("text"), phase)
-    return {
+    out = {
         "status": _mat(_Kind("text"), block.get("status")),
         "detail": _mat(_Kind("text"), block.get("detail")),
         "interp": _mat(_Kind("number"), block.get("interp")),
         "replay_version": _mat(_Kind("number"), block.get("replay_version")),
         "phases": cells,
-        "trials": _mat(_Kind("records", fields_of(tt.ReplayTrial)), block.get("trials") or []),
+        "trials": _mat(_Kind("records", fields_of(row_class(block))), block.get("trials") or []),
     }
+    if "grammar" in block:
+        # Only a grammar-2 block carries it, so a spine run's struct keeps the
+        # exact fields it always had.
+        out["grammar"] = _mat(_Kind("number"), block.get("grammar"))
+    return out
 
 
 def _bmp(text: str) -> str:
@@ -240,7 +283,7 @@ def rederive_file(json_path: Path) -> dict[str, Any] | None:
         document = json.loads(json_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None  # a torn or unreadable file is Recover's, and the rescan reports it
-    if not isinstance(document, dict) or not spine.is_spine_run(document):
+    if not isinstance(document, dict):
         return None
     entry: dict[str, Any] = {"jsonPath": str(json_path), "status": "failed", "reason": None,
                              "matError": None, "written": []}
@@ -251,6 +294,8 @@ def rederive_file(json_path: Path) -> dict[str, Any] | None:
         log.exception("couldn't re-derive %s", json_path)
         entry["reason"] = f"couldn't replay it: {exc!r}"
         return entry
+    if block is None:
+        return None  # a grammar-1 run: nothing to derive
     stored = document.get(DERIVED_KEY)
     held = _kept(stored, block)
     if held is not None:

@@ -279,7 +279,7 @@ export const GROUP_ORDER: readonly string[] = [
 ];
 
 /**
- * How the task editor files a profile's groups (`TASKS.md#parameter-dial`).
+ * How the task editor files a profile's groups (`TASKS.md#parameters`).
  *
  * A tab is a *reading* of a profile, never a key in one. `group` rides in
  * `ConfigField.to_json`, so it is inside `profile_hash` — re-filing a field
@@ -288,7 +288,7 @@ export const GROUP_ORDER: readonly string[] = [
  * same reasoning `QUICK_TUNE_GROUPS` below rests on, and the reason both
  * registries live in the app rather than in `fields.py`.
  *
- * Three homes besides a group's own dial stop:
+ * Three homes besides a group's own section in the parameters panel:
  *
  * - **Holds & shaping** — the ramp's groups, edited as one stage list.
  * - **Trial generation** — how the next trial is chosen: the anti-bias side
@@ -320,14 +320,14 @@ export function tabOf(group: string): string {
 /**
  * The groups one tab holds, in `GROUP_ORDER`, out of those a profile declares.
  *
- * Order matters for the same reason it does on the dial: a fold renders as
+ * Order matters for the same reason it does in the panel: a fold renders as
  * stacked sub-sections, in the order the values take effect.
  */
 export function groupsOfTab(tab: string, declared: Iterable<string>): string[] {
   return orderGroups([...declared].filter((group) => tabOf(group) === tab));
 }
 
-/** Where each tab sits on the dial — trial order, the way `GROUP_ORDER` is. */
+/** Where each tab sits — trial order, the way `GROUP_ORDER` is. */
 const TAB_ORDER: readonly string[] = [
   "Session",
   GENERATION_TAB,
@@ -345,16 +345,6 @@ export function orderTabs(tabs: Iterable<string>): string[] {
     const rb = rank.get(b) ?? Number.MAX_SAFE_INTEGER;
     return ra !== rb ? ra - rb : a.localeCompare(b);
   });
-}
-
-/**
- * The dial's stops for a profile's declared groups: every tab except the two
- * that have homes of their own on the page (generation, and the rows).
- */
-export function dialTabs(declared: Iterable<string>): string[] {
-  return orderTabs([...declared].map(tabOf)).filter(
-    (tab) => tab !== GENERATION_TAB && tab !== ROWS_TAB,
-  );
 }
 
 /**
@@ -773,7 +763,9 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
       lane: "floor",
       detail: "Odor was delivered, but the animal left before sampling completed.",
       governedBy: STAGES,
-      entryNames: [],
+      // Grammar 2 gives this release its own code (`TASKS.md#stream-grammar`);
+      // grammar 1's shared code puts the token nowhere, as before.
+      entryNames: ["ODOR_UNPOKE_EARLY_SAMPLING"],
     });
     for (const arm of odorArms) {
       edge({
@@ -894,7 +886,8 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
       detail: "Correct well, held to the end — fluid delivered.",
       needs: () => has("FLUID_L") || has("FLUID_R"),
       governedBy: ["Reward volume", ...STAGES],
-      entryNames: ["FLUID_L", "FLUID_R"],
+      // CORRECT is grammar 2's verdict, strobed just before the fluid.
+      entryNames: ["CORRECT", "FLUID_L", "FLUID_R"],
       settlesToIti: rewardSettles,
       edgeLabel: "correct, held",
       kind: "reward",
@@ -946,12 +939,12 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
     {
       id: "no-response",
       label: "No answer",
-      detail: "The response window elapsed with no well answered. Emits no strobe of its own.",
+      detail: "The response window elapsed with no well answered.",
       needs: () => true,
       governedBy: STAGES,
-      entryNames: [],
-      // Moot: nothing puts the token here, since a response window that simply
-      // elapsed emits no strobe of its own.
+      // The omission's own code; a stream recorded before the firmware emitted
+      // one puts the token nowhere here.
+      entryNames: ["RESP_OMIT"],
       settlesToIti: true,
       kind: "error",
       from: "window",
@@ -1021,6 +1014,7 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
       "WATER_UNPOKE_R",
       "END_CORRECT_ITI",
       "END_INCORRECT_ITI",
+      "END_TRIAL",
     ],
   });
   for (const outcome of outcomes) {
@@ -1131,6 +1125,9 @@ const TRIAL_BOUNDARY = new Set([
   "INVALID_TRIAL",
   "END_CORRECT_ITI",
   "END_INCORRECT_ITI",
+  // Stream grammar 2: the header opens a trial and the footer closes every one.
+  "TRIAL_START",
+  "END_TRIAL",
   "END_SESSION",
   "START_SESSION",
 ]);

@@ -1,5 +1,5 @@
 {
-  "taskName": "GRGL \u2014 olfactory discrimination",
+  "taskName": "GRGL — olfactory discrimination",
   "kind": "behavior",
   "config": [
     {
@@ -185,7 +185,7 @@
     {
       "metadataKey": "pool_weight_1",
       "wireKey": "PW1",
-      "label": "Weight \u2014 odor 1 (go right)",
+      "label": "Weight — odor 1 (go right)",
       "type": "int",
       "default": 1,
       "group": "Trial pool",
@@ -198,7 +198,7 @@
     {
       "metadataKey": "pool_weight_2",
       "wireKey": "PW2",
-      "label": "Weight \u2014 odor 3 (go left)",
+      "label": "Weight — odor 3 (go left)",
       "type": "int",
       "default": 1,
       "group": "Trial pool",
@@ -369,18 +369,30 @@
   "liveMetrics": [
     {
       "id": "p_r_odor1",
-      "label": "P(R | Odor 1)",
+      "label": "P(correct | Odor 1)",
       "trigger": "ODOR_1_ON",
-      "success": "WATER_POKE_R",
-      "alternate": "WATER_POKE_L",
+      "success": "CORRECT",
+      "alternate": [
+        "WATER_POKE_ERROR_L",
+        "WATER_POKE_ERROR_R",
+        "WATER_UNPOKE_EARLY_L",
+        "WATER_UNPOKE_EARLY_R",
+        "RESP_OMIT"
+      ],
       "windowSize": 20
     },
     {
       "id": "p_l_odor3",
-      "label": "P(L | Odor 3)",
+      "label": "P(correct | Odor 3)",
       "trigger": "ODOR_3_ON",
-      "success": "WATER_POKE_L",
-      "alternate": "WATER_POKE_R",
+      "success": "CORRECT",
+      "alternate": [
+        "WATER_POKE_ERROR_L",
+        "WATER_POKE_ERROR_R",
+        "WATER_UNPOKE_EARLY_L",
+        "WATER_UNPOKE_EARLY_R",
+        "RESP_OMIT"
+      ],
       "windowSize": 20
     }
   ],

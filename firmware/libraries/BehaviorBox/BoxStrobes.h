@@ -18,7 +18,30 @@
   would decode under different names.
 
   Never compute a code from an index: the odor onsets run 101-109 and then
-  114-116, because 110-113 are retired codes recorded sessions contain.
+  114-116, because 110-113 were taken when the onsets were issued and a code
+  is never renumbered, not even after the gap was freed. The
+  same goes for a row's header code: TRIAL_TYPE_<n> sits at 400 + n, and the
+  generated TaskTrials.h writes BF_TRIAL_TYPE_<n> into each row by name.
+
+  WHAT THE TRIAL RUNNER EMITS (stream grammar 2, docs/TASKS.md#stream-grammar),
+  by vocabulary name; emitTrialHeader(), runTrial() and emitTrialFooter() in
+  BehaviorBox.h are the emitters:
+
+    header    TRIAL_START, then TRIAL_GO_LEFT / TRIAL_GO_RIGHT / TRIAL_NO_GO,
+              then TRIAL_TYPE_<row>
+    timeline  LIGHTS_ON, ODOR_POKE, ODOR_<n>_ON, ODOR_OFF, ODOR_UNPOKE, LIGHTS_OFF,
+              WATER_POKE_L/R, FLUID_L/R, STOP_FLUID_G_L/R, WATER_UNPOKE_L/R --
+              each present only if reached, in time order
+    outcome   exactly one of CORRECT, WATER_POKE_ERROR_L/R, WATER_UNPOKE_EARLY_L/R,
+              RESP_OMIT, WATER_POKE_NONE, LAZY_RAT, ODOR_UNPOKE_EARLY,
+              ODOR_UNPOKE_EARLY_SAMPLING, stamped when the trial was scored
+    footer    INVALID_TRIAL only when the next trial re-presents this one, then
+              END_TRIAL always
+
+  RETIRED, emitted by nothing: END_CORRECT_ITI (242) and END_INCORRECT_ITI
+  (243), grammar 1's terminators. They stay reserved -- recorded sessions
+  contain them -- and the app still decodes a stream that ends its trials with
+  them. A board announces the grammar it speaks as STREAM=<n> before READY.
 */
 
 #ifndef BOX_STROBES_H

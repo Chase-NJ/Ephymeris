@@ -3,7 +3,7 @@ GRGL_Sim.ino -- rig simulator for the GRGL 2-odor task.
 Author: Chase Johnston
 
 Emits the strobe stream the real GRGL sketch would, over the same serial
-protocol (announce "INTERP=<n>" and "READY", answer SET lines with PARAMS,
+protocol (announce "INTERP=<n>", "STREAM=<n>" and "READY", answer SET lines with PARAMS,
 wait for a "START" line, emit a "SEED<TAB>value" line, then send tab-separated "CODE<TAB>MS" lines), so the app can be exercised
 end-to-end with no animal in the box.
 
@@ -65,27 +65,29 @@ inter-trial gap), leaving codes and order identical but making the printed
 timestamps a fraction of a real session's millis() -- useful for a quick smoke
 test of the app's whole strobe path, never for anything that reads the clock.
 
-Outcomes covered, with the strobe sequence each emits (mirrors runTrial() /
-checkResponse() in BehaviorBox.h):
+Outcomes covered, with the strobe sequence each emits (stream grammar 2,
+mirroring emitTrialHeader() / runTrial() / checkResponse() / emitTrialFooter()
+in BehaviorBox.h). Every trial opens with the header TRIAL_START,
+TRIAL_GO_RIGHT|TRIAL_GO_LEFT, TRIAL_TYPE_<row> and closes with END_TRIAL:
 
-  Administered Go trial = LIGHTS_ON, ODOR_POKE, ODOR_x_ON,
+  Administered Go trial = header, LIGHTS_ON, ODOR_POKE, ODOR_x_ON,
                           ODOR_OFF, ODOR_UNPOKE, LIGHTS_OFF, then one well outcome:
-    reward        -> WATER_POKE(side), FLUID(side), STOP_FLUID(side),
-                     WATER_UNPOKE(side), END_CORRECT_ITI
-    hold-fail     -> WATER_POKE(side), WATER_UNPOKE_EARLY(side),
-                     END_INCORRECT_ITI   (correct well, released before the
-                     fluidWellHold -- a consummatory hold failure, NOT a wrong
-                     choice; terminates with END_INCORRECT_ITI exactly as the
-                     firmware does after delay(noPokeHoldTimeout))
-    wrong well    -> WATER_POKE(other), WATER_POKE_ERROR(other),
-                     END_INCORRECT_ITI
+    reward        -> WATER_POKE(side), CORRECT, FLUID(side), STOP_FLUID(side),
+                     WATER_UNPOKE(side), END_TRIAL
+    hold-fail     -> WATER_POKE(side), WATER_UNPOKE_EARLY(side), END_TRIAL
+                     (correct well, released before the fluidWellHold -- a
+                     consummatory hold failure, NOT a wrong choice; the
+                     firmware waits noPokeHoldTimeout before END_TRIAL)
+    wrong well    -> WATER_POKE(other), WATER_POKE_ERROR(other), END_TRIAL
 
-  Aborted trial (no ODOR_UNPOKE; firmware strobes INVALID_TRIAL too):
-    lazy rat            -> LIGHTS_ON, LAZY_RAT, LIGHTS_OFF, INVALID_TRIAL
-    early odor (pre-vac)-> LIGHTS_ON, ODOR_POKE, ODOR_UNPOKE_EARLY,
-                           LIGHTS_OFF, INVALID_TRIAL   (no odor-on code)
-    early odor (sample) -> LIGHTS_ON, ODOR_POKE, ODOR_x_ON, ODOR_UNPOKE_EARLY,
-                           LIGHTS_OFF, INVALID_TRIAL
+  Aborted trial (no ODOR_UNPOKE; the footer says it comes back):
+    lazy rat            -> header, LIGHTS_ON, LAZY_RAT, LIGHTS_OFF,
+                           INVALID_TRIAL, END_TRIAL
+    early odor (pre-vac)-> header, LIGHTS_ON, ODOR_POKE, ODOR_UNPOKE_EARLY,
+                           LIGHTS_OFF, INVALID_TRIAL, END_TRIAL   (no odor-on code)
+    early odor (sample) -> header, LIGHTS_ON, ODOR_POKE, ODOR_x_ON,
+                           ODOR_UNPOKE_EARLY_SAMPLING, LIGHTS_OFF,
+                           INVALID_TRIAL, END_TRIAL
 */
 
 #include "TaskPins.h"    // GENERATED: this rig's pins. Must precede BehaviorBox.h.
@@ -152,8 +154,8 @@ const int SIM_POLICY = POLICY_ODOR;
    pointers it once did. Slot 0 is go-right; `simGoRight` names it so the
    comparison at the selection site below still reads as a side test. */
 static TrialType simTrials[] = { // not const: START overwrites each row's rewardTime
-    TrialType(true, Odors[0], rightWell, RIGHT_WELL_FL_1, BF_ODOR_1_ON, BF_FLUID_R, BF_STOP_FLUID_G_R, 100),
-    TrialType(true, Odors[2], leftWell, LEFT_WELL_FL_1, BF_ODOR_3_ON, BF_FLUID_L, BF_STOP_FLUID_G_L, 100),
+    TrialType(true, Odors[0], rightWell, RIGHT_WELL_FL_1, BF_ODOR_1_ON, BF_FLUID_R, BF_STOP_FLUID_G_R, 100, BF_TRIAL_TYPE_1),
+    TrialType(true, Odors[2], leftWell, LEFT_WELL_FL_1, BF_ODOR_3_ON, BF_FLUID_L, BF_STOP_FLUID_G_L, 100, BF_TRIAL_TYPE_2),
 };
 const int simTrialCount = (int)(sizeof(simTrials) / sizeof(simTrials[0]));
 const TrialType *const simGoRight = &simTrials[0];
@@ -199,7 +201,7 @@ void actuate(int code)
     return;
   else if (code == activeTrial->odorOnCode)
     digitalWrite(vac, HIGH); // close the N.O.V., directing odor to the port
-  else if (code == BF_ODOR_OFF || code == BF_ODOR_UNPOKE_EARLY)
+  else if (code == BF_ODOR_OFF || code == BF_ODOR_UNPOKE_EARLY || code == BF_ODOR_UNPOKE_EARLY_SAMPLING)
   {
     digitalWrite(activeTrial->odorPin, LOW);
     digitalWrite(vac, LOW);
@@ -383,37 +385,37 @@ void goTrial(bool goRight, int outcome)
   bool correct = (outcome != OUT_WRONG_WELL); // reward & hold-fail are both correct-well
   emit(BF_ODOR_UNPOKE, 0);   // withdrew from the port; the light drops next
   emit(BF_LIGHTS_OFF, movementTime(goRight, correct)); // then movement to the well
+  /* The outcome and its delay; the loop closes the trial with END_TRIAL once
+     the delay has run, exactly where runTrial() returns to its caller. */
   switch (outcome)
   {
   case OUT_REWARD: // correct well, held to fluid
     emit(goRight ? BF_WATER_POKE_R : BF_WATER_POKE_L,
-         params.fluidWellHold); // hold cleared -> fluid
+         params.fluidWellHold); // hold cleared -> the outcome, then fluid
+    emit(BF_CORRECT, 0);
     emit(goRight ? BF_FLUID_R : BF_FLUID_L, activeTrial->rewardTime); // this type's volume
     emit(goRight ? BF_STOP_FLUID_G_R : BF_STOP_FLUID_G_L,
          WITHDRAW_TIME); // drinking, then the animal withdraws
     emit(goRight ? BF_WATER_UNPOKE_R : BF_WATER_UNPOKE_L,
          params.standardITI); // left the well -- the ITI runs from here
-    emit(BF_END_CORRECT_ITI, 0);
     // Where runTrial() clears it: only a COMPLETED CORRECT trial defuses the
-    // escalator. A hold-fail or a wrong well ends on END_INCORRECT_ITI and
-    // leaves the counter standing, and so must the two cases below.
+    // escalator. A hold-fail or a wrong well leaves the counter standing, and
+    // so must the two cases below.
     abstention.reset();
     break;
   case OUT_HOLD_FAIL: // correct well, released early
     // Mirrors checkResponse(): WATER_POKE(correct side) then, when the hold
     // fails, WATER_UNPOKE_EARLY(correct side); the firmware then waits
-    // noPokeHoldTimeout and runTrial() emits END_INCORRECT_ITI.
+    // noPokeHoldTimeout before the footer.
     emit(goRight ? BF_WATER_POKE_R : BF_WATER_POKE_L,
          holdFailDuration()); // released before fluidWellHold
     emit(goRight ? BF_WATER_UNPOKE_EARLY_R : BF_WATER_UNPOKE_EARLY_L,
          params.noPokeHoldTimeout); // failure-to-hold timeout
-    emit(BF_END_INCORRECT_ITI, 0);
     break;
   case OUT_WRONG_WELL: // poke the OTHER well, then its error
     emit(goRight ? BF_WATER_POKE_L : BF_WATER_POKE_R, 0); // classified immediately
     emit(goRight ? BF_WATER_POKE_ERROR_L : BF_WATER_POKE_ERROR_R,
          params.errorDelay); // wrong-well timeout
-    emit(BF_END_INCORRECT_ITI, 0);
     break;
   }
 }
@@ -430,7 +432,6 @@ void lazyTrial(int completedTrials)
   emit(BF_LAZY_RAT, 0);
   emit(BF_LIGHTS_OFF,
        abstention.nextDelay(escalationArmed(params, completedTrials)));
-  emit(BF_INVALID_TRIAL, 0);
 }
 
 /* Early odor unpoke before the vacuum closed -- odor was never delivered, so NO
@@ -441,21 +442,19 @@ void earlyOdorPreVac()
   emit(BF_ODOR_POKE, partialOdorHold()); // bails before the pre-odor hold completes
   emit(BF_ODOR_UNPOKE_EARLY, 0);
   emit(BF_LIGHTS_OFF, params.noPokeHoldTimeout);
-  emit(BF_INVALID_TRIAL, 0);
 }
 
 /* Early odor unpoke during sampling -- odor-on IS sent (the rat cleared the
    pre-odor hold), but it left before ODOR_OFF, so there's no ODOR_OFF /
-   ODOR_UNPOKE (not administered). */
+   ODOR_UNPOKE (not administered). Its own code, as runTrial() emits it. */
 void earlyOdorSampling(bool goRight)
 {
   emit(BF_LIGHTS_ON, APPROACH_TIME);
   emit(BF_ODOR_POKE, params.odorPokeHold); // cleared pre-odor hold -> odor on
   emit(goRight ? BF_ODOR_1_ON : BF_ODOR_3_ON,
        partialOdorHold()); // bails during the sample hold
-  emit(BF_ODOR_UNPOKE_EARLY, 0);
+  emit(BF_ODOR_UNPOKE_EARLY_SAMPLING, 0);
   emit(BF_LIGHTS_OFF, params.noPokeHoldTimeout);
-  emit(BF_INVALID_TRIAL, 0);
 }
 
 /* Mirror the real handshake: announce INTERP and READY, then the shared loop
@@ -506,9 +505,13 @@ void setup()
     if (checkForStop())
       break;
 
-    // 1. The firmware's own selector picks this trial's correct side.
+    // 1. The firmware's own selector picks this trial's correct side, and the
+    //    header names it: the row is scheduled before anything is primed.
     const TrialType *trial = selector.selectNext();
     bool goRight = (trial == simGoRight);
+    emit(BF_TRIAL_START, 0);
+    emit(goRight ? BF_TRIAL_GO_RIGHT : BF_TRIAL_GO_LEFT, 0);
+    emit(trial->typeCode, 0);
 
     // 2. Prime the odor and hold it: the valve opens, primingDelay elapses, and
     //    only then does the light come on. Selecting BEFORE the gap is what
@@ -527,6 +530,8 @@ void setup()
       else
         earlyOdorSampling(goRight);
       endTrial();
+      emit(BF_INVALID_TRIAL, 0); // the same trial comes back: the loop re-selects,
+      emit(BF_END_TRIAL, 0);     // but the animal model draws afresh either way
       continue; // an abort does not advance, so the ramp does not move
     }
 
@@ -548,6 +553,7 @@ void setup()
     goTrial(goRight, outcome);
     selector.recordChoice(ratRight); // expressed side feeds the anti-bias estimate
     endTrial();
+    emit(BF_END_TRIAL, 0); // the outcome's delay has run: the trial closes
 
     completed++;
     applyStage(params, completed); // walk the ramp, so a staged profile is visible

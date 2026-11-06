@@ -3569,6 +3569,7 @@ Parsed from the sketch's `task.json` sibling (`TASKS.md#task-profile`); passed t
 | `telemetry` *(optional)* | [TelemetrySpec](#shape-telemetryspec) | Utility profiles only. |
 | `identify` *(optional)* | [IdentifySpec](#shape-identifyspec) | Utility profiles only — absent means this sketch can't be asked to point at its own box, which the placement walk degrades around rather than refusing. |
 | `spine` *(optional)* | map&lt;string, unknown&gt; | Phase-spine tasks only (`TASKS.md#spine-tasks`): the snapshot replay reads — the definition, the state table as lowered, each bit's channel and edge code names, and each parameter slot's wire key. Absent on every other profile. |
+| `exposed` *(optional)* | string[] | The parameters a generated task shows in its editor and offers in the Start dialog, by `metadataKey` (`TASKS.md#parameters`); the rest stay at their defaults, unseen, and still ride the `SET` lines. Absent on a hand-written profile, which offers every field. Never hashed. |
 
 <a id="shape-tasksaved"></a>
 #### TaskSaved
@@ -3759,7 +3760,7 @@ One classified trial (`ANALYTICS.md#how-a-strobe-stream-is-scored`) — the same
 |---|---|---|
 | `index` | number | 0-based position in the stream's trial order. |
 | `triggerCode` | number | The condition code that opened this trial — one of `boundaries_for`'s union, so a `ConditionOutcomes.triggerCode` matches it directly. |
-| `outcome` | "rewarded" \| "hold-failed" \| "wrong-well" \| "no-response" \| "aborted" |  |
+| `outcome` | "rewarded" \| "hold-failed" \| "wrong-well" \| "no-response" \| "aborted" \| "withheld" \| "false-alarm" | The last two only on a stream-grammar-2 run, whose no-go trials say which they were (`ANALYTICS.md#stream-grammar-2`). |
 | `atMs` | number \| null | Trial open, in ms from the run's first recorded timestamp. Null when the file carries no usable clock. |
 | `latencyMs` | number \| null | Trial open → the code that settled the outcome. Null for no-response/aborted trials, which nothing settles. |
 
@@ -3770,7 +3771,7 @@ A run's trial table (`ANALYTICS.md#the-trial-table`).
 
 | Field | Type | Notes |
 |---|---|---|
-| `kind` | "replay" \| "legacy" | Read off a replay, or by the legacy decoder. |
+| `kind` | "replay" \| "legacy" \| "grammar2" | Read off a replay, by the legacy decoder, or off a stream-grammar-2 run's headers and outcome codes (`ANALYTICS.md#stream-grammar-2`). |
 | `phases` | string[] | Each phase's kind, in spine order, for labels only. Empty for a legacy run. |
 | `gaps` | string[] | The columns this table cannot fill, so empty means unknown rather than none: `phase-entries`, `input-counts`, `no-go-outcomes`, `outcomes`, `presentations` (`ANALYTICS.md#how-a-legacy-run-becomes-a-trial-table`). |
 | `trials` | [ReplayTrial](#shape-replaytrial)[] |  |

@@ -345,10 +345,23 @@ def swapped_pins() -> dict:
     return doc
 
 
+def with_spine_vocabulary(data_dir: Path) -> Path:
+    """Seed `data_dir`'s vocabulary with the spine's codes before its sidecar
+    starts, as a machine that runs a spine task has them (the shipped default
+    declares them no longer; `tests/fixtures/spine.py`)."""
+    from ephymeris_sidecar.strobes import store as strobe_store
+
+    vocab_store = strobe_store.VocabularyStore(data_dir)
+    vocab_store.root.mkdir(parents=True, exist_ok=True)
+    vocab_store.path.write_text(
+        json.dumps(fixture.with_spine_codes(registry.default_vocabulary_document())), encoding="utf-8")
+    return data_dir
+
+
 async def machine_a_exports(tmp_path) -> tuple[dict, dict, Path]:
     """Machine A: its own wiring saved, the tracer stored by a newer build.
     Returns (A's channel set export, A's task export, A's data dir)."""
-    data = tmp_path / "a"
+    data = with_spine_vocabulary(tmp_path / "a")
     (data / "tasks").mkdir(parents=True)
     # As the app stores one (`TaskStore`), so the bytes can be compared on B.
     (data / "tasks" / "spine_tracer.json").write_text(
@@ -365,7 +378,7 @@ async def machine_a_exports(tmp_path) -> tuple[dict, dict, Path]:
 async def test_a_task_exported_on_one_machine_strobes_identical_codes_on_another(tmp_path):
     channel_set, exported, a = await machine_a_exports(tmp_path)
 
-    async with live_sidecar(tmp_path / "b") as b:
+    async with live_sidecar(with_spine_vocabulary(tmp_path / "b")) as b:
         await b.call("hardware.save", document=swapped_pins(), confirm=True)
         await b.call("hardware.importChannelSet", document=channel_set, apply=True, confirm=True)
         plan = (await b.call("tasks.import", document=exported, apply=False))["plan"]
@@ -398,7 +411,7 @@ async def test_a_task_exported_on_one_machine_strobes_identical_codes_on_another
 async def test_an_import_naming_a_missing_or_differing_channel_writes_nothing_and_says_why(tmp_path):
     _channel_set, exported, _a = await machine_a_exports(tmp_path)
 
-    b_dir = tmp_path / "b"
+    b_dir = with_spine_vocabulary(tmp_path / "b")
     # B already has a task of its own, so "nothing written" has bytes to keep.
     (b_dir / "tasks").mkdir(parents=True)
     (b_dir / "tasks" / "b_own.json").write_text(
@@ -450,7 +463,7 @@ async def test_replacing_a_saved_task_needs_confirm(tmp_path):
 async def test_a_stored_task_that_will_not_read_is_not_found_for_export(tmp_path):
     (tmp_path / "b" / "tasks").mkdir(parents=True)
     (tmp_path / "b" / "tasks" / "broken.json").write_text('{"id": "Not An Id"}', encoding="utf-8")
-    async with live_sidecar(tmp_path / "b") as b:
+    async with live_sidecar(with_spine_vocabulary(tmp_path / "b")) as b:
         await b.call("hardware.save", document=rig_store.default_document(), confirm=True)
         with pytest.raises(Refused) as refused:
             await b.call("tasks.export", taskId="broken")
@@ -458,7 +471,7 @@ async def test_a_stored_task_that_will_not_read_is_not_found_for_export(tmp_path
 
 
 async def test_a_file_that_is_not_an_export_is_task_transfer_invalid(tmp_path):
-    async with live_sidecar(tmp_path / "b") as b:
+    async with live_sidecar(with_spine_vocabulary(tmp_path / "b")) as b:
         with pytest.raises(Refused) as refused:
             await b.call("tasks.import", document={"x": 1}, apply=False)
     assert refused.value.code == "TASK_TRANSFER_INVALID"

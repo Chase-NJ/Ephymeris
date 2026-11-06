@@ -13,6 +13,8 @@ import copy
 
 from ephymeris_sidecar.hardware.store import default_document
 from ephymeris_sidecar.rig import allocation, registry
+from ephymeris_sidecar.strobes import store as strobe_store
+from ephymeris_sidecar.taskdef import lowering
 
 
 #: Driven outputs a rig can add (`TASKS.md#driven-outputs`): (entry, pin). Pins
@@ -33,7 +35,7 @@ LICK_CHANNEL = ({"kind": "response", "type": "digital_in", "role": "port", "acti
 def issued_rig(driven: bool = False, lick: bool = False) -> tuple[dict, dict]:
     """(rig document, vocabulary document): the shipped rig after its first save,
     with `DRIVEN_CHANNELS` added first when `driven`, then `lick_spout` when `lick`."""
-    vocab_doc = registry.default_vocabulary_document()
+    vocab_doc = with_spine_codes(registry.default_vocabulary_document())
     doc = default_document()
     if driven:
         for name, (entry, pin) in DRIVEN_CHANNELS.items():
@@ -46,6 +48,21 @@ def issued_rig(driven: bool = False, lick: bool = False) -> tuple[dict, dict]:
         doc["pins"]["lick_spout"] = {"index": pin, "watch_bit": max(bits) + 1}
     rig, allocations = allocation.plan(doc, registry.Vocabulary(vocab_doc))
     return rig, allocation.issue(vocab_doc, allocations)
+
+
+#: Where the spine's own codes go: the numbers they shipped at before they were
+#: withdrawn from the default (2026-11-06, `docs/adr/0005`). A machine that runs
+#: a spine task adds them on the Strobes page; the fixture adds them here.
+SPINE_CODES = {"BLOCK_START": 271, **{name: 272 + i for i, name in enumerate(lowering.OUTCOME_CODES)}}
+
+
+def with_spine_codes(vocab_doc: dict) -> dict:
+    """`vocab_doc` with `BLOCK_START` and the eight outcome codes added, as a
+    machine running a spine task has them."""
+    for name, code in SPINE_CODES.items():
+        if name not in vocab_doc.get("codes", {}):
+            vocab_doc = strobe_store.add(vocab_doc, name, code, rationale="the phase spine's, for the tests")
+    return vocab_doc
 
 
 def install(rig: dict | None = None, vocab: dict | None = None) -> None:

@@ -6,7 +6,7 @@ import { EDITOR_MIN_W } from "./graphLayout";
  *
  * The state machine has a floor (`EDITOR_MIN_W`) and the page bends around it,
  * never the reverse. **Split**: the machine and the trial types in the main
- * column, the parameter dial and trial generation in an aside beside them —
+ * column, the parameters panel and trial generation in an aside beside them —
  * everything in one frame. **Stacked**: when the aside would squeeze the
  * machine below its floor, the aside's two panels move under the trial types
  * and the page scrolls.

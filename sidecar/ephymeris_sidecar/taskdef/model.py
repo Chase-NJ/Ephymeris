@@ -532,6 +532,10 @@ class TaskDefinition:
     #: not reach a saved profile, which is the same reasoning `taskDefaults`
     #: rests on (`TASKS.md#three-layer-merge`).
     params: dict[str, Any] = field(default_factory=dict)
+    #: The parameters the editor shows and the Start dialog offers, by
+    #: `metadataKey` (`TASKS.md#parameters`). Everything else stays at its
+    #: default, unseen, and still rides the `SET` lines. Empty on a new task.
+    exposed: list[str] = field(default_factory=list)
     #: Names the lab's archives record for runs this profile now covers. Without
     #: them those runs stop decoding in Analytics — silently, because a missing
     #: profile is treated as data.
@@ -573,6 +577,7 @@ class TaskDefinition:
             "trials": [t.to_json() for t in self.trials],
             "stages": [s.to_json() for s in self.stages],
             "params": dict(self.params),
+            "exposed": list(self.exposed),
             "legacyNames": list(self.legacy_names),
             "notes": self.notes,
         }
@@ -631,6 +636,9 @@ class TaskDefinition:
         legacy = raw.get("legacyNames", [])
         if not isinstance(legacy, list) or any(not isinstance(n, str) for n in legacy):
             raise TaskDefinitionError("legacyNames must be a list of strings")
+        exposed = raw.get("exposed", [])
+        if not isinstance(exposed, list) or any(not isinstance(n, str) for n in exposed):
+            raise TaskDefinitionError("exposed must be a list of parameter keys")
 
         stages = [StageRow.from_json(s) for s in stages_raw] or [StageRow()]
         spine = Spine.from_json(raw) if "spine" in raw else None
@@ -642,6 +650,7 @@ class TaskDefinition:
             trials=[TrialTypeDef.from_json(t) for t in trials_raw],
             stages=stages,
             params=_one_block_trials_key(_one_row_reward_keys(dict(params), spine), spine),
+            exposed=list(dict.fromkeys(exposed)),
             legacy_names=[n for n in legacy],
             notes=str(raw.get("notes", "")),
             # The `spine` key is what makes a definition a spine task.

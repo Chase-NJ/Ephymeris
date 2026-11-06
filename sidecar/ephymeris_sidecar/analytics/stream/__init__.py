@@ -12,6 +12,7 @@ table: a spine run's by replay, a legacy run's by the legacy decoder.
 | Module | Answers |
 |---|---|
 | `legacy/` | A legacy run's trial table, read from its strobe names; the live runner's scorer (`MetricSet`); inference |
+| `grammar2` | A stream-grammar-2 run's trial table, read off its headers and outcome codes; which grammar a run speaks; its per-trial rows for its files |
 | `replay`, `spine` | A spine run replayed from its own file, and checked against what it recorded |
 | `trial_table` | One row per trial, for both kinds of run |
 | `table_metrics` | P(correct \\| row) and P(hit) per condition, the pooled figure, a spine run's class tallies |

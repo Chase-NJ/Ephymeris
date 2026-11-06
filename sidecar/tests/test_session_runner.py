@@ -249,6 +249,25 @@ async def test_the_channel_set_hash_the_sketch_was_generated_against_is_in_the_h
     assert document["channel_set_hash_version"] == 2
 
 
+async def test_the_stream_grammar_the_board_announced_is_recorded(tmp_path: Path, bench: Bench) -> None:
+    """A trial runner announces `STREAM=2` before READY (`TASKS.md#stream-grammar`):
+    the header and the document keep it, so Analytics picks its decoder by the
+    board's own word, and it is a fact about the build, never hashed."""
+    runner, _events, ended = make_runner(tmp_path, bench)
+    runner.start_box(1)
+    board = await bench.run_handshake(1, seed=5, interp=1, stream=2)
+    await board.said("101\t0", "246\t10")
+
+    text = tsv_text(tmp_path)
+    assert "# stream: 2\n" in text and text.index("# stream: 2") < text.index("101\t0")
+    await wait_until(lambda: any((tmp_path / "behavior.json").glob("*.json")))
+    document = json.loads(next((tmp_path / "behavior.json").glob("*.json")).read_text(encoding="utf-8"))
+    assert document["stream"] == 2
+    await wait_until(lambda: len(ended) == 1)
+    run, _reason = ended[0]
+    assert run.stream == 2 and "stream" not in run.config.config_metadata
+
+
 async def test_a_board_that_announced_no_interpreter_records_none(tmp_path: Path, bench: Bench) -> None:
     runner, _events, _ended = make_runner(tmp_path, bench)
     runner.start_box(1)

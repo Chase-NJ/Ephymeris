@@ -205,12 +205,14 @@ def test_the_trial_table_reproduces_the_hand_written_one():
     trials = generate.task_trials_h(a_task())
     assert (
         "TrialType(true, Odors[0], rightWell, 2, BF_ODOR_1_ON, BF_FLUID_R, "
-        "BF_STOP_FLUID_G_R, 100)" in trials
+        "BF_STOP_FLUID_G_R, 100, BF_TRIAL_TYPE_1)" in trials
     )
     assert (
         "TrialType(true, Odors[2], leftWell, 0, BF_ODOR_3_ON, BF_FLUID_L, "
-        "BF_STOP_FLUID_G_L, 100)" in trials
+        "BF_STOP_FLUID_G_L, 100, BF_TRIAL_TYPE_2)" in trials
     )
+    # The stream can name at most 99 rows, and the table says so at build time.
+    assert "static_assert(kTrialCount <= BOX_TRIAL_TYPE_LIMIT," in trials
     # Not const: the last argument is overwritten from the START line.
     assert "static TrialType kTrials[]" in trials
     assert "static const TrialType" not in trials
@@ -227,8 +229,8 @@ def test_the_reward_volume_rides_the_row_into_the_table_and_the_wire():
         replace(task.trials[1], reward_time=80),
     ])
     trials = generate.task_trials_h(task)
-    assert "BF_STOP_FLUID_G_R, 150)" in trials
-    assert "BF_STOP_FLUID_G_L, 80)" in trials
+    assert "BF_STOP_FLUID_G_R, 150, BF_TRIAL_TYPE_1)" in trials
+    assert "BF_STOP_FLUID_G_L, 80, BF_TRIAL_TYPE_2)" in trials
     profile = generate.build_profile(task)
     by_key = {f.wire_key: f for f in profile.config}
     assert by_key["RW1"].default == 150 and by_key["RW2"].default == 80
@@ -349,7 +351,59 @@ def test_a_no_go_type_carries_the_sentinel_and_no_reward():
     ])
     assert validate(definition) == []
     trials = generate.task_trials_h(definition)
-    assert "TrialType(false, Odors[4], SENTINEL, SENTINEL, BF_ODOR_5_ON, 0, 0, 0)" in trials
+    assert "TrialType(false, Odors[4], SENTINEL, SENTINEL, BF_ODOR_5_ON, 0, 0, 0, BF_TRIAL_TYPE_2)" in trials
+
+
+def test_exposed_parameters_ride_the_definition_into_the_profile_and_never_its_hash():
+    """`TASKS.md#parameters`: the editor's choice of parameters to show is saved
+    with the task and generated into `task.json`, so the Start dialog offers
+    the same ones; a key the catalogue does not declare is dropped there; and
+    exposing a field moves no history, so it stays out of `profile_hash`."""
+    from dataclasses import replace
+
+    from ephymeris_sidecar.tasks.profile import profile_hash
+
+    plain = a_task()
+    assert plain.exposed == [] and TaskDefinition.from_json(plain.to_json()).exposed == []
+    chosen = replace(plain, exposed=["error_delay", "num_trials", "no_such_key", "error_delay"])
+    round_tripped = TaskDefinition.from_json(chosen.to_json())
+    assert round_tripped.exposed == ["error_delay", "num_trials", "no_such_key"]
+    assert generate.profile_json(chosen)["exposed"] == ["error_delay", "num_trials"]
+    assert generate.build_profile(chosen).exposed == ["error_delay", "num_trials"]
+    assert generate.build_profile(plain).exposed == []
+    assert profile_hash(generate.build_profile(chosen)) == profile_hash(generate.build_profile(plain))
+    with pytest.raises(TaskDefinitionError):
+        TaskDefinition.from_json({**plain.to_json(), "exposed": "error_delay"})
+
+
+def test_a_row_s_header_code_is_its_slot_in_the_table_never_its_slot_in_the_definition():
+    """The header code names the row's position in `kTrials[]` (stream
+    grammar 2), and a row the generator drops is not in `kTrials[]`: the rows
+    after it move up, and so do their codes."""
+    definition = a_task(trials=[
+        TrialTypeDef("odor_line_1", "ODOR_1_ON", True, "right_well", "fluid_2", label="Go right"),
+        TrialTypeDef("odor_line_99", "ODOR_2_ON", True, "right_well", "fluid_2", label="Dropped"),
+        TrialTypeDef("odor_line_3", "ODOR_3_ON", True, "left_well", "fluid_1", label="Go left"),
+    ])
+    trials = generate.task_trials_h(definition)
+    assert "BF_ODOR_1_ON, BF_FLUID_R, BF_STOP_FLUID_G_R, 100, BF_TRIAL_TYPE_1)" in trials
+    assert "BF_ODOR_3_ON, BF_FLUID_L, BF_STOP_FLUID_G_L, 100, BF_TRIAL_TYPE_2)" in trials
+    assert "BF_TRIAL_TYPE_3" not in trials
+
+
+def test_a_row_past_the_declared_type_codes_is_reported():
+    """TSK115: the vocabulary names twelve rows; a thirteenth presentable row
+    would be built against a `BF_TRIAL_TYPE_13` nothing defines."""
+    from ephymeris_sidecar.strobes import store as strobe_store
+
+    doc = registry.default_vocabulary_document()
+    for n in range(2, 13):
+        doc = strobe_store.remove(doc, f"TRIAL_TYPE_{n}", sessions_containing=0)
+    definition = a_task()
+    with registry.hypothetical(vocabulary=doc):
+        reported = {d.code: d.location for d in validate(definition)}
+    assert reported.get("TSK115") == "trials[1]"
+    assert "TSK115" not in codes(a_task())
 
 
 def test_a_repin_moves_the_generated_header_and_nothing_else():
@@ -418,9 +472,27 @@ def test_live_metrics_gate_the_state_machine_drawing():
         assert metric.success_code != metric.alternate_code
 
 
+def test_a_go_metric_is_scored_on_the_outcome_codes():
+    """Stream grammar 2: the verdict is the trial's one outcome code, never the
+    first well poked. `CORRECT` is the hit; the wrong well, a hold let go of
+    early and no answer at all are the misses -- so a hold failure is a miss,
+    where the grammar-1 metric counted the correct well as a hit."""
+    from ephymeris_sidecar.rig.registry import Vocabulary
+
+    seed = Vocabulary(registry.default_vocabulary_document())
+    code = seed.code_of
+    metrics = {m.trigger_code: m for m in generate.build_profile(a_task()).live_metrics}
+    right = metrics[code("ODOR_1_ON")]
+    assert right.success_code == code("CORRECT")
+    assert right.alternate_codes == tuple(code(n) for n in generate.GO_ERROR_OUTCOMES)
+    assert right.label == "P(correct | Go right)"
+
+
 def test_a_no_go_metric_misses_at_every_response_port():
-    """A no-go trial is wrong at ANY port. An alternate of one port left a poke
-    at the other matching neither code, so the trial fell out of P(withhold)."""
+    """A no-go trial is wrong at ANY port: the runner answers a poke at either
+    well with that well's error code, and both score the miss. One alternate
+    left a poke at the other matching nothing, so the trial fell out of
+    P(withhold)."""
     definition = a_task(trials=[
         TrialTypeDef("odor_line_1", "ODOR_1_ON", True, "right_well", "fluid_2",
                      label="Go right"),
@@ -433,9 +505,7 @@ def test_a_no_go_metric_misses_at_every_response_port():
     metrics = {m.trigger_code: m for m in generate.build_profile(definition).live_metrics}
     no_go = metrics[code("ODOR_5_ON")]
     assert no_go.success_code == code("WATER_POKE_NONE")
-    assert no_go.alternate_codes == (code("WATER_POKE_L"), code("WATER_POKE_R"))
-    # A go type still has exactly one: the other well.
-    assert metrics[code("ODOR_1_ON")].alternate_codes == (code("WATER_POKE_L"),)
+    assert no_go.alternate_codes == (code("WATER_POKE_ERROR_L"), code("WATER_POKE_ERROR_R"))
 
 
 # --------------------------------------------------------------------------- #
@@ -556,7 +626,7 @@ def test_a_condition_s_name_titles_its_live_metric():
         TrialTypeDef("odor_line_1", "ODOR_1_ON", True, "right_well", "fluid_2",
                      label="orange → right"),
     ]))
-    assert [m.label for m in profile.live_metrics] == ["P(right well | orange → right)"]
+    assert [m.label for m in profile.live_metrics] == ["P(correct | orange → right)"]
 
 
 def test_an_unordered_ramp_is_reported():
@@ -1028,7 +1098,15 @@ def test_everything_the_firmware_emits_is_in_the_default_vocabulary():
     if names is None:
         pytest.skip("no firmware/ beside the sidecar (a packaged build)")
     vocab = registry.Vocabulary(registry.default_vocabulary_document())
-    assert names <= vocab.names(), f"named in firmware, not in the vocabulary: {sorted(names - vocab.names())}"
+    # BoxSpine.h names the spine's own codes, withdrawn from the default while
+    # the spine is in development (`docs/adr/0005`); a machine running a spine
+    # task adds them on the Strobes page, and the spine fixture adds them.
+    from ephymeris_sidecar.taskdef import lowering
+    from tests.fixtures.spine import SPINE_CODES
+
+    assert set(SPINE_CODES) == {"BLOCK_START", *lowering.OUTCOME_CODES}
+    assert names - set(SPINE_CODES) <= vocab.names(), \
+        f"named in firmware, not in the vocabulary: {sorted(names - set(SPINE_CODES) - vocab.names())}"
 
 
 def test_every_default_code_has_a_mechanism_that_emits_it():
@@ -1044,8 +1122,11 @@ def test_every_default_code_has_a_mechanism_that_emits_it():
     if names is None:
         pytest.skip("no firmware/ beside the sidecar (a packaged build)")
     vocab = registry.Vocabulary(registry.default_vocabulary_document())
+    # A row's header code reaches a sketch the way an onset does: through the
+    # generated `TaskTrials.h`, one per row the table binds.
     orphaned = {
-        n for n in vocab.names() - names if not re.search(r"_\d+_ON$", n)
+        n for n in vocab.names() - names
+        if not re.search(r"_\d+_ON$", n) and not re.fullmatch(r"TRIAL_TYPE_\d+", n)
     }
     assert not orphaned, f"declared with nothing to emit them: {sorted(orphaned)}"
 
@@ -1059,28 +1140,27 @@ def test_a_retired_code_is_never_reissued_and_never_free():
     half would let `is_free()` hand it out.
     """
     vocab = registry.vocabulary()
-    assert vocab.retired, "the dummy solenoid clicks are in the recorded archive"
+    assert vocab.retired, "stream grammar 1's terminators are in the recorded archive"
     for code, name in vocab.retired.items():
         assert not vocab.is_free(code), name
         assert vocab.name_of(code) is None, name
         assert vocab.retired_name(code) == name
 
 
-def test_the_odor_onsets_step_over_the_retired_block():
-    """The gap is load-bearing, not cosmetic.
+def test_the_odor_onsets_keep_stepping_over_110_to_113():
+    """The gap is history, and history is never rewritten.
 
-    Numbering odor 10 as 110 would make a `110` in a recorded file mean
-    DUMMY_SOLENOID_CLICK_1 before some date and ODOR_10_ON after it — the exact
-    silent merge the append-only rule exists to prevent, and the reason the run
-    resumes at 114 rather than continuing.
+    110-113 held the dummy solenoid clicks; they were freed on 2026-11-06. The
+    onsets still run 101-109 and then 114-116: renumbering odor 10 to 110 would
+    make a `110` in a recorded file mean one thing before some date and another
+    after it, the exact silent merge the append-only rule exists to prevent.
     """
     vocab = registry.vocabulary()
     assert [vocab.code_of(f"ODOR_{n}_ON") for n in range(1, 13)] == [
         101, 102, 103, 104, 105, 106, 107, 108, 109, 114, 115, 116
     ]
     for code in (110, 111, 112, 113):
-        assert vocab.retired_name(code), code
-        assert vocab.name_of(code) is None, code
+        assert vocab.is_free(code), code
 
 
 def test_the_free_ranges_are_exactly_what_is_unallocated():
@@ -1092,7 +1172,7 @@ def test_the_free_ranges_are_exactly_what_is_unallocated():
     for code in range(vocab.code_min, vocab.code_max + 1):
         expected = code not in allocated and not vocab.is_reserved(code)
         assert vocab.is_free(code) == expected, code
-    assert vocab.free_ranges()[0] == (117, 220)
+    assert vocab.free_ranges()[:2] == [(110, 113), (117, 219)]
 
 
 # --------------------------------------------------------------------------- #

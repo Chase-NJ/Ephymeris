@@ -930,6 +930,13 @@ export interface TaskProfile {
    * wire key. Absent on every other profile.
    */
   spine?: Record<string, unknown>;
+  /**
+   * The parameters a generated task shows in its editor and offers in the Start dialog, by
+   * `metadataKey` (`TASKS.md#parameters`); the rest stay at their defaults, unseen, and still
+   * ride the `SET` lines. Absent on a hand-written profile, which offers every field. Never
+   * hashed.
+   */
+  exposed?: string[];
 }
 
 /** One box's session-local mapping + task config (`ARCHITECTURE.md#session-lifecycle`). */
@@ -1663,7 +1670,11 @@ export interface TrialRecord {
    * `ConditionOutcomes.triggerCode` matches it directly.
    */
   triggerCode: number;
-  outcome: "rewarded" | "hold-failed" | "wrong-well" | "no-response" | "aborted";
+  /**
+   * The last two only on a stream-grammar-2 run, whose no-go trials say which they were
+   * (`ANALYTICS.md#stream-grammar-2`).
+   */
+  outcome: "rewarded" | "hold-failed" | "wrong-well" | "no-response" | "aborted" | "withheld" | "false-alarm";
   /**
    * Trial open, in ms from the run's first recorded timestamp. Null when the file carries no
    * usable clock.
@@ -1754,8 +1765,11 @@ export interface ReplayTrial {
 
 /** A run's trial table (`ANALYTICS.md#the-trial-table`). */
 export interface TrialTable {
-  /** Read off a replay, or by the legacy decoder. */
-  kind: "replay" | "legacy";
+  /**
+   * Read off a replay, by the legacy decoder, or off a stream-grammar-2 run's headers and outcome
+   * codes (`ANALYTICS.md#stream-grammar-2`).
+   */
+  kind: "replay" | "legacy" | "grammar2";
   /** Each phase's kind, in spine order, for labels only. Empty for a legacy run. */
   phases: string[];
   /**

@@ -10,7 +10,7 @@ import { GenerationPanel } from "@/components/task/editor/GenerationPanel";
 import { Panel } from "@/components/task/editor/Panel";
 import { SeedChooser } from "@/components/task/spine/SeedChooser";
 import { SpineEditor } from "@/components/task/spine/SpineEditor";
-import { ParameterOrrery } from "@/components/task/editor/ParameterOrrery";
+import { ParameterPanel } from "@/components/task/editor/ParameterPanel";
 import { TrialTypes } from "@/components/task/editor/TrialTypes";
 import { errorMessage } from "@/lib/cohorts/commands";
 import { getRig } from "@/lib/hardware/commands";
@@ -18,20 +18,14 @@ import type { RigDocument } from "@/lib/hardware/types";
 import { CASCADE, RISE, springPanel } from "@/lib/motion";
 import { useStrobeVocabulary } from "@/lib/strobes/useStrobeVocabulary";
 import { idFromName, listTasks } from "@/lib/taskdef/commands";
+import { spineEditorEnabled } from "@/lib/taskdef/devFlags";
 import { isRowOwnedField } from "@/lib/taskdef/lines";
 import { isSpine } from "@/lib/taskdef/spine";
+import { blankTrial, nextStage } from "@/lib/taskdef/types";
 import type { TaskDefinition, TaskDiagnostic, TaskDocument, TaskEntry } from "@/lib/taskdef/types";
 import { useTask } from "@/lib/taskdef/useTask";
 import { editorLayout } from "@/lib/tasks/editorLayout";
-import {
-  GENERATION_TAB,
-  HOLDS_TAB,
-  ROWS_TAB,
-  dialTabs,
-  tabOf,
-  taskGraph,
-  type TaskNode,
-} from "@/lib/tasks/topology";
+import { GENERATION_TAB, ROWS_TAB, tabOf, taskGraph, type TaskNode } from "@/lib/tasks/topology";
 import { useElementWidth } from "@/lib/useElementWidth";
 import { useSidecar } from "@/lib/ws/context";
 import { EVT } from "@/lib/ws/protocol";
@@ -43,14 +37,16 @@ const MARK_MS = 2400;
  * The task editor — one task, open.
  *
  * The route loads, saves and names the document, and hands it to the body for
- * its kind: a phase-spine task to `SpineEditor` (`TASKS.md#the-spine-editor`),
- * a trial-table task to `TrialTableEditor` (`TASKS.md#editor`). `/task/new`
- * with nothing handed over is the seed chooser: a new task starts from a seed
- * spine, and a trial-table task is only ever opened, or duplicated.
+ * its kind: a trial-table task to `TrialTableEditor` (`TASKS.md#editor`), a
+ * phase-spine task to `SpineEditor` (`TASKS.md#the-spine-editor`). `/task/new`
+ * with nothing handed over is a fresh trial-table task (`freshTask`): the
+ * spine editor has not been tested on a real box, so making a new spine task
+ * from a seed is behind a development flag (`lib/taskdef/devFlags.ts`); a
+ * saved spine task still opens in its own editor.
  *
  * The trial-table body is a telemetry display (`ARCHITECTURE.md#telemetry-panels`) in one frame: the
  * derived state machine front and centre with every trial type beneath it,
- * and beside them the parameter dial and the trial-generation panel. The
+ * and beside them the parameters panel and the trial-generation panel. The
  * machine has a floor and the page bends around it (`editorLayout`): when the
  * aside would squeeze it, the aside's panels move under the trial types and
  * the page scrolls.
@@ -76,13 +72,14 @@ export function TaskEditor() {
   const [problemsOpen, setProblemsOpen] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
 
-  /** A brand-new task: a seed spine picked here (`SeedChooser`), or a
-   *  DUPLICATE handed over in router state by the landing. Seeded ONCE:
+  /** A brand-new task: a fresh trial-table task built here (`freshTask`), a
+   *  DUPLICATE handed over in router state by the landing, or, behind the
+   *  development flag, a seed spine picked here (`SeedChooser`). Seeded ONCE:
    *  `useTask` treats a new seed object as a fresh open and would discard every
-   *  edit since. Null on `/task/new` until a seed is picked. */
+   *  edit since. Null on `/task/new` only while the flag's chooser waits. */
   const location = useLocation();
   const [seed, setSeed] = useState<TaskDocument | null>(() =>
-    taskId === undefined ? seedFrom(location.state) : null,
+    taskId === undefined ? (seedFrom(location.state) ?? (spineEditorEnabled() ? null : freshTask())) : null,
   );
   // Never opened by itself: a new task's category defaults to `Tasks`, which
   // the header's Details button shows, and the folder it decides is changed
@@ -190,7 +187,7 @@ export function TaskEditor() {
 
 /**
  * A trial-table task, open: the derived state machine front and centre with
- * every trial type beneath it, and beside them the parameter dial and the
+ * every trial type beneath it, and beside them the parameters panel and the
  * trial-generation panel (`TASKS.md#editor`).
  */
 function TrialTableEditor({
@@ -209,7 +206,8 @@ function TrialTableEditor({
   const [hoverGroup, setHoverGroup] = useState<string | null>(null);
   const [hoverNode, setHoverNode] = useState<TaskNode | null>(null);
   const [hoverCondition, setHoverCondition] = useState<string | null>(null);
-  const [selectedTab, setSelectedTab] = useState<string | null>(null);
+  /** A group the parameters panel should open its picker on (a chip click). */
+  const [focusGroup, setFocusGroup] = useState<string | null>(null);
   const [flashGeneration, setFlashGeneration] = useState(false);
   const [markedRow, setMarkedRow] = useState<number | null>(null);
 
@@ -317,24 +315,22 @@ function TrialTableEditor({
     generationRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, []);
 
-  /** Open a tab wherever it lives: the dial, the generation panel or the rows. */
+  /** Open a group wherever it lives: the generation panel, or the parameters
+   *  picker on that group; the rows have their own panel. */
   const openTab = useCallback(
     (tab: string) => {
       if (tab === GENERATION_TAB) showGeneration();
-      else if (tab !== ROWS_TAB) setSelectedTab(tab);
+      else if (tab !== ROWS_TAB) setFocusGroup(tab);
     },
     [showGeneration],
   );
 
   const onNodeClick = useCallback(
     (node: TaskNode) => {
-      const declared = new Set((session.profile?.config ?? []).map((f) => f.group ?? ""));
-      const dial = dialTabs(declared);
-      const homes = node.governedBy.map(tabOf);
-      const tab = homes.find((h) => dial.includes(h)) ?? homes.find((h) => h === GENERATION_TAB);
-      if (tab) openTab(tab);
+      const group = node.governedBy[0];
+      if (group) openTab(tabOf(group));
     },
-    [openTab, session.profile],
+    [openTab],
   );
 
   const onJump = useCallback(
@@ -344,8 +340,8 @@ function TrialTableEditor({
         setMarkedRow(home.row);
         window.clearTimeout(markTimer.current);
         markTimer.current = window.setTimeout(() => setMarkedRow(null), MARK_MS);
-      } else if (home.kind === "holds") setSelectedTab(HOLDS_TAB);
-      else if (home.kind === "generation") showGeneration();
+      } else if (home.kind === "generation") showGeneration();
+      // The ramp is always on screen in the parameters panel.
     },
     [showGeneration],
   );
@@ -411,18 +407,20 @@ function TrialTableEditor({
   );
 
   const params = definition && (
-    <ParameterOrrery
+    <ParameterPanel
       profile={session.profile}
       model={model}
       config={config}
       baseline={session.catalogueDefaults}
+      exposed={definition.exposed ?? []}
       mode={definition.selectionMode}
       stages={definition.stages}
       diagnostics={diagnostics}
-      selected={selectedTab}
       litGroups={litGroups}
-      onSelect={setSelectedTab}
+      focusGroup={focusGroup}
+      onFocusGroupConsumed={() => setFocusGroup(null)}
       onParams={onParams}
+      onExposed={(exposed) => setDefinition({ ...definition, exposed })}
       onStages={(stages) => setDefinition({ ...definition, stages })}
       onHoverGroup={setHoverGroup}
     />
@@ -431,16 +429,12 @@ function TrialTableEditor({
   const generation = definition && (
     <div ref={generationRef} className="flex min-h-0 flex-1 flex-col">
       <GenerationPanel
-        profile={session.profile}
-        config={config}
-        baseline={session.catalogueDefaults}
         trials={definition.trials}
         mode={definition.selectionMode}
         rig={rig}
         diagnostics={diagnostics}
         lit={generationLit}
         onMode={(selectionMode) => setDefinition({ ...definition, selectionMode })}
-        onParams={onParams}
         onHover={setHoverGroup}
         onHoverCondition={setHoverCondition}
         conditionOfRow={conditionOfRow}
@@ -504,12 +498,12 @@ function TrialTableEditor({
                   }
                   style={split ? { width: layout.aside } : {}}
                 >
-                  {/* Generation gets the larger share: it is the core choice and
-                      its panel carries more; the dial's fields scroll. */}
-                  <div className={split ? "flex min-h-[240px] flex-1 basis-0 flex-col" : "flex min-h-[460px] flex-col"}>
+                  {/* The parameters get the larger share: the exposed fields
+                      and the ramp scroll there; generation is a switch and a strip. */}
+                  <div className={split ? "flex min-h-[240px] flex-[1.4] basis-0 flex-col" : "flex min-h-[460px] flex-col"}>
                     {params}
                   </div>
-                  <div className={split ? "flex min-h-0 flex-[1.3] basis-0 flex-col" : "flex min-h-[460px] flex-col"}>
+                  <div className={split ? "flex min-h-0 flex-1 basis-0 flex-col" : "flex min-h-[320px] flex-col"}>
                     {generation}
                   </div>
                 </motion.div>
@@ -520,6 +514,30 @@ function TrialTableEditor({
       </motion.div>
     </div>
   );
+}
+
+/**
+ * A trial-table task with nothing decided yet.
+ *
+ * Built in the frontend rather than fetched, because there is nothing to fetch:
+ * every value here is either empty or the shape the firmware needs at minimum.
+ * `params` and `exposed` are empty on purpose — a definition stores only what
+ * DIVERGES from the field catalogue, so a new task pins nothing, inherits every
+ * default, and shows no parameter until one is added (`TASKS.md#parameters`).
+ */
+function freshTask(): TaskDefinition {
+  return {
+    id: idFromName("New task", []),
+    name: "New task",
+    category: "Tasks",
+    selectionMode: "antibias",
+    trials: [blankTrial()],
+    stages: [nextStage(undefined)],
+    params: {},
+    exposed: [],
+    legacyNames: [],
+    notes: "",
+  };
 }
 
 /** A duplicated task handed over by the Task landing, if that is how we got here. */

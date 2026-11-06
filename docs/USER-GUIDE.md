@@ -254,12 +254,17 @@ A task made of a table of odor lines shows its own screen:
   their side. **Pool** deals the whole session from the row weights at the start and never reacts to
   the animal — it is the only one that presents no-go trials. Settings a mode does not use are greyed
   out, and the bar shows the share of trials each condition would get.
-- **Parameters**, the dial above it: click a planet, use the arrow keys or scroll to turn it, and that
-  category's settings appear below. **Holds** is the shaping ramp.
+- **Parameters** on the right: every setting starts at its default and out of sight. Click **Add
+  parameter**, search or scroll the list (each shows its current value and its default), and click the
+  ones this task tunes; only those are shown here and offered when a session starts. The circular
+  arrow beside an added one puts it back to its default and hides it again. A hidden setting is still
+  sent to the box at its default. **Holds & shaping** below is the ramp.
 - At the top: **Problems** (click one to go to it) and
   **Details** (category, older names, notes). Save when done; a task saves even with problems.
 
 ![The task editor for 4-Odor Discrimination: Details at the top, the state machine across the left, four trial types below it (Sandalwood, Orange, Cedar and Lemon, each with its odor line, well, fluid line, reward and weight), the Parameters dial on Session at the top right, and Trial generation set to Weighted below it](images/task-editor.webp)
+
+*The picture shows the older dial; the Parameters panel now sits where it was.*
 
 The **Strobes** tile opens the list of every event a box can report and the number it is recorded as.
 The band across the top shows all the numbers from 0 to 999: purple ones are in use, grey ones are

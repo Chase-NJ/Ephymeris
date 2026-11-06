@@ -134,9 +134,9 @@ def infer_profile(
         ))
 
     # The whole registry, retired names included: a legacy stream really does
-    # carry the dummy-solenoid clicks, and a name — even "DUMMY_SOLENOID_
-    # CLICK_2" — reads better in a raw log than a bare number. Retired names
-    # match none of the outcome patterns, so they label without scoring.
+    # carry grammar 1's terminators, and a name — even "END_INCORRECT_ITI" —
+    # reads better in a raw log than a bare number. Retired names match none
+    # of the outcome patterns, so they label without scoring.
     strobes = {entry.code: entry.name for entry in vocab}
     strobes.update({code: name for code, name in vocab.retired.items()})
 
@@ -168,7 +168,13 @@ def _infer_sides(
       registry declares exactly two, and a third would make "the other" a
       guess.
     * `WATER_POKE_NONE` — the withheld answer on a no-go trial; a vote that
-      the condition is a withhold condition.
+      the condition is a withhold condition. Only a no-go trial ever emits it,
+      so it is weighed against the go-only evidence (a reward or an early
+      release, which only a correct well produces) and never against the
+      error votes: a grammar-2 board answers a no-go false alarm with the
+      well's error code (`TASKS.md#stream-grammar`), and counting those
+      against the withholds read every no-go an animal mostly failed as a go
+      condition.
 
     Majority wins; a reward-vote tie breaks toward the reward evidence, then
     deterministically toward the higher slot — an arbitrary orientation must at
@@ -177,6 +183,9 @@ def _infer_sides(
     """
     for_slot: dict[int, dict[int, int]] = {}
     reward_votes: dict[int, dict[int, int]] = {}
+    #: Votes from the go-only codes (a reward or an early release): what a
+    #: withhold vote is weighed against.
+    go_votes: dict[int, int] = {}
     withhold_votes: dict[int, int] = {}
 
     by_evidence: dict[int, tuple[_Slot, bool]] = {}
@@ -200,6 +209,7 @@ def _infer_sides(
             slot, is_reward = evidence
             votes = for_slot.setdefault(open_condition, {})
             votes[slot.number] = votes.get(slot.number, 0) + 1
+            go_votes[open_condition] = go_votes.get(open_condition, 0) + 1
             if is_reward:
                 rewards = reward_votes.setdefault(open_condition, {})
                 rewards[slot.number] = rewards.get(slot.number, 0) + 1
@@ -216,7 +226,7 @@ def _infer_sides(
     for condition in boundaries:
         votes = for_slot.get(condition, {})
         held = withhold_votes.get(condition, 0)
-        if held > sum(votes.values()):
+        if held > go_votes.get(condition, 0):
             out[condition] = "withhold"
             continue
         if not votes:

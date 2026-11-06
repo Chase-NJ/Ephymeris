@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
+from ..analytics.stream.grammar2 import scores_grammar_2
 from ..analytics.stream.legacy import MetricSet
 from ..analytics.stream.spine import is_spine_run
 from ..tasks.profile import TaskProfile
@@ -97,6 +98,9 @@ class ActiveRun:
     #: run record at finalization (`DATA.md#run-records`). `None` when it
     #: announced none.
     interp: int | None = None
+    #: What the board announced as `STREAM=<n>` before `READY`: the strobe-stream
+    #: grammar it emits (`TASKS.md#stream-grammar`). None when it announced none.
+    stream: int | None = None
     #: Why the board refused this run's start, once it has. Read by the port's
     #: loss, which then finalizes the run for that reason rather than as a drop.
     refusal: StartRefused | None = None
@@ -326,6 +330,14 @@ class SessionRunner:
         box = run.box
         run.seed = seed
         run.interp = announced.interp
+        run.stream = announced.stream
+        if announced.stream is None and run.config.profile is not None and scores_grammar_2(run.config.profile):
+            # The profile scores the outcome codes and this board announced no
+            # grammar, so it was flashed before they existed: its stream carries
+            # no CORRECT and the live P(correct) will never move. The file is
+            # still written whole, and Analytics scores it by its pokes.
+            log.warning("box %d: the task's profile reads stream grammar 2 but the board announced none; "
+                        "reflash it, or live metrics stay empty (TASKS.md#stream-grammar)", box)
 
         when = datetime.now()
         files = resolve_animal_files(
@@ -353,6 +365,11 @@ class SessionRunner:
             # `READY` (`TASKS.md#confirming-the-parameters`). Core for the same
             # reason: a fact about the build on this board.
             core["free_ram"] = announced.free_ram
+        if announced.stream is not None:
+            # Which strobe-stream grammar the board emits, announced as
+            # `STREAM=<n>` (`TASKS.md#stream-grammar`): what picks the decoder
+            # (`ANALYTICS.md#stream-grammar-2`). A fact about the build, never hashed.
+            core["stream"] = announced.stream
         if announced.sync is not None:
             # How the sync line pulsed: once per tick that strobed, announced
             # as `SYNC=TICK` (`RECORDING.md#firmware-pulse`). Absent, once per

@@ -42,14 +42,16 @@ export async function exportChannelSet(client: SidecarPort) {
 }
 
 /** Plan (`apply: false`) or apply another machine's export. The sidecar decides
- *  every conflict; `confirm` passes a plan's `breaks`, as for `saveRig`. */
+ *  every conflict; `confirm` passes a plan's `breaks`, as for `saveRig`, and
+ *  `pins` gives a pin to each channel the file adds here. */
 export async function importChannelSet(
   client: SidecarPort,
   document: unknown,
   apply: boolean,
   confirm = false,
+  pins: Record<string, number> = {},
 ) {
-  return client.call(CMD.HARDWARE_IMPORT_CHANNEL_SET, { document, apply, confirm });
+  return client.call(CMD.HARDWARE_IMPORT_CHANNEL_SET, { document, apply, confirm, pins });
 }
 
 /**

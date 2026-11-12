@@ -118,8 +118,10 @@ from the rig's wiring, so there is nothing to choose.
 
 On **Rig → Wiring**, **Export channel set** and **Import channel set** keep the lab's two computers recording
 the same events under the same codes. After the channels change on one computer, export there and import
-on the other. The pins stay each computer's own. If the two disagree anywhere, the import is refused and
-lists every difference. Fix each one first, then import again.
+on the other. The pins stay each computer's own. A channel the other computer added (a lever, a laser) is
+listed with a pin menu: pick the pin it is wired to on this computer's boxes for each one, and Import
+unlocks once every one has a pin the wiring rules accept. If the two disagree anywhere else, the import is
+refused and lists every difference. Fix each one first, then import again.
 
 Update both computers to the same version of Ephymeris before you move a channel set. An older version can
 refuse a file from a newer one, saying it was **changed after it was exported** when it was not.

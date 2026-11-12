@@ -1,10 +1,18 @@
 import { Upload } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Callout } from "@/components/common/Callout";
-import { Button } from "@/components/common/controls";
+import { Button, Select } from "@/components/common/controls";
 import { Modal } from "@/components/common/Modal";
 import { errorMessage } from "@/lib/cohorts/commands";
+import {
+  canImport,
+  latestOnly,
+  type PinPicks,
+  pinsToSend,
+  refusals,
+  withPick,
+} from "@/lib/hardware/channelSetImport";
 import { importChannelSet } from "@/lib/hardware/commands";
 import { useSidecar } from "@/lib/ws/context";
 import type { ChannelSetImportPlan } from "@/lib/ws/protocol";
@@ -17,7 +25,10 @@ import type { ChannelSetImportPlan } from "@/lib/ws/protocol";
  * the import would break is in `hardware.importChannelSet`'s plan; nothing here
  * predicts one. Import is held while the plan has a conflict or is identical,
  * and asks for confirmation while it has `breaks`, and the command checks all
- * of it again inside the write. The pins stay this machine's own.
+ * of it again inside the write. The pins stay this machine's own, except a
+ * channel the file adds: it takes a pin picked here from the plan's
+ * `freePins`, and each pick re-plans, so a pin a wiring rule refuses is shown
+ * before Import (`TASKS.md#adding-a-channel-lab-wide`).
  */
 export function ChannelSetImportDialog({
   open,
@@ -30,30 +41,71 @@ export function ChannelSetImportDialog({
   const [document, setDocument] = useState<unknown>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [plan, setPlan] = useState<ChannelSetImportPlan | null>(null);
+  const [picks, setPicks] = useState<PinPicks>({});
+  const [pending, setPending] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A reply to anything but the newest plan request is dropped.
+  const requests = useRef(latestOnly());
 
   useEffect(() => {
     if (!open) return;
+    requests.current.cancel();
     setDocument(null);
     setFileName(null);
     setPlan(null);
+    setPicks({});
+    setPending(false);
     setError(null);
   }, [open]);
 
+  const replan = async (parsed: unknown, pins: Record<string, number>) => {
+    const current = requests.current.begin();
+    setPending(true);
+    try {
+      const reply = await importChannelSet(client, parsed, false, false, pins);
+      if (current()) setPlan(reply.plan);
+    } catch (err) {
+      if (current()) {
+        setPlan(null);
+        setError(errorMessage(err));
+      }
+    } finally {
+      if (current()) setPending(false);
+    }
+  };
+
   const pick = async (file: File | undefined) => {
     if (!file) return;
+    // The last file's plan, if still on its way, is not this file's; and a
+    // file chosen after this one, read sooner, wins over it.
+    requests.current.cancel();
+    const chosen = requests.current.begin();
+    setPending(false);
     setFileName(file.name);
     setPlan(null);
+    setPicks({});
     setError(null);
+    let parsed: unknown;
     try {
-      const parsed: unknown = JSON.parse(await file.text());
-      setDocument(parsed);
-      setPlan((await importChannelSet(client, parsed, false)).plan);
-    } catch (err) {
-      setDocument(null);
-      setError(err instanceof SyntaxError ? "That file is not JSON." : errorMessage(err));
+      parsed = JSON.parse(await file.text());
+    } catch {
+      if (chosen()) {
+        setDocument(null);
+        setError("That file is not JSON.");
+      }
+      return;
     }
+    if (!chosen()) return;
+    setDocument(parsed);
+    await replan(parsed, {});
+  };
+
+  const pinChannel = (channel: string, pin: number | null) => {
+    const next = withPick(picks, channel, pin);
+    setPicks(next);
+    setError(null);
+    void replan(document, pinsToSend(plan, next));
   };
 
   const apply = async () => {
@@ -62,7 +114,7 @@ export function ChannelSetImportDialog({
     setError(null);
     try {
       // `breaks` were shown above the button, so pressing it is the confirm.
-      await importChannelSet(client, document, true, plan.breaks.length > 0);
+      await importChannelSet(client, document, true, plan.breaks.length > 0, pinsToSend(plan, picks));
       onClose();
     } catch (err) {
       setError(errorMessage(err));
@@ -72,6 +124,7 @@ export function ChannelSetImportDialog({
   };
 
   const conflicted = !!plan && plan.conflicts.length > 0;
+  const refused = plan ? refusals(plan) : [];
   const vocab = plan?.vocabulary;
 
   return (
@@ -79,9 +132,10 @@ export function ChannelSetImportDialog({
       <div className="flex flex-col gap-3.5">
         <p className="text-[13px] leading-relaxed text-static">
           Make this rig&rsquo;s channels and strobe codes the other machine&rsquo;s, so both
-          record the same task under the same numbers. The pins stay this rig&rsquo;s own. Any
-          disagreement — one name with two codes, a channel one side lacks, the channels listed
-          in another order — refuses the whole import.
+          record the same task under the same numbers. The pins stay this rig&rsquo;s own; a
+          channel the file adds takes a pin you pick here. Any other disagreement — one name with
+          two codes, a channel only this rig has, the channels listed in another order — refuses
+          the whole import.
         </p>
         <label className="flex cursor-pointer items-center gap-2 self-start rounded-sm border border-halo bg-nebula px-3 py-1.5 text-[12px] text-static transition-colors hover:border-static/70 hover:text-starlight">
           <Upload size={13} strokeWidth={1.75} />
@@ -94,13 +148,39 @@ export function ChannelSetImportDialog({
           />
         </label>
 
-        {plan && conflicted && (
+        {plan && plan.newChannels.length > 0 && (
           <Callout
-            title={`${plan.conflicts.length} conflict${plan.conflicts.length === 1 ? "" : "s"} — nothing can be imported`}
-            tone="error"
-            why="Resolve each on one of the two machines first. Picking a winner here would relabel one machine's recorded data, leave a channel without a pin, or put another odor line behind an odor position — channel order is the odor index."
+            title={`${plan.newChannels.length} channel${plan.newChannels.length === 1 ? "" : "s"} to add — pick a pin for each`}
+            why="The pin map is this rig's own. The pins offered are free on this board; the import checks your picks against the wiring rules, as a save does."
           >
-            {plan.conflicts.map((c, i) => (
+            {plan.newChannels.map((c) => (
+              <div key={c.channel} className="flex items-center gap-3 font-mono text-[11px]">
+                <span className="w-32 truncate text-starlight">{c.channel}</span>
+                <span className="w-32 truncate text-static">
+                  {c.kind ?? "?"} · {c.type ?? "?"}
+                </span>
+                <Select
+                  compact
+                  label={`Pin for ${c.channel}`}
+                  value={String(picks[c.channel] ?? "")}
+                  disabled={busy}
+                  options={[
+                    { value: "", label: "Pick a pin…" },
+                    ...c.freePins.map((pin) => ({ value: String(pin), label: `pin ${pin}` })),
+                  ]}
+                  onChange={(next) => pinChannel(c.channel, next === "" ? null : Number(next))}
+                />
+              </div>
+            ))}
+          </Callout>
+        )}
+        {plan && refused.length > 0 && (
+          <Callout
+            title={`${refused.length} conflict${refused.length === 1 ? "" : "s"} — nothing can be imported`}
+            tone="error"
+            why="A pin picked here can be changed above. Anything else is resolved on one of the two machines first: picking a winner here would relabel one machine's recorded data, or put another odor line behind an odor position — channel order is the odor index."
+          >
+            {refused.map((c, i) => (
               <span key={`${c.kind}-${c.channel ?? ""}-${i}`} className="font-mono text-[10.5px] text-static">
                 {c.message}
               </span>
@@ -172,7 +252,7 @@ export function ChannelSetImportDialog({
           </Button>
           <Button
             variant="primary"
-            disabled={!plan || conflicted || plan.identical || busy}
+            disabled={!canImport(plan, pending) || busy}
             onClick={() => void apply()}
           >
             {busy ? "Importing…" : plan && plan.breaks.length > 0 ? "Import anyway" : "Import"}

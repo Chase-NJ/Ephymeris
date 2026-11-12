@@ -90,8 +90,6 @@ export function RowsTable({
   onClearStored: (key: string) => void;
 }) {
   const windowAt = responseWindow(def);
-  const window = windowAt >= 0 ? def.spine[windowAt] : undefined;
-  const lines = def.slots.filter((s) => s.type === "digital_out" && !s.mode).map((s) => s.id);
   // An Outcome with no window before it pays the row's own probability.
   const outcomeAt = def.spine.findIndex((p) => p.phase === "outcome");
   const ownProbability = outcomeAt >= 0 && (windowAt < 0 || windowAt > outcomeAt);
@@ -182,7 +180,6 @@ export function RowsTable({
       <div className="flex flex-col divide-y divide-halo/50">
         {def.rows.map((row, r) => {
           const problems = diagnosticsOn(diagnostics, "row", r);
-          const sentences = mapSentences(def, row, rig);
           const roles = [...perType, ...(exposed[r] ?? []).filter((s) => !perType.includes(s) && def.slots.some((x) => x.id === s))];
           const hidden = shared.filter((s) => !roles.includes(s));
           return (
@@ -269,24 +266,7 @@ export function RowsTable({
                 </button>
               </div>
               <div className="flex flex-col gap-1 pl-5">
-                {sentences.length === 0 && <Note className="text-static">{rowSentence(def, row, rig)}</Note>}
-                {sentences.map((sentence) => (
-                  <MapLine
-                    key={sentence.key}
-                    response={sentence.key}
-                    subject={sentence.subject}
-                    entry={row.map?.[sentence.key]}
-                    classes={outcomeClasses}
-                    lines={lines}
-                    lineWord={(slot) => {
-                      const channel = row.bind[slot];
-                      return channel ? (channelChoices([channel], rig)[0]?.label ?? slot) : slot;
-                    }}
-                    holdMs={sentence.key !== "timeout" ? window?.holdMs : undefined}
-                    problems={at(`rows[${r}].map.${sentence.key}`)}
-                    onChange={(entry) => onChange(setMapEntry(def, r, sentence.key, entry))}
-                  />
-                ))}
+                <RowAnswers def={def} r={r} rig={rig} outcomeClasses={outcomeClasses} diagnostics={diagnostics} onChange={onChange} />
                 {driven.map((slot) => (
                   <DriveLine
                     key={slot.id}
@@ -320,8 +300,57 @@ export function RowsTable({
   );
 }
 
+/**
+ * One trial type's contingency map, a sentence per answer whose words are the
+ * controls (`MapLine`); a row with no window says what every trial of it does.
+ * The guide's answers step shows the same lines (`SpineGuide`).
+ */
+export function RowAnswers({
+  def,
+  r,
+  rig,
+  outcomeClasses,
+  diagnostics,
+  onChange,
+}: {
+  def: SpineDefinition;
+  r: number;
+  rig: RigDocument | null;
+  outcomeClasses: readonly string[];
+  diagnostics: readonly TaskDiagnostic[];
+  onChange: (next: SpineDefinition) => void;
+}) {
+  const row = def.rows[r]!;
+  const windowAt = responseWindow(def);
+  const window = windowAt >= 0 ? def.spine[windowAt] : undefined;
+  const lines = def.slots.filter((s) => s.type === "digital_out" && !s.mode).map((s) => s.id);
+  const sentences = mapSentences(def, row, rig);
+  return (
+    <>
+      {sentences.length === 0 && <Note className="text-static">{rowSentence(def, row, rig)}</Note>}
+      {sentences.map((sentence) => (
+        <MapLine
+          key={sentence.key}
+          response={sentence.key}
+          subject={sentence.subject}
+          entry={row.map?.[sentence.key]}
+          classes={outcomeClasses}
+          lines={lines}
+          lineWord={(slot) => {
+            const channel = row.bind[slot];
+            return channel ? (channelChoices([channel], rig)[0]?.label ?? slot) : slot;
+          }}
+          holdMs={sentence.key !== "timeout" ? window?.holdMs : undefined}
+          problems={diagnosticsAt([...diagnostics], `rows[${r}].map.${sentence.key}`)}
+          onChange={(entry) => onChange(setMapEntry(def, r, sentence.key, entry))}
+        />
+      ))}
+    </>
+  );
+}
+
 /** A row's name, held as typed. Unnamed is SPN108, said under the row. */
-function NameInput({ value, invalid, onChange }: { value: string; invalid: boolean; onChange: (v: string) => void }) {
+export function NameInput({ value, invalid, onChange }: { value: string; invalid: boolean; onChange: (v: string) => void }) {
   return (
     <input
       type="text"

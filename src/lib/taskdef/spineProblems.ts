@@ -259,3 +259,25 @@ export function wiringLines(
   }
   return lines;
 }
+
+/**
+ * Every line for these diagnostics, each said once where the editor would say
+ * it: the shared roles' Wiring line, the task-wide lines, each row's, then each
+ * phase, block, session, slot and RAM target's. For a view with no panels of
+ * its own, such as one step of the guide.
+ */
+export function everyLine(
+  diagnostics: readonly TaskDiagnostic[],
+  def: SpineDefinition,
+  rig: RigDocument | null,
+  shared: readonly string[],
+): ProblemLine[] {
+  const lines = [...wiringLines(diagnostics, rig, shared), ...problemLines(diagnostics, def, rig, null)];
+  def.rows.forEach((_, r) => lines.push(...problemLines(diagnostics, def, rig, r, shared)));
+  const targets = new Map<string, TaskDiagnostic["target"]>();
+  for (const d of diagnostics) {
+    if (["phase", "block", "session", "slot", "ram"].includes(d.target.kind)) targets.set(`${d.target.kind}:${d.target.index}`, d.target);
+  }
+  for (const t of targets.values()) lines.push(...targetLines(diagnostics, def, t.kind, t.index));
+  return lines;
+}

@@ -822,6 +822,26 @@ def test_a_pwm_channel_is_offered_only_the_timer_driven_pins(tmp_path):
     assert [c["channel"] for c in rules] == ["lever"] and "RIG109" in rules[0]["message"]
 
 
+def test_a_pwm_channel_is_not_offered_the_tone_timers_pins(tmp_path):
+    """tone() takes Timer2 with its two PWM pins (`rig/board.py`), so beside a
+    tone_out those pins would be RIG109 too."""
+    a = Machine(tmp_path / "a")
+    a.save()
+    doc = _with_lever_as_cue(a.hardware.load())
+    doc["channels"]["lever"] = {"kind": "cue", "label": "lever", "type": "pwm_out", "role": "stimulus"}
+    doc["pins"]["lever"] = {"index": 45}
+    doc["channels"]["buzzer"] = {"kind": "cue", "label": "buzzer", "type": "tone_out", "role": "cue"}
+    doc["pins"]["buzzer"] = {"index": 50}
+    a.save(doc)
+    exported = a.export()
+
+    b = Machine(tmp_path / "b")
+    b.save()
+    lever = next(c for c in b.plan(exported)["newChannels"] if c["channel"] == "lever")
+    timer2 = {p for p, t in board.PWM_TIMER.items() if t == board.TONE_TIMER}
+    assert lever["freePins"] and not timer2 & set(lever["freePins"])
+
+
 def test_a_new_channel_left_unpinned_refuses_the_whole_import(tmp_path):
     _a, exported = _a_with_lever_after(tmp_path)
     b = Machine(tmp_path / "b")
@@ -841,11 +861,8 @@ def test_a_new_channel_left_unpinned_refuses_the_whole_import(tmp_path):
     assert b.events == [] and b.rebuilds == 0
 
 
-@pytest.mark.parametrize(
-    ("pin", "rule"),
-    [(42, "RIG103"), (54, "RIG102")],  # fluid_0's pin; past a Mega's last pin
-)
-def test_a_new_channels_pin_is_judged_by_the_wiring_rules(tmp_path, pin, rule):
+def test_a_new_channels_pin_is_judged_by_the_wiring_rules(tmp_path):
+    pin, rule = 42, "RIG103"  # fluid_0's pin
     _a, exported = _a_with_lever_after(tmp_path)
     b = Machine(tmp_path / "b")
     b.save()
@@ -860,7 +877,19 @@ def test_a_new_channels_pin_is_judged_by_the_wiring_rules(tmp_path, pin, rule):
     assert b.files() == before
 
 
-@pytest.mark.parametrize("pins", [{"fluid_0": 53}, {"lever": 53, "nowhere": 52}, {"lever": "53"}, {"lever": True}])
+@pytest.mark.parametrize(
+    "pins",
+    [
+        {"fluid_0": 53},
+        {"lever": 53, "nowhere": 52},
+        {"lever": "53"},
+        {"lever": True},
+        # Pins this board lacks: past a Mega's last pin, and past the schema's range.
+        {"lever": 54},
+        {"lever": -1},
+        {"lever": 10_000},
+    ],
+)
 def test_a_pin_for_anything_but_a_new_channel_is_a_conflict(tmp_path, pins):
     _a, exported = _a_with_lever_after(tmp_path)
     b = Machine(tmp_path / "b")

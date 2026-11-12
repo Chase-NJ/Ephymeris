@@ -198,7 +198,8 @@ def plan_import(
 
     here_channels = wiring["channels"]
     new = [name for name in there_channels if name not in here_channels]
-    picked = {name: pins[name] for name in new if _is_pin(pins.get(name))}
+    board_pins = _board_pins(wiring)
+    picked = {name: pins[name] for name in new if _is_pin(pins.get(name), board_pins)}
     joined = {k: v for k, v in wiring.items() if k != "edited_at"}
     joined["channels"] = copy.deepcopy(there_channels)
     # The new channels' pins, as the editor writes a new channel's: no watch bit.
@@ -240,7 +241,8 @@ def plan_import(
             f"A pin was given for {name}, which is not a channel that channel set adds here. "
             "An import keeps every pin this rig already has."
             if name not in new
-            else f"{name}'s pin, {pin!r}, is not a pin number.",
+            else f"{name}'s pin, {pin!r}, is not a pin on this board, which has pins "
+            f"{board_pins.start}-{board_pins.stop - 1}.",
         )
         for name, pin in pins.items()
         if name not in picked and not (name in new and pin is None)
@@ -336,9 +338,17 @@ def _order_conflicts(here: list[str], there: list[str]) -> list[dict[str, Any]]:
     ]
 
 
-def _is_pin(value: Any) -> bool:
-    """A pin number; the wiring rules judge whether this board has it."""
-    return type(value) is int
+def _board_pins(wiring: dict[str, Any]) -> range:
+    """This board's pins, its `pin_range`, as RIG102 reads it."""
+    chans = _compose(wiring)
+    return range(chans.pin_min, chans.pin_max + 1)
+
+
+def _is_pin(value: Any, board_pins: range) -> bool:
+    """A pin this board has. Any other pick is a `pin` conflict, never joined
+    into the document: one outside the schema's range would fail the shape
+    check and read as a file that is not a channel set."""
+    return type(value) is int and value in board_pins
 
 
 def _new_channels(
@@ -350,18 +360,26 @@ def _new_channels(
     """One `ChannelSetNewChannel` per channel the file adds here, in its order.
 
     `freePins` are this board's pins that no channel this rig keeps is on,
-    narrowed to the timer-driven pins for a `pwm_out` (RIG109,
-    `rig/board.py`). They are NOT narrowed by the other new channels' picks:
+    narrowed for a `pwm_out` to the timer-driven pins, less `tone()`'s timer's
+    while the channel set has a `tone_out` (RIG109, `rig/board.py`). They are
+    NOT narrowed by the other new channels' picks:
     the dialog would have to predict, and two picks on one pin come back as
     RIG103.
     """
-    chans = _compose(wiring)
     used = {
         pin.get("index")
         for name, pin in wiring["pins"].items()
         if name in there and isinstance(pin, dict)
     }
-    free = [p for p in range(chans.pin_min, chans.pin_max + 1) if p not in used]
+    free = [p for p in _board_pins(wiring) if p not in used]
+    tone = any(
+        isinstance(e, dict) and registry.drive_of(e.get("type"), e.get("mode")) == "tone"
+        for e in there.values()
+    )
+    pwm = [
+        p for p in free
+        if p in board.PWM_TIMER and not (tone and board.PWM_TIMER[p] == board.TONE_TIMER)
+    ]
     out = []
     for name in new:
         entry = there[name] if isinstance(there[name], dict) else {}
@@ -372,7 +390,7 @@ def _new_channels(
             "kind": kind,
             "type": type_,
             "pin": picked.get(name),
-            "freePins": [p for p in free if p in board.PWM_TIMER] if drive == "pwm" else free,
+            "freePins": pwm if drive == "pwm" else free,
         })
     return out
 

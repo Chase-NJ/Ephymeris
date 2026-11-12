@@ -2288,7 +2288,7 @@ export interface ChannelSetConflict {
   /**
    * `vocabulary` (one name with two codes, one code with two names, or a code this machine cannot
    * issue), `not_here` (a channel the file has and this rig lacks, given no pin in `pins`), `pin`
-   * (a pin given for a channel the import does not add, or one that is not a pin number),
+   * (a pin given for a channel the import does not add, or one outside this board's `pin_range`),
    * `only_here` (a channel this rig has and the file lacks), `order` (a channel both have,
    * declared at another position: declaration order is the odor index,
    * `TASKS.md#order-is-meaning`), `no_code` (an edge the file names no code for), `rule` (a
@@ -2320,8 +2320,9 @@ export interface ChannelSetNewChannel {
   pin: number | null;
   /**
    * This board's pins (its `pin_range`) that no channel this rig keeps is on, ascending; for a
-   * `pwm_out`, only the timer-driven pins (RIG109). Not narrowed by the other new channels' pins:
-   * two on one pin come back as a `rule` conflict (RIG103).
+   * `pwm_out`, only the timer-driven pins, less Timer2's while the channel set has a `tone_out`
+   * (RIG109). Not narrowed by the other new channels' pins: two on one pin come back as a `rule`
+   * conflict (RIG103).
    */
   freePins: number[];
 }

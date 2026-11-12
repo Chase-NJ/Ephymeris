@@ -764,7 +764,7 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
       detail: "Odor was delivered, but the animal left before sampling completed.",
       governedBy: STAGES,
       // Grammar 2 gives this release its own code (`TASKS.md#stream-grammar`);
-      // grammar 1's shared code puts the token nowhere, as before.
+      // `liveNodeId` splits grammar 1's shared ODOR_UNPOKE_EARLY by the trial.
       entryNames: ["ODOR_UNPOKE_EARLY_SAMPLING"],
     });
     for (const arm of odorArms) {
@@ -1221,8 +1221,8 @@ function abortOfTrial(names: readonly (string | undefined)[], before: number): s
  * first one. `strobes` is the profile's code→name map; `codes` are the raw
  * codes as they arrived, oldest first.
  *
- * Most codes name one node (`entryNames`). Three are read by the trial they
- * close (`TASKS.md#derived-state-machine`):
+ * Most codes name one node (`entryNames`). Four are read by the trial they
+ * sit in (`TASKS.md#live-token`):
  *
  *   - `LIGHTS_OFF` opens the response window only on the administered path.
  *     Every abort strobes its code, then `LIGHTS_OFF`, then serves its penalty
@@ -1232,8 +1232,8 @@ function abortOfTrial(names: readonly (string | undefined)[], before: number): s
  *     `INVALID_TRIAL`, and it would otherwise read as the ITI.
  *   - Grammar 1's shared `ODOR_UNPOKE_EARLY` is split by `abortOfTrial`.
  *
- * Any answer is a node the model has: a profile that draws no abort node keeps
- * the code's own node.
+ * A contextual reading is used only when the model draws that node; otherwise
+ * the code keeps its own node.
  */
 export function liveNodeId(
   model: TaskGraphModel,

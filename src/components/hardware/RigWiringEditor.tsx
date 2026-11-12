@@ -23,6 +23,7 @@ import {
   type RigChannel,
   type RigDocument,
 } from "@/lib/hardware/types";
+import { lowestFreePin } from "@/lib/hardware/pins";
 import { canReset, canSave as canSaveView } from "@/lib/hardware/rigView";
 import { useStrobeVocabulary } from "@/lib/strobes/useStrobeVocabulary";
 import { onsetOptions } from "@/lib/taskdef/lines";
@@ -107,7 +108,8 @@ export function RigWiringEditor({
   }
 
   /**
-   * Add a channel on the lowest free pin.
+   * Add a channel on the lowest free pin the board does not reserve
+   * (`lowestFreePin`: never the Mega's serial pins 0 and 1).
    *
    * NAMED GENERICALLY AND THEN RENAMED, rather than asking for a name up front
    * in a dialog. The rail is already the place a channel's fields are edited,
@@ -117,12 +119,8 @@ export function RigWiringEditor({
    */
   function addChannel() {
     if (!doc) return;
-    const used = new Set(Object.values(doc.pins).map((p) => p.index));
-    const min = doc.pin_range?.min ?? 0;
-    const max = doc.pin_range?.max ?? 53;
-    let pin = min;
-    while (pin <= max && used.has(pin)) pin += 1;
-    if (pin > max) return;
+    const pin = lowestFreePin(doc, rig.reservedPins);
+    if (pin === null) return;
 
     let n = 1;
     while (doc.channels[`channel_${n}`]) n += 1;
@@ -274,6 +272,7 @@ export function RigWiringEditor({
               onCarry={setCarried}
               onMove={movePin}
               problemPins={problemPins}
+              reservedPins={rig.reservedPins}
             />
 
             <div className="flex items-center justify-between gap-3">

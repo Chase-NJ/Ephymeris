@@ -594,7 +594,7 @@ class ChannelMap:
         return f"{source}.{channel}" if "/" not in source else source
 
     def pin_problems(self) -> list[tuple[str, str]]:
-        """A pin index that is not a pin on this board.
+        """A pin index that is not a pin on this board, or is one of its serial pins.
 
         UNGUARDED UNTIL THE WIRING BECAME EDITABLE, because nobody could type
         one -- the pinout was a transcription of `BehaviorBox.h` that shipped
@@ -615,7 +615,15 @@ class ChannelMap:
                     f"{c.name!r} is on pin {c.index}; {self.board} has pins "
                     f"{self.pin_min}-{self.pin_max}.",
                 ))
+            elif (message := board.serial_pin_problem(c.name, c.index)) is not None:
+                out.append((where(c.name), message))
         return out
+
+    def offered_pins(self) -> list[int]:
+        """The pins a channel may be put on here: `pin_range` less the board's
+        serial pins (`board.SERIAL_PINS`). Every pin offer reads this, so none
+        offers a pin RIG102 would refuse."""
+        return board.offered_pins(self.pin_min, self.pin_max)
 
     def duplicate_pins(self) -> list[tuple[str, str]]:
         """Two channels on one pin.

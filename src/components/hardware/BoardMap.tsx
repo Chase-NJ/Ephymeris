@@ -2,7 +2,8 @@ import { motion } from "framer-motion";
 import { useMemo, useRef, useState } from "react";
 
 import { springSnappy } from "@/lib/motion";
-import { kindColor, type RigDocument } from "@/lib/hardware/types";
+import { isReserved } from "@/lib/hardware/pins";
+import { kindColor, type RigDocument, type RigReservedPin } from "@/lib/hardware/types";
 import { useReduceMotion } from "@/lib/useReduceMotion";
 
 /**
@@ -30,6 +31,12 @@ import { useReduceMotion } from "@/lib/useReduceMotion";
  * lab runs Windows where none of this has been exercised. A rig that cannot be
  * wired because a gesture does not land is a dead app, so every drag has a
  * click-click equivalent that uses no gesture at all.
+ *
+ * A RESERVED PIN IS DRAWN BUT NEVER A TARGET. The Mega's serial pins 0 and 1
+ * (`reservedPins`, from `rig/board.py`) are on the header, so they keep their
+ * cells, dashed; neither a drag nor a carried channel lands on one. A channel
+ * a stored file already puts there still shows, lit by RIG102, so it can be
+ * moved off.
  */
 
 /** Rendering geometry, in viewBox units. */
@@ -128,6 +135,7 @@ export function BoardMap({
   onCarry,
   onMove,
   problemPins,
+  reservedPins,
 }: {
   doc: RigDocument;
   selected: string | null;
@@ -138,6 +146,8 @@ export function BoardMap({
   onMove: (channel: string, pin: number) => void;
   /** Pins a diagnostic points at, lit so a message has somewhere to land. */
   problemPins: ReadonlySet<number>;
+  /** Pins no channel may take: never a drop or carry target. */
+  reservedPins: readonly RigReservedPin[];
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const dragged = useRef(false);
@@ -168,6 +178,7 @@ export function BoardMap({
     let best: number | null = null;
     let bestDistance = SNAP_RADIUS;
     for (const p of pins.values()) {
+      if (isReserved(p.pin, reservedPins)) continue;
       const distance = Math.hypot(p.x + CELL / 2 - x, p.y + CELL / 2 - y);
       if (distance < bestDistance) {
         best = p.pin;
@@ -235,6 +246,8 @@ export function BoardMap({
     }
     const here = occupant.get(pin);
     if (carried !== null) {
+      // A reserved pin is no destination; the channel stays carried.
+      if (isReserved(pin, reservedPins)) return;
       // The click-click half of a drag: a carried channel lands wherever the
       // next click is, occupied or not — TG228 reports a collision rather than
       // the map refusing a move the operator may be part-way through.
@@ -284,7 +297,8 @@ export function BoardMap({
         const entry = channel ? doc.channels?.[channel] : undefined;
         const isDragging = drag?.live === true && drag.channel === channel;
         const isTarget = dropTarget === pin && drag !== null;
-        const isCarryTarget = carried !== null && !isDragging;
+        const reserved = reservedPins.find((r) => r.pin === pin);
+        const isCarryTarget = carried !== null && !isDragging && !reserved;
         const colour = kindColor(entry?.kind);
         const lit = problemPins.has(pin);
 
@@ -308,6 +322,8 @@ export function BoardMap({
                       : "var(--color-halo)"
               }
               strokeWidth={isTarget || lit ? 1 : 0.5}
+              strokeDasharray={reserved && !channel ? "1.5 1.5" : undefined}
+              opacity={reserved && !channel ? 0.6 : 1}
               className={
                 channel || isCarryTarget ? "cursor-pointer" : "cursor-default"
               }
@@ -325,8 +341,12 @@ export function BoardMap({
             >
               {pin}
             </text>
-            {channel && !isDragging && (
+            {channel && !isDragging ? (
               <title>{`pin ${pin} — ${channel} (${entry?.kind ?? "?"})`}</title>
+            ) : (
+              reserved && (
+                <title>{`pin ${pin} — ${reserved.name}, the USB serial the box streams strobes over: no channel can go here`}</title>
+              )
             )}
           </g>
         );

@@ -2901,6 +2901,7 @@ The draft, plus everything wrong with it. `document` is served even when `proble
 | `document` | unknown | The draft the editor opens — `{rig_version, channels, pins}`, validated against rig/schema/rig_hardware.v1.json. A stored file that is not in force, when there is one (held, copied in, changed outside the app, or not loaded, even broken), so the operator can check its pins or repair it; else the wiring in force, or the shipped pins when there is nothing stored to show. `status.notices` says which. |
 | `status` | [RigStatus](#shape-rigstatus) |  |
 | `problems` | [RigProblem](#shape-rigproblem)[] |  |
+| `reservedPins` | [RigReservedPin](#shape-rigreservedpin)[] | Pins inside `pin_range` that no channel may take: the board's serial pins (`rig/board.py`, `TASKS.md#wiring-rules`). Adding a channel and the board map leave them out; RIG102 refuses a channel on one. |
 
 <a id="shape-rigimpact"></a>
 #### RigImpact
@@ -2923,6 +2924,16 @@ One thing wrong with a wiring document, located. Every problem is reported rathe
 | `location` | string | `channels.left_well.kind`, `pins.odor_port`, or a rule's registry file. |
 | `message` | string |  |
 | `code` | string \| null | The wiring rule, when one produced it — RIG101 through RIG108. Null for a schema violation, which has no rule number because it is caught before the halves are composed. |
+
+<a id="shape-rigreservedpin"></a>
+#### RigReservedPin
+
+A pin the board has that no channel may take: one of the Mega's USB serial pins, the link the box streams strobes over.
+
+| Field | Type | Notes |
+|---|---|---|
+| `pin` | number |  |
+| `name` | string | The board's name for it: `RX0`, `TX0`. |
 
 <a id="shape-rigsaved"></a>
 #### RigSaved

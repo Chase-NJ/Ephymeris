@@ -1168,7 +1168,7 @@ A well-formed document describing an impossible box is a successful reply carryi
 | Code | Problem |
 |---|---|
 | `RIG101` | The meaning and the pinout halves describe different boxes |
-| `RIG102` | A pin the board does not have |
+| `RIG102` | A pin the board does not have, or one of its [serial pins](#the-serial-pins) |
 | `RIG103` | Two channels on one pin |
 | `RIG104` | A response port with no strobe slot ([Port slots](#port-slots)) |
 | `RIG105` | More than one `sync` channel |
@@ -1176,6 +1176,10 @@ A well-formed document describing an impossible box is a successful reply carryi
 | `RIG107` | A type that contradicts the kind's direction, an active level or debounce on an output, a mode on a channel that is not a `digital_out` or one other than `train`, a [driven output](#driven-outputs) on a channel that is not a `cue` or on a pin the trial runner drives as a plain line, an edge the type does not have, an edge code that is not live, or one code on two edges ([Edge codes](#edge-codes)) |
 | `RIG108` | A draft read from a stored file that is not in force and that the record cannot vouch for (copied in, changed outside the app, not loaded even once repaired, a pin map not written with its channel set, or saved here when a save after it did not finish), its pins not yet confirmed by the operator ([The channel set and the pin map](#the-channel-set-and-the-pin-map)) |
 | `RIG109` | A [driven output](#driven-outputs) the board cannot run (`rig/board.py`): a `pwm_out` on a pin no timer drives, a `pwm_out` on Timer2's pins 9 or 10 beside a `tone_out`, or a second `tone_out` |
+
+### The serial pins
+
+Pins 0 and 1 are inside a Mega's `pin_range`, and no channel may take them: they are RX0 and TX0, the USB serial every box streams strobes over and takes `BEGIN`, `SET` and `START` on. A channel there would break that link. The fact lives in `rig/board.py` (`SERIAL_PINS`), not in the pin map, so a stored `pin_range` keeps meaning the pins the board has. RIG102 refuses a channel on one; `ChannelMap.offered_pins()` is the range less them, for every pin a sidecar offers; and `hardware.get` sends them as `reservedPins`, so **Add a channel** takes the lowest free pin after them and the board map draws them dashed and never lands a channel on one.
 
 ### The sync channel
 

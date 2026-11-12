@@ -659,6 +659,7 @@ A row is one of two things, in stream order:
 | `correct` | The condition's hit (true), miss (false) or exclusion (null), from `MetricAccumulator` fed the whole stream, so live ≡ offline still holds |
 | `rewarded`, `rewardLine`, `rewardMs` | The rewarded class; the `FLUID_*` strobe's name; null |
 | `correction` | Null: the strobes cannot say |
+| `counterN` | Null: no counter |
 | `complete` | True: a legacy trial ends at the next onset or the end of the file, and every one counts |
 | `presented` | The row opens a presentation on the ladder: the first onset in a trial-light window, and every odor-less presentation |
 | `scores` | `{condition, correct}` for every condition the onset opens: one, unless a profile declares two conditions on one onset, when each keeps its own verdict |

@@ -560,7 +560,7 @@ A [spine run](TASKS.md#spine-tasks)'s `.json` and `.mat` carry its [trial table]
 
 ```jsonc
 "derived": {
-  "status": "ok", "detail": null, "interp": 1, "replay_version": 3,
+  "status": "ok", "detail": null, "interp": 1, "replay_version": 4,
   "grammar": 2,             // the mark: this block's rows are a grammar-2 run's
   "phases": [],
   "trials": [{"index": 0, "type_slot": 1, "odor_line": 1, "side": "right", "sampled": true,

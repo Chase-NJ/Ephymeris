@@ -171,7 +171,7 @@ def test_a_variable_ratio_s_drawn_n_reaches_the_json_and_mat_copy():
     block = derived.derive(silent.document)
     assert block is not None and block["trials"]
     assert all(1 <= t["counter_n"] <= 9 for t in block["trials"])
-    assert all(c["count"] == 0 for t in block["trials"] for c in t["input_counts"])
+    assert all(t["input_counts"] == [] for t in block["trials"])
 
 
 def test_a_progressive_ratio_breaks_and_ends_the_session():

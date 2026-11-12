@@ -481,9 +481,10 @@ class Actions:
     #: The block running after this tick; NONE in a table without blocks.
     block: int = NONE
     #: The N a counter state entered this tick drew (its `target`); NONE when
-    #: it entered none. Python only: `InterpActions` has no such field and the
-    #: differential test compares the fields above, never this one. The trial
-    #: table reads it (`trial_table.trials_of`), since only replay has a VR's N.
+    #: it entered none. Python only: `InterpActions` has no such field, and the
+    #: differential test compares an explicit tuple of the fields above
+    #: (`differential.py`'s `run_python`), never this one. The trial table reads
+    #: it (`trial_table.trials_of`), since only replay has a VR's N.
     drawn: int = NONE
 
     @property

@@ -2,7 +2,7 @@ import { Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Callout } from "@/components/common/Callout";
-import { Button } from "@/components/common/controls";
+import { Button, Select } from "@/components/common/controls";
 import { Modal } from "@/components/common/Modal";
 import { errorMessage } from "@/lib/cohorts/commands";
 import {
@@ -77,8 +77,10 @@ export function ChannelSetImportDialog({
 
   const pick = async (file: File | undefined) => {
     if (!file) return;
-    // The last file's plan, if still on its way, is not this file's.
+    // The last file's plan, if still on its way, is not this file's; and a
+    // file chosen after this one, read sooner, wins over it.
     requests.current.cancel();
+    const chosen = requests.current.begin();
     setPending(false);
     setFileName(file.name);
     setPlan(null);
@@ -88,10 +90,13 @@ export function ChannelSetImportDialog({
     try {
       parsed = JSON.parse(await file.text());
     } catch {
-      setDocument(null);
-      setError("That file is not JSON.");
+      if (chosen()) {
+        setDocument(null);
+        setError("That file is not JSON.");
+      }
       return;
     }
+    if (!chosen()) return;
     setDocument(parsed);
     await replan(parsed, {});
   };
@@ -149,27 +154,23 @@ export function ChannelSetImportDialog({
             why="The pin map is this rig's own. The pins offered are free on this board; the import checks your picks against the wiring rules, as a save does."
           >
             {plan.newChannels.map((c) => (
-              <label key={c.channel} className="flex items-center gap-3 font-mono text-[11px]">
+              <div key={c.channel} className="flex items-center gap-3 font-mono text-[11px]">
                 <span className="w-32 truncate text-starlight">{c.channel}</span>
                 <span className="w-32 truncate text-static">
                   {c.kind ?? "?"} · {c.type ?? "?"}
                 </span>
-                <select
-                  className="rounded-sm border border-halo bg-nebula px-2 py-0.5 text-[11px] text-starlight"
-                  value={picks[c.channel] ?? ""}
+                <Select
+                  compact
+                  label={`Pin for ${c.channel}`}
+                  value={String(picks[c.channel] ?? "")}
                   disabled={busy}
-                  onChange={(e) =>
-                    pinChannel(c.channel, e.target.value === "" ? null : Number(e.target.value))
-                  }
-                >
-                  <option value="">Pick a pin…</option>
-                  {c.freePins.map((pin) => (
-                    <option key={pin} value={pin}>
-                      pin {pin}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  options={[
+                    { value: "", label: "Pick a pin…" },
+                    ...c.freePins.map((pin) => ({ value: String(pin), label: `pin ${pin}` })),
+                  ]}
+                  onChange={(next) => pinChannel(c.channel, next === "" ? null : Number(next))}
+                />
+              </div>
             ))}
           </Callout>
         )}

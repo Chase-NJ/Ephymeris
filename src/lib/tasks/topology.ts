@@ -764,7 +764,7 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
       detail: "Odor was delivered, but the animal left before sampling completed.",
       governedBy: STAGES,
       // Grammar 2 gives this release its own code (`TASKS.md#stream-grammar`);
-      // grammar 1's shared code puts the token nowhere, as before.
+      // `liveNodeId` splits grammar 1's shared ODOR_UNPOKE_EARLY by the trial.
       entryNames: ["ODOR_UNPOKE_EARLY_SAMPLING"],
     });
     for (const arm of odorArms) {
@@ -806,14 +806,14 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
    * Without this node the graph had nowhere to say "the animal is answering",
    * and the live token spent that whole stretch on Unpoke.
    *
-   * The code is emitted on all four paths through a trial, which is why it
-   * claimed no node before. `liveNodeId` walks newest-first, and each abort
-   * strobes ODOR_UNPOKE_EARLY or LAZY_RAT, then its LIGHTS_OFF, then serves its
-   * penalty delay in silence; the sketch loop strobes INVALID_TRIAL only after
-   * that delay. So an aborted trial's token sits on this node, not on its abort
-   * node, for the whole penalty and moves to `repeat` when INVALID_TRIAL arrives.
-   * On the administered path LIGHTS_OFF stays the newest code for the response
-   * window this node names.
+   * The code is emitted on every path through a trial, which is why it claimed
+   * no node before. Each abort strobes its code (LAZY_RAT, ODOR_UNPOKE_EARLY or
+   * ODOR_UNPOKE_EARLY_SAMPLING), then its LIGHTS_OFF, then serves its penalty
+   * delay in silence; the footer comes only after that delay. So LIGHTS_OFF
+   * after an abort code is part of the abort: `liveNodeId` keeps the token on
+   * the abort's node for the whole penalty, then moves it to `repeat` on the
+   * footer. This node holds the token only on the administered path, where
+   * LIGHTS_OFF follows ODOR_UNPOKE and opens the response window.
    */
   const answerFrom = has("LIGHTS_OFF") ? "lights-off" : "sample";
   if (has("LIGHTS_OFF")) {
@@ -1177,9 +1177,63 @@ export type LiveCondition =
   | null;
 
 /**
+ * Codes that open a trial, so the walk back through the current trial stops
+ * there. `LIGHTS_ON` is grammar 1's only opening; grammar 2 opens with its
+ * header, then `LIGHTS_ON`.
+ */
+const TRIAL_OPENING = new Set(["LIGHTS_ON", "TRIAL_START"]);
+
+/** The three abort codes and the node each one names. */
+const ABORT_NODE: Readonly<Record<string, string>> = {
+  LAZY_RAT: "lazy",
+  ODOR_UNPOKE_EARLY: "abort-pre-odor",
+  ODOR_UNPOKE_EARLY_SAMPLING: "abort-sampling",
+};
+
+/**
+ * The abort node the current trial took, reading back from `before` (exclusive)
+ * to the code that opened the trial, or `null` if it took none.
+ *
+ * Grammar 1's `ODOR_UNPOKE_EARLY` is one code for both early releases; an
+ * odor-on code earlier in the trial makes it the sampling release, exactly as
+ * `stream/engagement.py` splits it. Grammar 2 never sends that code after an
+ * onset, so the same rule reads both.
+ */
+function abortOfTrial(names: readonly (string | undefined)[], before: number): string | null {
+  let abort: string | null = null;
+  for (let i = before - 1; i >= 0; i -= 1) {
+    const name = names[i];
+    if (!name) continue;
+    if (TRIAL_OPENING.has(name)) break;
+    if (abort === null) {
+      abort = ABORT_NODE[name] ?? null;
+      // Any other abort code names its node; only the shared one reads on.
+      if (abort !== null && name !== "ODOR_UNPOKE_EARLY") return abort;
+    } else if (/^ODOR_\d+_ON$/.test(name)) {
+      return "abort-sampling";
+    }
+  }
+  return abort;
+}
+
+/**
  * The node the last recognised strobe puts the token on, or `null` before the
  * first one. `strobes` is the profile's code→name map; `codes` are the raw
  * codes as they arrived, oldest first.
+ *
+ * Most codes name one node (`entryNames`). Four are read by the trial they
+ * sit in (`TASKS.md#live-token`):
+ *
+ *   - `LIGHTS_OFF` opens the response window only on the administered path.
+ *     Every abort strobes its code, then `LIGHTS_OFF`, then serves its penalty
+ *     in silence, so after an abort the token stays on that abort's node.
+ *   - The footer, `INVALID_TRIAL` and grammar 2's `END_TRIAL`, puts an aborted
+ *     trial's token on `repeat`; grammar 2 sends `END_TRIAL` straight after
+ *     `INVALID_TRIAL`, and it would otherwise read as the ITI.
+ *   - Grammar 1's shared `ODOR_UNPOKE_EARLY` is split by `abortOfTrial`.
+ *
+ * A contextual reading is used only when the model draws that node; otherwise
+ * the code keeps its own node, or the walk reads on when it has none.
  */
 export function liveNodeId(
   model: TaskGraphModel,
@@ -1187,10 +1241,21 @@ export function liveNodeId(
   codes: readonly string[],
 ): string | null {
   const byName = nodeIndexByName(model);
-  for (let i = codes.length - 1; i >= 0; i -= 1) {
-    const name = strobes[codes[i]!];
+  const drawn = new Set(model.nodes.map((n) => n.id));
+  const names = codes.map((c) => strobes[c]?.toUpperCase());
+  for (let i = names.length - 1; i >= 0; i -= 1) {
+    const name = names[i];
     if (!name) continue;
-    const nodeId = byName.get(name.toUpperCase());
+    const contextual =
+      name === "LIGHTS_OFF"
+        ? abortOfTrial(names, i)
+        : name === "INVALID_TRIAL" || name === "END_TRIAL"
+          ? abortOfTrial(names, i) && "repeat"
+          : name === "ODOR_UNPOKE_EARLY"
+            ? abortOfTrial(names, i + 1)
+            : null;
+    if (contextual && drawn.has(contextual)) return contextual;
+    const nodeId = byName.get(name);
     if (nodeId) return nodeId;
   }
   return null;

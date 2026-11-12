@@ -21,6 +21,7 @@ import {
   happyPath,
   HOLDS_TAB,
   liveConditionId,
+  liveNodeId,
   nodesGovernedByTab,
   ROWS_TAB,
   tabOf,
@@ -248,6 +249,97 @@ describe("taskGraph", () => {
     expect(arms).toHaveLength(3);
     // And the aborts stay in the band the renderer will re-place.
     expect(model.nodes.filter((n) => n.lane === "floor").length).toBeGreaterThan(0);
+  });
+});
+
+// --- the live token --------------------------------------------------------
+
+describe("liveNodeId", () => {
+  const model = taskGraph(profile(2));
+  const at = (...names: string[]) => liveNodeId(model, STROBES, tail(...names));
+  // Grammar 2's header; grammar 1 has none.
+  const HEADER = ["TRIAL_START", "TRIAL_GO_LEFT", "TRIAL_TYPE_1"];
+
+  /*
+   * Each abort strobes its code, then LIGHTS_OFF, then serves its penalty in
+   * silence (`BehaviorBox.h`). The token must stay on the abort for the whole
+   * penalty, never on the response window LIGHTS_OFF opens on the other path.
+   */
+  const aborts: [string, string[], string[]][] = [
+    ["lazy", ["LIGHTS_ON", "LAZY_RAT"], ["LIGHTS_ON", "LAZY_RAT"]],
+    [
+      "abort-pre-odor",
+      ["LIGHTS_ON", "ODOR_POKE", "ODOR_UNPOKE_EARLY"],
+      ["LIGHTS_ON", "ODOR_POKE", "ODOR_UNPOKE_EARLY"],
+    ],
+    [
+      "abort-sampling",
+      // Grammar 1 shares one code, split by the onset before it.
+      ["LIGHTS_ON", "ODOR_POKE", "ODOR_1_ON", "ODOR_UNPOKE_EARLY"],
+      ["LIGHTS_ON", "ODOR_POKE", "ODOR_1_ON", "ODOR_UNPOKE_EARLY_SAMPLING"],
+    ],
+  ];
+
+  for (const [node, grammar1, grammar2] of aborts) {
+    it(`holds ${node} through its penalty, then repeats (grammar 1)`, () => {
+      expect(at(...grammar1)).toBe(node);
+      expect(at(...grammar1, "LIGHTS_OFF")).toBe(node);
+      expect(at(...grammar1, "LIGHTS_OFF", "INVALID_TRIAL")).toBe("repeat");
+    });
+
+    it(`holds ${node} through its penalty, then repeats (grammar 2)`, () => {
+      const trial = [...HEADER, ...grammar2];
+      expect(at(...trial)).toBe(node);
+      expect(at(...trial, "LIGHTS_OFF")).toBe(node);
+      expect(at(...trial, "LIGHTS_OFF", "INVALID_TRIAL")).toBe("repeat");
+      // END_TRIAL follows at once; it is the ITI's code on the other path.
+      expect(at(...trial, "LIGHTS_OFF", "INVALID_TRIAL", "END_TRIAL")).toBe("repeat");
+      // And it stays there through the next header, until the light comes on.
+      expect(at(...trial, "LIGHTS_OFF", "INVALID_TRIAL", "END_TRIAL", ...HEADER)).toBe("repeat");
+      expect(
+        at(...trial, "LIGHTS_OFF", "INVALID_TRIAL", "END_TRIAL", ...HEADER, "LIGHTS_ON"),
+      ).toBe("start");
+    });
+  }
+
+  it("opens the response window on LIGHTS_OFF only after a full sample", () => {
+    const sampled = ["LIGHTS_ON", "ODOR_POKE", "ODOR_1_ON", "ODOR_OFF", "ODOR_UNPOKE", "LIGHTS_OFF"];
+    expect(at(...sampled)).toBe("lights-off");
+    expect(at(...HEADER, ...sampled)).toBe("lights-off");
+    expect(at(...HEADER, ...sampled, "RESP_OMIT", "END_TRIAL")).toBe("iti");
+  });
+
+  it("never carries an abort into the next trial", () => {
+    // A lazy trial in grammar 1, then a sampled one: the second's LIGHTS_OFF
+    // is the response window, not the earlier trial's abort.
+    const lazy = ["LIGHTS_ON", "LAZY_RAT", "LIGHTS_OFF", "INVALID_TRIAL"];
+    const sampled = ["LIGHTS_ON", "ODOR_POKE", "ODOR_2_ON", "ODOR_OFF", "ODOR_UNPOKE", "LIGHTS_OFF"];
+    expect(at(...lazy, ...sampled)).toBe("lights-off");
+    // Nor an odor onset: the early release here comes before this trial's odor.
+    const sampledThenWrong = [...sampled, "WATER_POKE_R", "WATER_POKE_ERROR_R", "END_INCORRECT_ITI"];
+    expect(at(...sampledThenWrong, "LIGHTS_ON", "ODOR_POKE", "ODOR_UNPOKE_EARLY", "LIGHTS_OFF")).toBe(
+      "abort-pre-odor",
+    );
+  });
+
+  it("reads on when the profile draws no node for the reading", () => {
+    // A profile without ODOR_UNPOKE_EARLY draws neither early-release node, so
+    // the sampling release's LIGHTS_OFF falls back to the response window.
+    const strobes = Object.fromEntries(
+      Object.entries(STROBES).filter(([, name]) => name !== "ODOR_UNPOKE_EARLY"),
+    );
+    const bare = taskGraph({ ...profile(2), strobes } as TaskProfile);
+    expect(bare.nodes.some((n) => n.id === "abort-sampling")).toBe(false);
+    const trial = tail(...HEADER, "LIGHTS_ON", "ODOR_POKE", "ODOR_1_ON", "ODOR_UNPOKE_EARLY_SAMPLING", "LIGHTS_OFF");
+    expect(liveNodeId(bare, STROBES, trial)).toBe("lights-off");
+  });
+
+  it("sends a repeated error trial's footer to the ITI, not Repeat", () => {
+    // A correction budget repeats an error trial with INVALID_TRIAL; it was no
+    // abort, so END_TRIAL is its ITI as on any administered trial.
+    const wrong = [...HEADER, "LIGHTS_ON", "ODOR_POKE", "ODOR_1_ON", "ODOR_OFF", "ODOR_UNPOKE",
+      "LIGHTS_OFF", "WATER_POKE_L", "WATER_POKE_ERROR_L"];
+    expect(at(...wrong, "INVALID_TRIAL", "END_TRIAL")).toBe("iti");
   });
 });
 

@@ -322,6 +322,18 @@ describe("liveNodeId", () => {
     );
   });
 
+  it("reads on when the profile draws no node for the reading", () => {
+    // A profile without ODOR_UNPOKE_EARLY draws neither early-release node, so
+    // the sampling release's LIGHTS_OFF falls back to the response window.
+    const strobes = Object.fromEntries(
+      Object.entries(STROBES).filter(([, name]) => name !== "ODOR_UNPOKE_EARLY"),
+    );
+    const bare = taskGraph({ ...profile(2), strobes } as TaskProfile);
+    expect(bare.nodes.some((n) => n.id === "abort-sampling")).toBe(false);
+    const trial = tail(...HEADER, "LIGHTS_ON", "ODOR_POKE", "ODOR_1_ON", "ODOR_UNPOKE_EARLY_SAMPLING", "LIGHTS_OFF");
+    expect(liveNodeId(bare, STROBES, trial)).toBe("lights-off");
+  });
+
   it("sends a repeated error trial's footer to the ITI, not Repeat", () => {
     // A correction budget repeats an error trial with INVALID_TRIAL; it was no
     // abort, so END_TRIAL is its ITI as on any administered trial.

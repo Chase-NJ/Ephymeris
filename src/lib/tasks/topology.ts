@@ -1181,7 +1181,7 @@ export type LiveCondition =
  * there. `LIGHTS_ON` is grammar 1's only opening; grammar 2 opens with its
  * header, then `LIGHTS_ON`.
  */
-const TRIAL_OPENING = new Set(["LIGHTS_ON", "TRIAL_START", "START_SESSION", "END_SESSION"]);
+const TRIAL_OPENING = new Set(["LIGHTS_ON", "TRIAL_START"]);
 
 /** The three abort codes and the node each one names. */
 const ABORT_NODE: Readonly<Record<string, string>> = {
@@ -1233,7 +1233,7 @@ function abortOfTrial(names: readonly (string | undefined)[], before: number): s
  *   - Grammar 1's shared `ODOR_UNPOKE_EARLY` is split by `abortOfTrial`.
  *
  * A contextual reading is used only when the model draws that node; otherwise
- * the code keeps its own node.
+ * the code keeps its own node, or the walk reads on when it has none.
  */
 export function liveNodeId(
   model: TaskGraphModel,
@@ -1251,7 +1251,7 @@ export function liveNodeId(
         ? abortOfTrial(names, i)
         : name === "INVALID_TRIAL" || name === "END_TRIAL"
           ? abortOfTrial(names, i) && "repeat"
-          : ABORT_NODE[name]
+          : name === "ODOR_UNPOKE_EARLY"
             ? abortOfTrial(names, i + 1)
             : null;
     if (contextual && drawn.has(contextual)) return contextual;

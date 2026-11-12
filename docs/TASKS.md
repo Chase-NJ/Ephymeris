@@ -1711,6 +1711,14 @@ Lines are grouped by what fixes them: a shared role's binding problems are one l
 > [!CAUTION]
 > **A value stored in `params` wins over the field it tunes**, so an edit to that field changes nothing the board runs. A key that carries a phase index would also tune whichever phase takes that index after an insert or a remove, which is why those are folded into their fields first. `SpineView.stored` lists each one with its target, and the editor shows it beside the field it shadows, with **Use the value here** to remove the stored key. A definition the editor builds stores none. One comes from an older build, an import, or a hand edit.
 
+#### The guide
+
+A first spine task can be built step by step (`components/task/spine/SpineGuide.tsx`; its steps, which problems each shows and the stimulus rule in `lib/taskdef/guide.ts`, pure and unit-tested). It sits behind the same development flag as the seed chooser. With the flag on, `/task/new` opens it while the task list holds no spine task (`TaskEntry.spine`, read from `tasks.list`; no preference stores it), and the seed chooser links to it otherwise. Eight steps: choose a paradigm (the seed cards), name the trial types, say which channel plays each role, say what each answer means (each trial type's contingency map as the editor's sentence controls), the timings that matter (`spineWords.timingFields`), the session's shape (the editor's shape control), Simulate (the editor's panel) and Save.
+
+- **One document.** The first step seeds the route's `useTask` session and every later step edits that same unsaved document with the editor's functions. Every problem shown is the preview's, filed under the step that can fix it: names SPN108; roles SPN101, SPN102, SPN103 and SPN107; answers SPN109 and SPN112; timings a phase's; the session a block's or the cap's; Simulate and Save every one. Next is never held: **Open in the editor** on any step leaves with the document kept, and Simulate and Save say whatever is left.
+- **Roles once, the stimulus per trial type.** Each role is asked once and bound in every trial type, except the stimulus, asked per trial type: for each Present, the outputs the step after it turns off; when that is several, the ones already on before it (primed, as the full odor trial primes `sample`); and with two or more Presents, never a role every Present turns on (the vacuum). So `sample` on 2AFC and go/no-go, `sample` and `test` on DNMS, `cs` on trace and none on FR/PR. Either can be flipped on the step.
+- **Saving** goes to the editor at the task's address, as a save from the seed chooser does.
+
 ### Simulating a spine task
 
 The editor's **Simulate** panel (`SimulatePanel`) runs the unsaved definition against a simulated animal and shows what Analytics would show for that run, before anything is compiled or flashed (`tasks.simulate`, `analytics/simulation.py`):

@@ -179,7 +179,7 @@ export function BlockTimeline({
  * (`applyShape`); its numbers edit them in place. Custom is whatever the
  * blocks are, edited in the panel below.
  */
-function ShapeControl({ def, onChange }: { def: SpineDefinition; onChange: (next: SpineDefinition) => void }) {
+export function ShapeControl({ def, onChange }: { def: SpineDefinition; onChange: (next: SpineDefinition) => void }) {
   const shape = shapeOf(def);
   const reversible = canReverse(def);
   const pick = (kind: ShapeKind) => {

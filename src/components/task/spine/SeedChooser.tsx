@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Compass } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/common/controls";
@@ -26,21 +26,13 @@ import type { TaskSeed } from "@/lib/ws/protocol";
 export function SeedChooser({
   onPick,
   onBack,
+  onGuide,
 }: {
   onPick: (definition: TaskDocument) => void;
   onBack: () => void;
+  /** Opens the guided first task instead (`SpineGuide`). */
+  onGuide: () => void;
 }) {
-  const { client, status } = useSidecar();
-  const [seeds, setSeeds] = useState<TaskSeed[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (status !== "connected") return;
-    void spinePalette(client)
-      .then((reply) => setSeeds(reply.seeds))
-      .catch((err) => setError(errorMessage(err)));
-  }, [client, status]);
-
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -61,12 +53,44 @@ export function SeedChooser({
           of trials. You name each trial type, say which channel on this rig plays each role, then
           change whatever else differs.
         </p>
+        <button
+          type="button"
+          onClick={onGuide}
+          className="mt-3 flex items-center gap-1.5 text-[12px] text-pulsar transition-colors hover:text-starlight"
+        >
+          <Compass size={13} strokeWidth={1.75} />
+          New to this? Build a first task step by step
+        </button>
+        <SeedGrid onPick={onPick} className="mt-6" />
+      </section>
+    </motion.div>
+  );
+}
+
+/**
+ * The palette's seeds as cards, each with its summary and its steps in words.
+ * The seed chooser and the guide's first step both show it.
+ */
+export function SeedGrid({ onPick, className = "" }: { onPick: (definition: TaskDocument) => void; className?: string }) {
+  const { client, status } = useSidecar();
+  const [seeds, setSeeds] = useState<TaskSeed[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (status !== "connected") return;
+    void spinePalette(client)
+      .then((reply) => setSeeds(reply.seeds))
+      .catch((err) => setError(errorMessage(err)));
+  }, [client, status]);
+
+  return (
+    <div className={className}>
         {error && <p className="mt-4 text-[11px] text-status-error">{error}</p>}
         {status !== "connected" && (
           <p className="mt-4 text-[12px] text-static">Waiting for the backend — the seeds come from it.</p>
         )}
         {seeds && (
-          <motion.div variants={CASCADE} initial="hidden" animate="shown" className="mt-6 grid grid-cols-2 gap-3">
+          <motion.div variants={CASCADE} initial="hidden" animate="shown" className="grid grid-cols-2 gap-3">
             {seeds.map((seed) => {
               const def = seed.definition as SpineDefinition;
               return (
@@ -89,7 +113,6 @@ export function SeedChooser({
             })}
           </motion.div>
         )}
-      </section>
-    </motion.div>
+    </div>
   );
 }

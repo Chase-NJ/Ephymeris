@@ -166,6 +166,12 @@ opens with a problem on every trial type:
    line…). Once one trial type is bound, **Bind like …** under the next fills it the same way in one click.
 3. Change whatever else differs from the seed.
 
+For a first spine task, **New to this? Build a first task step by step** walks through it in eight steps:
+the paradigm, the trial types' names, which channel plays each role (the stimulus is asked for each trial
+type, every other role once), what each answer means, the timings, the session's shape, a check against a
+pretend animal, and Save. It opens by itself while this computer has no spine task, and **Open in the
+editor** on any step takes everything filled in so far to the editor.
+
 New tasks are always built from a seed. A task made of a table of odor lines, saved here or imported
 from the other computer, opens, changes and saves on its own screen, described below. You can
 duplicate one, but you cannot start a new one from scratch.

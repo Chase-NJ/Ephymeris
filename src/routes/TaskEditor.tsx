@@ -10,6 +10,7 @@ import { GenerationPanel } from "@/components/task/editor/GenerationPanel";
 import { Panel } from "@/components/task/editor/Panel";
 import { SeedChooser } from "@/components/task/spine/SeedChooser";
 import { SpineEditor } from "@/components/task/spine/SpineEditor";
+import { SpineGuide } from "@/components/task/spine/SpineGuide";
 import { ParameterPanel } from "@/components/task/editor/ParameterPanel";
 import { TrialTypes } from "@/components/task/editor/TrialTypes";
 import { errorMessage } from "@/lib/cohorts/commands";
@@ -19,6 +20,7 @@ import { CASCADE, RISE, springPanel } from "@/lib/motion";
 import { useStrobeVocabulary } from "@/lib/strobes/useStrobeVocabulary";
 import { idFromName, listTasks } from "@/lib/taskdef/commands";
 import { spineEditorEnabled } from "@/lib/taskdef/devFlags";
+import { offerGuide } from "@/lib/taskdef/guide";
 import { isRowOwnedField } from "@/lib/taskdef/lines";
 import { isSpine } from "@/lib/taskdef/spine";
 import { blankTrial, nextStage } from "@/lib/taskdef/types";
@@ -67,7 +69,7 @@ export function TaskEditor() {
   const { client, status } = useSidecar();
   const connected = status === "connected";
 
-  const [tasks, setTasks] = useState<TaskEntry[]>([]);
+  const [tasks, setTasks] = useState<TaskEntry[] | null>(null);
   const [rig, setRig] = useState<RigDocument | null>(null);
   const [problemsOpen, setProblemsOpen] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
@@ -81,6 +83,15 @@ export function TaskEditor() {
   const [seed, setSeed] = useState<TaskDocument | null>(() =>
     taskId === undefined ? (seedFrom(location.state) ?? (spineEditorEnabled() ? null : freshTask())) : null,
   );
+  /** The guided first task (`SpineGuide`): offered on `/task/new` behind the
+   *  same flag while the machine has no spine task, opened from the seed
+   *  chooser's link, and left for the editor (or the chooser) at any step. */
+  const [guide, setGuide] = useState<"offered" | "on" | "off">("offered");
+  const guiding =
+    taskId === undefined &&
+    spineEditorEnabled() &&
+    !seedFrom(location.state) &&
+    (guide === "on" || (guide === "offered" && seed === null && tasks !== null && offerGuide(tasks)));
   // Never opened by itself: a new task's category defaults to `Tasks`, which
   // the header's Details button shows, and the folder it decides is changed
   // there whenever someone wants another.
@@ -115,7 +126,7 @@ export function TaskEditor() {
     if (taskId !== undefined || !definition) return;
     const want = idFromName(
       definition.name,
-      tasks.map((t) => t.id),
+      (tasks ?? []).map((t) => t.id),
     );
     if (want !== definition.id) setDefinition({ ...definition, id: want });
   }, [taskId, definition, tasks, setDefinition]);
@@ -129,7 +140,7 @@ export function TaskEditor() {
   }, [definition, navigate, session, taskId]);
 
   const categories = useMemo(
-    () => [...new Set(tasks.map((t) => t.category))].sort((a, b) => a.localeCompare(b)),
+    () => [...new Set((tasks ?? []).map((t) => t.category))].sort((a, b) => a.localeCompare(b)),
     [tasks],
   );
 
@@ -147,8 +158,25 @@ export function TaskEditor() {
   };
 
   let body;
-  if (taskId === undefined && seed === null) {
-    body = <SeedChooser onPick={setSeed} onBack={() => navigate("/task")} />;
+  if (guiding) {
+    body = (
+      <SpineGuide
+        session={session}
+        rig={rig}
+        onPickSeed={(picked) => {
+          setGuide("on");
+          setSeed(picked);
+        }}
+        onLeave={() => setGuide("off")}
+        onSave={() => void save()}
+      />
+    );
+  } else if (taskId === undefined && seed === null && guide === "offered" && spineEditorEnabled() && tasks === null && !listError) {
+    // Whether to offer the guide waits on the task list: nothing, rather than
+    // the chooser for a frame.
+    body = null;
+  } else if (taskId === undefined && seed === null) {
+    body = <SeedChooser onPick={setSeed} onBack={() => navigate("/task")} onGuide={() => setGuide("on")} />;
   } else if (session.loadError || !definition) {
     body = (
       <Frame scrolls>

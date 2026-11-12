@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import type { TaskDiagnostic } from "@/lib/ws/protocol";
 
 import type { SpineDefinition } from "./spine";
-import { problemLines, targetLines, wiringLines } from "./spineProblems";
+import { everyLine, problemLines, targetLines, wiringLines } from "./spineProblems";
 
 function def(): SpineDefinition {
   return {
@@ -122,5 +122,21 @@ describe("the task's problems", () => {
     expect(targetLines([odd], def(), "phase", 1)).toEqual([
       { code: "SPN111", instruction: odd.message, detail: [odd.message], diagnostics: [odd], fix: null, link: null },
     ]);
+  });
+});
+
+describe("every line", () => {
+  it("says each problem once, wherever the editor would", () => {
+    const lines = everyLine(all, def(), null, ["port"]);
+    const said = lines.flatMap((l) => l.diagnostics);
+    // Each diagnostic in exactly one line.
+    expect(new Set(said).size).toBe(said.length);
+    expect([...said].sort((a, b) => all.indexOf(a) - all.indexOf(b))).toEqual(all);
+    expect(lines.map((l) => l.instruction)).toContain("Pick the channel that plays port.");
+    expect(lines.filter((l) => l.code === "SPN103")).toHaveLength(1);
+  });
+
+  it("says nothing for no problems", () => {
+    expect(everyLine([], def(), null, [])).toEqual([]);
   });
 });

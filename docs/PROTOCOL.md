@@ -2838,6 +2838,7 @@ One trial of a run: a spine run's read off its replay, a legacy run's off its st
 | `rewardMs` | number \| null | How long the line was open. |
 | `correction` | boolean \| null | A correction trial; false until blocks have a correction rule, null on a legacy run, which cannot say. |
 | `inputCounts` | [InputCount](#shape-inputcount)[] | Non-zero counts only. |
+| `counterN` | number \| null | The N the trial's Counter phase drew when it was entered (an FR's, a VR's or a PR's step), from replay, whether or not the trial reached it; null when it entered no Counter, and on a legacy run. |
 | `complete` | boolean | False only for a crashed spine run's cut-off last trial. |
 | `presented` | boolean | The trial opens a presentation on the engagement ladder. |
 | `scores` | [ConditionScore](#shape-conditionscore)[] | A legacy trial's verdict under every condition its onset opens. Empty on a spine run. |

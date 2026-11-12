@@ -541,11 +541,11 @@ A [spine run](TASKS.md#spine-tasks)'s `.json` and `.mat` carry its [trial table]
   "status": "ok",           // ok | diverged | unreplayable
   "detail": null,           // why, when not ok
   "interp": 6,              // the INTERP it was replayed under (the header's, when unreplayable)
-  "replay_version": 3,      // spine.REPLAY_VERSION
+  "replay_version": 4,      // spine.REPLAY_VERSION
   "phases": ["wait", "present", "delay", "outcome", "iti"],
   "trials": [{"index": 0, "at_ms": 0, "block": "b1", "row": "r1", "row_name": "Odor 1", "level": null,
               "phase_entries": [0, 200, 1200, 1700, 1701], "outcome": "correct", "rewarded": true, /* … */
-              "input_counts": [{"phase": 0, "channel": "odor_port", "count": 1}], "complete": true}]
+              "input_counts": [{"phase": 0, "channel": "odor_port", "count": 1}], "counter_n": null, "complete": true}]
 }
 ```
 
@@ -560,7 +560,7 @@ A [spine run](TASKS.md#spine-tasks)'s `.json` and `.mat` carry its [trial table]
 
 ```jsonc
 "derived": {
-  "status": "ok", "detail": null, "interp": 1, "replay_version": 3,
+  "status": "ok", "detail": null, "interp": 1, "replay_version": 4,
   "grammar": 2,             // the mark: this block's rows are a grammar-2 run's
   "phases": [],
   "trials": [{"index": 0, "type_slot": 1, "odor_line": 1, "side": "right", "sampled": true,

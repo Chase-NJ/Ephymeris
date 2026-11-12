@@ -1755,6 +1755,12 @@ export interface ReplayTrial {
   correction: boolean | null;
   /** Non-zero counts only. */
   inputCounts: InputCount[];
+  /**
+   * The N the trial's Counter phase drew when it was entered (an FR's, a VR's or a PR's step),
+   * from replay, whether or not the trial reached it; null when it entered no Counter, and on a
+   * legacy run.
+   */
+  counterN: number | null;
   /** False only for a crashed spine run's cut-off last trial. */
   complete: boolean;
   /** The trial opens a presentation on the engagement ladder. */

@@ -2388,7 +2388,9 @@ SHAPES = (
                 STR,
                 doc="`vocabulary` (one name with two codes, one code with two names, "
                 "or a code this machine cannot issue), `not_here` (a channel the file "
-                "has and this rig lacks, so it has no pin here), `only_here` (a "
+                "has and this rig lacks, given no pin in `pins`), `pin` (a pin given "
+                "for a channel the import does not add, or one outside this board's "
+                "`pin_range`), `only_here` (a "
                 "channel this rig has and the file lacks), `order` (a channel both "
                 "have, declared at another position: declaration order is the odor "
                 "index, `TASKS.md#order-is-meaning`), `no_code` (an edge the "
@@ -2402,6 +2404,30 @@ SHAPES = (
         doc="One way another machine's channel set disagrees with this one "
         "(`TASKS.md#moving-the-channel-set-between-machines`). Any one refuses "
         "the whole import.",
+    ),
+    Shape(
+        "ChannelSetNewChannel",
+        obj(
+            f("channel", STR, doc="The channel's name, as the file declares it."),
+            f("kind", nullable(STR), doc="Its `kind`, from the file's entry."),
+            f("type", nullable(STR), doc="Its `type`, from the file's entry."),
+            f(
+                "pin",
+                nullable(INT),
+                doc="The pin `hardware.importChannelSet` was given for it in `pins`; "
+                "null while it has none, which is a `not_here` conflict.",
+            ),
+            f(
+                "freePins",
+                ListOf(INT),
+                doc="This board's pins (its `pin_range`) that no channel this rig "
+                "keeps is on, ascending; for a `pwm_out`, only the timer-driven pins, "
+                "less Timer2's while the channel set has a `tone_out` (RIG109). Not narrowed by the other new channels' pins: two on one "
+                "pin come back as a `rule` conflict (RIG103).",
+            ),
+        ),
+        doc="A channel the imported channel set adds here, with what a pin picker "
+        "needs (`TASKS.md#moving-the-channel-set-between-machines`).",
     ),
     Shape(
         "ChannelSetImportPlan",
@@ -2421,6 +2447,12 @@ SHAPES = (
                 "changed",
                 ListOf(STR),
                 doc="Channels on both sides whose entry the import replaces.",
+            ),
+            f(
+                "newChannels",
+                ListOf(Ref("ChannelSetNewChannel")),
+                doc="Every channel the file has and this rig lacks, in the file's "
+                "declaration order, pinned or not.",
             ),
             f(
                 "breaks",
@@ -2457,7 +2489,8 @@ SHAPES = (
             ),
         ),
         doc="What importing another machine's channel set and vocabulary would "
-        "do here. The pin map is never imported.",
+        "do here. The pin map is never imported: a channel the file adds takes "
+        "the pin given for it here.",
     ),
     # --------------------------------------------------------------- task profiles
     #
@@ -3648,6 +3681,14 @@ COMMANDS = (
                 optional=True,
                 doc="As `hardware.save`'s: needed to apply a plan with `breaks`.",
             ),
+            f(
+                "pins",
+                MapOf(INT),
+                optional=True,
+                doc="Channel name → pin, for each channel the file has and this rig "
+                "lacks (`ChannelSetImportPlan.newChannels`). Judged by the wiring "
+                "rules as a save's pins are; every other pin stays this rig's own.",
+            ),
         ),
         result=obj(
             f("plan", Ref("ChannelSetImportPlan")),
@@ -3658,7 +3699,8 @@ COMMANDS = (
             ),
         ),
         doc="Make this machine's channel set and vocabulary the other machine's, "
-        "keeping this machine's pins. One rig definition write: the vocabulary "
+        "keeping this machine's pins and taking `pins` for the channels it adds. "
+        "One rig definition write: the vocabulary "
         "union, then the wiring, then one rebuild, broadcasting "
         "`strobes.updated` (when the vocabulary changed) and `hardware.updated`. "
         "`CHANNEL_SET_IMPORT_CONFLICT` applying a plan with conflicts "

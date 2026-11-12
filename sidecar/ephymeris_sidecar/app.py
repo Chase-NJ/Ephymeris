@@ -1366,7 +1366,10 @@ class Application:
     async def _hardware_import_channel_set(self, args: Args) -> dict[str, Any]:
         # A rig definition write when applied (`TASKS.md#moving-the-channel-set-between-machines`).
         return await self.rig_definition.import_channel_set(
-            args["document"], apply=args["apply"], confirm=bool(args.get("confirm"))
+            args["document"],
+            apply=args["apply"],
+            confirm=bool(args.get("confirm")),
+            pins=args.get("pins"),
         )
 
     def _rig_document_arg(self, args: Args) -> dict[str, Any]:

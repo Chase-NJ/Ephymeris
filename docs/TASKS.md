@@ -1204,21 +1204,22 @@ Both lab machines must hold one channel set and emit identical codes ([ADR 0003]
   - an edge has no code yet, for example on the shipped set before this machine's first save. The importer would issue its own numbers;
   - the stored wiring is not in force: it did not load, or it is held.
 
-**The import replaces this machine's channel set with the file's and keeps every pin.** It adopts the file's entries verbatim, labels included, so the two documents agree beyond the hash. Declaration order must already agree (an `order` conflict otherwise). It merges the vocabulary as [a vocabulary import](#moving-codes-between-machines) does. `apply: false` returns the plan and writes nothing.
+**The import replaces this machine's channel set with the file's and keeps every pin.** It adopts the file's entries verbatim, labels included, so the two documents agree beyond the hash. Declaration order must already agree among the channels both sides have (an `order` conflict otherwise). It merges the vocabulary as [a vocabulary import](#moving-codes-between-machines) does. `apply: false` returns the plan and writes nothing.
 
 **Any conflict refuses the whole import**, and the plan lists every one (`ChannelSetConflict.kind`):
 
 | Kind | When |
 |---|---|
 | `vocabulary` | One name with two codes, one code with two names, or a code this machine cannot issue |
-| `not_here` | A channel the file has and this rig lacks. It has no pin here |
+| `not_here` | A channel the file has and this rig lacks, given no pin ([Adding a channel](#adding-a-channel-lab-wide)) |
+| `pin` | A pin given for a channel the file does not add here, or a pin outside this board's `pin_range`. This rig's own pins never change on import |
 | `only_here` | A channel this rig has and the file lacks. Its pin would belong to no channel |
 | `order` | A channel both sides have, declared at another position. Declaration order is the [odor index](#order-is-meaning), so adopting another order would put another line behind each odor position with every trial still looking correct. One conflict per channel that would move |
 | `no_code` | An edge the file names no code for |
 | `rule` | A [wiring rule](#wiring-rules) the joined document breaks against the merged vocabulary. One case is a code retired here that the file's channel names: a merge never reinstates |
 | `hash` | The joined channel set does not hash to the file's `channel_set_hash`: the file changed after export |
 
-Two kinds are judged only when nothing else already names the problem. `rule` and `hash` are judged only once both sides have the same channels, because a channel one side lacks would come back as RIG101. `hash` is also skipped over a `rule` or `no_code` conflict. A code in a `vocabulary` conflict is left out of the merge the rules are judged against, so a rule it breaks is still listed beside it.
+Two kinds are judged only when nothing else already names the problem. `rule` and `hash` are judged only once every channel the import leaves has a pin and none is `only_here`, because a channel with no pin would come back as RIG101. `hash` is also skipped over a `rule` or `no_code` conflict. A code in a `vocabulary` conflict is left out of the merge the rules are judged against, so a rule it breaks is still listed beside it.
 
 Besides conflicts:
 
@@ -1236,7 +1237,15 @@ Besides conflicts:
 
 In this order, a failure between any two steps leaves a wiring and a vocabulary that load together. What landed stays, since the vocabulary is append only. The rebuild still runs, the rig restarts on its own wiring, and importing again finishes the rest. An identical import writes nothing.
 
-**Adding a channel lab-wide is not covered yet.** The file's new channel has no pin on the importing machine, so the import refuses it as `not_here`.
+#### Adding a channel lab-wide
+
+A channel one machine added (a lever, a laser) reaches the other by the same import, with a pin picked on the importing machine for each channel the file has and this rig lacks. The plan lists them as `newChannels`, in the file's order, each with its `kind`, `type`, the `pin` given for it (null until one is) and `freePins`: this board's pins (`pin_range`) that no channel this rig keeps is on, and for a `pwm_out` only the timer-driven ones, less `tone()`'s Timer2 pins when the channel set has a `tone_out` ([Driven outputs](#driven-outputs)). The import dialog sends the picks as `pins` (channel → pin), with `apply: false` to plan and again to apply.
+
+- **Every new channel needs a pin.** One left without is a `not_here` conflict and the import is refused whole, writing nothing.
+- **The picks are judged as a save's pins are**, by the [wiring rules](#wiring-rules) against the joined document: a pin another channel holds (including another new channel's pick) is RIG103, a PWM or tone output the board cannot run RIG109. A pin outside `pin_range` is a `pin` conflict instead, and never joins the document. `freePins` is not narrowed by the other picks; the plan is.
+- **A new channel's pin entry is `{"index": pin}`**, as the Wiring page writes a new channel's, with no watch bit.
+- **It takes the file's position.** `order` counts only the channels both sides have, so a channel added mid-list moves no one.
+- **The rest is unchanged:** every other pin stays this rig's, and the write is the one above, so after it both machines' channel-set hashes are equal. `only_here` is still a conflict: removing a channel lab-wide is not covered.
 
 ## Strobe vocabulary
 

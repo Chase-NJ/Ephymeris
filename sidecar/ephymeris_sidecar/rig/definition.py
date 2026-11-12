@@ -388,9 +388,15 @@ class RigDefinition:
         }
 
     async def import_channel_set(
-        self, other: Any, *, apply: bool, confirm: bool = False
+        self,
+        other: Any,
+        *,
+        apply: bool,
+        confirm: bool = False,
+        pins: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """The plan for importing `other`; written too when `apply`.
+        """The plan for importing `other`; written too when `apply`. `pins`
+        gives a pin to each channel `other` has and this rig lacks.
 
         One rig definition write: plan again inside it, then three steps --
         the vocabulary's new codes, `wiring.json`, then the vocabulary's
@@ -407,10 +413,10 @@ class RigDefinition:
         `WiringSaveBlocked` or `RigInUse`. Nothing is written on any of them.
         """
         if not apply:
-            planned = await asyncio.to_thread(self._plan_import, other)
+            planned = await asyncio.to_thread(self._plan_import, other, pins)
             return {"plan": planned.plan.to_json(), "applied": False}
         async with self.writing(WIRING_IN_USE):
-            planned = await asyncio.to_thread(self._plan_import, other)
+            planned = await asyncio.to_thread(self._plan_import, other, pins)
             plan = planned.plan
             if plan.conflicts:
                 raise transfer.ChannelSetImportConflict(plan.conflicts)
@@ -423,7 +429,7 @@ class RigDefinition:
                 if planned.adds is not None:
                     await self._install_vocabulary(planned.adds)
                     vocabulary_changed = True
-                if plan.changed:
+                if plan.changed or plan.added:
                     await asyncio.to_thread(self._hardware.save, planned.wiring)
                     self._install_wiring()
                     wiring_changed = True
@@ -455,7 +461,7 @@ class RigDefinition:
             vocabulary = await asyncio.to_thread(self.vocabulary_payload)
             await self._broadcast(event(Evt.STROBES_UPDATED, vocabulary))
 
-    def _plan_import(self, other: Any) -> transfer.Planned:
+    def _plan_import(self, other: Any, pins: dict[str, Any] | None = None) -> transfer.Planned:
         """Against the wiring and the vocabulary in force, and refused while
         the rig's state refuses a save: an import over the shipped pins, or over
         a stored file whose pins nobody has confirmed, would put either in force
@@ -466,7 +472,7 @@ class RigDefinition:
         blocked = self.save_blocked(confirmed_pins=False)
         if blocked:
             raise WiringSaveBlocked(blocked)
-        planned = transfer.plan_import(self._wiring_in_force(), self.load_vocabulary_strict(), other)
+        planned = transfer.plan_import(self._wiring_in_force(), self.load_vocabulary_strict(), other, pins)
         if planned.wiring is not None:
             planned.plan.breaks = impact_of(
                 self._tasks, wiring=planned.wiring, vocabulary=planned.vocabulary

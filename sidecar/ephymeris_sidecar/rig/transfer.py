@@ -17,7 +17,9 @@ is judged.
 
 THE PIN MAP NEVER TRAVELS. An import replaces this machine's channel set with
 the file's, entries verbatim and in the file's declaration order, and keeps
-every pin this machine has.
+every pin this machine has. A channel the file has and this rig lacks takes the
+pin the operator picks for it here (`pins`), checked by the wiring rules as a
+save checks them; unpicked, it refuses the import.
 """
 
 from __future__ import annotations
@@ -31,7 +33,7 @@ from typing import Any
 from ..hardware import service as hardware_service
 from ..hardware import store as hardware_store
 from ..strobes import store as strobe_store
-from . import registry
+from . import board, registry
 
 #: The export document version this code writes and reads.
 EXPORT_VERSION = 1
@@ -79,6 +81,11 @@ class ImportPlan:
     conflicts: list[dict[str, Any]] = field(default_factory=list)
     #: Channels on both sides whose entry differs.
     changed: list[str] = field(default_factory=list)
+    #: Channels the file has and this rig lacks, each pinned by the operator.
+    added: list[str] = field(default_factory=list)
+    #: Every channel the file has and this rig lacks, pinned or not, in the
+    #: file's order, with what a pin picker needs (`ChannelSetNewChannel`).
+    new_channels: list[dict[str, Any]] = field(default_factory=list)
     #: Saved tasks the import would newly break; set by the caller, who has them.
     breaks: list[dict[str, Any]] = field(default_factory=list)
 
@@ -89,13 +96,14 @@ class ImportPlan:
     @property
     def identical(self) -> bool:
         """Nothing to write: the two machines already agree."""
-        return not (self.conflicts or self.changed or self.changes_vocabulary)
+        return not (self.conflicts or self.changed or self.added or self.changes_vocabulary)
 
     def to_json(self) -> dict[str, Any]:
         return {
             "conflicts": self.conflicts,
             "vocabulary": self.vocabulary.to_json(),
             "changed": self.changed,
+            "newChannels": self.new_channels,
             "breaks": self.breaks,
             "hereHash": self.here_hash,
             "importedHash": self.imported_hash,
@@ -162,17 +170,26 @@ def export_document(wiring: dict[str, Any], vocabulary: dict[str, Any]) -> dict[
 # --------------------------------------------------------------------------- #
 
 
-def plan_import(wiring: dict[str, Any], vocabulary: dict[str, Any], other: Any) -> Planned:
+def plan_import(
+    wiring: dict[str, Any],
+    vocabulary: dict[str, Any],
+    other: Any,
+    pins: dict[str, Any] | None = None,
+) -> Planned:
     """Compare another machine's export with this machine's wiring and
     vocabulary in force. Writes nothing; raises `ChannelSetInvalid` for a file
     that is not an export.
 
+    `pins` gives a pin to each channel the file has and this rig lacks; every
+    other pin is this rig's own and never changes.
+
     EVERY CONFLICT, NOT THE FIRST, with two exceptions that are restatements:
-    the wiring rules and the hash are judged only once both sides have the same
-    channels (a channel one side lacks would come back as RIG101 on every
-    rule), and the hash is not judged over a `rule` or `no_code` conflict,
-    which already names the edit.
+    the wiring rules and the hash are judged only once every channel the import
+    leaves has a pin and nothing is left over here (a channel with no pin would
+    come back as RIG101 on every rule), and the hash is not judged over a
+    `rule` or `no_code` conflict, which already names the edit.
     """
+    pins = dict(pins or {})
     there_channels, there_vocab, stated_hash, hash_version = _read_export(other)
     try:
         vocab_plan = strobe_store.plan_merge(vocabulary, there_vocab)
@@ -180,27 +197,56 @@ def plan_import(wiring: dict[str, Any], vocabulary: dict[str, Any], other: Any) 
         raise ChannelSetInvalid(f"That file's vocabulary will not read: {exc}") from exc
 
     here_channels = wiring["channels"]
+    new = [name for name in there_channels if name not in here_channels]
+    board_pins = _board_pins(wiring)
+    picked = {name: pins[name] for name in new if _is_pin(pins.get(name), board_pins)}
     joined = {k: v for k, v in wiring.items() if k != "edited_at"}
     joined["channels"] = copy.deepcopy(there_channels)
+    # The new channels' pins, as the editor writes a new channel's: no watch bit.
+    joined["pins"] = {**copy.deepcopy(wiring["pins"]), **{n: {"index": p} for n, p in picked.items()}}
     shape = hardware_store.validate(joined)
     if shape:
         where, what = shape[0]
         raise ChannelSetInvalid(f"That file's channel set is not a channel set: {where}: {what}")
 
+    # No pin enters the channel-set hash, but composing drops a channel with
+    # none: hash the unpinned new channels on a stand-in so the plan's
+    # `importedHash` is the file's channel set before any pin is picked.
+    hashed = {**joined, "pins": {**{n: {"index": 0} for n in new}, **joined["pins"]}}
     plan = ImportPlan(
         vocabulary=vocab_plan,
         here_hash=_compose(wiring).channel_set.content_hash(),
-        imported_hash=_compose(joined).channel_set.content_hash(),
+        imported_hash=_compose(hashed).channel_set.content_hash(),
         file_hash=stated_hash,
         file_hash_version=hash_version,
         changed=[n for n in there_channels if n in here_channels and here_channels[n] != there_channels[n]],
+        added=list(picked),
+        new_channels=_new_channels(wiring, there_channels, new, picked),
     )
     conflicts = plan.conflicts
     conflicts += [_conflict("vocabulary", None, c["message"]) for c in vocab_plan.conflicts]
     conflicts += [
-        _conflict("not_here", name, f"{name} is in that channel set and not on this rig, so it has no pin here.")
-        for name in there_channels
-        if name not in here_channels
+        _conflict(
+            "not_here",
+            name,
+            f"{name} is in that channel set and not on this rig. Pick a pin for it to add it here.",
+        )
+        # Given a pin it cannot take, it is the `pin` conflict below instead.
+        for name in new
+        if pins.get(name) is None
+    ]
+    conflicts += [
+        _conflict(
+            "pin",
+            name if name in there_channels else None,
+            f"A pin was given for {name}, which is not a channel that channel set adds here. "
+            "An import keeps every pin this rig already has."
+            if name not in new
+            else f"{name}'s pin, {pin!r}, is not a pin on this board, which has pins "
+            f"{board_pins.start}-{board_pins.stop - 1}.",
+        )
+        for name, pin in pins.items()
+        if name not in picked and not (name in new and pin is None)
     ]
     conflicts += [
         _conflict("only_here", name, f"{name} is on this rig and not in that channel set.")
@@ -208,7 +254,8 @@ def plan_import(wiring: dict[str, Any], vocabulary: dict[str, Any], other: Any) 
         if name not in there_channels
     ]
     conflicts += _order_conflicts(list(here_channels), list(there_channels))
-    same_channels = set(there_channels) == set(here_channels)
+    # Every channel the import leaves has a pin, and none is left over here.
+    same_channels = set(there_channels) == set(here_channels) | set(picked)
 
     composed = _compose(joined)
     uncoded = [
@@ -290,6 +337,63 @@ def _order_conflicts(here: list[str], there: list[str]) -> list[dict[str, Any]]:
         for at, (name, mine) in enumerate(zip(shared_there, shared_here))
         if name != mine
     ]
+
+
+def _board_pins(wiring: dict[str, Any]) -> range:
+    """This board's pins, its `pin_range`, as RIG102 reads it."""
+    chans = _compose(wiring)
+    return range(chans.pin_min, chans.pin_max + 1)
+
+
+def _is_pin(value: Any, board_pins: range) -> bool:
+    """A pin this board has. Any other pick is a `pin` conflict, never joined
+    into the document: one outside the schema's range would fail the shape
+    check and read as a file that is not a channel set."""
+    return type(value) is int and value in board_pins
+
+
+def _new_channels(
+    wiring: dict[str, Any],
+    there: dict[str, Any],
+    new: list[str],
+    picked: dict[str, int],
+) -> list[dict[str, Any]]:
+    """One `ChannelSetNewChannel` per channel the file adds here, in its order.
+
+    `freePins` are this board's pins that no channel this rig keeps is on,
+    narrowed for a `pwm_out` to the timer-driven pins, less `tone()`'s timer's
+    while the channel set has a `tone_out` (RIG109, `rig/board.py`). They are
+    NOT narrowed by the other new channels' picks:
+    the dialog would have to predict, and two picks on one pin come back as
+    RIG103.
+    """
+    used = {
+        pin.get("index")
+        for name, pin in wiring["pins"].items()
+        if name in there and isinstance(pin, dict)
+    }
+    free = [p for p in _board_pins(wiring) if p not in used]
+    tone = any(
+        isinstance(e, dict) and registry.drive_of(e.get("type"), e.get("mode")) == "tone"
+        for e in there.values()
+    )
+    pwm = [
+        p for p in free
+        if p in board.PWM_TIMER and not (tone and board.PWM_TIMER[p] == board.TONE_TIMER)
+    ]
+    out = []
+    for name in new:
+        entry = there[name] if isinstance(there[name], dict) else {}
+        kind, type_ = entry.get("kind"), entry.get("type")
+        drive = registry.drive_of(type_, entry.get("mode")) if isinstance(type_, str) else None
+        out.append({
+            "channel": name,
+            "kind": kind,
+            "type": type_,
+            "pin": picked.get(name),
+            "freePins": pwm if drive == "pwm" else free,
+        })
+    return out
 
 
 def _conflict(kind: str, channel: str | None, message: str) -> dict[str, Any]:

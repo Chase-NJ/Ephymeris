@@ -154,6 +154,26 @@ def test_a_fixed_ratio_is_pressed_n_times_a_trial():
     assert all(c["count"] == 5 for t in rows for c in t["inputCounts"] if c["phase"] == 0)
 
 
+def test_a_variable_ratio_s_drawn_n_reaches_the_json_and_mat_copy():
+    """End to end (#164): the N each VR trial drew comes through `spine.replayed`
+    into the trial table and the derived copy, and a completed trial's N is its
+    presses; a silent animal's cut-off trial still has its N."""
+    from ephymeris_sidecar.sessions import derived
+
+    rows = trials(run(fixture.variable_ratio(1, 9), CORRECT))
+    complete = [t for t in rows if t["complete"]]
+    assert len({t["counterN"] for t in complete}) > 1, "a VR draws more than one N"
+    for t in complete:
+        assert 1 <= t["counterN"] <= 9
+        assert t["counterN"] == sum(c["count"] for c in t["inputCounts"] if c["phase"] == 0)
+
+    silent = run(fixture.variable_ratio(1, 9), SILENT, limit_ms=2000)
+    block = derived.derive(silent.document)
+    assert block is not None and block["trials"]
+    assert all(1 <= t["counter_n"] <= 9 for t in block["trials"])
+    assert all(c["count"] == 0 for t in block["trials"] for c in t["input_counts"])
+
+
 def test_a_progressive_ratio_breaks_and_ends_the_session():
     # Presses 200-600 ms apart cannot finish the larger ratios inside 2 s.
     result = run(fixture.progressive_ratio(limit_ms=2000), CORRECT)

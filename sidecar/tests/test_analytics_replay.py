@@ -9,6 +9,8 @@ the tick rules written out by hand, and the tables replay refuses.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from ephymeris_sidecar.analytics.stream import replay as rp, trial_table
@@ -281,6 +283,17 @@ def test_a_trial_cut_off_mid_counter_keeps_its_drawn_n() -> None:
     run = rp.replay(VR, COUNT_PARAMS, seed=seed, events=presses(1, 2), ticks=50)
     (last,) = trial_table.trials_of(VR, run, end=None)
     assert not last.complete and last.counter_n == drawn
+
+
+def test_the_drawn_n_never_joins_the_fields_the_differential_test_compares() -> None:
+    """`Actions.drawn` is Python only: the C core has no such field, so the
+    differential test must keep comparing an explicit list without it."""
+    from pathlib import Path
+
+    harness = Path(__file__).parents[2] / "firmware/libraries/BehaviorBox/extras/host_test/differential.py"
+    fields = re.search(r"^FIELDS = \((.*?)\)$", harness.read_text(), re.M)
+    assert fields is not None and "drawn" not in fields.group(1)
+    assert "drawn" in rp.Actions.__dataclass_fields__
 
 
 @pytest.mark.parametrize(

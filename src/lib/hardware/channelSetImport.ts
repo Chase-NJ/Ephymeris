@@ -13,6 +13,25 @@ import type {
  * picks on every change; these functions only sort what it said.
  */
 
+/**
+ * Numbers plan requests so only the newest one's reply is used: the plan shown
+ * is always the one for the file and picks shown. `begin` starts a request and
+ * returns whether it is still the newest; `cancel` makes every request so far
+ * stale (a new file, the dialog reopened).
+ */
+export function latestOnly(): { begin: () => () => boolean; cancel: () => void } {
+  let newest = 0;
+  return {
+    begin() {
+      const mine = (newest += 1);
+      return () => mine === newest;
+    },
+    cancel() {
+      newest += 1;
+    },
+  };
+}
+
 /** The operator's picks, channel → pin; a channel with no pick is absent. */
 export type PinPicks = Readonly<Record<string, number>>;
 

@@ -7,6 +7,7 @@ import { Modal } from "@/components/common/Modal";
 import { errorMessage } from "@/lib/cohorts/commands";
 import {
   canImport,
+  latestOnly,
   type PinPicks,
   pinsToSend,
   refusals,
@@ -44,13 +45,12 @@ export function ChannelSetImportDialog({
   const [pending, setPending] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Each plan request's number: a reply to an older one is dropped, so the
-  // plan shown is always the one for the picks shown.
-  const asked = useRef(0);
+  // A reply to anything but the newest plan request is dropped.
+  const requests = useRef(latestOnly());
 
   useEffect(() => {
     if (!open) return;
-    asked.current += 1;
+    requests.current.cancel();
     setDocument(null);
     setFileName(null);
     setPlan(null);
@@ -60,23 +60,26 @@ export function ChannelSetImportDialog({
   }, [open]);
 
   const replan = async (parsed: unknown, pins: Record<string, number>) => {
-    const mine = (asked.current += 1);
+    const current = requests.current.begin();
     setPending(true);
     try {
       const reply = await importChannelSet(client, parsed, false, false, pins);
-      if (mine === asked.current) setPlan(reply.plan);
+      if (current()) setPlan(reply.plan);
     } catch (err) {
-      if (mine === asked.current) {
+      if (current()) {
         setPlan(null);
         setError(errorMessage(err));
       }
     } finally {
-      if (mine === asked.current) setPending(false);
+      if (current()) setPending(false);
     }
   };
 
   const pick = async (file: File | undefined) => {
     if (!file) return;
+    // The last file's plan, if still on its way, is not this file's.
+    requests.current.cancel();
+    setPending(false);
     setFileName(file.name);
     setPlan(null);
     setPicks({});

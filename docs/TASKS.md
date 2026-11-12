@@ -1155,7 +1155,7 @@ not pin order.*
 
 **The inspector edits what a channel is.** Beside its kind, it edits the channel's type and role; for a `digital_out`, its mode (level or train); for an input, its active level and debounce; for a reward line, the port it serves. A channel's edge codes are shown read-only, and an edge with no code yet reads "issued on save".
 
-**Export channel set** and **Import channel set** move the channel set and the vocabulary to and from the other lab machine ([Moving the channel set between machines](#moving-the-channel-set-between-machines)). The import dialog renders the sidecar's plan, offers a picker of each new channel's `freePins` and re-plans with the picks ([Adding a channel lab-wide](#adding-a-channel-lab-wide)), and holds Import on any conflict or while a re-plan is in flight (`src/lib/hardware/channelSetImport.ts`).
+**Export channel set** and **Import channel set** move the channel set and the vocabulary to and from the other lab machine ([Moving the channel set between machines](#moving-the-channel-set-between-machines)). The import dialog renders the sidecar's plan, with a pin picker per new channel ([Adding a channel lab-wide](#adding-a-channel-lab-wide)), and holds Import on any conflict or while a re-plan is in flight (`src/lib/hardware/channelSetImport.ts`).
 
 **Saving previews what it would issue.** `hardware.preview` returns `allocations`, the [edge codes](#edge-codes) a save would issue. The page lists them above Save, so a new code is never a surprise in the vocabulary.
 

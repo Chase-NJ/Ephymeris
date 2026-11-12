@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ChannelSetConflict, ChannelSetImportPlan } from "@/lib/ws/protocol";
 
-import { canImport, pinsToSend, refusals, unpinned, withPick } from "./channelSetImport";
+import { canImport, latestOnly, pinsToSend, refusals, unpinned, withPick } from "./channelSetImport";
 
 const lever = { channel: "lever", kind: "cue", type: "digital_out", pin: null, freePins: [50, 53] };
 const laser = { channel: "laser", kind: "emitter", type: "pwm_out", pin: null, freePins: [44, 45] };
@@ -27,6 +27,25 @@ const notHere = (channel: string): ChannelSetConflict => ({
   kind: "not_here",
   channel,
   message: `${channel} is in that channel set and not on this rig. Pick a pin for it to add it here.`,
+});
+
+describe("latestOnly", () => {
+  it("keeps only the newest request current", () => {
+    const seq = latestOnly();
+    const first = seq.begin();
+    expect(first()).toBe(true);
+    const second = seq.begin();
+    expect(first()).toBe(false);
+    expect(second()).toBe(true);
+  });
+
+  it("makes every request stale on cancel, as a new file does", () => {
+    const seq = latestOnly();
+    const inFlight = seq.begin();
+    seq.cancel();
+    expect(inFlight()).toBe(false);
+    expect(seq.begin()()).toBe(true);
+  });
 });
 
 describe("pinsToSend", () => {

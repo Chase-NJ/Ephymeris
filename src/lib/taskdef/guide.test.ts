@@ -11,6 +11,7 @@ import type { TaskDiagnostic } from "@/lib/ws/protocol";
 import {
   bindRole,
   GUIDE_STEPS,
+  initialPerType,
   nextStep,
   offerGuide,
   previousStep,
@@ -84,6 +85,16 @@ describe("stimulusRoles", () => {
   });
 });
 
+describe("initialPerType", () => {
+  it("is the stimulus, plus any role the paradigm already binds per trial type", () => {
+    const d = def(FULL_TRIAL, ["port", "cue", "sample", "vacuum"]);
+    expect(initialPerType(d)).toEqual(["sample"]);
+    d.rows[0]!.bind.cue = "trial_light";
+    d.rows[1]!.bind.cue = "house_light";
+    expect(initialPerType(d)).toEqual(["sample", "cue"]);
+  });
+});
+
 describe("roles", () => {
   const base = def(FULL_TRIAL, ["port", "cue", "sample", "vacuum"]);
 
@@ -132,6 +143,15 @@ describe("stepDiagnostics", () => {
     expect(codes("answers")).toEqual(["SPN109"]);
     expect(codes("timings")).toEqual(["SPN105"]);
     expect(codes("session")).toEqual(["SPN106", "SPN110"]);
+  });
+
+  it("files the rig's and the task's problems with the wiring, so none waits for Simulate", () => {
+    const rest = [diag("SPN104", "vocabulary", null), diag("SPN105", "task", null), diag("SPN102", "ram", null), diag("SPN110", "row", 1)];
+    expect(stepDiagnostics("roles", rest).map((d) => d.code)).toEqual(["SPN104", "SPN105", "SPN102", "SPN110"]);
+    // Every problem is on exactly one step from the names to the session.
+    const shown = GUIDE_STEPS.slice(1, 6).flatMap((s) => stepDiagnostics(s, [...all, ...rest]));
+    expect(new Set(shown).size).toBe(shown.length);
+    expect(shown).toHaveLength(all.length + rest.length);
   });
 
   it("shows every problem at Simulate and Save", () => {

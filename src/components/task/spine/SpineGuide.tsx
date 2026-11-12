@@ -11,18 +11,18 @@ import {
   bindRole,
   GUIDE_STEPS,
   type GuideStep,
+  initialPerType,
   nextStep,
   previousStep,
   setScope,
   STEP_WORDS,
   stepDiagnostics,
   stepIndex,
-  stimulusRoles,
 } from "@/lib/taskdef/guide";
-import { setPhase, setRow, type SpineDefinition } from "@/lib/taskdef/spine";
+import { isSpine, setPhase, setRow, type SpineDefinition } from "@/lib/taskdef/spine";
 import { slotTypeLabel } from "@/lib/taskdef/spineLabels";
 import { everyLine } from "@/lib/taskdef/spineProblems";
-import { channelChoices, channelGroups, roleScopes, sharedChannel, timingFields } from "@/lib/taskdef/spineWords";
+import { channelChoices, channelGroups, sharedChannel, timingFields } from "@/lib/taskdef/spineWords";
 import type { TaskDocument } from "@/lib/taskdef/types";
 import type { TaskSession } from "@/lib/taskdef/useTask";
 import { useSidecar } from "@/lib/ws/context";
@@ -63,9 +63,10 @@ export function SpineGuide({
   const [error, setError] = useState<string | null>(null);
   const def = session.definition as SpineDefinition | null;
   const { setDefinition } = session;
-  // The roles asked per trial type: the stimulus at first (`stimulusRoles`),
-  // then whatever the user flips. Set once per paradigm.
-  const [perType, setPerType] = useState<string[] | null>(null);
+  // The roles asked per trial type: the stimulus at first (`initialPerType`),
+  // then whatever the user flips. Set from the paradigm as it is picked, never
+  // from `def`, which still holds the last paradigm for a render.
+  const [perType, setPerType] = useState<string[]>([]);
 
   useEffect(() => {
     if (status !== "connected") return;
@@ -74,15 +75,8 @@ export function SpineGuide({
       .catch((err) => setError(errorMessage(err)));
   }, [client, status]);
 
-  useEffect(() => {
-    if (def && perType === null) {
-      const scopes = roleScopes(def);
-      setPerType([...new Set([...stimulusRoles(def), ...def.slots.filter((s) => scopes[s.id] === "per-type").map((s) => s.id)])]);
-    }
-  }, [def, perType]);
-
   const diagnostics = useMemo(() => stepDiagnostics(step, session.diagnostics), [step, session.diagnostics]);
-  const roles = perType ?? [];
+  const roles = perType;
   const shared = def ? def.slots.map((s) => s.id).filter((id) => !roles.includes(id)) : [];
   const lines = def ? everyLine(diagnostics, def, rig, shared) : [];
   const at = stepIndex(step);
@@ -91,7 +85,7 @@ export function SpineGuide({
   const words = STEP_WORDS[step];
 
   const pickSeed = (seed: TaskDocument) => {
-    setPerType(null);
+    setPerType(isSpine(seed) ? initialPerType(seed) : []);
     onPickSeed(seed);
     setStep("names");
   };
@@ -142,6 +136,7 @@ export function SpineGuide({
           </div>
           {error && <p className="text-[11px] text-status-error">{error}</p>}
 
+          {step === "paradigm" && def && <Note>Picking another paradigm starts the task again from it.</Note>}
           {step === "paradigm" && <SeedGrid onPick={pickSeed} />}
           {def && step === "names" && (
             <div className="flex flex-col gap-2">
@@ -220,7 +215,7 @@ export function SpineGuide({
             </div>
           )}
 
-          {def && step !== "simulate" && <ProblemLines lines={lines} onFix={(apply) => setDefinition(apply(def))} />}
+          {def && <ProblemLines lines={lines} onFix={(apply) => setDefinition(apply(def))} />}
         </div>
 
         <div className="flex items-center gap-2">

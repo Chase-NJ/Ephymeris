@@ -1,7 +1,7 @@
 import type { TaskDiagnostic, TaskEntry } from "@/lib/ws/protocol";
 
 import { setBinding, type SpineDefinition } from "./spine";
-import { bindShared, sharedChannel } from "./spineWords";
+import { bindShared, roleScopes, sharedChannel } from "./spineWords";
 
 /**
  * The guided first spine task (`TASKS.md#the-guide`): its steps, which of the
@@ -59,27 +59,34 @@ const STEP_CODES: Partial<Record<GuideStep, readonly string[]>> = {
   answers: ["SPN109", "SPN112"],
 };
 
+/** The step a problem is filed under, the first that can show it. */
+function stepOf(d: TaskDiagnostic): GuideStep {
+  for (const step of ["names", "roles", "answers"] as const) if (STEP_CODES[step]!.includes(d.code)) return step;
+  if (d.target.kind === "phase") return "timings";
+  if (d.target.kind === "block" || d.target.kind === "session") return "session";
+  // Everything else is about the rig and its codes (the strobe vocabulary, the
+  // RAM, a role, the task as a whole): the wiring step, where the Rig and
+  // Strobes links sit, so nothing waits unseen until Simulate.
+  return "roles";
+}
+
 /**
  * The preview's problems a step shows: names, wiring and answers by code;
- * timings by the phase they sit on; the session by its blocks and cap.
- * Simulate and Save show every one, since the session cannot run while any is
- * left. The paradigm step shows none: nothing is chosen yet.
+ * timings by the phase they sit on; the session by its blocks and cap; the
+ * rest with the wiring. Simulate and Save show every one, since the session
+ * cannot run while any is left. The paradigm step shows none: nothing is
+ * chosen yet.
  */
 export function stepDiagnostics(step: GuideStep, diagnostics: readonly TaskDiagnostic[]): TaskDiagnostic[] {
-  const filed = new Set(Object.values(STEP_CODES).flat());
-  switch (step) {
-    case "paradigm":
-      return [];
-    case "simulate":
-    case "save":
-      return [...diagnostics];
-    case "timings":
-      return diagnostics.filter((d) => d.target.kind === "phase" && !filed.has(d.code));
-    case "session":
-      return diagnostics.filter((d) => (d.target.kind === "block" || d.target.kind === "session") && !filed.has(d.code));
-    default:
-      return diagnostics.filter((d) => STEP_CODES[step]!.includes(d.code));
-  }
+  if (step === "paradigm") return [];
+  if (step === "simulate" || step === "save") return [...diagnostics];
+  return diagnostics.filter((d) => stepOf(d) === step);
+}
+
+/** The roles asked per trial type when a paradigm is picked: its stimulus, and any role its trial types already bind differently. */
+export function initialPerType(def: SpineDefinition): string[] {
+  const scopes = roleScopes(def);
+  return [...new Set([...stimulusRoles(def), ...def.slots.filter((s) => scopes[s.id] === "per-type").map((s) => s.id)])];
 }
 
 /**
@@ -113,7 +120,7 @@ export function stimulusRoles(def: SpineDefinition): string[] {
 
 /**
  * Make `role` shared or per trial type. Shared binds every trial type to the
- * first one's channel; per type keeps each trial type's own binding.
+ * channel of the first trial type that binds it; per type keeps each trial type's own binding.
  */
 export function setScope(perType: readonly string[], def: SpineDefinition, role: string, wantPerType: boolean): { perType: string[]; def: SpineDefinition } {
   if (wantPerType) return { perType: perType.includes(role) ? [...perType] : [...perType, role], def };

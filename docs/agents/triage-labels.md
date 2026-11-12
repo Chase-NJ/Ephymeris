@@ -12,4 +12,10 @@ The skills speak in terms of five canonical triage roles. This file maps those r
 
 When a skill mentions a role (e.g. "apply the AFK-ready triage label"), use the corresponding label string from this table.
 
+## Labels of this repo's own
+
+| Label    | Meaning                                                                                       |
+| -------- | --------------------------------------------------------------------------------------------- |
+| `paused` | Work on hold by the maintainer's decision. Never pick it up, claim it or triage it; the ticket says what lifts the pause |
+
 Edit the "Label in our tracker" column to match whatever vocabulary you actually use.

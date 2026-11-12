@@ -231,8 +231,9 @@ def plan_import(
             name,
             f"{name} is in that channel set and not on this rig. Pick a pin for it to add it here.",
         )
+        # Given a pin it cannot take, it is the `pin` conflict below instead.
         for name in new
-        if name not in picked
+        if pins.get(name) is None
     ]
     conflicts += [
         _conflict(

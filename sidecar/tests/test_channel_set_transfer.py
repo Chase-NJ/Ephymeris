@@ -785,7 +785,6 @@ def test_a_channel_added_mid_list_moves_no_one(tmp_path):
     b = Machine(tmp_path / "b")
     b.save()
     plan = b.plan_with(exported, {"lever": 53})
-    assert [c for c in plan["conflicts"] if c["kind"] == "order"] == []
     assert plan["conflicts"] == []
     assert plan["identical"] is False
 
@@ -805,7 +804,6 @@ def test_the_plan_lists_each_new_channel_with_the_pins_free_here(tmp_path):
     assert (lever["kind"], lever["type"]) == ("cue", "digital_out")
     assert lever["pin"] is None
     assert lever["freePins"] == [p for p in range(0, 54) if p not in used]
-    assert plan["newChannels"] == b.plan_with(exported, {})["newChannels"]
     assert b.plan_with(exported, {"lever": 53})["newChannels"][0]["pin"] == 53
 
 
@@ -837,9 +835,11 @@ def test_a_pwm_channel_is_not_offered_the_tone_timers_pins(tmp_path):
 
     b = Machine(tmp_path / "b")
     b.save()
+    used = {p["index"] for p in b.hardware.load()["pins"].values()}
     lever = next(c for c in b.plan(exported)["newChannels"] if c["channel"] == "lever")
-    timer2 = {p for p, t in board.PWM_TIMER.items() if t == board.TONE_TIMER}
-    assert lever["freePins"] and not timer2 & set(lever["freePins"])
+    assert lever["freePins"] == sorted(
+        p for p, timer in board.PWM_TIMER.items() if p not in used and timer != board.TONE_TIMER
+    )
 
 
 def test_a_new_channel_left_unpinned_refuses_the_whole_import(tmp_path):
@@ -878,28 +878,47 @@ def test_a_new_channels_pin_is_judged_by_the_wiring_rules(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "pins",
+    ("pins", "conflicts", "says"),
     [
-        {"fluid_0": 53},
-        {"lever": 53, "nowhere": 52},
-        {"lever": "53"},
-        {"lever": True},
-        # Pins this board lacks: past a Mega's last pin, and past the schema's range.
-        {"lever": 54},
-        {"lever": -1},
-        {"lever": 10_000},
+        # A pin for a channel this rig has, or one no file names: this rig's
+        # pins never change, and lever still has none.
+        ({"fluid_0": 53}, [("not_here", "lever"), ("pin", "fluid_0")], "not a channel that channel set adds"),
+        ({"lever": 53, "nowhere": 52}, [("pin", None)], "not a channel that channel set adds"),
+        # A pick for the new channel that is not a pin on this board: the pin
+        # conflict alone, never also "pick a pin".
+        ({"lever": "53"}, [("pin", "lever")], "which has pins 0-53"),
+        ({"lever": True}, [("pin", "lever")], "which has pins 0-53"),
+        ({"lever": 54}, [("pin", "lever")], "which has pins 0-53"),
+        ({"lever": -1}, [("pin", "lever")], "which has pins 0-53"),
+        ({"lever": 10_000}, [("pin", "lever")], "which has pins 0-53"),
     ],
 )
-def test_a_pin_for_anything_but_a_new_channel_is_a_conflict(tmp_path, pins):
+def test_a_pick_that_is_not_a_new_channels_pin_here_is_a_pin_conflict(tmp_path, pins, conflicts, says):
     _a, exported = _a_with_lever_after(tmp_path)
     b = Machine(tmp_path / "b")
     b.save()
     before = b.files()
     plan = b.plan_with(exported, pins)
-    assert "pin" in {c["kind"] for c in plan["conflicts"]}
+    assert sorted((c["kind"], c["channel"]) for c in plan["conflicts"]) == sorted(
+        conflicts, key=lambda kc: (kc[0], kc[1] or "")
+    )
+    assert says in next(c["message"] for c in plan["conflicts"] if c["kind"] == "pin")
     with pytest.raises(transfer.ChannelSetImportConflict):
         b.import_(exported, pins=pins)
     assert b.files() == before
+
+
+def test_a_pick_is_judged_against_this_rigs_own_pin_range(tmp_path):
+    _a, exported = _a_with_lever_after(tmp_path)
+    b = Machine(tmp_path / "b")
+    doc = store.default_document()
+    doc["pin_range"] = {"min": 0, "max": 50}
+    b.save(doc)
+    (lever,) = b.plan(exported)["newChannels"]
+    assert max(lever["freePins"]) == 50
+    (conflict,) = b.plan_with(exported, {"lever": 51})["conflicts"]
+    assert conflict["kind"] == "pin" and "which has pins 0-50" in conflict["message"]
+    assert b.plan_with(exported, {"lever": 50})["conflicts"] == []
 
 
 def test_a_channel_only_here_is_still_a_conflict_with_every_new_channel_pinned(tmp_path):

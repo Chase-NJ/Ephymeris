@@ -19,7 +19,7 @@ import re
 import pytest
 
 from ephymeris_sidecar.hardware import store
-from ephymeris_sidecar.rig import definition, registry, transfer
+from ephymeris_sidecar.rig import board, definition, registry, transfer
 from ephymeris_sidecar.strobes import store as strobe_store
 from ephymeris_sidecar.taskdef import generate
 
@@ -97,10 +97,15 @@ class Machine:
     def plan(self, document) -> dict:
         return asyncio.run(self.definition.import_channel_set(document, apply=False))["plan"]
 
-    def import_(self, document, *, confirm: bool = False) -> dict:
+    def import_(self, document, *, confirm: bool = False, pins: dict | None = None) -> dict:
         return asyncio.run(
-            self.definition.import_channel_set(document, apply=True, confirm=confirm)
+            self.definition.import_channel_set(document, apply=True, confirm=confirm, pins=pins)
         )
+
+    def plan_with(self, document, pins: dict) -> dict:
+        return asyncio.run(
+            self.definition.import_channel_set(document, apply=False, pins=pins)
+        )["plan"]
 
     def files(self) -> tuple[bytes | None, bytes]:
         wiring = self.hardware.path
@@ -526,6 +531,22 @@ async def test_export_and_import_over_the_wire(sidecar) -> None:  # noqa: ANN001
         await sidecar.call("hardware.importChannelSet", document={"x": 1}, apply=False)
     assert refused.value.code == "CHANNEL_SET_INVALID"
 
+    # A rig without the vacuum line takes it back with a pin picked here.
+    without = store.default_document()
+    del without["channels"]["vacuum"], without["pins"]["vacuum"]
+    await sidecar.call("hardware.save", document=without, confirm=True)
+    plan = (await sidecar.call("hardware.importChannelSet", document=exported, apply=False))["plan"]
+    assert [(c["kind"], c["channel"]) for c in plan["conflicts"]] == [("not_here", "vacuum")]
+    (vacuum,) = plan["newChannels"]
+    assert vacuum["channel"] == "vacuum" and vacuum["pin"] is None and 40 in vacuum["freePins"]
+    added = await sidecar.call(
+        "hardware.importChannelSet", document=exported, apply=True, confirm=True, pins={"vacuum": 40}
+    )
+    assert added["applied"] is True and added["plan"]["newChannels"][0]["pin"] == 40
+    got = await sidecar.call("hardware.get")
+    assert got["status"]["channelSetHash"] == exported["channel_set_hash"]
+    assert got["document"]["pins"]["vacuum"] == {"index": 40}
+
 
 def test_conflicts_of_different_kinds_are_listed_together(tmp_path):
     """A code in conflict is left out of the merge the rules are judged
@@ -708,3 +729,164 @@ def test_an_order_conflict_counts_positions_among_the_channels_both_sides_have(t
     for message in order.values():
         here_at, there_at = re.search(r"shared channel (\d+) here and (\d+) in", message).groups()
         assert here_at != there_at
+
+
+# --------------------------------------------------------------------------- #
+# Adding a channel lab-wide: a pin for each channel the file adds (#181)
+# --------------------------------------------------------------------------- #
+
+
+def _a_with_lever_after(tmp_path, after: str = "odor_line_2", channel: dict | None = None) -> tuple[Machine, dict]:
+    """A machine whose channel set adds `lever` right after `after`, and its export."""
+    a = Machine(tmp_path / "a")
+    a.save()
+    doc = _with_lever_as_cue(a.hardware.load())
+    if channel is not None:
+        doc["channels"]["lever"] = channel
+        doc["pins"]["lever"] = {"index": 45}
+    names = [n for n in doc["channels"] if n != "lever"]
+    names.insert(names.index(after) + 1, "lever")
+    doc["channels"] = {n: doc["channels"][n] for n in names}
+    a.save(doc)
+    return a, a.export()
+
+
+def test_a_new_channel_takes_the_pin_picked_here_and_the_hashes_agree(tmp_path):
+    a, exported = _a_with_lever_after(tmp_path)
+    a_hash = hash_in_force()
+
+    b = Machine(tmp_path / "b")
+    b.save()
+    pins_before = b.hardware.load()["pins"]
+    b.events.clear()
+    b.rebuilds = 0
+
+    reply = b.import_(exported, pins={"lever": 53})
+
+    assert reply["applied"] is True
+    assert reply["plan"]["conflicts"] == []
+    assert hash_in_force() == a_hash
+    stored = b.hardware.load()
+    # The file's channel, at the file's position, on the pin picked here...
+    assert list(stored["channels"]) == list(exported["channel_set"]["channels"])
+    assert stored["pins"]["lever"] == {"index": 53}
+    # ...and every other pin is B's own, untouched.
+    assert {n: p for n, p in stored["pins"].items() if n != "lever"} == pins_before
+    # One rig definition write: one rebuild. The lever's edge codes are new
+    # here, so the vocabulary moved too.
+    assert b.events == ["strobes.updated", "hardware.updated"]
+    assert b.rebuilds == 1
+    # Nothing left to do: importing again is identical.
+    assert b.plan(exported)["identical"] is True
+
+
+def test_a_channel_added_mid_list_moves_no_one(tmp_path):
+    _a, exported = _a_with_lever_after(tmp_path, after="odor_port")
+    b = Machine(tmp_path / "b")
+    b.save()
+    plan = b.plan_with(exported, {"lever": 53})
+    assert [c for c in plan["conflicts"] if c["kind"] == "order"] == []
+    assert plan["conflicts"] == []
+    assert plan["identical"] is False
+
+
+def test_the_plan_lists_each_new_channel_with_the_pins_free_here(tmp_path):
+    _a, exported = _a_with_lever_after(tmp_path)
+    b = Machine(tmp_path / "b")
+    b.save()
+    used = {p["index"] for p in b.hardware.load()["pins"].values()}
+
+    plan = b.plan(exported)
+    (lever,) = plan["newChannels"]
+    assert lever["channel"] == "lever"
+    assert (lever["kind"], lever["type"]) == ("cue", "digital_out")
+    assert lever["pin"] is None
+    assert lever["freePins"] == [p for p in range(0, 54) if p not in used]
+    assert plan["newChannels"] == b.plan_with(exported, {})["newChannels"]
+    assert b.plan_with(exported, {"lever": 53})["newChannels"][0]["pin"] == 53
+
+
+def test_a_pwm_channel_is_offered_only_the_timer_driven_pins(tmp_path):
+    light = {"kind": "cue", "label": "lever", "type": "pwm_out", "role": "stimulus"}
+    _a, exported = _a_with_lever_after(tmp_path, channel=light)
+    b = Machine(tmp_path / "b")
+    b.save()
+    used = {p["index"] for p in b.hardware.load()["pins"].values()}
+    (lever,) = b.plan(exported)["newChannels"]
+    assert lever["freePins"] == sorted(p for p in board.PWM_TIMER if p not in used)
+    # A pin no timer drives is RIG109, as on a save.
+    rules = [c for c in b.plan_with(exported, {"lever": 53})["conflicts"] if c["kind"] == "rule"]
+    assert [c["channel"] for c in rules] == ["lever"] and "RIG109" in rules[0]["message"]
+
+
+def test_a_new_channel_left_unpinned_refuses_the_whole_import(tmp_path):
+    _a, exported = _a_with_lever_after(tmp_path)
+    b = Machine(tmp_path / "b")
+    b.save()
+    before, hash_before = b.files(), hash_in_force()
+    b.events.clear()
+    b.rebuilds = 0
+
+    for pins in (None, {}, {"lever": None}):
+        plan = b.plan_with(exported, pins or {}) if pins is not None else b.plan(exported)
+        assert [(c["kind"], c["channel"]) for c in plan["conflicts"]] == [("not_here", "lever")]
+        with pytest.raises(transfer.ChannelSetImportConflict):
+            b.import_(exported, pins=pins)
+
+    assert b.files() == before
+    assert hash_in_force() == hash_before
+    assert b.events == [] and b.rebuilds == 0
+
+
+@pytest.mark.parametrize(
+    ("pin", "rule"),
+    [(42, "RIG103"), (54, "RIG102")],  # fluid_0's pin; past a Mega's last pin
+)
+def test_a_new_channels_pin_is_judged_by_the_wiring_rules(tmp_path, pin, rule):
+    _a, exported = _a_with_lever_after(tmp_path)
+    b = Machine(tmp_path / "b")
+    b.save()
+    assert b.hardware.load()["pins"]["fluid_0"] == {"index": 42}
+    before = b.files()
+
+    plan = b.plan_with(exported, {"lever": pin})
+    assert [c["kind"] for c in plan["conflicts"]] == ["rule"]
+    assert plan["conflicts"][0]["message"].startswith(rule)
+    with pytest.raises(transfer.ChannelSetImportConflict):
+        b.import_(exported, pins={"lever": pin})
+    assert b.files() == before
+
+
+@pytest.mark.parametrize("pins", [{"fluid_0": 53}, {"lever": 53, "nowhere": 52}, {"lever": "53"}, {"lever": True}])
+def test_a_pin_for_anything_but_a_new_channel_is_a_conflict(tmp_path, pins):
+    _a, exported = _a_with_lever_after(tmp_path)
+    b = Machine(tmp_path / "b")
+    b.save()
+    before = b.files()
+    plan = b.plan_with(exported, pins)
+    assert "pin" in {c["kind"] for c in plan["conflicts"]}
+    with pytest.raises(transfer.ChannelSetImportConflict):
+        b.import_(exported, pins=pins)
+    assert b.files() == before
+
+
+def test_a_channel_only_here_is_still_a_conflict_with_every_new_channel_pinned(tmp_path):
+    a = Machine(tmp_path / "a")
+    a.save()
+    a.save(_with_lever_as_cue(a.hardware.load()))
+    exported = a.export()
+
+    b = Machine(tmp_path / "b")
+    doc = store.default_document()
+    doc["channels"]["door"] = {"kind": "cue", "label": "door", "type": "digital_out", "role": "cue"}
+    doc["pins"]["door"] = {"index": 52}
+    b.save(doc)
+    before = b.files()
+
+    plan = b.plan_with(exported, {"lever": 53})
+    # B's door issued its edge codes where A's lever did: vocabulary conflicts too.
+    kinds = {(c["kind"], c["channel"]) for c in plan["conflicts"] if c["kind"] != "vocabulary"}
+    assert kinds == {("only_here", "door")}
+    with pytest.raises(transfer.ChannelSetImportConflict):
+        b.import_(exported, pins={"lever": 53})
+    assert b.files() == before

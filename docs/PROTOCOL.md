@@ -334,7 +334,7 @@ The channel set and the vocabulary as they travel to the other lab machine (`TAS
 <a id="cmd-hardware.importchannelset"></a>
 #### `hardware.importChannelSet`
 
-Make this machine's channel set and vocabulary the other machine's, keeping this machine's pins. One rig definition write: the vocabulary union, then the wiring, then one rebuild, broadcasting `strobes.updated` (when the vocabulary changed) and `hardware.updated`. `CHANNEL_SET_IMPORT_CONFLICT` applying a plan with conflicts (`detail.conflicts`); `CHANNEL_SET_INVALID` for a file that is not an export; `RIG_WOULD_BREAK_TASKS` without `confirm`; `RIG_IN_USE`, `RIG_WIRING_UNLOADED` and `RIG_SAVE_BLOCKED` as for `hardware.save`. Nothing is written on any of them.
+Make this machine's channel set and vocabulary the other machine's, keeping this machine's pins and taking `pins` for the channels it adds. One rig definition write: the vocabulary union, then the wiring, then one rebuild, broadcasting `strobes.updated` (when the vocabulary changed) and `hardware.updated`. `CHANNEL_SET_IMPORT_CONFLICT` applying a plan with conflicts (`detail.conflicts`); `CHANNEL_SET_INVALID` for a file that is not an export; `RIG_WOULD_BREAK_TASKS` without `confirm`; `RIG_IN_USE`, `RIG_WIRING_UNLOADED` and `RIG_SAVE_BLOCKED` as for `hardware.save`. Nothing is written on any of them.
 
 **Args**
 
@@ -343,6 +343,7 @@ Make this machine's channel set and vocabulary the other machine's, keeping this
 | `document` | unknown | Another machine's `hardware.exportChannelSet` document. |
 | `apply` | boolean | False ⇒ plan only, write nothing. |
 | `confirm` *(optional)* | boolean | As `hardware.save`'s: needed to apply a plan with `breaks`. |
+| `pins` *(optional)* | map&lt;string, number&gt; | Channel name → pin, for each channel the file has and this rig lacks (`ChannelSetImportPlan.newChannels`). Judged by the wiring rules as a save's pins are; every other pin stays this rig's own. |
 
 **Result**
 
@@ -1948,26 +1949,40 @@ One way another machine's channel set disagrees with this one (`TASKS.md#moving-
 
 | Field | Type | Notes |
 |---|---|---|
-| `kind` | string | `vocabulary` (one name with two codes, one code with two names, or a code this machine cannot issue), `not_here` (a channel the file has and this rig lacks, so it has no pin here), `only_here` (a channel this rig has and the file lacks), `order` (a channel both have, declared at another position: declaration order is the odor index, `TASKS.md#order-is-meaning`), `no_code` (an edge the file names no code for), `rule` (a wiring rule, RIG101–RIG107 or RIG109, that the imported channel set breaks here, judged against the merged vocabulary), or `hash` (the file changed after it was exported). |
+| `kind` | string | `vocabulary` (one name with two codes, one code with two names, or a code this machine cannot issue), `not_here` (a channel the file has and this rig lacks, given no pin in `pins`), `pin` (a pin given for a channel the import does not add, or one that is not a pin number), `only_here` (a channel this rig has and the file lacks), `order` (a channel both have, declared at another position: declaration order is the odor index, `TASKS.md#order-is-meaning`), `no_code` (an edge the file names no code for), `rule` (a wiring rule, RIG101–RIG107 or RIG109, that the imported channel set breaks here, judged against the merged vocabulary), or `hash` (the file changed after it was exported). |
 | `channel` | string \| null | The channel it is about, when it is about one. |
 | `message` | string | The difference, in words, naming both sides. |
 
 <a id="shape-channelsetimportplan"></a>
 #### ChannelSetImportPlan
 
-What importing another machine's channel set and vocabulary would do here. The pin map is never imported.
+What importing another machine's channel set and vocabulary would do here. The pin map is never imported: a channel the file adds takes the pin given for it here.
 
 | Field | Type | Notes |
 |---|---|---|
 | `conflicts` | [ChannelSetConflict](#shape-channelsetconflict)[] | Every disagreement, not the first. Non-empty means the import is refused whole and nothing is written. |
 | `vocabulary` | [StrobeImportPlan](#shape-strobeimportplan) | The vocabulary half: the codes the import adds and retires here. |
 | `changed` | string[] | Channels on both sides whose entry the import replaces. |
+| `newChannels` | [ChannelSetNewChannel](#shape-channelsetnewchannel)[] | Every channel the file has and this rig lacks, in the file's declaration order, pinned or not. |
 | `breaks` | [RigImpact](#shape-rigimpact)[] | Saved tasks the import would newly break. Applying needs `confirm` when non-empty. |
 | `hereHash` | string | This rig's `channelSetHash` now, by the current rule. |
 | `importedHash` | string | This rig's `channelSetHash` after a clean import: computed here, by the current rule, over the file's channel set. It equals `fileHash` only when the file was made by the current rule. |
 | `fileHash` | string | The hash the file states, `channel_set_hash`, made by the rule `fileHashVersion` names. Checked by that rule (a `hash` conflict when it does not match), never compared with `importedHash`. |
 | `fileHashVersion` | number | The rule that made `fileHash` (`TASKS.md#registry-rules`): 2 covers declaration order, 1 ignored it. 1 for a file from a build before the hash had a version. |
 | `identical` | boolean | The two machines already agree: applying writes nothing. |
+
+<a id="shape-channelsetnewchannel"></a>
+#### ChannelSetNewChannel
+
+A channel the imported channel set adds here, with what a pin picker needs (`TASKS.md#moving-the-channel-set-between-machines`).
+
+| Field | Type | Notes |
+|---|---|---|
+| `channel` | string | The channel's name, as the file declares it. |
+| `kind` | string \| null | Its `kind`, from the file's entry. |
+| `type` | string \| null | Its `type`, from the file's entry. |
+| `pin` | number \| null | The pin `hardware.importChannelSet` was given for it in `pins`; null while it has none, which is a `not_here` conflict. |
+| `freePins` | number[] | This board's pins (its `pin_range`) that no channel this rig keeps is on, ascending; for a `pwm_out`, only the timer-driven pins (RIG109). Not narrowed by the other new channels' pins: two on one pin come back as a `rule` conflict (RIG103). |
 
 <a id="shape-cohort"></a>
 #### Cohort

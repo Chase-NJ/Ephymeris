@@ -27,7 +27,9 @@ scored with no change here:
   latency runs from that visit's entry, each state its own phase. A trial
   decided by a timer has none, and neither has a spine with no deciding state;
 - an input's **count** is its watched rises, attributed to the state held before
-  the tick, as the interpreter attributes them.
+  the tick, as the interpreter attributes them;
+- its **counter N** is the N its first counter-state entry drew, from replay
+  (`Actions.drawn`): a VR's comes from the session RNG, so nothing else has it.
 
 `trials_of` works in states, ticks and bits; `name` turns one trial into the
 row the wire carries, through the snapshot's `Naming`.
@@ -88,6 +90,8 @@ class Trial:
     reward_ms: int | None = None
     #: (state, input bit) -> watched rises while in that state.
     counts: dict[tuple[int, int], int] = field(default_factory=dict)
+    #: The N its first counter-state entry drew; None if it entered none.
+    counter_n: int | None = None
     #: The next trial started, or the session ended at a trial start.
     complete: bool = False
 
@@ -101,6 +105,7 @@ class _Open:
     #: (state entered, tick, the state it was entered from, the edge row that took it there)
     path: list[tuple[int, int, int | None, rp.EdgeRow | None]] = field(default_factory=list)
     counts: dict[tuple[int, int], int] = field(default_factory=dict)
+    counter_n: int | None = None
     reward_state: int | None = None
     reward_at: int | None = None
     reward_ms: int | None = None
@@ -173,6 +178,10 @@ def trials_of(
                 return out
             current = _Open(index=len(out), at=now)
             walk(current, entered, range(split, len(entered)), now, edge)
+        # A counter state is the last a tick enters (the core stops there), so
+        # its N belongs to whichever trial holds that state now.
+        if current is not None and a.drawn != rp.NONE and current.counter_n is None:
+            current.counter_n = a.drawn
         held = entered[-1]
     if current is not None:
         out.append(_close(current, states, phase, deciding, window_states, complete=False))
@@ -285,6 +294,7 @@ def _close(t: _Open, states: Sequence[rp.StateRow], phase, deciding: frozenset[i
         reward_outputs=t.reward_outputs,
         reward_ms=t.reward_ms,
         counts=dict(t.counts),
+        counter_n=t.counter_n,
         complete=complete,
     )
 
@@ -379,6 +389,10 @@ class ReplayTrial:
     #: None when the run cannot say, as a legacy run cannot.
     correction: bool | None = False
     input_counts: tuple[InputCount, ...] = ()
+    #: The N its Counter phase drew at entry (FR, VR or PR alike), whether or
+    #: not the trial reached it; None when it entered no counter, and on a
+    #: legacy run.
+    counter_n: int | None = None
     complete: bool = True
     #: The trial opens a presentation on the engagement ladder.
     presented: bool = True
@@ -415,6 +429,7 @@ class ReplayTrial:
             "rewardMs": self.reward_ms,
             "correction": self.correction,
             "inputCounts": [c.to_json() for c in self.input_counts],
+            "counterN": self.counter_n,
             "complete": self.complete,
             "presented": self.presented,
             "scores": [s.to_json() for s in self.scores],
@@ -486,5 +501,6 @@ def name(trial: Trial, naming: Naming) -> ReplayTrial:
         # from what the core reports at the trial's start (`ACT_CORRECTION`).
         correction=False,
         input_counts=counts,
+        counter_n=trial.counter_n,
         complete=trial.complete,
     )

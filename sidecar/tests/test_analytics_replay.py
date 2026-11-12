@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from ephymeris_sidecar.analytics.stream import replay as rp
+from ephymeris_sidecar.analytics.stream import replay as rp, trial_table
 from ephymeris_sidecar.analytics.stream.replay import (
     FALL,
     NONE,
@@ -243,6 +243,64 @@ def test_a_progressive_count_reads_the_next_ratio_and_repeats_the_last() -> None
     # A limit that runs out is no completion: the step stays.
     run = dict(rp.replay(pr, COUNT_PARAMS, seed=1, events=presses(111), ticks=111))
     assert run[100].entered[0] == 2 and run[111].entered[0] == 1
+
+
+# --- the drawn N reaches the trial table (#164) -------------------------------
+
+VR = counter_table(rp.Counter(count_min=P_COUNT, count_max=P_COUNT_MAX))
+
+
+def _vr_seed_drawing_at_least(n: int) -> tuple[int, int]:
+    """A seed whose first VR draw is at least `n`, and that draw."""
+    for seed in range(1000003, 1000003 + 200 * 104729, 104729):
+        drawn = 3 + rp.draw(seed, 7)[0]
+        if drawn >= n:
+            return seed, drawn
+    raise AssertionError("no seed draws that high")
+
+
+def test_replay_reports_the_n_a_counter_entry_drew() -> None:
+    seed, drawn = _vr_seed_drawing_at_least(5)
+    run = rp.replay(VR, COUNT_PARAMS, seed=seed, events=presses(1, 2), ticks=10)
+    assert run[0][1].entered[0] == 0 and run[0][1].drawn == drawn
+    # A tick that enters no counter, and a counted rise, report none.
+    assert all(a.drawn == NONE for _, a in run[1:])
+
+
+def test_a_vr_trial_whose_counter_times_out_keeps_its_drawn_n() -> None:
+    seed, drawn = _vr_seed_drawing_at_least(5)
+    run = rp.replay(VR, COUNT_PARAMS, seed=seed, events=presses(1, 2), ticks=200)
+    first = trial_table.trials_of(VR, run, end=None)[0]
+    assert first.outcome == 4 and first.complete           # the limit ran out: an omission
+    assert first.counter_n == drawn
+    assert first.counts == {(0, 1): 2}                     # two short of nothing it can show
+
+
+def test_a_trial_cut_off_mid_counter_keeps_its_drawn_n() -> None:
+    seed, drawn = _vr_seed_drawing_at_least(5)
+    run = rp.replay(VR, COUNT_PARAMS, seed=seed, events=presses(1, 2), ticks=50)
+    (last,) = trial_table.trials_of(VR, run, end=None)
+    assert not last.complete and last.counter_n == drawn
+
+
+@pytest.mark.parametrize(
+    "counter",
+    [rp.Counter(count_min=P_COUNT, count_max=P_COUNT), rp.Counter(count_min=P_COUNT, count_max=P_COUNT_MAX),
+     rp.Counter(ratios=(1, 2, 4))],
+    ids=["FR", "VR", "PR"],
+)
+def test_a_completed_trials_n_is_its_counted_presses(counter: rp.Counter) -> None:
+    table = counter_table(counter)
+    t, events = 0, []
+    for _ in range(6):                     # press until each trial's counter exits
+        events += presses(*range(t + 1, t + 10))
+        t += 30
+    run = rp.replay(table, COUNT_PARAMS, seed=7, events=events, ticks=t)
+    trials = [x for x in trial_table.trials_of(table, run, end=None) if x.complete]
+    assert len(trials) >= 3
+    for trial in trials:
+        assert trial.outcome == 1
+        assert trial.counter_n == trial.counts[(0, 1)]
 
 
 def test_a_counter_or_a_last_trial_state_is_refused_before_version_4() -> None:

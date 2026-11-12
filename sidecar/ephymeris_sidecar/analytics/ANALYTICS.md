@@ -539,6 +539,7 @@ One row per trial (`stream/trial_table.py`, `ReplayTrial` on the wire). Columns,
 | `correct` | True when `outcome` is in `table_metrics.HITS`, false for any other class, null when it has none or its class is in `table_metrics.EXCLUDED` (an abort) |
 | `correction` | The core reported `ACT_CORRECTION` at the trial's start: its block's correction rule repeated the last trial's row ([TASKS.md](../../../docs/TASKS.md#blocks)). False for a table without blocks |
 | `inputCounts` | Each watched input's rises per phase, attributed to the state held before the tick, as the interpreter attributes them. Non-zero counts only |
+| `counterN` | The N the trial's first counter-state entry drew (`Actions.drawn`, which replay reports and `InterpActions` does not carry): an FR's parameter, a VR's draw from the session RNG, a PR's current ratio. Set whether or not the trial reached it, so a counter that timed out or a run cut off mid-counter still shows how far short the presses fell; on a trial that completed its ratio it equals the presses counted in the Counter phase. Null when the trial entered no counter |
 | `complete` | The next trial started, or the session ended at a trial start. Only a crashed run's last trial is incomplete |
 | `presented`, `scores` | Always true, and empty: they carry a [legacy run's](#how-a-legacy-run-becomes-a-trial-table) engagement and verdicts |
 

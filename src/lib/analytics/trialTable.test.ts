@@ -24,6 +24,7 @@ const trial = (over: Partial<ReplayTrial>): ReplayTrial => ({
   rewardMs: null,
   correction: false,
   inputCounts: [],
+  counterN: null,
   complete: true,
   presented: true,
   scores: [],

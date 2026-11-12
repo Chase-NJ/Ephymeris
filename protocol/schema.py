@@ -1767,6 +1767,9 @@ SHAPES = (
             f("correction", nullable(BOOL), doc="A correction trial; false until blocks have a "
               "correction rule, null on a legacy run, which cannot say."),
             f("inputCounts", ListOf(Ref("InputCount")), doc="Non-zero counts only."),
+            f("counterN", nullable(INT), doc="The N the trial's Counter phase drew when it was "
+              "entered (an FR's, a VR's or a PR's step), from replay, whether or not the trial "
+              "reached it; null when it entered no Counter, and on a legacy run."),
             f("complete", BOOL, doc="False only for a crashed spine run's cut-off last trial."),
             f("presented", BOOL, doc="The trial opens a presentation on the engagement ladder."),
             f("scores", ListOf(Ref("ConditionScore")), doc="A legacy trial's verdict under every "

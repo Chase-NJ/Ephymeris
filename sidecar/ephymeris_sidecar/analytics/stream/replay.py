@@ -480,6 +480,11 @@ class Actions:
     flags: int = 0
     #: The block running after this tick; NONE in a table without blocks.
     block: int = NONE
+    #: The N a counter state entered this tick drew (its `target`); NONE when
+    #: it entered none. Python only: `InterpActions` has no such field and the
+    #: differential test compares the fields above, never this one. The trial
+    #: table reads it (`trial_table.trials_of`), since only replay has a VR's N.
+    drawn: int = NONE
 
     @property
     def idle(self) -> bool:
@@ -548,10 +553,11 @@ class _Tick:
     off: int = 0
     entered: list[int] = field(default_factory=lambda: [NONE, NONE])
     flags: int = 0
+    drawn: int = NONE
 
     def done(self, block: int) -> Actions:
         return Actions(self.rose, self.fell, self.on, self.off, (self.entered[0], self.entered[1]), self.flags,
-                       block)
+                       block, self.drawn)
 
 
 def _pick(rng: int, branches: int) -> tuple[int, int]:
@@ -879,6 +885,7 @@ def _enter(core: Core, target: int, now: int, a: _Tick) -> Core:
             c.target = k.ratios[min(c.step, len(k.ratios) - 1)]
         else:
             c.target, c.rng = _count_of(c.rng, _param(c, k.count_min), _param(c, k.count_max))
+        a.drawn = c.target
     c.duration = 0
     if s.timer_min != NONE:
         lo, hi = _param(c, s.timer_min), _param(c, s.timer_max)

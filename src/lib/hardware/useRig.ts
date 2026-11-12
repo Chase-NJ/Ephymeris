@@ -7,7 +7,14 @@ import { EVT } from "@/lib/ws/protocol";
 
 import { getRig, previewRig, resetRig, saveRig } from "./commands";
 import { afterSave, applyPreview, servedView } from "./rigView";
-import type { RigAllocation, RigDocument, RigImpact, RigProblem, RigStatus } from "./types";
+import type {
+  RigAllocation,
+  RigDocument,
+  RigImpact,
+  RigProblem,
+  RigReservedPin,
+  RigStatus,
+} from "./types";
 
 /**
  * One rig-wiring editing session.
@@ -35,6 +42,9 @@ export interface RigSession {
   /** The DRAFT's schema violations and RIG101–RIG107, RIG109. What is wrong with the
    *  rig itself is `status.notices`, which no edit clears (`rigView.ts`). */
   problems: RigProblem[];
+  /** Pins the board has that no channel may take (`reservedPins`): the
+   *  editor never offers them. Empty until the first load. */
+  reservedPins: RigReservedPin[];
   /** Tasks this change would newly stop compiling. */
   breaks: RigImpact[];
   /** The edge codes a save of this draft would issue, as the sidecar plans
@@ -73,6 +83,7 @@ export function useRig(): RigSession {
   const [baselineProblems, setBaselineProblems] = useState<RigProblem[]>([]);
   const [confirmedPins, setConfirmedPins] = useState(false);
   const [problems, setProblems] = useState<RigProblem[]>([]);
+  const [reservedPins, setReservedPins] = useState<RigReservedPin[]>([]);
   const [breaks, setBreaks] = useState<RigImpact[]>([]);
   const [allocations, setAllocations] = useState<RigAllocation[]>([]);
   const [issued, setIssued] = useState<RigAllocation[]>([]);
@@ -92,6 +103,7 @@ export function useRig(): RigSession {
       setConfirmedPins(false);
       setProblems(reply.problems);
       setBaselineProblems(reply.problems);
+      setReservedPins(reply.reservedPins);
       setBreaks([]);
       setAllocations([]);
       setLoadError(null);
@@ -233,6 +245,7 @@ export function useRig(): RigSession {
       setConfirmedPins(false);
       setProblems(reply.problems);
       setBaselineProblems(reply.problems);
+      setReservedPins(reply.reservedPins);
       setBreaks([]);
       setAllocations([]);
       setIssued([]);
@@ -249,6 +262,7 @@ export function useRig(): RigSession {
     dirty,
     status,
     problems,
+    reservedPins,
     breaks,
     allocations,
     issued,

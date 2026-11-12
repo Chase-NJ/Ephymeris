@@ -171,6 +171,21 @@ def test_rig102_a_pin_this_board_does_not_have_is_refused():
     assert "RIG102" in codes_for(rig(pins={"trial_light": {"index": 200}}))
 
 
+def test_the_offered_pins_are_the_range_less_the_serial_pins():
+    """Every pin offer reads `offered_pins`, so none offers a pin RIG102 refuses."""
+    chans = registry.channels()
+    offered = chans.offered_pins()
+    assert offered == [p for p in range(chans.pin_min, chans.pin_max + 1) if p not in (0, 1)]
+    assert "RIG102" not in codes_for(rig(pins={"trial_light": {"index": offered[0]}}))
+    assert "RIG102" in codes_for(rig(pins={"trial_light": {"index": 0}}))
+
+
+def test_the_shipped_pinout_uses_no_serial_pin():
+    from ephymeris_sidecar.rig import board
+
+    assert not {c.index for c in registry.shipped_channels()} & set(board.SERIAL_PINS)
+
+
 def test_rig103_two_channels_on_one_pin_are_refused():
     """Legal on a breadboard, never legal here: the pin table inverts pin to
     name, and two names on one pin makes that answer arbitrary."""

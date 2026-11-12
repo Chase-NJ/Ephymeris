@@ -1,4 +1,6 @@
-"""What the board can drive: the Mega's timers, and RIG109 (TASKS.md#driven-outputs).
+"""What the board can drive: the Mega's timers and serial pins, RIG109 and RIG102.
+
+Driven outputs are TASKS.md#driven-outputs; the serial pins, TASKS.md#wiring-rules.
 
 A `pwm_out` channel is `analogWrite`, which needs a pin a hardware timer
 drives; a `tone_out` channel is `tone()`, which the Mega's AVR core plays on
@@ -30,6 +32,32 @@ TONE_TIMER = 2
 
 #: How many tone pins the Mega's core can play at once.
 TONE_CHANNELS = 1
+
+#: Pin -> its name on the board, for the pins no channel may take: USART0,
+#: which the Mega wires to its USB-serial chip. It is the link every box
+#: streams strobes over and takes `BEGIN`, `SET` and `START` on, so a channel
+#: driving or reading either pin would break the box's serial. The board HAS
+#: these pins, so they stay inside `pin_range`; every pin offer and RIG102
+#: leave them out instead.
+SERIAL_PINS: dict[int, str] = {0: "RX0", 1: "TX0"}
+
+
+def offered_pins(pin_min: int, pin_max: int) -> list[int]:
+    """The pins of `pin_min`..`pin_max` a channel may be put on: all but the serial pins."""
+    return [p for p in range(pin_min, pin_max + 1) if p not in SERIAL_PINS]
+
+
+def serial_pin_problem(name: str, pin: int) -> str | None:
+    """RIG102's message for a channel on a serial pin; None when `pin` is not one."""
+    if pin not in SERIAL_PINS:
+        return None
+    return (f"{name!r} is on pin {pin}, the Mega's {SERIAL_PINS[pin]}: the USB serial the box streams "
+            "strobes over. A channel there would break that link; move it to another pin.")
+
+
+def reserved_pins_json() -> list[dict[str, object]]:
+    """`RigDocument.reservedPins`: the serial pins, so the editor can leave them out."""
+    return [{"pin": pin, "name": name} for pin, name in sorted(SERIAL_PINS.items())]
 
 
 def drive_problems(channels: Iterable) -> list[tuple[str, str]]:  # noqa: ANN001 - registry.Channel

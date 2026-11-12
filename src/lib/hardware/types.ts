@@ -53,6 +53,7 @@ export type RigProblem = CommandResultMap["hardware.get"]["problems"][number];
 export type RigStatus = CommandResultMap["hardware.get"]["status"];
 export type RigImpact = CommandResultMap["hardware.preview"]["breaks"][number];
 export type RigAllocation = CommandResultMap["hardware.preview"]["allocations"][number];
+export type RigReservedPin = CommandResultMap["hardware.get"]["reservedPins"][number];
 
 /** The seven kinds `channels.v1.json` declares, in the order the rail lists them. */
 export const KINDS = [

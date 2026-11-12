@@ -382,12 +382,15 @@ def document_payload(rig: store.HardwareStore, *, in_force: InForce | None = Non
     that clears them. Whether a save may be made is `status.canSave`, decided
     here. `in_force` defaults to what the file would install now.
     """
+    from ephymeris_sidecar.rig import board
+
     state = rig_state(rig, in_force)
     doc = served_draft(state)
     return {
         "document": doc,
         "status": _status(rig, state, draft=doc, confirmed_pins=False),
         "problems": _draft_problems(state, doc, confirmed_pins=False),
+        "reservedPins": board.reserved_pins_json(),
     }
 
 

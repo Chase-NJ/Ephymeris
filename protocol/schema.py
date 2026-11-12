@@ -2317,12 +2317,29 @@ SHAPES = (
             ),
             f("status", Ref("RigStatus")),
             f("problems", ListOf(Ref("RigProblem"))),
+            f(
+                "reservedPins",
+                ListOf(Ref("RigReservedPin")),
+                doc="Pins inside `pin_range` that no channel may take: the board's "
+                "serial pins (`rig/board.py`, `TASKS.md#wiring-rules`). Adding a "
+                "channel and the board map leave them out; RIG102 refuses a "
+                "channel on one.",
+            ),
         ),
         doc="The draft, plus everything wrong with it. `document` is served even "
         "when `problems` is non-empty: an editor that refused to show a broken "
         "document would be refusing to show the one that needs fixing. "
         "`problems` are the draft's; what is wrong with the rig is "
         "`status.notices`.",
+    ),
+    Shape(
+        "RigReservedPin",
+        obj(
+            f("pin", INT),
+            f("name", STR, doc="The board's name for it: `RX0`, `TX0`."),
+        ),
+        doc="A pin the board has that no channel may take: one of the Mega's "
+        "USB serial pins, the link the box streams strobes over.",
     ),
     Shape(
         "RigImpact",

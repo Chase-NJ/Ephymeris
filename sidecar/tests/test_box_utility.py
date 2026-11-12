@@ -307,6 +307,7 @@ def door_first_rig() -> dict:
     """A valid rig whose first output is a level line of role `port` (a door),
     shown with the cues but no cue: identify must not light it."""
     from ephymeris_sidecar.hardware import service
+    from ephymeris_sidecar.rig import board
 
     doc = default_document()
     door = {"kind": "cue", "type": "digital_out", "role": "port", "label": "Door"}
@@ -449,6 +450,7 @@ def largest_rig() -> dict:
     name on every other free pin: the longest STATUS line a valid rig can have,
     which no 64-byte TX buffer holds."""
     from ephymeris_sidecar.hardware import service
+    from ephymeris_sidecar.rig import board
 
     doc = default_document()
     doc["channels"]["laser"] = {"kind": "cue", "type": "digital_out", "mode": "train",
@@ -456,7 +458,7 @@ def largest_rig() -> dict:
     doc["pins"]["laser"] = {"index": 11}
     used = {p["index"] for p in doc["pins"].values()}
     span = doc["pin_range"]
-    for i, pin in enumerate(p for p in range(span["min"], span["max"] + 1) if p not in used):
+    for i, pin in enumerate(p for p in board.offered_pins(span["min"], span["max"]) if p not in used):
         name = f"cue_line_{i:02d}_".ljust(32, "x")
         doc["channels"][name] = {"kind": "cue", "type": "digital_out", "role": "cue", "label": name}
         doc["pins"][name] = {"index": pin}
@@ -476,7 +478,8 @@ def test_a_train_pulse_is_never_held_high_while_status_is_printed(tmp_path):
     install(largest_rig())
     header = utility.utility_channels_h("BOX_Utility")
     status_bytes = int(re.search(r"BOX_UTILITY_STATUS_BYTES (\d+)", header)[1])
-    assert status_bytes > 1500, "the case this test is for: a line many buffers long"
+    # Twenty 64-byte TX buffers: the largest valid rig (every offered pin) prints ~1460.
+    assert status_bytes > 20 * 64, "the case this test is for: a line many buffers long"
     ran = run_on_host(tmp_path, r"""
   static unsigned long roseAt = 0, longest = 0;
   static bool high = false;

@@ -91,6 +91,23 @@ def test_a_sense_violation_carries_its_rule():
     assert "0-53" in problems[0]["message"]
 
 
+@pytest.mark.parametrize("pin, name", [(0, "RX0"), (1, "TX0")])
+def test_a_channel_on_a_serial_pin_is_refused_saying_why(pin, name):
+    """Pins 0 and 1 are inside a Mega's `pin_range`, and are its USB serial:
+    a channel there would break the link every box streams strobes over."""
+    problems = service.problems_for(rig(pins={"trial_light": {"index": pin}}))
+    assert [p["code"] for p in problems] == ["RIG102"]
+    assert problems[0]["location"] == "pins.trial_light"
+    assert name in problems[0]["message"] and "serial" in problems[0]["message"]
+
+
+def test_the_document_names_the_pins_no_channel_may_take(rig_store):
+    """The editor leaves out what the sidecar reserves, rather than knowing
+    a Mega fact of its own."""
+    payload = service.document_payload(rig_store)
+    assert payload["reservedPins"] == [{"pin": 0, "name": "RX0"}, {"pin": 1, "name": "TX0"}]
+
+
 def test_shape_is_reported_before_sense():
     """A document that failed the schema may not have the sections the rules
     read, and "channels is not an object" beats a KeyError from a rule."""

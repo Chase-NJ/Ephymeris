@@ -2239,6 +2239,22 @@ export interface RigDocument {
   document: unknown;
   status: RigStatus;
   problems: RigProblem[];
+  /**
+   * Pins inside `pin_range` that no channel may take: the board's serial pins (`rig/board.py`,
+   * `TASKS.md#wiring-rules`). Adding a channel and the board map leave them out; RIG102 refuses a
+   * channel on one.
+   */
+  reservedPins: RigReservedPin[];
+}
+
+/**
+ * A pin the board has that no channel may take: one of the Mega's USB serial pins, the link the
+ * box streams strobes over.
+ */
+export interface RigReservedPin {
+  pin: number;
+  /** The board's name for it: `RX0`, `TX0`. */
+  name: string;
 }
 
 /** A task this wiring change would break. Computed BEFORE the write. */

@@ -797,6 +797,9 @@ def test_the_plan_lists_each_new_channel_with_the_pins_free_here(tmp_path):
     used = {p["index"] for p in b.hardware.load()["pins"].values()}
 
     plan = b.plan(exported)
+    # The hash after import is the file's, before any pin is picked: no pin
+    # enters it, so an unpinned channel must not drop out of it.
+    assert plan["importedHash"] == exported["channel_set_hash"] != plan["hereHash"]
     (lever,) = plan["newChannels"]
     assert lever["channel"] == "lever"
     assert (lever["kind"], lever["type"]) == ("cue", "digital_out")

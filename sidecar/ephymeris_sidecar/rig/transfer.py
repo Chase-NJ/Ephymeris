@@ -208,10 +208,14 @@ def plan_import(
         where, what = shape[0]
         raise ChannelSetInvalid(f"That file's channel set is not a channel set: {where}: {what}")
 
+    # No pin enters the channel-set hash, but composing drops a channel with
+    # none: hash the unpinned new channels on a stand-in so the plan's
+    # `importedHash` is the file's channel set before any pin is picked.
+    hashed = {**joined, "pins": {**{n: {"index": 0} for n in new}, **joined["pins"]}}
     plan = ImportPlan(
         vocabulary=vocab_plan,
         here_hash=_compose(wiring).channel_set.content_hash(),
-        imported_hash=_compose(joined).channel_set.content_hash(),
+        imported_hash=_compose(hashed).channel_set.content_hash(),
         file_hash=stated_hash,
         file_hash_version=hash_version,
         changed=[n for n in there_channels if n in here_channels and here_channels[n] != there_channels[n]],

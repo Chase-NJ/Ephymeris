@@ -102,7 +102,7 @@ export function SpineGuide({
         <div className="flex items-center gap-3">
           <h1 className="font-display text-[22px] text-starlight">Your first task</h1>
           <span className="font-mono text-[10px] tracking-wide text-static/70 uppercase">
-            step {at + 1} of {GUIDE_STEPS.length}
+            part {at + 1} of {GUIDE_STEPS.length}
           </span>
           <span className="flex-1" />
           <Button variant="ghost" onClick={onLeave} title="Leave the guide; everything filled in so far is kept">
@@ -111,7 +111,7 @@ export function SpineGuide({
           </Button>
         </div>
 
-        <ol className="flex flex-wrap gap-x-1 gap-y-1" aria-label="Steps">
+        <ol className="flex flex-wrap gap-x-1 gap-y-1" aria-label="Parts of the guide">
           {GUIDE_STEPS.map((s, i) => (
             <li key={s}>
               <button
@@ -300,6 +300,7 @@ function RolesStep({
             )}
             <button
               type="button"
+              aria-label={each ? `Make ${slot.id} the same in every trial type` : `Choose ${slot.id} per trial type`}
               onClick={() => flip(slot.id, !each)}
               className="text-[10.5px] text-pulsar transition-colors hover:text-starlight"
             >
@@ -309,7 +310,7 @@ function RolesStep({
         );
       })}
       <Note>
-        The roles asked once are the same wire in every trial type. The stimulus is asked per trial type, so each trial type can present its own.
+        The roles asked once are the same channel in every trial type. The stimulus is asked per trial type, so each trial type can present its own.
       </Note>
     </div>
   );

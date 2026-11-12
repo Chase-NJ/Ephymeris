@@ -22,8 +22,8 @@ export const STEP_WORDS: Record<GuideStep, { title: string; help: string }> = {
   paradigm: { title: "Choose a paradigm", help: "A paradigm brings the steps of a trial, its trial types and what each answer means. Everything can be changed later." },
   names: { title: "Name the trial types", help: "Each trial type is one kind of trial the session draws, such as Odor 1 or CS+. Its name titles every readout." },
   roles: {
-    title: "Say which wire plays each role",
-    help: "A role is a part in the trial: the port, the sample, a well, the line that pays. A channel is the wire on this rig that plays it. Most roles are the same wire in every trial type; the stimulus is usually one per trial type.",
+    title: "Pick the channel for each role",
+    help: "A role is a part in the trial: the port, the sample, a well, the line that pays. A channel is the line on this rig that plays it. Most roles are the same channel in every trial type; the stimulus is usually one per trial type.",
   },
   answers: { title: "Say what each answer means", help: "For each trial type, what every response (and no response) counts as, and whether it pays." },
   timings: { title: "The timings that matter", help: "How long each step of the trial lasts. The rest keep the paradigm's values." },

@@ -171,7 +171,7 @@ export function TaskEditor() {
         onSave={() => void save()}
       />
     );
-  } else if (taskId === undefined && seed === null && guide === "offered" && spineEditorEnabled() && tasks === null && !listError) {
+  } else if (taskId === undefined && seed === null && guide === "offered" && spineEditorEnabled() && connected && tasks === null && !listError) {
     // Whether to offer the guide waits on the task list: nothing, rather than
     // the chooser for a frame.
     body = null;

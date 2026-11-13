@@ -1,6 +1,6 @@
 /**
- * The version a "Ship main" build calls itself, and the check that it moves
- * the update feed forward (`.github/workflows/ship-main.yml`).
+ * The version a "Ship update" build calls itself, and the check that it moves
+ * the update feed forward (`.github/workflows/ship-update.yml`).
  *
  *   node scripts/ship-version.mjs <commit count> [feed version]
  *
@@ -14,7 +14,7 @@
  *   1.1.3-alpha  ->  1.1.3-alpha.214    above 1.1.3-alpha, below 1.1.4-alpha
  *   1.2.0        ->  1.2.1-main.214     above 1.2.0, below 1.2.1
  *
- * A tagged release (`release.yml`) bumps `package.json`, so the main builds
+ * A tagged release (`ship-release.yml`) bumps `package.json`, so the main builds
  * after it count up from that release rather than from below it.
  */
 

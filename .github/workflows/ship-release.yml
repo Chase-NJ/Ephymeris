@@ -1,0 +1,99 @@
+# Ships a new version in two steps, with a look at it in between:
+#
+#   1. Pushing a tag like v1.1.4-alpha builds the Windows installer on a clean machine, signs
+#      it for the updater, and attaches both to a DRAFT release. Nothing reaches the lab yet.
+#   2. Publishing that draft points every installed copy's updater at it. Publishing is shipping.
+#
+# Step 2 runs when YOU publish. A release published by a workflow's own token would not
+# trigger it, which is one more reason step 1 only ever drafts.
+#
+# Run by hand with a tag, it does step 2 alone: after a failed run, or to put back an
+# earlier release's feed entry.
+#
+# To ship main without a new version number, use ship-update.yml instead.
+
+name: Ship release
+
+on:
+  push:
+    tags: ["v*"]
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Published release to point the update feed at, e.g. v1.1.2-alpha"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  # --- Step 1, on a pushed tag: build and draft. ---
+
+  # The tag is the version. Refuse a tag that disagrees with what the app
+  # will call itself, rather than ship an installer named one thing that
+  # reports another.
+  version:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Tag matches package.json and tauri.conf.json
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg=$(node -p "require('./package.json').version")
+          conf=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          echo "tag=$tag package.json=$pkg tauri.conf.json=$conf"
+          [ "$tag" = "$pkg" ] && [ "$tag" = "$conf" ]
+
+  # Holds the signing key, so it gets the workflow's contents: read and nothing more.
+  installer:
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/build-installer
+        with:
+          signing-key: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          signing-key-password: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+  draft:
+    needs: installer
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # create the release and upload the installer
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: installer
+          path: installer
+      - name: Draft a release with the installer and its signature
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft --prerelease \
+            --title "Ephymeris $GITHUB_REF_NAME" \
+            --generate-notes \
+            installer/*-setup.exe \
+            installer/*-setup.exe.sig
+
+  # --- Step 2, on publishing the draft (or by hand): point the feed. ---
+
+  feed:
+    if: github.event_name != 'push'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # push the feed branch
+    concurrency:
+      group: update-feed
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: .github/actions
+      - uses: ./.github/actions/point-feed
+        with:
+          tag: ${{ github.event.release.tag_name || inputs.tag }}
+          token: ${{ github.token }}

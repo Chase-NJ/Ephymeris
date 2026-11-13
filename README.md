@@ -232,15 +232,17 @@ trains included, and
 
 ## Continuous integration
 
-Five GitHub Actions workflows live in `.github/workflows/`:
+Three GitHub Actions workflows live in `.github/workflows/`:
 
 | Workflow | Runs on | What it does |
 |---|---|---|
 | `check.yml` | every push to `main`, every pull request | `npm run check`; the sidecar suite on Windows and Linux; the firmware host tests; `cargo test` on Windows |
-| `release.yml` | a pushed tag `v*` | builds and signs the installer and attaches it and its `.sig` to a **draft** pre-release |
-| `ship-main.yml` | run by hand | builds and signs `main` as `<package.json version>.<commit count>`, publishes it as a pre-release, and points the update feed at it |
-| `installer.yml` | called by the two above | builds the signed installer on a clean Windows runner; the one copy of the build steps |
-| `publish-update.yml` | publishing a release; called by `ship-main.yml` | points the update feed, `latest.json` on the `updates` branch, at that release ([Updates](docs/ARCHITECTURE.md#updates)) |
+| `ship-release.yml` | a pushed tag `v*`, then publishing its release | on the tag, builds and signs the installer and attaches it and its `.sig` to a **draft** pre-release; when the draft is published, points the update feed at it |
+| `ship-update.yml` | run by hand | builds and signs `main` as `<package.json version>.<commit count>`, publishes it as a pre-release, and points the update feed at it |
+
+The two ship workflows share their steps as actions in `.github/actions/`: `build-installer` builds the
+signed installer on a clean Windows runner, and `point-feed` points the update feed, `latest.json` on
+the `updates` branch, at a release ([Updates](docs/ARCHITECTURE.md#updates)).
 
 Tests that need hardware, `arduino-cli`, RHX or the lab's probe maps skip themselves on a runner, so a
 green check says nothing about them.
@@ -252,18 +254,18 @@ with that version prefixed by `v` and push the tag:
 git tag v1.1.1-alpha && git push origin main --tags
 ```
 
-The workflow refuses a tag that disagrees with either file. When the draft appears on the Releases
+**Ship release** refuses a tag that disagrees with either file. When the draft appears on the Releases
 page, write its notes and publish it. **Publishing is shipping**: within a few minutes every installed
 copy that checks finds it. Nothing reaches the lab before that.
 
-To ship `main` between releases, run **Ship main** instead (Actions tab, or the command below). It needs
+To ship `main` between releases, run **Ship update** instead (Actions tab, or the command below). It needs
 no version bump or tag: the build calls itself `package.json`'s version with the commit count appended
 (`1.1.3-alpha` becomes `1.1.3-alpha.214`), which sorts above the release it follows and below the next
 one. Running it is shipping, just as publishing a draft is. It refuses to run from any other branch, and
 refuses a version the feed already holds or has passed.
 
 ```bash
-gh workflow run ship-main.yml --ref main
+gh workflow run ship-update.yml --ref main
 ```
 
 Signing needs two repository secrets, `TAURI_SIGNING_PRIVATE_KEY` and
@@ -273,7 +275,7 @@ Signing needs two repository secrets, `TAURI_SIGNING_PRIVATE_KEY` and
 
 ## Building the installer
 
-`release.yml` runs exactly this. To build one locally, from a development machine that already runs
+`ship-release.yml` and `ship-update.yml` run exactly this. To build one locally, from a development machine that already runs
 the app from source:
 
 ```bash
@@ -287,7 +289,7 @@ merges `src-tauri/tauri.bundle.conf.json` and writes an NSIS installer to
 `src-tauri/target/release/bundle/nsis/`. Delete `src-tauri/resources/` to force a fresh stage.
 
 The frozen sidecar carries the interpreter of the venv that built it, so lab machines run whatever
-Python packaged them. `release.yml` uses 3.13; build locally from a 3.13+ venv too. On Windows,
+Python packaged them. The workflows use 3.13; build locally from a 3.13+ venv too. On Windows,
 Python 3.12's asyncio clock ticks every 15.6 ms and fires any timer due within one tick at the next
 socket event, which makes short waits end early (see `SETTLE_S` in `intan/client.py`).
 

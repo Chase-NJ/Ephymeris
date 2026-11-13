@@ -1,25 +1,27 @@
 # Ships main as it stands to every installed copy: no version bump, no tag, no draft.
-# Run it by hand (Actions -> Ship main -> Run workflow, or `gh workflow run ship-main.yml`).
+# Run it by hand (Actions -> Ship update -> Run workflow, or `gh workflow run ship-update.yml`).
 #
 # The build calls itself package.json's version plus main's commit count (1.1.3-alpha ->
-# 1.1.3-alpha.214, scripts/ship-version.mjs), is signed like a tagged release, goes up as an
+# 1.1.3-alpha.214, scripts/ship-version.mjs), is signed like a release, goes up as an
 # already-published pre-release, and the feed is pointed at it in the same run. Installed
 # copies then find it on their next check and install it when the operator clicks, exactly
-# as for a tagged release (docs/ARCHITECTURE.md#updates).
+# as for a release (docs/ARCHITECTURE.md#updates).
 #
 # By hand rather than on every push: whatever this ships is what runs the lab's next
 # session, and that should be a decision rather than a side effect of merging.
+#
+# For a new version number, use ship-release.yml instead.
 
-name: Ship main
+name: Ship update
 
 on:
   workflow_dispatch:
 
 permissions:
-  contents: write # create the release and push the feed
+  contents: read
 
 concurrency:
-  group: ship-main
+  group: ship-update
 
 jobs:
   version:
@@ -30,7 +32,7 @@ jobs:
       - name: Only main ships
         if: github.ref != 'refs/heads/main'
         run: |
-          echo "::error::Ship main runs from main, not $GITHUB_REF_NAME"
+          echo "::error::Ship update runs from main, not $GITHUB_REF_NAME"
           exit 1
 
       - uses: actions/checkout@v5
@@ -46,23 +48,31 @@ jobs:
           version=$(node scripts/ship-version.mjs "$(git rev-list --count HEAD)" "$feed")
           echo "feed=$feed ship=$version"
           if gh release view "v$version" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            echo "::error::v$version is already released. To point the feed at it again, run Publish update with that tag"
+            echo "::error::v$version is already released. To point the feed at it again, run Ship release by hand with that tag"
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+  # Holds the signing key, so it gets the workflow's contents: read and nothing more.
   installer:
     needs: version
-    uses: ./.github/workflows/installer.yml
-    with:
-      version: ${{ needs.version.outputs.version }}
-    secrets: inherit
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/build-installer
+        with:
+          version: ${{ needs.version.outputs.version }}
+          signing-key: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          signing-key-password: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
-  # Published, not drafted: running this workflow was the decision to ship. A tag pushed by
-  # the workflow's own token starts no other workflow, so release.yml does not also run.
+  # Published, not drafted: running this workflow was the decision to ship. A tag or release
+  # made by the workflow's own token starts no other workflow, so ship-release.yml does not
+  # also run, and the feed job below points the feed itself.
   release:
     needs: [version, installer]
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write # create the release and upload the installer
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -78,13 +88,23 @@ jobs:
             --target "$GITHUB_SHA" \
             --prerelease --latest=false \
             --title "Ephymeris $TAG" \
-            --notes "Built from main at ${GITHUB_SHA::7} by Ship main." \
+            --notes "Built from main at ${GITHUB_SHA::7} by Ship update." \
             --generate-notes \
             installer/*-setup.exe \
             installer/*-setup.exe.sig
 
   feed:
     needs: [version, release]
-    uses: ./.github/workflows/publish-update.yml
-    with:
-      tag: v${{ needs.version.outputs.version }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # push the feed branch
+    concurrency:
+      group: update-feed
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: .github/actions
+      - uses: ./.github/actions/point-feed
+        with:
+          tag: v${{ needs.version.outputs.version }}
+          token: ${{ github.token }}

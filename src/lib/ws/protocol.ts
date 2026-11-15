@@ -117,6 +117,8 @@ export const CMD = {
   INTAN_CONFIGURE: "intan.configure",
   INTAN_PARSE_PROBE_MAP: "intan.parseProbeMap",
   INTAN_PROBE_MAP: "intan.probeMap",
+  INTAN_MEASURE_IMPEDANCE: "intan.measureImpedance",
+  INTAN_IMPEDANCE_HISTORY: "intan.impedanceHistory",
   INTAN_FORCE_STOP: "intan.forceStop",
 
   // Session log
@@ -2977,6 +2979,33 @@ export interface IntanStatus {
   sync: IntanSyncStat[];
 }
 
+/** One electrode site's impedance at the measurement's frequency. */
+export interface ImpedanceSite {
+  ohms: number;
+  phaseDeg: number;
+}
+
+/** One animal's sites, measured once (`RECORDING.md#impedance-tracking`). */
+export interface ImpedanceMeasurement {
+  animalId: string;
+  /** UTC ISO; identifies the measurement for this animal. */
+  measuredAt: string;
+  box: number;
+  sessionId: string | null;
+  /** What RHX measured at, which can differ from 1 kHz asked. */
+  frequencyHz: number;
+  /** RHX's own CSV, saved beside the recording. */
+  file: string | null;
+  /** Native channel name → impedance, for the channels the box records. */
+  sites: Record<string, ImpedanceSite>;
+}
+
+export interface ImpedanceComparison {
+  current: ImpedanceMeasurement;
+  /** The animal's measurement before `current`, what a change is judged against. */
+  previous: ImpedanceMeasurement | null;
+}
+
 export interface IntanSpikes {
   box: number;
   /**
@@ -3213,6 +3242,8 @@ export interface CommandArgsMap {
   "intan.configure": { sessionId: string; groupId: string; config: RecordingConfig };
   "intan.parseProbeMap": { path: string };
   "intan.probeMap": { box: number };
+  "intan.measureImpedance": { sessionId: string; groupId: string; saveDirectory: string; boxes: Array<{ box: number; port: string; firstChannel: number; lastChannel: number }> };
+  "intan.impedanceHistory": { animalIds: string[] };
   "intan.forceStop": Record<string, never>;
   "logbook.cohort": { cohortId: string };
   "logbook.addNote": { sessionId: string; tag: NoteTag; body: string; scope?: NoteScope; carryForward?: boolean; at?: string };
@@ -3306,6 +3337,8 @@ export interface CommandResultMap {
   "intan.configure": IntanStatus;
   "intan.parseProbeMap": { probeMap: unknown };
   "intan.probeMap": { probeMap: unknown };
+  "intan.measureImpedance": { measurements: Record<string, ImpedanceComparison> };
+  "intan.impedanceHistory": { latest: Record<string, ImpedanceComparison> };
   "intan.forceStop": { ok: boolean };
   "logbook.cohort": LogbookCohort;
   "logbook.addNote": { note: SessionNote };

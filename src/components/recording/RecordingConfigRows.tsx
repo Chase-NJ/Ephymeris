@@ -3,6 +3,7 @@ import { Dropdown } from "@/components/common/Dropdown";
 import { DirectoryField } from "@/components/settings/DirectoryField";
 import { SettingRow } from "@/components/settings/SettingRow";
 import type { RecordingConfigDefaults } from "@/lib/intan/defaults";
+import { DEFAULT_IMPEDANCE_FLAGS, normalizeImpedanceFlags, type ImpedanceFlags } from "@/lib/intan/impedance";
 import { FILE_FORMATS } from "@/lib/intan/types";
 
 /**
@@ -253,6 +254,70 @@ export function ThresholdRows({
       <p className="px-4 py-2.5 text-[11px] leading-relaxed text-static">
         A single channel can be adjusted live in RHX's own Spike Scope.
       </p>
+    </>
+  );
+}
+
+/**
+ * What the Record step flags as an open, shorted or changed electrode site
+ * (`RECORDING.md#impedance-tracking`). Entered in the units people think in
+ * (MΩ, kΩ, ×) and stored in ohms; `normalizeImpedanceFlags` keeps the short
+ * bound below the open one.
+ */
+export function ImpedanceFlagRows({
+  value,
+  onChange,
+}: {
+  value: ImpedanceFlags;
+  onChange: (next: ImpedanceFlags) => void;
+}) {
+  return (
+    <>
+      <SettingRow label="Open above" description="A broken lead, or a site out of tissue. 0.01 to 1000 MΩ.">
+        <span className="flex items-center gap-2">
+          <NumberInput
+            label="Open above, in megaohms"
+            value={value.openOhms / 1e6}
+            fallback={DEFAULT_IMPEDANCE_FLAGS.openOhms / 1e6}
+            min={0.01}
+            max={1000}
+            className="w-20"
+            onChange={(v) => onChange(normalizeImpedanceFlags({ ...value, openOhms: Number(v) * 1e6 }))}
+          />
+          <span className="text-[11px] text-static">MΩ</span>
+        </span>
+      </SettingRow>
+      <SettingRow label="Shorted below" description="Bridged to a neighbour or to ground. 0.001 to 100000 kΩ.">
+        <span className="flex items-center gap-2">
+          <NumberInput
+            label="Shorted below, in kiloohms"
+            value={value.shortOhms / 1e3}
+            fallback={DEFAULT_IMPEDANCE_FLAGS.shortOhms / 1e3}
+            min={0.001}
+            max={100000}
+            className="w-20"
+            onChange={(v) => onChange(normalizeImpedanceFlags({ ...value, shortOhms: Number(v) * 1e3 }))}
+          />
+          <span className="text-[11px] text-static">kΩ</span>
+        </span>
+      </SettingRow>
+      <SettingRow
+        label="Changed by more than"
+        description="Either way, since the animal's last measurement. 1.1 to 100 ×."
+      >
+        <span className="flex items-center gap-2">
+          <NumberInput
+            label="Change factor"
+            value={value.changeFactor}
+            fallback={DEFAULT_IMPEDANCE_FLAGS.changeFactor}
+            min={1.1}
+            max={100}
+            className="w-20"
+            onChange={(v) => onChange(normalizeImpedanceFlags({ ...value, changeFactor: Number(v) }))}
+          />
+          <span className="text-[11px] text-static">×</span>
+        </span>
+      </SettingRow>
     </>
   );
 }

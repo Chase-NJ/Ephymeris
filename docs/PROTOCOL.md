@@ -151,6 +151,8 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="cmd-intan.configure"></a>`intan.configure` | `sessionId`, `groupId`, `config` | [IntanStatus](#shape-intanstatus) | Apply a recording setup to RHX **for one group run** — animals, and so … |
 | <a id="cmd-intan.parseprobemap"></a>`intan.parseProbeMap` | `path` | `probeMap` | Parse an Intan probe-map XML for the setup preview. |
 | <a id="cmd-intan.probemap"></a>`intan.probeMap` | `box` | `probeMap` | The probe map configured for this box in the current recording, or null: what … |
+| <a id="cmd-intan.measureimpedance"></a>`intan.measureImpedance` | `sessionId`, `groupId`, `saveDirectory`, `boxes` | `measurements` | Measure every electrode's impedance in RHX and keep each box's sites under its animal … |
+| <a id="cmd-intan.impedancehistory"></a>`intan.impedanceHistory` | `animalIds` | `latest` | Each animal's latest impedances, for the Record step to show before anything is measured … |
 | <a id="cmd-intan.forcestop"></a>`intan.forceStop` | — | `ok` | Stop waiting for boxes to finish their trials during a graceful end; the recording … |
 
 ### Session log
@@ -305,6 +307,9 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="shape-grouprejection"></a>GroupRejection | `reason`, `minimumGroups` |  |
 | <a id="shape-grouprun"></a>GroupRun | `groupId`, `order`, `startedAt`, `endedAt` |  |
 | <a id="shape-identifyspec"></a>IdentifySpec | `on`, `off` | The two commands that make a box announce itself — a trial light, a … |
+| <a id="shape-impedancecomparison"></a>ImpedanceComparison | `current`, `previous` |  |
+| <a id="shape-impedancemeasurement"></a>ImpedanceMeasurement | `animalId`, `measuredAt`, `box`, `sessionId`, `frequencyHz`, `file`, `sites` | One animal's sites, measured once (`RECORDING.md#impedance-tracking`). |
+| <a id="shape-impedancesite"></a>ImpedanceSite | `ohms`, `phaseDeg` | One electrode site's impedance at the measurement's frequency. |
 | <a id="shape-inputcount"></a>InputCount | `phase`, `channel`, `count` | Watched rises of one input channel during one phase of a trial. |
 | <a id="shape-intansettings"></a>IntanSettings | `commandPort`, `waveformPort`, `spikePort` | Where Intan RHX's three TCP servers listen. |
 | <a id="shape-intanspikes"></a>IntanSpikes | `box`, `counts`, `lagMs`, `sentAt` |  |

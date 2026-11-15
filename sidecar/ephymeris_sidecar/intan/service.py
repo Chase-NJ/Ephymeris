@@ -52,6 +52,7 @@ from typing import Any, Awaitable, Callable
 
 from ..settings import IntanEndpoints, SidecarSettings
 from . import probemap
+from .impedance import ImpedanceFile, parse_csv
 from .analysis import (
     EdgeDetector,
     EdgeMatcher,
@@ -88,6 +89,16 @@ POST_ROLL_S = 1.0
 #: The longest `set runmode stop` may take before the stop is given up on and
 #: owed. Covers the client's own wait for the change to take, with room.
 STOP_TIMEOUT_S = 12.0
+#: The frequency impedances are measured at: the field's convention, so one
+#: animal's measurements compare across sessions.
+IMPEDANCE_FREQ_HZ = 1000
+#: `MeasureImpedance` holds RHX until every channel of every headstage is
+#: measured: seconds in demo mode, up to about a minute on a full rig.
+MEASURE_TIMEOUT_S = 180.0
+#: How long the saved CSV may take to appear after the measurement, when RHX's
+#: writes cannot be confirmed (`confirmsWrites: false`) and so nothing says
+#: when the measurement ended.
+IMPEDANCE_FILE_WAIT_S = 30.0
 #: Spikes are sent as `intan.spikes` this often: a frame at 30 fps, so the
 #: firing map's flash is never more than one frame behind the sidecar.
 SPIKES_PUBLISH_S = 1 / 30
@@ -632,6 +643,70 @@ class IntanService:
         self._set_state("configured", None)
         await self._open_streams()
         await self.publish()
+
+    async def measure_impedance(self, directory: str, base_filename: str) -> tuple[ImpedanceFile, Path]:
+        """Measure every channel's impedance and read RHX's CSV of them back
+        (`RECORDING.md#impedance-tracking`). RHX must be stopped: one left in
+        Run is stopped, as `configure` does; one recording is refused.
+
+        RHX saves the file itself (`SaveImpedance`); it goes in `directory`,
+        beside the recording, and stays there as the durable copy.
+        """
+        if self._run_open:
+            raise IntanNotReady("A recording is running; impedances are measured before it starts.")
+        if not self._client.connected:
+            await self.connect()
+        client = self._client
+        await self._refresh_info()
+        if self._run_mode in ("record", "trigger"):
+            raise IntanNotReady("RHX is recording. Stop it in RHX first.")
+        if self._run_mode == "run":
+            await client.set_run_mode("stop")
+            self._run_mode = "stop"
+        if not self._info.get("headstagePresent"):
+            raise IntanNotReady("RHX sees no headstage to measure.")
+
+        folder = Path(directory)
+        target = folder / f"{base_filename}.csv"
+        try:
+            await asyncio.to_thread(folder.mkdir, parents=True, exist_ok=True)
+            await asyncio.to_thread(target.unlink, missing_ok=True)
+        except OSError as exc:
+            raise IntanNotReady(f"Couldn't prepare {folder}: {exc.strerror or exc}") from exc
+
+        await client.set("desiredimpedancefreqhertz", IMPEDANCE_FREQ_HZ)
+        await client.set("impedancefilename.path", rhx_path(str(folder)), verify=True)
+        await client.set("impedancefilename.basefilename", base_filename, verify=True)
+        # RHX measures before it reads on, so this returns when it is done.
+        await client.execute("measureimpedance", timeout_s=MEASURE_TIMEOUT_S)
+        await client.execute("saveimpedance")
+        text = await self._wait_for_file(target)
+        try:
+            return parse_csv(text), target
+        except ValueError as exc:
+            raise IntanNotReady(f"RHX's impedance file {target.name} couldn't be read: {exc}") from exc
+
+    async def _wait_for_file(self, path: Path) -> str:
+        """The CSV, once it is there and whole. At once when writes are
+        confirmed; otherwise polled, since nothing says when RHX is done."""
+        loop = asyncio.get_running_loop()
+        # Unconfirmed, the measurement itself may still be running.
+        wait = 2.0 if self._client.confirms_writes else MEASURE_TIMEOUT_S + IMPEDANCE_FILE_WAIT_S
+        deadline = loop.time() + wait
+        while True:
+            try:
+                text = await asyncio.to_thread(path.read_text, encoding="utf-8", errors="replace")
+                if text.strip() and text.endswith("\n"):  # RHX ends every row with one
+                    return text
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                raise IntanNotReady(f"Couldn't read {path}: {exc.strerror or exc}") from exc
+            if loop.time() >= deadline:
+                raise IntanNotReady(
+                    f"RHX did not save the impedances to {path}. Check that RHX can write there."
+                )
+            await asyncio.sleep(0.25)
 
     def _plan(
         self, session_id: str, group_id: str, config: dict[str, Any], base_filename: str

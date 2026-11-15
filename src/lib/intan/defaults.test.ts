@@ -44,6 +44,8 @@ describe("normalizeRecordingDefaults", () => {
         "3": { record: false, port: "", firstChannel: 0, lastChannel: -1 },
       },
       probeMaps: {},
+      // Absent from a file written before impedance tracking: the defaults.
+      impedanceFlags: DEFAULT_RECORDING_DEFAULTS.impedanceFlags,
     });
   });
 

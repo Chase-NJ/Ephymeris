@@ -134,6 +134,8 @@ A rescan re-points (`rehomed`) records an older relocate left behind, wherever t
 - **Identity**, by case-folded name: a roster animal or [former member](#former-members) of that name in the destination is **joined**; otherwise the animal is carried under its own id.
 - **Files:** every `.json`/`.tsv`/`.mat` of its recorded and [adopted](#orphan-adoption) runs, plus unrecorded files whose stem names it. Never `notes.md`, RHX recordings or AppleDouble files.
 - **Sessions** only moved animals ran in move whole; shared ones are **split**, the destination getting its own record (no recording). Notes about moved animals or their boxes move, about staying ones stay, and the rest (whole-session, shared box) are **copied**.
+- **Impedance history** ([RECORDING.md](RECORDING.md#impedance-tracking)) follows the animal into the one it
+  joins.
 - **Caches** follow with their [freshness keys](#caching). An adoption whose run the destination already holds joins that row, which keeps its id and ruling.
 - **Refused** with nothing touched when: anything runs; either cohort has an open session; a folder is unreachable, shared or nested; a destination file differs; a run file lies outside the source; two moved animals share a name; the destination is archived; or an earlier move would collide.
 
@@ -351,6 +353,7 @@ erDiagram
     prefixes |o..o{ sessions : "prefix_id"
     animals |o..o{ session_animal_runs : "animal_id"
     animals |o..o{ adopted_runs : "animal_id"
+    animals |o..o{ electrode_impedances : "animal_id"
     task_profiles |o..o{ session_animal_runs : "profile_hash"
     session_animal_runs |o..o| run_metrics_cache : "run_id"
     adopted_runs |o..o| run_metrics_cache : "run_id"
@@ -488,6 +491,17 @@ erDiagram
         TEXT adopted_at
         INTEGER file_mtime_ns
         INTEGER file_size
+    }
+    electrode_impedances {
+        TEXT animal_id PK
+        TEXT measured_at PK
+        TEXT channel PK
+        TEXT session_id
+        INTEGER box_number
+        REAL frequency_hz
+        REAL ohms
+        REAL phase_deg
+        TEXT csv_file
     }
     session_notes {
         TEXT id PK

@@ -19,6 +19,7 @@ yet been made ([Not yet verified](#not-yet-verified)).
 - [Recording walkthrough](#recording-walkthrough)
   - [Recording tab](#recording-tab)
   - [Record step](#record-step)
+  - [Impedance tracking](#impedance-tracking)
 - [Start and end](#start-and-end)
   - [Start](#start)
   - [Graceful end](#graceful-end)
@@ -316,6 +317,40 @@ is stopped (it ignores saving parameters while running); one in `Record` is refu
 are switched off.** RHX's three notes carry the session, cohort and group, and the box→animal→port map;
 `livenotes` stamps each box's start and end.
 
+### Impedance tracking
+
+The Record step's **Impedances** tile measures every electrode site and keeps each animal's values, so a
+site is judged against that animal's last measurement as well as fixed bounds. RHX shows only the
+measurement in front of it; the history across sessions is what Ephymeris adds. Optional: nothing waits
+on it.
+
+`intan.measureImpedance` (`IntanService.measure_impedance`):
+
+1. Refuse while recording; stop an RHX left in Run, as `intan.configure` does.
+2. `set DesiredImpedanceFreqHertz` to `IMPEDANCE_FREQ_HZ` (1 kHz), point `ImpedanceFilename` at the save
+   location (read back), and delete any file of that name first.
+3. `execute MeasureImpedance`, with `MEASURE_TIMEOUT_S`: RHX measures every channel of every headstage
+   **before it reads on**, so the sentinel answers when it is done (4.9 s for 64 demo channels, RHX's
+   own progress bar).
+4. `execute SaveImpedance`, then read RHX's CSV (`intan/impedance.py`), which stays beside the
+   recording as `impedance_<UTC stamp>.csv`.
+5. Keep each box's channels under the animal the confirmed mapping puts there, in
+   `electrode_impedances` ([DATA.md](DATA.md#tables)), and answer each with the measurement before it.
+
+> [!CAUTION]
+> **RHX's CSV has the native name in "Channel Number"** and the custom name in "Channel Name". Read by
+> the second column, a renamed channel would be filed under its label.
+
+`intan.impedanceHistory` gives each animal's latest on arrival. The webview judges them
+(`lib/intan/impedance.ts`) with the **Impedance flags** recording default: **open** above 5 MΩ,
+**short** below 20 kΩ, **changed** by more than 2× either way since the animal's previous measurement.
+Open and short win over changed. Flagged sites are outlined on the probe-map preview.
+
+| Unverified | If the answer is the bad one |
+|---|---|
+| A real headstage's measurement time | Over `MEASURE_TIMEOUT_S` (180 s) the step reports RHX unavailable; raise it |
+| RHX in demo mode measures 100 kΩ, −70° on every site | Nothing can be judged from a demo measurement; it proves the plumbing only |
+
 ## Start and end
 
 Context: [ARCHITECTURE.md](ARCHITECTURE.md#session-lifecycle). One group's recording
@@ -492,7 +527,8 @@ switchable). `sidecar/tests/test_intan_real_rhx.py` probes a real RHX: opt-in (`
 never enters `record`, restores every value it touches, and uses one connection throughout. On RHX 3.5.0
 (`ControllerRecordUSB3`, synthetic) it confirmed the sentinel batching, reported refusals, the space in
 `Filename.Path`, `digital-in-01` input names (`digital_in_name`), the [run-mode](#talking-to-rhx)
-deferral, nameless replies, case handling, spike latency by batch size, and every
+deferral, nameless replies, case handling, spike latency by batch size, the impedance
+measure-and-save sequence and its CSV, and every
 `intan.configure` parameter name.
 
 To watch on the first full-length recording:

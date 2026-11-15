@@ -253,6 +253,27 @@ def test_the_files_records_and_notes_move(lab: Lab) -> None:
     assert plan.files and all(f.action == "present" for f in plan.files)
 
 
+def test_an_animal_s_impedance_history_follows_it_into_the_animal_it_joins(lab: Lab) -> None:
+    """`RECORDING.md#impedance-tracking`: keyed by animal, so a move that
+    joins slow1 to B's b-slow takes its implant's history with it."""
+    from ephymeris_sidecar.intan.impedance import SiteImpedance
+    from ephymeris_sidecar.intan.impedance_store import ImpedanceStore, Measurement
+
+    give_b(lab, "slow1", "b-slow")
+    store = ImpedanceStore(lab.db)
+    store.add([Measurement("slow1", "2026-07-22T10:00:00.000+00:00", 3, lab.s1, 1000.0, None,
+                           (SiteImpedance("A-000", 1e5, -70.0),))])
+    store.add([Measurement("remy1", "2026-07-22T10:00:00.000+00:00", 1, lab.s1, 1000.0, None,
+                           (SiteImpedance("A-016", 2e5, -70.0),))])
+
+    lab.apply("slow1")
+
+    assert store.latest("slow1") is None
+    moved = store.latest("b-slow")
+    assert moved is not None and moved.sites[0].ohms == 1e5
+    assert store.latest("remy1") is not None
+
+
 def test_a_carried_animal_lands_on_the_destination_roster(lab: Lab) -> None:
     lab.apply("slow1")
     [animal] = lab.cohorts.get(lab.b.id).animals

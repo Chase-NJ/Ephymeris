@@ -254,6 +254,15 @@ def _apply_records(conn: Tx, plan: MovePlan, sessions: SessionRepository) -> Non
                 (animal.source_id, source.id),
             )
 
+    # An implant's impedance history follows the animal, whatever session it
+    # was measured in (`RECORDING.md#impedance-tracking`).
+    for old, new in mapped.items():
+        if old != new:
+            conn.execute(
+                "UPDATE OR IGNORE electrode_impedances SET animal_id = ? WHERE animal_id = ?",
+                (new, old),
+            )
+
     for entry in plan.sessions:
         _apply_session(conn, plan, entry, mapped, now, sessions)
 

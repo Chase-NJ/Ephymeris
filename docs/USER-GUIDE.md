@@ -396,7 +396,10 @@ thresholds.
 4. Configure and place the animals as usual. On **Set Up the Recording**, fix anything under
    **Readiness**, check **Saving** (a yellow line warns of a space in the path), and set each box to
    **Record** or **Behavior only** with its port, channels and optional probe map.
-5. Click **Configure RHX and continue**. Nothing reaches RHX before this.
+   Optionally click **Measure impedances**: RHX measures every site (up to a minute), and each animal's
+   values are kept. Sites that are open, shorted or changed since that animal's last measurement are
+   listed and outlined on its probe map; the bounds are on the Recording tab under **Impedance flags**.
+5. Click **Configure RHX and continue**. Nothing reaches RHX before this, except an impedance measurement.
 
 ![Set Up the Recording: Readiness 5/5 ready, Saving with the save location and a space warning, Using your defaults with Edit for this session, and the first box under Boxes set to Record on Port A, channels 0 to 15](images/record-step.webp)
 

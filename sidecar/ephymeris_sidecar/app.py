@@ -32,7 +32,8 @@ from .sessions.paths import resolve_session_folder
 from .hardware import service as hardware_service
 from .hardware import store as hardware_store
 from .intan import probemap as intan_probemap
-from .intan.service import IntanService
+from .intan.impedance_store import ImpedanceStore, Measurement
+from .intan.service import IntanService, channel_name
 from .logbook.service import LogbookService
 from .rig import definition as rig_definition
 from .rig import registry as rig_registry
@@ -134,6 +135,7 @@ class Application:
         self.db = Database(data_dir / DB_FILENAME)
         self.cohorts = CohortRepository(self.db)
         self.sessions = SessionRepository(self.db)
+        self.impedances = ImpedanceStore(self.db)
         self.runner: SessionRunner | None = None
         self.backup: BackupManager | None = None
         self.archive: CohortArchive | None = None
@@ -300,6 +302,8 @@ class Application:
         self.server.register(Cmd.INTAN_PARSE_PROBE_MAP, self._intan_parse_probe_map)
         self.server.register(Cmd.INTAN_PROBE_MAP, self._intan_probe_map)
         self.server.register(Cmd.INTAN_FORCE_STOP, self._intan_force_stop)
+        self.server.register(Cmd.INTAN_MEASURE_IMPEDANCE, self._intan_measure_impedance)
+        self.server.register(Cmd.INTAN_IMPEDANCE_HISTORY, self._intan_impedance_history)
 
         missing = self.server.unhandled()
         if missing:
@@ -1763,6 +1767,62 @@ class Application:
     async def _intan_force_stop(self, _args: Args) -> dict[str, Any]:
         self._require_intan().force_stop.set()
         return {"ok": True}
+
+    async def _intan_measure_impedance(self, args: Args) -> dict[str, Any]:
+        """`RECORDING.md#impedance-tracking`: measure, keep each box's sites
+        under the animal the confirmed mapping puts there, compare with its last."""
+        intan = self._require_intan()
+        session_id = _str_arg(args, "sessionId")
+        group_id = _str_arg(args, "groupId")
+        directory = _str_arg(args, "saveDirectory")
+        rows = args.get("boxes") or []
+        if not rows:
+            raise CommandError(ErrCode.BAD_MESSAGE, "Choose at least one box to measure.")
+        mapped = self._require_lifecycle().mapped_boxes(session_id, group_id, (r["box"] for r in rows))
+        now = datetime.now(UTC)
+        measured_at = now.isoformat(timespec="milliseconds")
+        stamp = now.strftime("%Y%m%dT%H%M%SZ")
+        reading, csv_path = await intan.measure_impedance(directory, f"impedance_{stamp}")
+        by_channel = {site.channel: site for site in reading.sites}
+
+        measurements = []
+        for row in rows:
+            channels = [
+                channel_name(str(row["port"]), n)
+                for n in range(int(row["firstChannel"]), int(row["lastChannel"]) + 1)
+            ]
+            measurements.append(
+                Measurement(
+                    animal_id=mapped[row["box"]].animal_id,
+                    measured_at=measured_at,
+                    box=int(row["box"]),
+                    session_id=session_id,
+                    frequency_hz=reading.frequency_hz,
+                    csv_file=str(csv_path),
+                    sites=tuple(by_channel[c] for c in channels if c in by_channel),
+                )
+            )
+        await asyncio.to_thread(self.impedances.add, measurements)
+        out = {}
+        for m in measurements:
+            out[m.animal_id] = await asyncio.to_thread(self._impedance_comparison, m)
+        return {"measurements": out}
+
+    async def _intan_impedance_history(self, args: Args) -> dict[str, Any]:
+        ids = [a for a in args.get("animalIds") or [] if isinstance(a, str)]
+        latest = {}
+        for animal_id in dict.fromkeys(ids):
+            found = await asyncio.to_thread(self.impedances.latest, animal_id)
+            if found is not None:
+                latest[animal_id] = await asyncio.to_thread(self._impedance_comparison, found)
+        return {"latest": latest}
+
+    def _impedance_comparison(self, current: Measurement) -> dict[str, Any]:
+        previous = self.impedances.latest(current.animal_id, before=current.measured_at)
+        return {
+            "current": current.to_json(),
+            "previous": previous.to_json() if previous is not None else None,
+        }
 
 
 def _is_ready_to_run(cohort: Any) -> bool:

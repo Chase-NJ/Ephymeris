@@ -7,7 +7,7 @@ import { PanelTitle } from "@/components/charts/PanelTitle";
 import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
 import { Button } from "@/components/common/controls";
 import { IntanConnectionPanel } from "@/components/recording/IntanConnectionPanel";
-import { SavingRows, ThresholdRows } from "@/components/recording/RecordingConfigRows";
+import { ImpedanceFlagRows, SavingRows, ThresholdRows } from "@/components/recording/RecordingConfigRows";
 import { RecChip, RecordingStatus } from "@/components/recording/RecordingStatus";
 import { SyncInputsTable } from "@/components/recording/SyncInputsTable";
 import { SettingRowDensityContext } from "@/components/settings/SettingRow";
@@ -192,6 +192,12 @@ export function Recording() {
                       <ThresholdRows
                         value={defaults.config}
                         onChange={(patch) => void save({ config: { ...defaults.config, ...patch } })}
+                      />
+                    </Panel>
+                    <Panel name="Impedance flags" note="at 1 kHz, on the Record step">
+                      <ImpedanceFlagRows
+                        value={defaults.impedanceFlags}
+                        onChange={(impedanceFlags) => void save({ impedanceFlags })}
                       />
                     </Panel>
                     <p className="px-1 text-[11px] leading-relaxed text-static/80">

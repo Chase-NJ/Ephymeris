@@ -3166,6 +3166,39 @@ SHAPES = (
         ),
     ),
     Shape(
+        "ImpedanceSite",
+        obj(f("ohms", FLOAT), f("phaseDeg", FLOAT)),
+        doc="One electrode site's impedance at the measurement's frequency.",
+    ),
+    Shape(
+        "ImpedanceMeasurement",
+        obj(
+            f("animalId", STR),
+            f("measuredAt", STR, doc="UTC ISO; identifies the measurement for this animal."),
+            f("box", INT),
+            f("sessionId", nullable(STR)),
+            f("frequencyHz", FLOAT, doc="What RHX measured at, which can differ from 1 kHz asked."),
+            f("file", nullable(STR), doc="RHX's own CSV, saved beside the recording."),
+            f(
+                "sites",
+                MapOf(Ref("ImpedanceSite")),
+                doc="Native channel name → impedance, for the channels the box records.",
+            ),
+        ),
+        doc="One animal's sites, measured once (`RECORDING.md#impedance-tracking`).",
+    ),
+    Shape(
+        "ImpedanceComparison",
+        obj(
+            f("current", Ref("ImpedanceMeasurement")),
+            f(
+                "previous",
+                nullable(Ref("ImpedanceMeasurement")),
+                doc="The animal's measurement before `current`, what a change is judged against.",
+            ),
+        ),
+    ),
+    Shape(
         "IntanSpikes",
         obj(
             f("box", INT),
@@ -4646,6 +4679,46 @@ COMMANDS = (
         result=obj(f("probeMap", ANY)),
         doc="The probe map configured for this box in the current recording, "
         "or null: what the live firing map draws (`RECORDING.md#live-firing-map`).",
+    ),
+    Command(
+        "intan.measureImpedance",
+        args=obj(
+            f("sessionId", STR),
+            f("groupId", STR),
+            f("saveDirectory", STR, doc="Where RHX saves its CSV: the recording's save location."),
+            f(
+                "boxes",
+                ListOf(obj(f("box", INT), f("port", STR), f("firstChannel", INT), f("lastChannel", INT))),
+            ),
+        ),
+        result=obj(
+            f(
+                "measurements",
+                MapOf(Ref("ImpedanceComparison")),
+                doc="Animal id → this measurement and the one before it.",
+            )
+        ),
+        doc="Measure every electrode's impedance in RHX and keep each box's "
+        "sites under its animal (`RECORDING.md#impedance-tracking`). Animals "
+        "come from this group's confirmed mapping, as for `intan.configure` "
+        "(`SESSION_INVALID` with `detail.boxes` for boxes it lacks). RHX must "
+        "not be recording; one left in Run is stopped. `INTAN_NOT_READY` for "
+        "no headstage, a running recording, or a CSV RHX did not write. "
+        "Long-running: up to a minute on a full rig.",
+    ),
+    Command(
+        "intan.impedanceHistory",
+        args=obj(f("animalIds", ListOf(STR))),
+        result=obj(
+            f(
+                "latest",
+                MapOf(Ref("ImpedanceComparison")),
+                doc="Animal id → its most recent measurement and the one before; "
+                "an animal never measured is absent.",
+            )
+        ),
+        doc="Each animal's latest impedances, for the Record step to show "
+        "before anything is measured (`RECORDING.md#impedance-tracking`).",
     ),
     Command(
         "intan.forceStop",

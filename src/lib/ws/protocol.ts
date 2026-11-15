@@ -120,6 +120,7 @@ export const CMD = {
   INTAN_MEASURE_IMPEDANCE: "intan.measureImpedance",
   INTAN_IMPEDANCE_HISTORY: "intan.impedanceHistory",
   INTAN_YIELD_HISTORY: "intan.yieldHistory",
+  INTAN_ACKNOWLEDGE_TETHER: "intan.acknowledgeTether",
   INTAN_FORCE_STOP: "intan.forceStop",
 
   // Session log
@@ -2947,6 +2948,19 @@ export interface IntanSyncStat {
   unmatchedStrobes: number;
 }
 
+/** One recording box's tether, judged against its own baseline. */
+export interface IntanTetherStat {
+  box: number;
+  /** `learning` its baseline; `silent`/`noisy` an alarm (`RECORDING.md#tether-alarm`). */
+  state: "learning" | "ok" | "silent" | "noisy";
+  /** While alarmed: when the evidence began (UTC ISO). */
+  since: string | null;
+  /** The operator has seen this alarm; it stays until the box recovers. */
+  acknowledged: boolean;
+  /** False when the box's baseline is too quiet to tell silence from quiet. */
+  watchesSilence: boolean;
+}
+
 export interface IntanStatus {
   state: IntanState;
   /** Why, when the state alone does not say. */
@@ -2978,6 +2992,13 @@ export interface IntanStatus {
   /** While `stopping`: boxes still finishing their trial. */
   waitingOn: number[];
   sync: IntanSyncStat[];
+  /** Every running recording box's tether. */
+  tether: IntanTetherStat[];
+  /**
+   * Every judged box went silent at once: upstream of the tethers (RHX, the controller), so no
+   * box alarms.
+   */
+  tetherAllSilent: boolean;
 }
 
 /** One electrode site's impedance at the measurement's frequency. */
@@ -3268,6 +3289,7 @@ export interface CommandArgsMap {
   "intan.measureImpedance": { sessionId: string; groupId: string; saveDirectory: string; boxes: Array<{ box: number; port: string; firstChannel: number; lastChannel: number }> };
   "intan.impedanceHistory": { animalIds: string[] };
   "intan.yieldHistory": { animalIds: string[]; limit?: number };
+  "intan.acknowledgeTether": { box: number };
   "intan.forceStop": Record<string, never>;
   "logbook.cohort": { cohortId: string };
   "logbook.addNote": { sessionId: string; tag: NoteTag; body: string; scope?: NoteScope; carryForward?: boolean; at?: string };
@@ -3364,6 +3386,7 @@ export interface CommandResultMap {
   "intan.measureImpedance": { measurements: Record<string, ImpedanceComparison> };
   "intan.impedanceHistory": { latest: Record<string, ImpedanceComparison> };
   "intan.yieldHistory": { history: Record<string, RunYield[]> };
+  "intan.acknowledgeTether": IntanStatus;
   "intan.forceStop": { ok: boolean };
   "logbook.cohort": LogbookCohort;
   "logbook.addNote": { note: SessionNote };

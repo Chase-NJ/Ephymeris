@@ -23,6 +23,7 @@ import { SessionWrapUp } from "@/components/sessions/SessionWrapUp";
 import { ElapsedClock, StateChip, clockSpan } from "@/components/sessions/BoxStatus";
 import { Constellation3D } from "@/components/sessions/Constellation3D";
 import { LiveProbeMap } from "@/components/recording/LiveProbeMap";
+import { TetherAlarm } from "@/components/recording/TetherAlarm";
 import { RecordingRail } from "@/components/recording/RecordingRail";
 import { SessionJourney } from "@/components/sessions/SessionJourney";
 import { MetricStrip } from "@/components/sessions/MetricStrip";
@@ -609,6 +610,7 @@ export function MissionControl() {
                         Note about box {focusedBox.box}
                       </Button>
                     </span>
+                    {isRecording && <TetherAlarm box={focusedBox.box} />}
                     {isRecording && <LiveProbeMap box={focusedBox.box} className="h-96" />}
                   </div>
                 }
@@ -986,6 +988,7 @@ function BoxCard({
           note={spine ? replayNote(replay) : metricsNote}
         />
       )}
+      {recording && <TetherAlarm box={box.box} />}
       {recording && <LiveProbeMap box={box.box} className="mt-3 h-44" />}
     </section>
   );

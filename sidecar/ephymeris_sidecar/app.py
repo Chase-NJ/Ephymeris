@@ -307,6 +307,7 @@ class Application:
         self.server.register(Cmd.INTAN_MEASURE_IMPEDANCE, self._intan_measure_impedance)
         self.server.register(Cmd.INTAN_IMPEDANCE_HISTORY, self._intan_impedance_history)
         self.server.register(Cmd.INTAN_YIELD_HISTORY, self._intan_yield_history)
+        self.server.register(Cmd.INTAN_ACKNOWLEDGE_TETHER, self._intan_acknowledge_tether)
 
         missing = self.server.unhandled()
         if missing:
@@ -446,6 +447,7 @@ class Application:
             rig_has_sync=lambda: rig_registry.channels().unique_of_kind("sync") is not None,
         )
         self.intan.start()
+        self.intan.on_tether = self._tether_note
         # The runner's three taps. They run on a port's session thread, which
         # is why the service's side of each is a `call_soon_threadsafe`.
         self.runner.recording_fields = self.intan.recording_fields
@@ -1819,6 +1821,25 @@ class Application:
             if found is not None:
                 latest[animal_id] = await asyncio.to_thread(self._impedance_comparison, found)
         return {"latest": latest}
+
+    async def _intan_acknowledge_tether(self, args: Args) -> dict[str, Any]:
+        intan = self._require_intan()
+        await intan.acknowledge_tether(_box_arg(args))
+        return intan.status_json()
+
+    async def _tether_note(self, session_id: str, box: int, state: str, since: str) -> None:
+        """A tether alarm goes in the session log as a box note, dated from
+        when its evidence began, so the session says which stretch of data to
+        distrust (`RECORDING.md#tether-alarm`)."""
+        what = (
+            "every site went silent — check the tether and headstage"
+            if state == "silent"
+            else "every site turned noisy — check the ground, connector and tether"
+        )
+        await self.logbook.add_note(
+            session_id,
+            {"tag": "hardware", "at": since, "body": f"Tether alarm: {what}.", "scope": {"kind": "box", "box": box}},
+        )
 
     async def _intan_yield_history(self, args: Args) -> dict[str, Any]:
         limit = args.get("limit", 10)

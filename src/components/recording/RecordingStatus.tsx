@@ -153,6 +153,13 @@ export function RecordingStatus() {
         </div>
       )}
 
+      {intan.tetherAllSilent && (
+        <p className="mt-2 text-[11px] leading-relaxed" style={{ color: "var(--color-status-warning)" }}>
+          Every recording box went silent at once — that is RHX or the controller, not the tethers, so no box
+          is alarmed. Check RHX.
+        </p>
+      )}
+
       {!intan.liveStreams && (intan.state === "recording" || intan.state === "configured") && (
         <p className="mt-2 text-[11px] leading-relaxed text-static">
           The sync check and the firing map are unavailable — RHX's data sockets did not open. The

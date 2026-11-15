@@ -27,6 +27,7 @@ yet been made ([Not yet verified](#not-yet-verified)).
   - [When RHX goes away](#when-rhx-goes-away)
 - [What is written](#what-is-written)
 - [Live firing map](#live-firing-map)
+- [Tether alarm](#tether-alarm)
 - [Not yet verified](#not-yet-verified)
 
 ## The rule
@@ -545,6 +546,48 @@ RHX at several batch sizes. RHX 3.5.0, demo mode, 30 kS/s, 16 channels, about 42
 > has already written to TCP, so the clock bound is loose by a near-constant amount. The differences
 > between rows are sound; the true p95 at 2 blocks is nearer 17 ms. One block per write buys nothing at
 > p95 and doubles the worst case, so 2 it is. `lagMs` carries the same bias.
+
+## Tether alarm
+
+A warning on a recording box's Mission Control card when **every one of its sites changes at once**:
+all silent (tether cut, headstage unplugged) or all noisy (ground lost, connector half seated,
+chewing). RHX records through either without complaint and has no alarm; nobody watches six animals'
+traces for an hour. One quiet site is ordinary and never an alarm: that is the
+[impedance](#impedance-tracking) and [yield](#active-site-yield) history's to show.
+
+`intan/analysis.py`'s `TetherBoard`, fed by the spike socket (`add_spike`) and the waveform socket
+(`delivered`), judges each box **one second of RHX samples at a time** against **its own baseline**,
+the median rate of its first `TETHER_BASELINE_S` (120 s) after START, since implants differ tenfold:
+
+| Verdict | A window where the box's crossings are... |
+|---|---|
+| silent | under `TETHER_SILENT_FRACTION` (10%) of its baseline. Only once the baseline reaches `TETHER_MIN_BASELINE_HZ` (2 Hz, whole box); a quieter box is watched for noise only |
+| noisy | over `TETHER_NOISY_FACTOR` (5×) the baseline on `TETHER_NOISY_SITES` (80%) of its sites, **or** at least `TETHER_COINCIDENT_FRACTION` (half) of them land within `TETHER_COINCIDENT_S` (0.5 ms) on half its sites or more: neurons do not fire in lockstep across a probe, artifacts do |
+
+A verdict must hold `TETHER_SUSTAIN_S` (20 s) to raise an alarm and its absence as long to clear one, so
+a twitching connector does not flicker it; the alarm is dated from where its evidence began. While the
+box is healthy the baseline follows slow drift (`TETHER_BASELINE_TAU_S`).
+
+**Missing data is never silence**, which is what makes the alarm safe to trust:
+
+- Windows are cut from **RHX's samples**, not wall time, and a window any gap in the waveform stream
+  touches is **skipped**. A window closes `TETHER_LAG_S` after its end, since spikes trail the waveform.
+- Nothing is judged while the data sockets are down (`liveStreams: false`).
+- **Every judged box silent in the same window is upstream** (RHX, the controller): no box alarms, and
+  `intan.status.tetherAllSilent` says so on the rail. The boxes are each other's control.
+- An acquisition restarted under the recording (its sample clock back at zero) starts every box's
+  baseline again.
+
+When it fires, nothing stops ([the rule](#the-rule)): the card shows the alarm with **Acknowledge**
+(`intan.acknowledgeTether`), after which it stays as a quiet line until the box recovers;
+`livenotes` stamps `BOX<n> TETHER SILENT|NOISY|OK` into RHX's own notes; and the session log gets a
+`hardware` box note dated from the evidence's start (`Application._tether_note`), saying which
+stretch of data to distrust.
+
+> [!NOTE]
+> **The thresholds are first guesses**, pinned only against synthetic faults
+> (`tests/test_intan_tether.py`). The first real recordings decide them: a sleeping animal or a long
+> grooming bout should not alarm, and a pulled headstage should.
 
 ## Not yet verified
 

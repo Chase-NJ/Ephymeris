@@ -24,6 +24,7 @@ yet been made ([Not yet verified](#not-yet-verified)).
   - [Graceful end](#graceful-end)
   - [When RHX goes away](#when-rhx-goes-away)
 - [What is written](#what-is-written)
+- [Live firing map](#live-firing-map)
 - [Live windows](#live-windows)
 - [Not yet verified](#not-yet-verified)
 
@@ -446,6 +447,38 @@ a relocate of that folder.
 > `_STRING_FIELDS` (so `0423_7` does not come back as a number).
 
 The durable record is RHX's files plus the `.tsv`; nothing the live views compute is persisted.
+
+## Live firing map
+
+Each recording box's probe, lit as its sites fire, in Mission Control. It has to **feel** live: a flash
+within about 100 ms of the spike, so the whole path is built for latency rather than averages.
+
+| Leg | What bounds it |
+|---|---|
+| RHX → sidecar | RHX writes its data sockets every `TCPNumberDataBlocksPerWrite` blocks of 128 samples (default 10, 43 ms at 30 kS/s); `intan.configure` sets `BLOCKS_PER_WRITE` (2, 8.5 ms) |
+| Sidecar → webview | Spikes are counted per box and sent as `intan.spikes` every `SPIKES_PUBLISH_S` (one 30 fps frame), only for a box that fired |
+| Webview → screen | Drawn on the next animation frame, outside React |
+
+**Every batch carries its own latency.** `lagMs` is the slowest spike's trip from RHX having its sample
+to the sidecar reading it, against RHX's clock read once per poll (`get currenttimestamp`,
+`analysis.py`'s `SampleClock`); `sentAt` lets the webview time its own leg on the same machine's clock.
+The USB transfer before RHX has the sample is outside both, as it is for RHX's own displays.
+
+`tests/test_intan_real_rhx.py`'s `probe_how_late_do_spikes_arrive` measures the first leg against a real
+RHX at several batch sizes. RHX 3.5.0, demo mode, 30 kS/s, 16 channels, about 420 spikes a run:
+
+| Blocks per write | p50 | p95 | max |
+|---|---|---|---|
+| 10 (RHX's default) | 12.4 ms | 38.6 ms | 46.1 ms |
+| 4 | 1.6 ms | 15.9 ms | 17.8 ms |
+| **2** (`BLOCKS_PER_WRITE`) | −6.6 ms | 6.7 ms | 23.7 ms |
+| 1 | −6.9 ms | 7.5 ms | 32.9 ms |
+
+> [!NOTE]
+> **These read about 10 ms low**, hence the negative medians: `currenttimestamp` trails the samples RHX
+> has already written to TCP, so the clock bound is loose by a near-constant amount. The differences
+> between rows are sound; the true p95 at 2 blocks is nearer 17 ms. One block per write buys nothing at
+> p95 and doubles the worst case, so 2 it is. `lagMs` carries the same bias.
 
 ## Live windows
 

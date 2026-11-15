@@ -59,6 +59,7 @@ from .analysis import (
     EdgeDetector,
     EdgeMatcher,
     MatchedEvent,
+    SampleClock,
     SpikeRing,
     WaveformRing,
     isi_histogram,
@@ -108,6 +109,13 @@ SNIPPET_PRE_MS = 2.0
 SNIPPET_POST_MS = 4.0
 SNIPPETS_KEPT = 500
 TRIGGERS_KEPT = 2000
+#: Spikes are sent as `intan.spikes` this often: a frame at 30 fps, so the
+#: firing map's flash is never more than one frame behind the sidecar.
+SPIKES_PUBLISH_S = 1 / 30
+#: RHX writes to its data sockets every this many 128-sample blocks (its
+#: `TCPNumberDataBlocksPerWrite`, default 10: 43 ms at 30 kS/s). Two is 8.5 ms,
+#: and costs nothing here now that only spikes and one digital word stream.
+BLOCKS_PER_WRITE = 2
 
 FILE_FORMATS = ("Traditional", "OneFilePerSignalType", "OneFilePerChannel")
 DOWNSAMPLE = (1, 2, 4, 8, 16, 32, 64, 128)
@@ -301,6 +309,12 @@ class IntanService:
         self._spikes: dict[str, SpikeRing] = {}
         self._snippets: dict[str, _Snippets] = {}
         self._newest_sample = 0
+        #: The live firing map's feed: channel → its box, spikes counted per
+        #: box since the last `intan.spikes`, and the slowest of them.
+        self._box_of: dict[str, int] = {}
+        self._fired: dict[int, dict[str, int]] = {}
+        self._fired_lag: dict[int, float] = {}
+        self._clock: SampleClock | None = None
         #: Set when the data sockets (re)open; the first block then tells every
         #: spike ring where its coverage restarts.
         self._reopened = False
@@ -325,6 +339,7 @@ class IntanService:
         self._tasks = [
             self._loop.create_task(self._poll_loop(), name="intan-poll"),
             self._loop.create_task(self._publish_loop(), name="intan-publish"),
+            self._loop.create_task(self._spikes_loop(), name="intan-spikes-publish"),
         ]
 
     async def stop(self) -> None:
@@ -542,6 +557,7 @@ class IntanService:
         try:
             self._run_mode = await self._client.run_mode()
             self._silent_polls = 0
+            await self._read_clock()
             await self._send_owed_stop()
         except RhxError as exc:
             # A socket that is still open but did not answer: allow one.
@@ -654,6 +670,7 @@ class IntanService:
             raise IntanNotReady("Lowpass downsample must be a power of two up to 128.")
         commands = [
             "set createnewdirectory true",
+            f"set tcpnumberdatablocksperwrite {BLOCKS_PER_WRITE}",
             f"set savewidebandamplifierwaveforms {_b(config.get('saveWideband'))}",
             f"set savespikedata {_b(config.get('saveSpikes'))}",
             f"set savespikesnapshots {_b(config.get('saveSpikeSnapshots'))}",
@@ -1132,6 +1149,9 @@ class IntanService:
         self._snippets = {}
         self._newest_sample = 0
         self._thresholds = {}
+        self._box_of = {name: b for b, p in plan.boxes.items() for name in p.channels}
+        self._fired, self._fired_lag = {}, {}
+        self._clock = SampleClock(float(plan.sample_rate))
 
     def _layout(self) -> FrameLayout:
         return FrameLayout(
@@ -1232,7 +1252,9 @@ class IntanService:
         parser = SpikeParser()
         try:
             while data := await reader.read(1 << 16):
+                arrived = self._loop.time()
                 for spike in parser.feed(data):
+                    self._count_spike(spike.channel, spike.timestamp, arrived)
                     ring = self._spikes.get(spike.channel)
                     if ring is None:
                         continue
@@ -1364,6 +1386,57 @@ class IntanService:
         if recording is None or box not in recording.boxes:
             return None
         return recording.boxes[box].probe_map
+
+    # --- live firing map ---------------------------------------------------
+
+    async def _read_clock(self) -> None:
+        """One `currenttimestamp` read per poll while RHX acquires and the
+        sockets are open: what spike lags are measured against."""
+        if self._clock is None or not self._live or (self._run_mode or "") not in ("run", "record"):
+            return
+        reply = await self._client.get("currenttimestamp")
+        try:
+            self._clock.read(int(reply), self._loop.time())
+        except ValueError:
+            log.debug("unreadable currenttimestamp %r", reply)
+
+    def _count_spike(self, channel: str, sample: int, arrived: float) -> None:
+        box = self._box_of.get(channel)
+        if box is None:
+            return
+        counts = self._fired.setdefault(box, {})
+        counts[channel] = counts.get(channel, 0) + 1
+        lag = self._clock.lag_ms(sample, arrived) if self._clock is not None else None
+        if lag is not None and lag > self._fired_lag.get(box, float("-inf")):
+            self._fired_lag[box] = lag
+
+    async def _spikes_loop(self) -> None:
+        while True:
+            await asyncio.sleep(SPIKES_PUBLISH_S)
+            try:
+                await self._publish_spikes()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - the loop must not die
+                log.exception("spike publish failed")
+
+    async def _publish_spikes(self) -> None:
+        from ..protocol import Evt, event
+
+        if not self._fired:
+            return
+        fired, lags = self._fired, self._fired_lag
+        self._fired, self._fired_lag = {}, {}
+        sent_at = time.time() * 1000.0
+        for box, counts in sorted(fired.items()):
+            lag = lags.get(box)
+            await self._broadcast(
+                event(
+                    Evt.INTAN_SPIKES,
+                    {"box": box, "counts": counts,
+                     "lagMs": None if lag is None else round(lag, 1), "sentAt": sent_at},
+                )
+            )
 
     async def _publish_loop(self) -> None:
         tick = 0

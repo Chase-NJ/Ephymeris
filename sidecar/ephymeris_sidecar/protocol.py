@@ -177,6 +177,7 @@ class Evt:
     SIDECAR_ERROR: Final = "sidecar.error"
     TASKS_UPDATED: Final = "tasks.updated"
     INTAN_STATUS: Final = "intan.status"
+    INTAN_SPIKES: Final = "intan.spikes"
     INTAN_SCOPE_DATA: Final = "intan.scope.data"
 
 
@@ -418,6 +419,7 @@ SHAPES: Final[dict[str, Any]] = {
     "IntanState": ('lit', ('disconnected', 'idle', 'configured', 'recording', 'stopping', 'error')),
     "IntanSyncStat": ('obj', (('box', 'int', False), ('matched', 'int', False), ('spuriousEdges', 'int', False), ('unmatchedStrobes', 'int', False))),
     "IntanStatus": ('obj', (('state', ('ref', 'IntanState'), False), ('message', ('union', ('str', 'null')), False), ('connected', 'bool', False), ('controller', ('union', ('str', 'null')), False), ('version', ('union', ('str', 'null')), False), ('sampleRate', ('union', ('int', 'null')), False), ('synthetic', 'bool', False), ('headstagePresent', 'bool', False), ('runMode', ('union', ('str', 'null')), False), ('ports', ('map', 'int'), False), ('confirmsWrites', ('union', ('bool', 'null')), False), ('rigHasSync', 'bool', False), ('liveStreams', 'bool', False), ('recording', ('union', (('ref', 'RecordingRun'), 'null')), False), ('waitingOn', ('list', 'int'), False), ('sync', ('list', ('ref', 'IntanSyncStat')), False))),
+    "IntanSpikes": ('obj', (('box', 'int', False), ('counts', ('map', 'int'), False), ('lagMs', ('union', ('float', 'null')), False), ('sentAt', 'float', False))),
     "ScopeKind": ('lit', ('spikescope', 'psth', 'isi', 'probemap')),
     "ScopeData": ('obj', (('scopeId', 'str', False), ('kind', ('ref', 'ScopeKind'), False), ('box', 'int', False), ('channel', ('union', ('str', 'null')), False), ('data', 'any', False))),
     "NoteTag": ('lit', ('observation', 'intervention', 'hardware', 'animal-health', 'protocol-deviation')),
@@ -648,6 +650,7 @@ EVENT_DATA: Final[dict[str, Any]] = {
     "sidecar.error": ('ref', 'SidecarErrorData'),
     "tasks.updated": ('ref', 'TasksUpdatedData'),
     "intan.status": ('ref', 'IntanStatus'),
+    "intan.spikes": ('ref', 'IntanSpikes'),
     "intan.scope.data": ('ref', 'ScopeData'),
 }
 

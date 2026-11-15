@@ -93,6 +93,9 @@ export function ProbeMapView({
               const w = Math.max(site.width * fit.scale, 7);
               const h = Math.max(site.height * fit.scale, 7);
               const common = {
+                // The live firing map finds its sites by this and sets their
+                // fill itself, once a frame, outside React.
+                "data-channel": live ? site.channel : undefined,
                 fill: "var(--color-pulsar)",
                 fillOpacity: rates ? 0.08 + 0.92 * strength : live ? 0.35 : 0,
                 stroke: isSelected ? "var(--color-starlight)" : "var(--color-static)",

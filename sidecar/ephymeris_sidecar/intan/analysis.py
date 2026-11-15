@@ -207,6 +207,49 @@ class EdgeMatcher:
 
 
 # --------------------------------------------------------------------------- #
+# Latency
+# --------------------------------------------------------------------------- #
+
+#: Clock reads kept. At one a second this is half a minute: long enough for a
+#: tight bound, short enough that the two clocks' drift (tens of ppm: about a
+#: millisecond over the window at worst) never builds up inside it.
+CLOCK_WINDOW = 30
+
+
+class SampleClock:
+    """Where RHX's sample clock stands against ours, to time a spike's trip.
+
+    Each `read` is a `currenttimestamp` reply and the time it came back. RHX
+    had that sample no later than the reply, so `at - sample / rate` bounds
+    the clocks' offset from above, and the SMALLEST recent bound is the
+    tightest. A spike's lag is then measured from RHX's clock reaching its
+    sample, and leaves out the USB transfer before that, which no client can
+    see or shorten. On RHX 3.5.0 it reads about 10 ms LOW: `currenttimestamp`
+    trails what RHX has already written to TCP (`RECORDING.md#live-firing-map`).
+    Times are passed in, so this stays clock-free.
+    """
+
+    def __init__(self, rate: float, window: int = CLOCK_WINDOW) -> None:
+        self._rate = rate
+        self._bounds: deque[float] = deque(maxlen=window)
+        self._last = -1
+
+    def read(self, sample: int, at: float) -> None:
+        if sample < 0:
+            return  # not acquiring
+        if sample < self._last:
+            self._bounds.clear()  # acquisition restarted at zero
+        self._last = sample
+        self._bounds.append(at - sample / self._rate)
+
+    def lag_ms(self, sample: int, at: float) -> float | None:
+        """None until the clock has been read since acquisition (re)started."""
+        if not self._bounds or sample < 0:
+            return None
+        return (at - (sample / self._rate + min(self._bounds))) * 1000.0
+
+
+# --------------------------------------------------------------------------- #
 # Spikes
 # --------------------------------------------------------------------------- #
 

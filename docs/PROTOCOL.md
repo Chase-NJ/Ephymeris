@@ -197,6 +197,7 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="evt-sidecar.error"></a>`sidecar.error` | [SidecarErrorData](#shape-sidecarerrordata) | A failure with no command to attribute it to. |
 | <a id="evt-tasks.updated"></a>`tasks.updated` | [TasksUpdatedData](#shape-tasksupdateddata) | The stored task list, after a task was saved or deleted or stored tasks … |
 | <a id="evt-intan.status"></a>`intan.status` | [IntanStatus](#shape-intanstatus) | The recording subsystem's full snapshot, on every change and on connect. |
+| <a id="evt-intan.spikes"></a>`intan.spikes` | [IntanSpikes](#shape-intanspikes) | One box's spikes, batched every `SPIKES_PUBLISH_S` while RHX streams them (`RECORDING.md#live-firing-map`). |
 | <a id="evt-intan.scope.data"></a>`intan.scope.data` | [ScopeData](#shape-scopedata) | One live view's payload, only while that scope is open (`RECORDING.md#live-windows`). |
 
 ## Error codes
@@ -311,6 +312,7 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="shape-identifyspec"></a>IdentifySpec | `on`, `off` | The two commands that make a box announce itself — a trial light, a … |
 | <a id="shape-inputcount"></a>InputCount | `phase`, `channel`, `count` | Watched rises of one input channel during one phase of a trial. |
 | <a id="shape-intansettings"></a>IntanSettings | `commandPort`, `waveformPort`, `spikePort` | Where Intan RHX's three TCP servers listen. |
+| <a id="shape-intanspikes"></a>IntanSpikes | `box`, `counts`, `lagMs`, `sentAt` |  |
 | <a id="shape-intanstate"></a>IntanState | "disconnected" \| "idle" \| "configured" \| "recording" \| "stopping" \| "error" |  |
 | <a id="shape-intanstatus"></a>IntanStatus | `state`, `message`, `connected`, `controller`, `version`, `sampleRate`, `synthetic`, `headstagePresent`, `runMode`, `ports`, `confirmsWrites`, `rigHasSync`, `liveStreams`, `recording`, `waitingOn`, `sync` |  |
 | <a id="shape-intansyncstat"></a>IntanSyncStat | `box`, `matched`, `spuriousEdges`, `unmatchedStrobes` | How well a box's sync edges are pairing with its strobes. |

@@ -663,6 +663,33 @@ async def test_strobes_and_sync_edges_meet_and_drive_a_psth(rig, tmp_path):
         await h.service.open_scope("isi", 3, "A-002", {})
 
 
+async def test_spikes_reach_the_firing_map_batched_by_box(rig, tmp_path):
+    """`intan.spikes`: each box hears only its own channels, counted since the
+    last send; a channel no box records is not reported; and once RHX's clock
+    has been read the batch says how late its slowest spike was."""
+    h = await rig()
+    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    assert h.fake.params["tcpnumberdatablocksperwrite"] == "2"
+    await h.service.start_recording()
+    await h.until(lambda: h.service._clock is not None and h.service._clock.lag_ms(0, 0.0) is not None)
+
+    spikes = [Spike("A-003", 9_000, 1), Spike("A-003", 9_100, 1), Spike("A-020", 9_000, 1)]
+    await h.fake.push_spikes(b"".join(pack_spike(s) for s in spikes))
+    sent = lambda: [e["data"] for e in h.events if e["evt"] == Evt.INTAN_SPIKES]  # noqa: E731
+    await h.until(lambda: {d["box"] for d in sent()} == {1, 3})
+
+    by_box = {d["box"]: d for d in sent()}
+    assert by_box[1]["counts"] == {"A-003": 2}
+    assert by_box[3]["counts"] == {"A-020": 1}
+    assert all(isinstance(d["lagMs"], float) for d in sent())
+    assert all(validate(("ref", "IntanSpikes"), d) == [] for d in sent())
+
+    # Nothing new: nothing sent.
+    before = len(sent())
+    await asyncio.sleep(0.2)
+    assert len(sent()) == before
+
+
 async def test_a_spikescope_streams_its_channel_and_cuts_waveforms(rig, tmp_path):
     h = await rig()
     await h.service.configure("s1", "g1", config(tmp_path), "x")

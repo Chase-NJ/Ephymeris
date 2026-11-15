@@ -10,6 +10,7 @@
 import type { RecordingConfig } from "@/lib/ws/protocol";
 
 export type {
+  IntanSpikes,
   IntanState,
   IntanStatus,
   IntanSyncStat,

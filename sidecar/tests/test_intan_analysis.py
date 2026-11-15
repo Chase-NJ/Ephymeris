@@ -10,6 +10,7 @@ from __future__ import annotations
 from ephymeris_sidecar.intan.analysis import (
     EdgeDetector,
     EdgeMatcher,
+    SampleClock,
     SpikeRing,
     WaveformRing,
     isi_histogram,
@@ -215,6 +216,37 @@ def test_an_unconnected_tick_pulsed_line_does_not_queue_strobes_forever():
             got += matcher.add_strobe(code, n * 1000)
     assert len(got) == 3 * (200 - EdgeMatcher.MAX_PENDING)
     assert all(e.sample is None for e in got) and matcher.unmatched_strobes == len(got)
+
+
+# --- latency ----------------------------------------------------------------
+
+
+def test_a_spike_s_lag_is_measured_from_the_tightest_clock_read():
+    clock = SampleClock(FS)
+    assert clock.lag_ms(30_000, 10.0) is None  # not read yet
+    # Sample n reached RHX at t = 4 + n / FS; two of the replies came back late.
+    clock.read(30_000, 5.020)
+    clock.read(60_000, 6.000)  # the tight one: offset 4.000
+    clock.read(90_000, 7.004)
+    # A spike at 2.5 s, which RHX had at t = 6.5, reaching us at 6.512 is 12 ms late.
+    assert round(clock.lag_ms(75_000, 6.512), 3) == 12.0
+
+
+def test_a_restarted_acquisition_forgets_the_old_offset():
+    clock = SampleClock(FS)
+    clock.read(300_000, 10.0)  # offset 0.0
+    clock.read(30_000, 20.0)  # restarted at zero: offset 19.0, not min(0, 19)
+    assert round(clock.lag_ms(30_000, 20.010), 3) == 10.0
+    clock.read(-1, 30.0)  # RHX stopped: no read, no change
+    assert round(clock.lag_ms(30_000, 20.010), 3) == 10.0
+
+
+def test_old_clock_reads_age_out_so_drift_cannot_pile_up():
+    clock = SampleClock(FS, window=2)
+    clock.read(0, 1.000)  # offset 1.000, the tightest -- until it ages out
+    clock.read(30_000, 2.010)
+    clock.read(60_000, 3.010)
+    assert round(clock.lag_ms(60_000, 3.010), 3) == 0.0
 
 
 # --- histograms -------------------------------------------------------------

@@ -22,6 +22,7 @@ import { ReturnChecklist } from "@/components/sessions/ReturnChecklist";
 import { SessionWrapUp } from "@/components/sessions/SessionWrapUp";
 import { ElapsedClock, StateChip, clockSpan } from "@/components/sessions/BoxStatus";
 import { Constellation3D } from "@/components/sessions/Constellation3D";
+import { LiveProbeMap } from "@/components/recording/LiveProbeMap";
 import { RecordingRail, ScopeButtons } from "@/components/recording/RecordingRail";
 import { SessionJourney } from "@/components/sessions/SessionJourney";
 import type { ScopeTrigger } from "@/lib/intan/windows";
@@ -629,6 +630,7 @@ export function MissionControl() {
                         triggers={triggersFor[focusedBox.sketchPath] ?? []}
                       />
                     )}
+                    {isRecording && <LiveProbeMap box={focusedBox.box} className="h-96" />}
                   </div>
                 }
               />
@@ -1007,6 +1009,7 @@ function BoxCard({
         />
       )}
       {triggers && <ScopeButtons box={box.box} animalName={box.animalName} triggers={triggers} />}
+      {triggers && <LiveProbeMap box={box.box} className="mt-2 h-40" />}
     </section>
   );
 }

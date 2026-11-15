@@ -3160,6 +3160,32 @@ SHAPES = (
             f("sync", ListOf(Ref("IntanSyncStat"))),
         ),
     ),
+    Shape(
+        "IntanSpikes",
+        obj(
+            f("box", INT),
+            f(
+                "counts",
+                MapOf(INT),
+                doc="Native channel name → spikes RHX detected since the last send. "
+                "Only channels that fired; never an empty map.",
+            ),
+            f(
+                "lagMs",
+                nullable(FLOAT),
+                doc="The slowest of these spikes: from RHX's clock reaching its sample to "
+                "the sidecar reading it. Reads about 10 ms low, since `currenttimestamp` "
+                "trails RHX's TCP output (`RECORDING.md#live-firing-map`). Null until "
+                "RHX's clock has been read.",
+            ),
+            f(
+                "sentAt",
+                FLOAT,
+                doc="Epoch milliseconds when sent, so the webview can time its own leg "
+                "(same machine, same clock).",
+            ),
+        ),
+    ),
     Shape("ScopeKind", lit("spikescope", "psth", "isi", "probemap")),
     Shape(
         "ScopeData",
@@ -4962,6 +4988,13 @@ EVENTS = (
         "connect. A lost command socket mid-recording is `state: \"error\"`, "
         "never a session failure — RHX keeps recording on its own when the "
         "socket drops.",
+    ),
+    Event(
+        "intan.spikes",
+        Ref("IntanSpikes"),
+        doc="One box's spikes, batched every `SPIKES_PUBLISH_S` while RHX streams "
+        "them (`RECORDING.md#live-firing-map`). Sent only for a box with spikes "
+        "to report. Never persisted: RHX's own files are the durable copy.",
     ),
     Event(
         "intan.scope.data",

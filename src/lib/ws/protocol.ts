@@ -162,6 +162,7 @@ export const EVT = {
   SIDECAR_ERROR: "sidecar.error",
   TASKS_UPDATED: "tasks.updated",
   INTAN_STATUS: "intan.status",
+  INTAN_SPIKES: "intan.spikes",
   INTAN_SCOPE_DATA: "intan.scope.data",
 } as const;
 
@@ -2978,6 +2979,23 @@ export interface IntanStatus {
   sync: IntanSyncStat[];
 }
 
+export interface IntanSpikes {
+  box: number;
+  /**
+   * Native channel name → spikes RHX detected since the last send. Only channels that fired;
+   * never an empty map.
+   */
+  counts: Record<string, number>;
+  /**
+   * The slowest of these spikes: from RHX's clock reaching its sample to the sidecar reading it.
+   * Reads about 10 ms low, since `currenttimestamp` trails RHX's TCP output
+   * (`RECORDING.md#live-firing-map`). Null until RHX's clock has been read.
+   */
+  lagMs: number | null;
+  /** Epoch milliseconds when sent, so the webview can time its own leg (same machine, same clock). */
+  sentAt: number;
+}
+
 export type ScopeKind = "spikescope" | "psth" | "isi" | "probemap";
 
 export interface ScopeData {
@@ -3345,6 +3363,7 @@ export interface EventDataMap {
   "sidecar.error": SidecarErrorData;
   "tasks.updated": TasksUpdatedData;
   "intan.status": IntanStatus;
+  "intan.spikes": IntanSpikes;
   "intan.scope.data": ScopeData;
 }
 

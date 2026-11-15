@@ -30,23 +30,6 @@ export interface UpdateInfo {
   date: string | null;
 }
 
-/** What an app-opened window needs; frameless like the main one, always. */
-export interface WindowSpec {
-  /** Unique among live windows. Recording pop-ups use `scope-*`, which the shell's permissions key on. */
-  label: string;
-  /** This same bundle at a hash route, e.g. `index.html#/scope/psth?box=1`. */
-  url: string;
-  title: string;
-  width: number;
-  height: number;
-  minWidth: number;
-  minHeight: number;
-  x: number;
-  y: number;
-  /** Painted before the bundle is, so the frame does not flash white. */
-  backgroundColor: string;
-}
-
 /**
  * Spread onto an element to make it drag its window: `<header {...frame.dragRegion}>`.
  * A data attribute only, so it never fights the element's own `className`.
@@ -102,9 +85,6 @@ export interface Shell {
     onResized(handler: () => void): Promise<() => void>;
     close(): Promise<void>;
   };
-
-  /** Open another window of this app (`RECORDING.md#live-windows`). */
-  openWindow(spec: WindowSpec): void;
 
   /** App updates (`ARCHITECTURE.md#updates`). */
   updates: {

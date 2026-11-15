@@ -15,7 +15,7 @@ tasks and firmware: [TASKS.md](TASKS.md); files, database and analytics: [DATA.m
 - [Flashing reset and passthrough](#flashing-reset-and-passthrough): [Flashing](#flashing), [The flash queue](#the-flash-queue), [What a board carries](#what-a-board-carries), [Reset](#reset)
 - [Hardware utility baseline](#hardware-utility-baseline): [When a restore happens](#when-a-restore-happens), [Three rules it never breaks](#three-rules-it-never-breaks), [Unloaded wiring holds it](#unloaded-wiring-holds-it), [Running a task from Debug Mode](#running-a-task-from-debug-mode)
 - [Session lifecycle](#session-lifecycle): [The flow](#the-flow), [Configuration](#configuration), [Mapping and the placement walk](#mapping-and-the-placement-walk), [Group step](#group-step), [Running boxes](#running-boxes), [Entering IN_SESSION](#entering-in_session), [Clean exit](#clean-exit), [Board drop](#board-drop), [Stop reasons](#stop-reasons)
-- [Frontend](#frontend): [Routes](#routes), [The shell module](#the-shell-module), [Scope windows](#scope-windows), [One sky](#one-sky), [Cohort browser](#cohort-browser), [Shaders and lights](#shaders-and-lights), [Live session views](#live-session-views), [Export progress](#export-progress)
+- [Frontend](#frontend): [Routes](#routes), [The shell module](#the-shell-module), [One sky](#one-sky), [Cohort browser](#cohort-browser), [Shaders and lights](#shaders-and-lights), [Live session views](#live-session-views), [Export progress](#export-progress)
 - [Theme](#theme): [Telemetry panels](#telemetry-panels), [Printed documents](#printed-documents)
 - [Module map](#module-map)
 
@@ -130,7 +130,7 @@ Packaging: [DEVELOPING.md](DEVELOPING.md#building-the-installer).
 |---|---|
 | `main.ts` | Starts everything; kills the sidecar on `will-quit` |
 | `sidecar.ts`, `launch.ts`, `handshake.ts` | Port of `sidecar.rs` |
-| `window.ts`, `geometry.ts` | The frameless main window; closing it closes every pop-up |
+| `window.ts`, `geometry.ts` | The frameless main window, the app's only one |
 | `ipc.ts`, `bridge.ts`, `preload.cts` | One IPC channel per `Shell` method, exposed as `window.ephymeris` |
 | `settingsFile.ts` | `settings.json`, written to a temporary file and renamed |
 | `updater.ts`, `installer.nsh` | [Updates](#updates) and removing the Tauri copy |
@@ -140,8 +140,7 @@ Packaging: [DEVELOPING.md](DEVELOPING.md#building-the-installer).
 > Electron's `userData`.** Anywhere else, every setting and the whole cohort database look missing, with no
 > error.
 
-IPC handlers answer only the top frame of the app's own pages; a `scope-*` pop-up gets only the endpoint, its
-frame and opening a pop-up. Pages are sandboxed, context-isolated and Node-less. `saveFile` writes only the
+IPC handlers answer only the top frame of the app's own pages. Pages are sandboxed, context-isolated and Node-less. `saveFile` writes only the
 path its dialog just returned; `openPath` opens folders only. Windows load Vite when `EPHYMERIS_DEV_URL` is
 set (never installed), else `dist/` from `app://ephymeris/`, because `fetch` refuses `file://`.
 
@@ -224,8 +223,7 @@ starting, and the screen that fixes it must still work. `settings.json` (one `"s
 `shell.settings` after every change; a failed save shows a persistent note.
 
 > [!IMPORTANT]
-> **Settings flow one way, shell to sidecar**: the full payload on every connect and change. Scope windows
-> never push.
+> **Settings flow one way, shell to sidecar**: the full payload on every connect and change.
 
 <a id="where-each-setting-is-edited"></a>
 
@@ -656,16 +654,11 @@ needs box health everywhere. **Unit tests cover `src/lib/**` only**, so logic li
 ### The shell module
 
 The webview reaches the shell only through `shell` from `src/lib/shell/`: the sidecar endpoint, dialogs and
-`saveFile`, `openPath`, `settings`, the window `frame`, `openWindow` and `updates`. `index.ts` picks
+`saveFile`, `openPath`, `settings`, the window `frame` and `updates`. `index.ts` picks
 `tauri.ts`, `electron.ts` or `none.ts` once; `boundary.test.ts` fails on any other file naming
 `@tauri-apps/*`, `window.ephymeris` or `electron`. The interface stays as narrow as the shell's permissions.
-
-### Scope windows
-
-The recording pop-ups (`routes/scope/`) are real windows that `main.tsx` mounts with only `SidecarProvider`
-and `IntanProvider`: **no `SettingsProvider`**, which would push stale settings over the main window's.
-Closing the main window closes them all, or the sidecar would not exit. Under Electron a drag region
-swallows clicks, so `styles/index.css` makes everything interactive inside one `no-drag`.
+Under Electron a drag region swallows clicks, so `styles/index.css` makes everything interactive inside one
+`no-drag`.
 
 <a id="status-constellation"></a>
 

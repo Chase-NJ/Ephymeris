@@ -299,10 +299,6 @@ class Application:
         self.server.register(Cmd.INTAN_CONFIGURE, self._intan_configure)
         self.server.register(Cmd.INTAN_PARSE_PROBE_MAP, self._intan_parse_probe_map)
         self.server.register(Cmd.INTAN_PROBE_MAP, self._intan_probe_map)
-        self.server.register(Cmd.INTAN_SET_THRESHOLD, self._intan_set_threshold)
-        self.server.register(Cmd.INTAN_SCOPE_OPEN, self._intan_scope_open)
-        self.server.register(Cmd.INTAN_SCOPE_UPDATE, self._intan_scope_update)
-        self.server.register(Cmd.INTAN_SCOPE_CLOSE, self._intan_scope_close)
         self.server.register(Cmd.INTAN_FORCE_STOP, self._intan_force_stop)
 
         missing = self.server.unhandled()
@@ -1763,27 +1759,6 @@ class Application:
 
     async def _intan_probe_map(self, args: Args) -> dict[str, Any]:
         return {"probeMap": self._require_intan().probe_map_for(_box_arg(args))}
-
-    async def _intan_set_threshold(self, args: Args) -> dict[str, Any]:
-        channel = _str_arg(args, "channel")
-        value = await self._require_intan().set_threshold(channel, args["microvolts"])
-        return {"channel": channel.upper(), "microvolts": value}
-
-    async def _intan_scope_open(self, args: Args) -> dict[str, Any]:
-        scope_id = await self._require_intan().open_scope(
-            args["kind"], _box_arg(args), args.get("channel"), args.get("params", {})
-        )
-        return {"scopeId": scope_id}
-
-    async def _intan_scope_update(self, args: Args) -> dict[str, Any]:
-        ok = await self._require_intan().update_scope(
-            _str_arg(args, "scopeId"), args.get("channel"), args.get("params")
-        )
-        return {"ok": ok}
-
-    async def _intan_scope_close(self, args: Args) -> dict[str, Any]:
-        await self._require_intan().close_scope(_str_arg(args, "scopeId"))
-        return {"ok": True}
 
     async def _intan_force_stop(self, _args: Args) -> dict[str, Any]:
         self._require_intan().force_stop.set()

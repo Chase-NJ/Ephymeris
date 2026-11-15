@@ -1,19 +1,19 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 
-import { fitProbeMap, rateStrength } from "@/lib/intan/scopeMath";
+import { fitProbeMap } from "@/lib/intan/probeMath";
 import type { ProbeMap } from "@/lib/intan/types";
 
 /**
  * One page of an Intan probe map, drawn from the JSON the sidecar parsed.
  *
- * Shared by the recording setup's preview (no rates — the geometry alone, so
- * the operator can see they picked the right file) and the live probe window
- * (each site filled by how much it fired in the last second).
+ * Shared by the recording setup's preview (the geometry alone, so the
+ * operator can see they picked the right file) and Mission Control's live
+ * firing map (`LiveProbeMap`), which draws this once and then sets each
+ * site's fill itself, every frame, by its `data-channel`.
  *
- * SVG, not canvas: a probe is tens to a few hundred sites and the rates arrive
- * under twice a second, so there is nothing here a retained scene cannot keep
- * up with — and sites need to be hoverable and clickable, which SVG gives for
- * free. The SpikeScope is the canvas; this is not.
+ * SVG, not canvas: a probe is tens to a few hundred sites, and changing one
+ * attribute per site per frame costs well under a millisecond
+ * (`RECORDING.md#live-firing-map`).
  *
  * THE FILE'S COLOURS ARE IGNORED, deliberately. A probe map carries its own
  * background, outline and text colours, chosen for RHX's UI. Honouring them
@@ -23,23 +23,16 @@ import type { ProbeMap } from "@/lib/intan/types";
 export function ProbeMapView({
   map,
   page = 0,
-  rates,
   channels,
-  selected,
-  onSelect,
-  legend = false,
+  live = false,
   className = "",
 }: {
   map: ProbeMap;
   page?: number;
-  /** Native channel → spikes in the last second. Omit for a static preview. */
-  rates?: Record<string, number> | undefined;
   /** The channels this box actually records; others are drawn hollow. */
   channels?: readonly string[] | undefined;
-  selected?: string | null | undefined;
-  onSelect?: ((channel: string) => void) | undefined;
-  /** The live window's key: what a filled, a hollow and a dim site mean. */
-  legend?: boolean;
+  /** Recorded sites start dim rather than half-lit: their fill is the caller's. */
+  live?: boolean;
   className?: string;
 }) {
   const host = useRef<HTMLDivElement>(null);
@@ -63,9 +56,8 @@ export function ProbeMapView({
     [current, size.width, size.height],
   );
   const recorded = useMemo(() => (channels ? new Set(channels) : null), [channels]);
-  const maxRate = rates ? Math.max(0, ...Object.values(rates)) : 0;
 
-  // Positioning is the caller's: the live window passes `absolute inset-0`,
+  // Positioning is the caller's: the live map passes `absolute inset-0`,
   // and a `relative` here would win over it (Tailwind emits `.relative` after
   // `.absolute`), leaving a host with no height and a map that never draws.
   return (
@@ -85,9 +77,7 @@ export function ProbeMapView({
           ))}
           {current.ports.flatMap((port) =>
             port.sites.map((site) => {
-              const live = recorded === null || recorded.has(site.channel);
-              const strength = live && rates ? rateStrength(rates[site.channel] ?? 0, maxRate) : 0;
-              const isSelected = selected === site.channel;
+              const isRecorded = recorded === null || recorded.has(site.channel);
               // A floor on the drawn size: a 15 µm site on an 800 µm shank is
               // under two pixels, which can be neither seen nor clicked.
               const w = Math.max(site.width * fit.scale, 7);
@@ -95,21 +85,14 @@ export function ProbeMapView({
               const common = {
                 // The live firing map finds its sites by this and sets their
                 // fill itself, once a frame, outside React.
-                "data-channel": live ? site.channel : undefined,
+                "data-channel": isRecorded ? site.channel : undefined,
                 fill: "var(--color-pulsar)",
-                fillOpacity: rates ? 0.08 + 0.92 * strength : live ? 0.35 : 0,
-                stroke: isSelected ? "var(--color-starlight)" : "var(--color-static)",
-                strokeOpacity: live ? 1 : 0.35,
-                strokeWidth: isSelected ? 1.75 : 1,
-                // Hover lifts the outline to starlight, so the site under the
-                // pointer is the one that reads as clickable.
-                className: onSelect && live ? "cursor-pointer hover:[stroke:var(--color-starlight)]" : undefined,
-                onClick: onSelect && live ? () => onSelect(site.channel) : undefined,
+                fillOpacity: !isRecorded ? 0 : live ? 0.08 : 0.35,
+                stroke: "var(--color-static)",
+                strokeOpacity: isRecorded ? 1 : 0.35,
+                strokeWidth: 1,
               };
-              const rate = rates?.[site.channel];
-              const title = `${site.channel}${rate !== undefined ? ` · ${rate} Hz` : ""}${
-                live ? "" : " · not recorded"
-              }`;
+              const title = `${site.channel}${isRecorded ? "" : " · not recorded"}`;
               return site.shape === "ellipse" ? (
                 <ellipse
                   key={site.channel}
@@ -156,41 +139,6 @@ export function ProbeMapView({
           ))}
         </svg>
       )}
-      {legend && (
-        <div className="pointer-events-none absolute bottom-2 left-2.5 flex flex-col gap-0.5 font-mono text-[10px] text-static">
-          <LegendRow fill={0.85} strokeOpacity={1}>firing · fill ∝ √rate</LegendRow>
-          <LegendRow fill={0.08} strokeOpacity={1}>recorded, quiet</LegendRow>
-          <LegendRow fill={0} strokeOpacity={0.35}>not recorded</LegendRow>
-        </div>
-      )}
     </div>
-  );
-}
-
-function LegendRow({
-  fill,
-  strokeOpacity,
-  children,
-}: {
-  fill: number;
-  strokeOpacity: number;
-  children: React.ReactNode;
-}) {
-  return (
-    <span className="flex items-center gap-1.5">
-      <svg width="10" height="10" aria-hidden>
-        <rect
-          x="1"
-          y="1"
-          width="8"
-          height="8"
-          fill="var(--color-pulsar)"
-          fillOpacity={fill}
-          stroke="var(--color-static)"
-          strokeOpacity={strokeOpacity}
-        />
-      </svg>
-      {children}
-    </span>
   );
 }

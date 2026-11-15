@@ -117,10 +117,6 @@ export const CMD = {
   INTAN_CONFIGURE: "intan.configure",
   INTAN_PARSE_PROBE_MAP: "intan.parseProbeMap",
   INTAN_PROBE_MAP: "intan.probeMap",
-  INTAN_SET_THRESHOLD: "intan.setThreshold",
-  INTAN_SCOPE_OPEN: "intan.scope.open",
-  INTAN_SCOPE_UPDATE: "intan.scope.update",
-  INTAN_SCOPE_CLOSE: "intan.scope.close",
   INTAN_FORCE_STOP: "intan.forceStop",
 
   // Session log
@@ -163,7 +159,6 @@ export const EVT = {
   TASKS_UPDATED: "tasks.updated",
   INTAN_STATUS: "intan.status",
   INTAN_SPIKES: "intan.spikes",
-  INTAN_SCOPE_DATA: "intan.scope.data",
 } as const;
 
 export type EventName = (typeof EVT)[keyof typeof EVT];
@@ -2971,7 +2966,10 @@ export interface IntanStatus {
   confirmsWrites: boolean | null;
   /** This rig's wiring declares a `sync` channel. */
   rigHasSync: boolean;
-  /** The waveform and spike sockets are both open. */
+  /**
+   * RHX's waveform and spike sockets are both open: the sync check and the live firing map are
+   * fed (`RECORDING.md#data-sockets`).
+   */
   liveStreams: boolean;
   recording: RecordingRun | null;
   /** While `stopping`: boxes still finishing their trial. */
@@ -2994,17 +2992,6 @@ export interface IntanSpikes {
   lagMs: number | null;
   /** Epoch milliseconds when sent, so the webview can time its own leg (same machine, same clock). */
   sentAt: number;
-}
-
-export type ScopeKind = "spikescope" | "psth" | "isi" | "probemap";
-
-export interface ScopeData {
-  scopeId: string;
-  kind: ScopeKind;
-  box: number;
-  channel: string | null;
-  /** Per kind; see `RECORDING.md#live-windows`. */
-  data: unknown;
 }
 
 /**
@@ -3226,10 +3213,6 @@ export interface CommandArgsMap {
   "intan.configure": { sessionId: string; groupId: string; config: RecordingConfig };
   "intan.parseProbeMap": { path: string };
   "intan.probeMap": { box: number };
-  "intan.setThreshold": { channel: string; microvolts: number };
-  "intan.scope.open": { kind: ScopeKind; box: number; channel?: string | null; params?: Record<string, unknown> };
-  "intan.scope.update": { scopeId: string; channel?: string | null; params?: Record<string, unknown> };
-  "intan.scope.close": { scopeId: string };
   "intan.forceStop": Record<string, never>;
   "logbook.cohort": { cohortId: string };
   "logbook.addNote": { sessionId: string; tag: NoteTag; body: string; scope?: NoteScope; carryForward?: boolean; at?: string };
@@ -3323,10 +3306,6 @@ export interface CommandResultMap {
   "intan.configure": IntanStatus;
   "intan.parseProbeMap": { probeMap: unknown };
   "intan.probeMap": { probeMap: unknown };
-  "intan.setThreshold": { channel: string; microvolts: number };
-  "intan.scope.open": { scopeId: string };
-  "intan.scope.update": { ok: boolean };
-  "intan.scope.close": { ok: boolean };
   "intan.forceStop": { ok: boolean };
   "logbook.cohort": LogbookCohort;
   "logbook.addNote": { note: SessionNote };
@@ -3364,7 +3343,6 @@ export interface EventDataMap {
   "tasks.updated": TasksUpdatedData;
   "intan.status": IntanStatus;
   "intan.spikes": IntanSpikes;
-  "intan.scope.data": ScopeData;
 }
 
 // --- Envelopes -------------------------------------------------------------

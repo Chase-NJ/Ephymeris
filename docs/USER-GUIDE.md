@@ -402,19 +402,14 @@ thresholds.
 
 6. **Start All** starts RHX first; if it cannot, no box starts. The **Sync check** counts each box's
    pulses **matched**, **missed** and **stray**; *no pulses arriving* means the sync cable is not reaching RHX.
-7. Each recorded tile opens **Spike Scope**, **PSTH**, **ISI** and **Probe map** windows. Drag the Spike
-   Scope's dashed line to set RHX's threshold; click a probe-map site for its Spike Scope.
+7. Each recorded box's card shows its probe map, every site flashing as it fires; open a box's panel for
+   a larger one. For one channel's waveforms, threshold, ISI or PSTH, use RHX's own tools.
 8. **End Session** and **Switch Group** let each box finish its trial (up to 45 seconds) under **ENDING**;
    **End now** stops RHX without waiting.
 
-![Mission Control during a recording: the Recording panel with REC, the file name, the format and 30 kS/s, and a SYNC CHECK table of matched, missed and stray pulses per box; each box tile shows port A, its DIN and channel range, and Spike Scope, PSTH, ISI and Probe map buttons](images/mission-control-recording.webp)
+![Mission Control during a recording: the Recording panel with REC, the file name, the format and 30 kS/s, and a SYNC CHECK table of matched, missed and stray pulses per box; each box tile shows port A, its DIN and channel range](images/mission-control-recording.webp)
 
 ![A recording ending: the panel reads ENDING, "Finishing the trials in flight" and "Waiting for box 1, 4, 5 to finish its trial…", with an End now button; boxes 2 and 3 already show Finished](images/mission-control-ending.webp)
-
-![Spike Scope window for Box 1, channel A-000: about twenty overlaid spike waveforms and a dashed threshold line at −41 µV](images/scope-spikescope.webp)
-![PSTH window for Box 1: a raster of 18 trials and a histogram, both aligned to ODOR_1_ON, with firing rising after the odor comes on](images/scope-psth.webp)
-![ISI window for Box 2: a histogram of the time between spikes, with the mean interval and firing rate underneath](images/scope-isi.webp)
-![Probe Map window for Box 2: a 16-site shank with each site shaded by how fast it is firing](images/scope-probemap.webp)
 
 There is one recording per group; the Record step returns for each new group.
 

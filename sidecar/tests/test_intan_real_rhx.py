@@ -79,35 +79,6 @@ async def probe_does_the_save_path_keep_a_space(rhx):
             await rhx.send([f"set filename.path {original}"])
 
 
-async def probe_can_a_threshold_and_a_tcp_output_change_while_running(rhx):
-    """NOT handled if the answer is no: a SpikeScope opened mid-recording would
-    wait forever (fix: enable the band at configure time), and the threshold
-    drag would be refused by its read-back."""
-    channel = await first_channel(rhx)
-    threshold = await rhx.get(f"{channel}.spikethresholdmicrovolts")
-    await rhx.set_run_mode("run")
-    try:
-        await asyncio.sleep(0.5)
-        print(f"\n  currenttimestamp while running: {await rhx.get('currenttimestamp')}")
-
-        await rhx.send([f"set {channel}.tcpdataoutputenabledhigh true"])
-        took = (await rhx.get(f"{channel}.tcpdataoutputenabledhigh")).lower() == "true"
-        print(f"  TCP highpass output changed while running: {took}")
-
-        probe = -123 if threshold.strip() != "-123" else -124
-        await rhx.send([f"set {channel}.spikethresholdmicrovolts {probe}"])
-        moved = (await rhx.get(f"{channel}.spikethresholdmicrovolts")).strip() == str(probe)
-        print(f"  spike threshold changed while running:     {moved}")
-    finally:
-        await rhx.set_run_mode("stop")
-        await rhx.send(
-            [
-                f"set {channel}.tcpdataoutputenabledhigh false",
-                f"set {channel}.spikethresholdmicrovolts {threshold}",
-            ]
-        )
-
-
 #: How long each batching setting streams spikes for, and how many channels.
 LATENCY_RUN_S = 6.0
 LATENCY_CHANNELS = 16
@@ -206,7 +177,6 @@ PROBES = (
     probe_does_a_get_that_rides_a_batch_get_answered,
     probe_is_a_refused_set_reported_as_text,
     probe_does_the_save_path_keep_a_space,
-    probe_can_a_threshold_and_a_tcp_output_change_while_running,
     probe_how_are_digital_inputs_named,
     probe_how_late_do_spikes_arrive,
 )

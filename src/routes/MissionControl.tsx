@@ -23,9 +23,8 @@ import { SessionWrapUp } from "@/components/sessions/SessionWrapUp";
 import { ElapsedClock, StateChip, clockSpan } from "@/components/sessions/BoxStatus";
 import { Constellation3D } from "@/components/sessions/Constellation3D";
 import { LiveProbeMap } from "@/components/recording/LiveProbeMap";
-import { RecordingRail, ScopeButtons } from "@/components/recording/RecordingRail";
+import { RecordingRail } from "@/components/recording/RecordingRail";
 import { SessionJourney } from "@/components/sessions/SessionJourney";
-import type { ScopeTrigger } from "@/lib/intan/windows";
 import { MetricStrip } from "@/components/sessions/MetricStrip";
 import { StarPanel } from "@/components/sessions/StarPanel";
 import { errorMessage } from "@/lib/cohorts/commands";
@@ -123,7 +122,7 @@ export function MissionControl() {
     // Switch Group (`ARCHITECTURE.md#group-step`) is only meaningful with more than one populated group.
     multiGroup,
     // Also an Intan recording (`RECORDING.md`). Everything it adds to this screen
-    // is an ADDITION — the rail block and each box's scope buttons — and renders
+    // is an ADDITION — the rail block and each box's live firing map — and renders
     // nothing for a behavior-only session.
     isRecording,
     group: groupInfo,
@@ -172,19 +171,6 @@ export function MissionControl() {
   const labelsFor = useMemo(() => {
     const out: Record<string, Record<string, string>> = {};
     for (const path of new Set(sketchPaths)) out[path] = metricLabels(profiles[path]);
-    return out;
-  }, [sketchPaths, profiles]);
-  // Each sketch's strobe vocabulary, as the events a PSTH can be aligned to. It
-  // travels to the pop-up in its URL: a scope window shares no memory with this
-  // one and has no profile to look the names up in.
-  const triggersFor = useMemo(() => {
-    const out: Record<string, ScopeTrigger[]> = {};
-    for (const path of new Set(sketchPaths)) {
-      out[path] = Object.entries(profiles[path]?.strobes ?? {})
-        .map(([code, name]) => ({ code: Number(code), name }))
-        .filter((t) => Number.isFinite(t.code))
-        .sort((a, b) => a.code - b.code);
-    }
     return out;
   }, [sketchPaths, profiles]);
   // Recorded history, for the cage-ships' "most recently ran" anchor — reads
@@ -623,13 +609,6 @@ export function MissionControl() {
                         Note about box {focusedBox.box}
                       </Button>
                     </span>
-                    {isRecording && (
-                      <ScopeButtons
-                        box={focusedBox.box}
-                        animalName={focusedBox.animalName}
-                        triggers={triggersFor[focusedBox.sketchPath] ?? []}
-                      />
-                    )}
                     {isRecording && <LiveProbeMap box={focusedBox.box} className="h-96" />}
                   </div>
                 }
@@ -651,7 +630,7 @@ export function MissionControl() {
                     metricLabels={labelsFor[box.sketchPath] ?? {}}
                     metricsNote={liveScoring(profiles[box.sketchPath]).note}
                     spine={profiles[box.sketchPath]?.spine !== undefined}
-                    triggers={isRecording ? (triggersFor[box.sketchPath] ?? []) : null}
+                    recording={isRecording}
                     durationMinutes={session?.durationMinutes ?? null}
                     onOpen={() => setFocusedId(box.animalId)}
                     onStart={() => void run(() => startOne(box.box))}
@@ -904,7 +883,7 @@ function BoxCard({
   metricLabels,
   metricsNote,
   spine,
-  triggers,
+  recording,
   durationMinutes,
   onOpen,
   onStart,
@@ -922,9 +901,8 @@ function BoxCard({
   /** A spine task: its strip shows what the sidecar's live replay scored
    *  (`session.replay`), never the legacy telemetry. */
   spine: boolean;
-  /** This box's strobe vocabulary, for its PSTH — null when the session is not
-   *  a recording, which is also what hides the scope buttons. */
-  triggers: ScopeTrigger[] | null;
+  /** The session is a recording: the card adds the box's live firing map. */
+  recording: boolean;
   durationMinutes: number | null;
   onOpen: () => void;
   onStart: () => void;
@@ -1008,8 +986,7 @@ function BoxCard({
           note={spine ? replayNote(replay) : metricsNote}
         />
       )}
-      {triggers && <ScopeButtons box={box.box} animalName={box.animalName} triggers={triggers} />}
-      {triggers && <LiveProbeMap box={box.box} className="mt-2 h-40" />}
+      {recording && <LiveProbeMap box={box.box} className="mt-3 h-44" />}
     </section>
   );
 }

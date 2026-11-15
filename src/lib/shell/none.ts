@@ -28,6 +28,5 @@ export const noShell: Shell = {
     onResized: never,
     close: unavailable,
   },
-  openWindow: () => console.error("no desktop shell: cannot open another window"),
   updates: { supported: false, check: unavailable, install: unavailable },
 };

@@ -3,15 +3,13 @@
  * may import `@tauri-apps/*` (`boundary.test.ts`).
  *
  * Each method maps onto one plugin or one command of the Rust shell, and the
- * permissions in `src-tauri/capabilities/` are what bound it: the main window
- * gets all of this, a `scope-*` pop-up only its frame and `openWindow`.
+ * permissions in `src-tauri/capabilities/` are what bound it.
  */
 
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { writeFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { openPath } from "@tauri-apps/plugin-opener";
@@ -100,14 +98,6 @@ export const tauriShell: Shell = {
     isMaximized: () => getCurrentWindow().isMaximized(),
     onResized: (handler) => getCurrentWindow().onResized(() => handler()),
     close: () => getCurrentWindow().close(),
-  },
-
-  openWindow(spec) {
-    const { label, ...options } = spec;
-    const view = new WebviewWindow(label, { ...options, decorations: false });
-    void view.once("tauri://error", (event) => {
-      console.error(`could not open the window ${label}`, event.payload);
-    });
   },
 
   updates: {

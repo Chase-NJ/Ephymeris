@@ -129,10 +129,6 @@ class Cmd:
     INTAN_CONFIGURE: Final = "intan.configure"
     INTAN_PARSE_PROBE_MAP: Final = "intan.parseProbeMap"
     INTAN_PROBE_MAP: Final = "intan.probeMap"
-    INTAN_SET_THRESHOLD: Final = "intan.setThreshold"
-    INTAN_SCOPE_OPEN: Final = "intan.scope.open"
-    INTAN_SCOPE_UPDATE: Final = "intan.scope.update"
-    INTAN_SCOPE_CLOSE: Final = "intan.scope.close"
     INTAN_FORCE_STOP: Final = "intan.forceStop"
 
     # Session log
@@ -178,7 +174,6 @@ class Evt:
     TASKS_UPDATED: Final = "tasks.updated"
     INTAN_STATUS: Final = "intan.status"
     INTAN_SPIKES: Final = "intan.spikes"
-    INTAN_SCOPE_DATA: Final = "intan.scope.data"
 
 
 ALL_EVENTS: Final[frozenset[str]] = frozenset(
@@ -420,8 +415,6 @@ SHAPES: Final[dict[str, Any]] = {
     "IntanSyncStat": ('obj', (('box', 'int', False), ('matched', 'int', False), ('spuriousEdges', 'int', False), ('unmatchedStrobes', 'int', False))),
     "IntanStatus": ('obj', (('state', ('ref', 'IntanState'), False), ('message', ('union', ('str', 'null')), False), ('connected', 'bool', False), ('controller', ('union', ('str', 'null')), False), ('version', ('union', ('str', 'null')), False), ('sampleRate', ('union', ('int', 'null')), False), ('synthetic', 'bool', False), ('headstagePresent', 'bool', False), ('runMode', ('union', ('str', 'null')), False), ('ports', ('map', 'int'), False), ('confirmsWrites', ('union', ('bool', 'null')), False), ('rigHasSync', 'bool', False), ('liveStreams', 'bool', False), ('recording', ('union', (('ref', 'RecordingRun'), 'null')), False), ('waitingOn', ('list', 'int'), False), ('sync', ('list', ('ref', 'IntanSyncStat')), False))),
     "IntanSpikes": ('obj', (('box', 'int', False), ('counts', ('map', 'int'), False), ('lagMs', ('union', ('float', 'null')), False), ('sentAt', 'float', False))),
-    "ScopeKind": ('lit', ('spikescope', 'psth', 'isi', 'probemap')),
-    "ScopeData": ('obj', (('scopeId', 'str', False), ('kind', ('ref', 'ScopeKind'), False), ('box', 'int', False), ('channel', ('union', ('str', 'null')), False), ('data', 'any', False))),
     "NoteTag": ('lit', ('observation', 'intervention', 'hardware', 'animal-health', 'protocol-deviation')),
     "NoteScope": ('obj', (('kind', ('lit', ('session', 'animal', 'box')), False), ('animalId', ('union', ('str', 'null')), False), ('box', ('union', ('int', 'null')), False))),
     "SessionNote": ('obj', (('id', 'str', False), ('sessionId', 'str', False), ('cohortId', 'str', False), ('at', 'str', False), ('createdAt', 'str', False), ('editedAt', ('union', ('str', 'null')), False), ('tag', ('ref', 'NoteTag'), False), ('scope', ('ref', 'NoteScope'), False), ('body', 'str', False), ('offsetMs', ('union', ('int', 'null')), False), ('carryForward', 'bool', False), ('resolvedAt', ('union', ('str', 'null')), False), ('resolvedInSessionId', ('union', ('str', 'null')), False))),
@@ -515,10 +508,6 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "intan.configure": ('obj', (('sessionId', 'str', False), ('groupId', 'str', False), ('config', ('ref', 'RecordingConfig'), False))),
     "intan.parseProbeMap": ('obj', (('path', 'str', False),)),
     "intan.probeMap": ('obj', (('box', 'int', False),)),
-    "intan.setThreshold": ('obj', (('channel', 'str', False), ('microvolts', 'int', False))),
-    "intan.scope.open": ('obj', (('kind', ('ref', 'ScopeKind'), False), ('box', 'int', False), ('channel', ('union', ('str', 'null')), True), ('params', ('map', 'any'), True))),
-    "intan.scope.update": ('obj', (('scopeId', 'str', False), ('channel', ('union', ('str', 'null')), True), ('params', ('map', 'any'), True))),
-    "intan.scope.close": ('obj', (('scopeId', 'str', False),)),
     "intan.forceStop": ('obj', ()),
     "logbook.cohort": ('obj', (('cohortId', 'str', False),)),
     "logbook.addNote": ('obj', (('sessionId', 'str', False), ('tag', ('ref', 'NoteTag'), False), ('body', 'str', False), ('scope', ('ref', 'NoteScope'), True), ('carryForward', 'bool', True), ('at', 'str', True))),
@@ -611,10 +600,6 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "intan.configure": ('ref', 'IntanStatus'),
     "intan.parseProbeMap": ('obj', (('probeMap', 'any', False),)),
     "intan.probeMap": ('obj', (('probeMap', 'any', False),)),
-    "intan.setThreshold": ('obj', (('channel', 'str', False), ('microvolts', 'int', False))),
-    "intan.scope.open": ('obj', (('scopeId', 'str', False),)),
-    "intan.scope.update": ('obj', (('ok', 'bool', False),)),
-    "intan.scope.close": ('obj', (('ok', 'bool', False),)),
     "intan.forceStop": ('obj', (('ok', 'bool', False),)),
     "logbook.cohort": ('ref', 'LogbookCohort'),
     "logbook.addNote": ('obj', (('note', ('ref', 'SessionNote'), False),)),
@@ -651,7 +636,6 @@ EVENT_DATA: Final[dict[str, Any]] = {
     "tasks.updated": ('ref', 'TasksUpdatedData'),
     "intan.status": ('ref', 'IntanStatus'),
     "intan.spikes": ('ref', 'IntanSpikes'),
-    "intan.scope.data": ('ref', 'ScopeData'),
 }
 
 

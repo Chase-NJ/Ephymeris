@@ -3,10 +3,10 @@
  * each checking who is asking before doing anything.
  *
  * The same split as `src-tauri/capabilities/`: the main window may use every
- * channel, updates included; a recording pop-up only the sidecar's endpoint, its own frame, and
- * opening another pop-up (a probe-map site opens that channel's Spike Scope).
- * A frame that is not the top frame of one of this app's windows, showing one
- * of its pages, gets nothing.
+ * channel, updates included, and is today the app's only window; a channel
+ * marked "any" would also serve another window of this app. A frame that is
+ * not the top frame of one of this app's windows, showing one of its pages,
+ * gets nothing.
  */
 
 import { stat, writeFile } from "node:fs/promises";
@@ -110,8 +110,6 @@ export function registerIpc({ windows, sidecar, settings, updater }: Services): 
   });
   handle("frame:is-maximized", "any", (window) => window.isMaximized());
   handle("frame:close", "any", (window) => window.close());
-
-  handle("window:open", "any", (_window, spec) => windows.openScope(spec));
 
   handle("updates:check", "main", () => updater.check());
   handle("updates:install", "main", (window) => {

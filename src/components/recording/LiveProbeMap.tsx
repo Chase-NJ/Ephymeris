@@ -10,8 +10,6 @@ import { ProbeMapView } from "./ProbeMapView";
 
 /** Latency samples kept for the footer's p95: a few seconds of batches. */
 const SAMPLES_KEPT = 150;
-/** Marks the view live (sites start dim, not half-lit); the fills come from the frame loop. */
-const LIVE: Record<string, number> = {};
 
 /**
  * One recorded box's probe, each site flashing as it spikes
@@ -92,16 +90,28 @@ export function LiveProbeMap({ box, className = "" }: { box: number; className?:
   }, [store, box, channelKey, map]);
 
   if (!mine) return null;
+  const first = mine.channels[0];
+  const last = mine.channels[mine.channels.length - 1];
+  const wiring = (
+    <div className="font-mono text-[10px] text-static">
+      port {mine.port} · DIN {mine.digitalIn}
+      {first ? ` · ${first}${last && last !== first ? `…${last}` : ""}` : ""}
+    </div>
+  );
   if (!mine.probeMap) {
     return (
-      <p className="font-mono text-[10px] text-static">No probe map was added for box {box}.</p>
+      <div className="mt-3 border-t border-halo pt-2.5">
+        {wiring}
+        <p className="font-mono text-[10px] text-static">No probe map was added for box {box}.</p>
+      </div>
     );
   }
   return (
-    <div className={`flex flex-col gap-1 ${className}`}>
+    <div className={`flex flex-col gap-1 border-t border-halo pt-2.5 ${className}`}>
+      {wiring}
       <div ref={host} className="relative min-h-0 flex-1">
         {map && (
-          <ProbeMapView map={map} rates={LIVE} channels={mine.channels} className="absolute inset-0" />
+          <ProbeMapView map={map} live channels={mine.channels} className="absolute inset-0" />
         )}
       </div>
       <span ref={footer} className="font-mono text-[10px] text-static">

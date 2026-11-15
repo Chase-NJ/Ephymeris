@@ -55,7 +55,6 @@ const bridge: EphymerisBridge = {
     onResized: (handler) => subscribe("frame:resized", () => handler()),
     close: () => invoke("frame:close"),
   },
-  openWindow: (spec) => invoke("window:open", spec),
   updates: {
     supported: process.argv.includes(UPDATES_FLAG),
     check: () => invoke("updates:check"),

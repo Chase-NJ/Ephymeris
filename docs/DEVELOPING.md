@@ -70,7 +70,7 @@ run reads the sketch library from `firmware/` in place ([its README](../firmware
 
 **Frontend: Vitest over `src/lib/**` and `electron/**`, with no DOM.** It pins the arithmetic and
 decoding that produce a drawing or readout that looks deliberate when wrong (the derived state machine,
-its layout, the strategy plane, the cohort sky, the scope maths), and the Electron shell's pure parts.
+its layout, the strategy plane, the cohort sky, the probe geometry and firing map), and the Electron shell's pure parts.
 Stores are tested through `FakeSidecar` (`lib/ws/fakeSidecar.ts`); `ws/port.contract.test.ts` holds it to
 the real client's rules. `lib/shell/boundary.test.ts` keeps each shell inside `lib/shell`. There is no
 linter; `tsc` is the type check.

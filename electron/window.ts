@@ -1,9 +1,8 @@
 /**
- * The app's windows: the main one and the recording pop-ups
- * (`RECORDING.md#live-windows`), plus the `app://` scheme an installed build
- * loads them from. The window half of `src-tauri/src/lib.rs`.
+ * The app's window, plus the `app://` scheme an installed build loads it from.
+ * The window half of `src-tauri/src/lib.rs`.
  *
- * Every window is frameless (the webview draws its own title bars), sandboxed,
+ * The window is frameless (the webview draws its own title bars), sandboxed,
  * and reaches the main process only through the preload's bridge.
  */
 
@@ -13,14 +12,12 @@ import { pathToFileURL } from "node:url";
 
 import { BrowserWindow, net, protocol, screen, type WebContents } from "electron";
 
-import type { EventChannels, WindowSpec } from "./bridge.js";
+import type { EventChannels } from "./bridge.js";
 import { openingSize, MIN_HEIGHT, MIN_WIDTH } from "./geometry.js";
-import { APP_HOST, APP_SCHEME, isAppUrl, scopeUrl } from "./origin.js";
+import { APP_HOST, APP_SCHEME, isAppUrl } from "./origin.js";
 
 /** The Void: painted before the bundle is, so no window flashes white. */
 const BACKGROUND = "#0B0B10";
-
-const SCOPE_LABEL = /^scope-[a-z0-9-]{1,80}$/;
 
 /**
  * Must run before `app` is ready. `fetch` refuses `file://`, and
@@ -56,7 +53,6 @@ export function serveApp(distDir: string): void {
 
 export class Windows {
   private mainWindow: BrowserWindow | null = null;
-  private readonly scopes = new Map<string, BrowserWindow>();
 
   constructor(
     readonly base: URL,
@@ -101,12 +97,6 @@ export class Windows {
     window.once("ready-to-show", show);
     window.webContents.once("did-fail-load", show);
 
-    // The pop-ups are windows of the app, not of this window: closing main
-    // closes them, or the app would not exit until each was closed by hand,
-    // holding the sidecar and its serial ports with it.
-    window.on("close", () => {
-      for (const scope of this.scopes.values()) if (!scope.isDestroyed()) scope.close();
-    });
     window.on("closed", () => {
       this.mainWindow = null;
     });
@@ -116,38 +106,10 @@ export class Windows {
     return window;
   }
 
-  /** A recording pop-up, frameless like main. Refuses any spec that is not a scope of this app. */
-  openScope(spec: WindowSpec): void {
-    if (!SCOPE_LABEL.test(spec.label)) throw new Error(`not a scope window label: ${spec.label}`);
-    if (this.scopes.has(spec.label)) throw new Error(`a window labelled ${spec.label} is already open`);
-    const url = scopeUrl(spec.url, this.base);
-    if (!url) throw new Error(`not a scope page of this app: ${spec.url}`);
-
-    const window = new BrowserWindow({
-      title: spec.title,
-      width: whole(spec.width),
-      height: whole(spec.height),
-      minWidth: whole(spec.minWidth),
-      minHeight: whole(spec.minHeight),
-      x: whole(spec.x),
-      y: whole(spec.y),
-      frame: false,
-      backgroundColor: /^#[0-9a-fA-F]{6}$/.test(spec.backgroundColor) ? spec.backgroundColor : BACKGROUND,
-      webPreferences: this.webPreferences(),
-    });
-    this.scopes.set(spec.label, window);
-    this.reportResizes(window);
-    // The page's own <title> is "Ephymeris" in every window; the taskbar should
-    // say which pop-up this is, as it does under Tauri.
-    window.on("page-title-updated", (event) => event.preventDefault());
-    window.on("closed", () => this.scopes.delete(spec.label));
-    void window.loadURL(url.href);
-  }
-
   /** Whether `contents` belongs to one of this app's windows. */
   owns(contents: WebContents): boolean {
     const window = BrowserWindow.fromWebContents(contents);
-    return window !== null && (window === this.mainWindow || [...this.scopes.values()].includes(window));
+    return window !== null && window === this.mainWindow;
   }
 
   isMain(contents: WebContents): boolean {
@@ -191,9 +153,4 @@ export class Windows {
     window.on("maximize", send);
     window.on("unmaximize", send);
   }
-}
-
-function whole(value: number): number {
-  if (!Number.isFinite(value)) throw new Error("window geometry must be finite numbers");
-  return Math.round(value);
 }

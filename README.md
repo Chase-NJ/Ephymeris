@@ -82,7 +82,7 @@ Copies installed before the Electron shell ([ADR 0006](docs/adr/DECISIONS.md#000
 `%LOCALAPPDATA%\Ephymeris`. Their next update installs the Electron build, which removes the old copy,
 takes over its shortcuts and keeps all app data. Do it once per PC, with someone there, then check:
 settings and cohorts are as they were; the wiring is in force with no RIG108 hold; a session runs on a
-real box; a scope window opens; **Settings → Updates** reports the version current; and **Apps →
+real box; **Settings → Updates** reports the version current; and **Apps →
 Installed apps** lists one Ephymeris.
 
 ## Troubleshooting

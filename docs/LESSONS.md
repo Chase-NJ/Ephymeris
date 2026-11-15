@@ -307,13 +307,14 @@ Tried, then abandoned. Don't retry one without reading why.
 
 The repository started again from one commit on 2026-11-15. What that changed:
 
-- **Ship main's version counter restarted.** A main build is `package.json`'s version plus
-  `git rev-list --count HEAD` ([DEVELOPING.md](DEVELOPING.md#continuous-integration-and-releases)). The
-  feed already served `1.1.3-alpha.225` before the reset, so the fresh start moved `package.json` to
-  `1.1.4-alpha`; a version at or below the feed's makes `scripts/ship-version.mjs` refuse to publish.
-  A future history reset needs the same bump.
-- **The `updates` branch and the release tags were kept** on GitHub: installed copies read their feed
-  from `updates`, and published releases hang off their tags.
+- **Versions start again at `2.0.0-beta`, the one release.** Every earlier release and tag (the last was
+  `1.1.3-alpha.225`) was deleted. Installed copies never downgrade, so the beta had to sort above what
+  the lab PCs ran: a `1.0.0-beta` would have been ignored by every copy.
+- **Ship main's commit counter restarted.** A main build is `package.json`'s version plus
+  `git rev-list --count HEAD` ([DEVELOPING.md](DEVELOPING.md#continuous-integration-and-releases)), and
+  `scripts/ship-version.mjs` refuses one at or below the feed's. A future history reset needs a version
+  bump past the feed for the same reason.
+- **The `updates` branch was kept**: installed copies read their feed from it.
 - **Some fixtures can no longer be regenerated from history.** `sidecar/tests/fixtures/schemas/` was
   copied from shipped versions in the old history, and `legacy_corpus.py` names an old commit (2b851fd)
   as the "before" side of its capture. Both stay valid as they are.

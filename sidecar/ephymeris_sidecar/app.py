@@ -33,6 +33,7 @@ from .hardware import service as hardware_service
 from .hardware import store as hardware_store
 from .intan import probemap as intan_probemap
 from .intan.impedance_store import ImpedanceStore, Measurement
+from .intan.yield_store import SpikeYieldStore
 from .intan.service import IntanService, channel_name
 from .logbook.service import LogbookService
 from .rig import definition as rig_definition
@@ -136,6 +137,7 @@ class Application:
         self.cohorts = CohortRepository(self.db)
         self.sessions = SessionRepository(self.db)
         self.impedances = ImpedanceStore(self.db)
+        self.spike_yields = SpikeYieldStore(self.db)
         self.runner: SessionRunner | None = None
         self.backup: BackupManager | None = None
         self.archive: CohortArchive | None = None
@@ -304,6 +306,7 @@ class Application:
         self.server.register(Cmd.INTAN_FORCE_STOP, self._intan_force_stop)
         self.server.register(Cmd.INTAN_MEASURE_IMPEDANCE, self._intan_measure_impedance)
         self.server.register(Cmd.INTAN_IMPEDANCE_HISTORY, self._intan_impedance_history)
+        self.server.register(Cmd.INTAN_YIELD_HISTORY, self._intan_yield_history)
 
         missing = self.server.unhandled()
         if missing:
@@ -1816,6 +1819,18 @@ class Application:
             if found is not None:
                 latest[animal_id] = await asyncio.to_thread(self._impedance_comparison, found)
         return {"latest": latest}
+
+    async def _intan_yield_history(self, args: Args) -> dict[str, Any]:
+        limit = args.get("limit", 10)
+        if not 1 <= limit <= 200:
+            raise CommandError(ErrCode.BAD_MESSAGE, "`limit` must be from 1 to 200")
+        ids = [a for a in args.get("animalIds") or [] if isinstance(a, str)]
+        history = {}
+        for animal_id in dict.fromkeys(ids):
+            runs = await asyncio.to_thread(self.spike_yields.history, animal_id, limit=limit)
+            if runs:
+                history[animal_id] = runs
+        return {"history": history}
 
     def _impedance_comparison(self, current: Measurement) -> dict[str, Any]:
         previous = self.impedances.latest(current.animal_id, before=current.measured_at)

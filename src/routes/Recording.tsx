@@ -7,7 +7,12 @@ import { PanelTitle } from "@/components/charts/PanelTitle";
 import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
 import { Button } from "@/components/common/controls";
 import { IntanConnectionPanel } from "@/components/recording/IntanConnectionPanel";
-import { ImpedanceFlagRows, SavingRows, ThresholdRows } from "@/components/recording/RecordingConfigRows";
+import {
+  ActiveSiteRow,
+  ImpedanceFlagRows,
+  SavingRows,
+  ThresholdRows,
+} from "@/components/recording/RecordingConfigRows";
 import { RecChip, RecordingStatus } from "@/components/recording/RecordingStatus";
 import { SyncInputsTable } from "@/components/recording/SyncInputsTable";
 import { SettingRowDensityContext } from "@/components/settings/SettingRow";
@@ -194,10 +199,14 @@ export function Recording() {
                         onChange={(patch) => void save({ config: { ...defaults.config, ...patch } })}
                       />
                     </Panel>
-                    <Panel name="Impedance flags" note="at 1 kHz, on the Record step">
+                    <Panel name="Electrode checks" note="on the Record step, per animal">
                       <ImpedanceFlagRows
                         value={defaults.impedanceFlags}
                         onChange={(impedanceFlags) => void save({ impedanceFlags })}
+                      />
+                      <ActiveSiteRow
+                        value={defaults.activeSiteHz}
+                        onChange={(activeSiteHz) => void save({ activeSiteHz })}
                       />
                     </Panel>
                     <p className="px-1 text-[11px] leading-relaxed text-static/80">

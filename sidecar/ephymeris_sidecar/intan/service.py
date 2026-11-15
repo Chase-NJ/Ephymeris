@@ -45,7 +45,7 @@ import asyncio
 import logging
 import shutil
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -53,6 +53,7 @@ from typing import Any, Awaitable, Callable
 from ..settings import IntanEndpoints, SidecarSettings
 from . import probemap
 from .impedance import ImpedanceFile, parse_csv
+from .yield_store import RunSpikes
 from .analysis import (
     EdgeDetector,
     EdgeMatcher,
@@ -154,6 +155,9 @@ class Recording:
     #: The mapping confirmation this was set up for (`SessionLifecycle.confirmations`).
     #: None for a setup made without one, which never starts a recording.
     confirmation: int | None = None
+    #: `RecordingConfig.threshold` as configured: what each run's spike
+    #: counts were detected under (`RECORDING.md#active-site-yield`).
+    threshold: dict[str, Any] | None = None
     file_timestamp: str | None = None
     started_at: str | None = None
     ended_at: str | None = None
@@ -192,6 +196,13 @@ def _int(value: Any, name: str, lo: int, hi: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or not lo <= value <= hi:
         raise IntanNotReady(f"{name} must be a whole number from {lo} to {hi}.")
     return value
+
+
+@dataclass
+class _RunCount:
+    started: float
+    samples_at_start: int
+    counts: dict[str, int] = field(default_factory=dict)
 
 
 # --------------------------------------------------------------------------- #
@@ -261,6 +272,10 @@ class IntanService:
         self._fired: dict[int, dict[str, int]] = {}
         self._fired_lag: dict[int, float] = {}
         self._clock: SampleClock | None = None
+        #: Each running box's spike counts since its START, and the samples
+        #: the waveform socket had delivered then (`RECORDING.md#active-site-yield`).
+        self._runs: dict[int, _RunCount] = {}
+        self._samples_seen = 0
 
     # --- lifecycle --------------------------------------------------------
 
@@ -568,6 +583,7 @@ class IntanService:
 
         plan = self._plan(session_id, group_id, config, base_filename)
         plan.confirmation = confirmation
+        plan.threshold = dict(config.get("threshold") or {}) or None
         controller = self._info.get("controller")
 
         directory = Path(plan.path)
@@ -1091,11 +1107,25 @@ class IntanService:
             return
         self._matchers[box] = EdgeMatcher(float(recording.sample_rate), tick_pulsed=tick_pulsed)
         self._matched[box] = 0
+        self._runs[box] = _RunCount(self._loop.time(), self._samples_seen)
         self._loop.create_task(self._livenote(f"BOX{box} START {animal}"))
 
-    def box_ended(self, box: int, animal: str, reason: str) -> None:
-        if self._recording is not None and box in self._recording.boxes and self.is_recording:
+    def box_ended(self, box: int, animal: str, reason: str) -> RunSpikes | None:
+        """On the loop, as the run is finalized. Returns the run's spike counts
+        for every site the box records, or None when it was not counted (a
+        behavior-only box, or one started before the recording)."""
+        recording = self._recording
+        if recording is not None and box in recording.boxes and self.is_recording:
             self._loop.create_task(self._livenote(f"BOX{box} END {animal} ({reason})"))
+        run = self._runs.pop(box, None)
+        if run is None or recording is None or box not in recording.boxes:
+            return None
+        return RunSpikes(
+            counts={name: run.counts.get(name, 0) for name in recording.boxes[box].channels},
+            counted_seconds=round((self._samples_seen - run.samples_at_start) / recording.sample_rate, 3),
+            run_seconds=round(self._loop.time() - run.started, 3),
+            threshold=recording.threshold,
+        )
 
     async def _livenote(self, note: str) -> None:
         try:
@@ -1126,6 +1156,7 @@ class IntanService:
     def _reset_live(self, plan: Recording) -> None:
         self._detectors = {b: EdgeDetector(p.digital_in) for b, p in plan.boxes.items()}
         self._matchers, self._matched = {}, {}
+        self._runs = {}
         self._box_of = {name: b for b, p in plan.boxes.items() for name in p.channels}
         self._fired, self._fired_lag = {}, {}
         self._clock = SampleClock(float(plan.sample_rate))
@@ -1184,6 +1215,7 @@ class IntanService:
 
     def _on_block(self, block: Any) -> None:
         stamps = block.timestamps
+        self._samples_seen += len(stamps)
         if block.digital_in is not None and not self.synthetic:
             for box, detector in self._detectors.items():
                 edges = detector.feed(stamps, block.digital_in)
@@ -1228,6 +1260,9 @@ class IntanService:
             return
         counts = self._fired.setdefault(box, {})
         counts[channel] = counts.get(channel, 0) + 1
+        run = self._runs.get(box)
+        if run is not None:
+            run.counts[channel] = run.counts.get(channel, 0) + 1
         lag = self._clock.lag_ms(sample, arrived) if self._clock is not None else None
         if lag is not None and lag > self._fired_lag.get(box, float("-inf")):
             self._fired_lag[box] = lag

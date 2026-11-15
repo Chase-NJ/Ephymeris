@@ -119,6 +119,7 @@ export const CMD = {
   INTAN_PROBE_MAP: "intan.probeMap",
   INTAN_MEASURE_IMPEDANCE: "intan.measureImpedance",
   INTAN_IMPEDANCE_HISTORY: "intan.impedanceHistory",
+  INTAN_YIELD_HISTORY: "intan.yieldHistory",
   INTAN_FORCE_STOP: "intan.forceStop",
 
   // Session log
@@ -3006,6 +3007,28 @@ export interface ImpedanceComparison {
   previous: ImpedanceMeasurement | null;
 }
 
+/**
+ * One recorded run's spike counts per site, the basis of active-site yield
+ * (`RECORDING.md#active-site-yield`).
+ */
+export interface RunYield {
+  runId: string;
+  sessionId: string;
+  box: number;
+  startedAt: string | null;
+  /**
+   * How much of the run RHX's spike stream covered; less than `runSeconds` means a gap, and every
+   * site reads quieter than it was.
+   */
+  countedSeconds: number;
+  /** START to the run's end. */
+  runSeconds: number;
+  /** The recording's `RecordingConfig.threshold`: counts under different thresholds do not compare. */
+  threshold: Record<string, unknown> | null;
+  /** Native channel name → threshold crossings, every recorded site. */
+  counts: Record<string, number>;
+}
+
 export interface IntanSpikes {
   box: number;
   /**
@@ -3244,6 +3267,7 @@ export interface CommandArgsMap {
   "intan.probeMap": { box: number };
   "intan.measureImpedance": { sessionId: string; groupId: string; saveDirectory: string; boxes: Array<{ box: number; port: string; firstChannel: number; lastChannel: number }> };
   "intan.impedanceHistory": { animalIds: string[] };
+  "intan.yieldHistory": { animalIds: string[]; limit?: number };
   "intan.forceStop": Record<string, never>;
   "logbook.cohort": { cohortId: string };
   "logbook.addNote": { sessionId: string; tag: NoteTag; body: string; scope?: NoteScope; carryForward?: boolean; at?: string };
@@ -3339,6 +3363,7 @@ export interface CommandResultMap {
   "intan.probeMap": { probeMap: unknown };
   "intan.measureImpedance": { measurements: Record<string, ImpedanceComparison> };
   "intan.impedanceHistory": { latest: Record<string, ImpedanceComparison> };
+  "intan.yieldHistory": { history: Record<string, RunYield[]> };
   "intan.forceStop": { ok: boolean };
   "logbook.cohort": LogbookCohort;
   "logbook.addNote": { note: SessionNote };

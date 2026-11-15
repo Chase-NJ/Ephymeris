@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useIntanStatus, useIntanStore } from "@/lib/intan/context";
 import { FiringModel, quantile } from "@/lib/intan/firing";
 import type { ProbeMap } from "@/lib/intan/types";
+import { useRecordingDefaults } from "@/lib/settings/useRecordingDefaults";
 import { useSidecar } from "@/lib/ws/context";
 import { CMD } from "@/lib/ws/protocol";
 
@@ -20,14 +21,22 @@ const SAMPLES_KEPT = 150;
  * `intan.spikes` batches never become React state — at 30 a second per box,
  * re-rendering on each would be exactly the clunkiness this replaces.
  *
- * The footer says how live it is: the sidecar's measured lag from RHX, the
- * lag from the sidecar to the frame that drew it, and the frame rate.
+ * The footer counts the sites active since the map opened, judged as a
+ * stored run is (`RECORDING.md#active-site-yield`), then says how live it is:
+ * the sidecar's measured lag from RHX, the lag from the sidecar to the frame
+ * that drew it, and the frame rate.
  */
 export function LiveProbeMap({ box, className = "" }: { box: number; className?: string }) {
   const intan = useIntanStatus();
   const store = useIntanStore();
   const mine = intan.recording?.boxes.find((b) => b.box === box) ?? null;
   const map = useBoxProbeMap(box, mine?.probeMap ?? null);
+  const { defaults } = useRecordingDefaults();
+  const activeSiteHz = defaults.activeSiteHz;
+  // Read by the frame loop, so editing it re-judges without restarting the loop
+  // (which would throw away every count so far).
+  const activeHzRef = useRef(activeSiteHz);
+  activeHzRef.current = activeSiteHz;
   const host = useRef<HTMLDivElement>(null);
   const footer = useRef<HTMLSpanElement>(null);
   // Keyed by content: every status snapshot is a new array, and restarting the
@@ -78,7 +87,11 @@ export function LiveProbeMap({ box, className = "" }: { box: number; className?:
         const fps = (frames * 1000) / (now - since);
         frames = 0;
         since = now;
-        if (footer.current) footer.current.textContent = describe(rhxLags, appLags, fps);
+        if (footer.current) {
+          const active = model.activeCount(activeHzRef.current, now);
+          const yieldText = active === null ? "counting active sites…" : `${active}/${channels.length} active`;
+          footer.current.textContent = `${yieldText} · ${describe(rhxLags, appLags, fps)}`;
+        }
       }
       raf = requestAnimationFrame(frame);
     };
@@ -114,7 +127,11 @@ export function LiveProbeMap({ box, className = "" }: { box: number; className?:
           <ProbeMapView map={map} live channels={mine.channels} className="absolute inset-0" />
         )}
       </div>
-      <span ref={footer} className="font-mono text-[10px] text-static">
+      <span
+        ref={footer}
+        className="font-mono text-[10px] text-static"
+        title={`Active: a mean of at least ${activeSiteHz} Hz since this map opened`}
+      >
         {intan.liveStreams ? "waiting for spikes…" : "live data unavailable — RHX's data sockets did not open"}
       </span>
     </div>

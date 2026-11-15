@@ -34,23 +34,29 @@ export class FiringModel {
   /** In Hz: each spike adds 1/τ, and the whole decays with τ, so a steady λ settles at λ. */
   private readonly rate: Float64Array;
   private last: number | null = null;
+  /** Every spike since the model began, and when it began: the live active-site count. */
+  private readonly totals: Float64Array;
+  private began: number | null = null;
 
   constructor(channels: readonly string[]) {
     this.channels = channels;
     channels.forEach((c, i) => this.index.set(c, i));
     this.flash = new Float64Array(channels.length);
     this.rate = new Float64Array(channels.length);
+    this.totals = new Float64Array(channels.length);
   }
 
   /** One `intan.spikes` batch. Channels not on this map are ignored. */
   add(counts: Record<string, number>, now: number): void {
     this.advance(now);
+    this.began ??= now;
     for (const channel in counts) {
       const i = this.index.get(channel);
       const n = counts[channel] ?? 0;
       if (i === undefined || n <= 0) continue;
       this.flash[i] = 1;
       this.rate[i] = (this.rate[i] ?? 0) + (n * 1000) / RATE_TAU_MS;
+      this.totals[i] = (this.totals[i] ?? 0) + n;
     }
   }
 
@@ -74,6 +80,20 @@ export class FiringModel {
 
   rateHz(i: number): number {
     return this.rate[i] ?? 0;
+  }
+
+  /**
+   * Sites whose MEAN rate since the first batch reaches `minHz` — the same
+   * judgement as a stored run's (`lib/intan/yield.ts`), so the live count and
+   * the Record step's trend agree. Null for the first `minMs`, when a mean
+   * says nothing yet.
+   */
+  activeCount(minHz: number, now: number, minMs = 10_000): number | null {
+    if (this.began === null || now - this.began < minMs) return null;
+    const seconds = (now - this.began) / 1000;
+    let active = 0;
+    for (let i = 0; i < this.totals.length; i++) if ((this.totals[i] ?? 0) / seconds >= minHz) active += 1;
+    return active;
   }
 }
 

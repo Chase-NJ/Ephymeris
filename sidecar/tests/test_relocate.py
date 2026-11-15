@@ -27,6 +27,8 @@ from ephymeris_sidecar.cohorts import relocate
 from ephymeris_sidecar.cohorts.db import DATA_PATHS, OTHER_PATHS, Database
 from ephymeris_sidecar.cohorts.folders import DataFolderError, relative_below
 from ephymeris_sidecar.cohorts.repository import CohortRepository
+from ephymeris_sidecar.intan.impedance import SiteImpedance
+from ephymeris_sidecar.intan.impedance_store import ImpedanceStore, Measurement
 from ephymeris_sidecar.sessions.models import SessionAnimalRun
 from ephymeris_sidecar.sessions.repository import SessionRepository
 from tests.conftest import fine_mtime, statements
@@ -126,6 +128,13 @@ class Archive:
             self.session_id,
             {"runs": [{"groupId": "g", "path": str(ephys)}, {"groupId": "h", "path": elsewhere}]},
         )
+        # Its impedance CSV, which RHX saved beside the recording.
+        csv = ephys / "impedance_20260901T085900Z.csv"
+        csv.write_text("Channel Number\n")
+        ImpedanceStore(self.db).add([Measurement(
+            "remy1", "2026-09-01T08:59:00.000+00:00", 1, self.session_id, 1000.0, str(csv),
+            (SiteImpedance("A-000", 1e5, -70.0),),
+        )])
         return elsewhere
 
     def recording_paths(self) -> list[str]:

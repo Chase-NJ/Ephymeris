@@ -161,6 +161,14 @@ def rewrite_paths(
                 "UPDATE OR REPLACE strobe_scan_cache SET file_path = ? WHERE file_path = ?",
                 (new, path),
             )
+    # RHX's impedance CSVs, beside the recording: the same rule as a save
+    # location, so one under this folder moves with it, whoever's animal.
+    for (path,) in conn.execute(
+        "SELECT DISTINCT csv_file FROM electrode_impedances WHERE csv_file IS NOT NULL"
+    ).fetchall():
+        new = rebased(path)
+        if new and (not only_existing or present(new, run=False)):
+            conn.execute("UPDATE electrode_impedances SET csv_file = ? WHERE csv_file = ?", (new, path))
     return changed
 
 

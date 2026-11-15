@@ -4,6 +4,7 @@ import { DirectoryField } from "@/components/settings/DirectoryField";
 import { SettingRow } from "@/components/settings/SettingRow";
 import type { RecordingConfigDefaults } from "@/lib/intan/defaults";
 import { DEFAULT_IMPEDANCE_FLAGS, normalizeImpedanceFlags, type ImpedanceFlags } from "@/lib/intan/impedance";
+import { DEFAULT_ACTIVE_SITE_HZ, normalizeActiveSiteHz } from "@/lib/intan/yield";
 import { FILE_FORMATS } from "@/lib/intan/types";
 
 /**
@@ -319,5 +320,28 @@ export function ImpedanceFlagRows({
         </span>
       </SettingRow>
     </>
+  );
+}
+
+/** The rate a site must average over a run to count as active (`RECORDING.md#active-site-yield`). */
+export function ActiveSiteRow({ value, onChange }: { value: number; onChange: (hz: number) => void }) {
+  return (
+    <SettingRow
+      label="Active site at or above"
+      description="A site's mean threshold-crossing rate over a run. Crossings, not sorted units. 0.01 to 100 Hz."
+    >
+      <span className="flex items-center gap-2">
+        <NumberInput
+          label="Active site rate, in hertz"
+          value={value}
+          fallback={DEFAULT_ACTIVE_SITE_HZ}
+          min={0.01}
+          max={100}
+          className="w-20"
+          onChange={(v) => onChange(normalizeActiveSiteHz(Number(v)))}
+        />
+        <span className="text-[11px] text-static">Hz</span>
+      </span>
+    </SettingRow>
   );
 }

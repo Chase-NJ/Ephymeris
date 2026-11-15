@@ -108,7 +108,7 @@ On the wire as `Cohort.formerAnimals` (single-cohort loads only); `Cohort.animal
 
 `cohorts.setDataFolder` (`cohorts/relocate.py`) with `moveExisting: true` moves the data into an **empty** folder; with `false` it points at data already there (how a pre-Ephymeris archive is attached for [adoption](#orphan-adoption)) and writes nothing.
 
-A move carries every stored absolute path with it (records, adoptions, cache rows with their [freshness keys](#caching), and RHX save locations inside the folder; all listed in `cohorts/db.py`'s `DATA_PATHS`, which a test keeps complete), journalled in `folder_moves`:
+A move carries every stored absolute path with it (records, adoptions, cache rows with their [freshness keys](#caching), and RHX save locations and impedance CSVs inside the folder; all listed in `cohorts/db.py`'s `DATA_PATHS`, which a test keeps complete), journalled in `folder_moves`:
 
 ```mermaid
 flowchart LR
@@ -354,6 +354,7 @@ erDiagram
     animals |o..o{ session_animal_runs : "animal_id"
     animals |o..o{ adopted_runs : "animal_id"
     animals |o..o{ electrode_impedances : "animal_id"
+    session_animal_runs |o..o| run_spike_counts : "run_id"
     task_profiles |o..o{ session_animal_runs : "profile_hash"
     session_animal_runs |o..o| run_metrics_cache : "run_id"
     adopted_runs |o..o| run_metrics_cache : "run_id"
@@ -502,6 +503,13 @@ erDiagram
         REAL ohms
         REAL phase_deg
         TEXT csv_file
+    }
+    run_spike_counts {
+        TEXT run_id PK
+        REAL counted_seconds
+        REAL run_seconds
+        TEXT threshold_json
+        TEXT counts_json
     }
     session_notes {
         TEXT id PK
@@ -668,7 +676,7 @@ A vanished file never deletes its row on the read path; only [pruning](#pruning)
 
 ### Pruning
 
-A rescan (unless `adoptOrphans: false`) also deletes records, adoptions and their cache rows whose file is gone, then sessions with no folder, no runs **and** no [log entry](#the-session-log). Records only; never open sessions.
+A rescan (unless `adoptOrphans: false`) also deletes records (with their [spike counts](RECORDING.md#active-site-yield)), adoptions and their cache rows whose file is gone, then sessions with no folder, no runs **and** no [log entry](#the-session-log). Records only; never open sessions.
 
 > [!CAUTION]
 > **Absence counts only when the storage is reachable**: a path is gone only if some ancestor is readable (`_storage_is_reachable`). A `.json` whose `.tsv` survives is kept for [recovery](#crash-recovery).

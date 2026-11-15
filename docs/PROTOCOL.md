@@ -155,6 +155,8 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="cmd-intan.impedancehistory"></a>`intan.impedanceHistory` | `animalIds` | `latest` | Each animal's latest impedances, for the Record step to show before anything is measured … |
 | <a id="cmd-intan.yieldhistory"></a>`intan.yieldHistory` | `animalIds`, `limit?` | `history` | Each animal's recent recorded runs with their spike counts per site, for the Record … |
 | <a id="cmd-intan.acknowledgetether"></a>`intan.acknowledgeTether` | `box` | [IntanStatus](#shape-intanstatus) | The operator has seen this box's tether alarm: it stays until the box recovers … |
+| <a id="cmd-intan.recordedruns"></a>`intan.recordedRuns` | `sessionId` | `runIds` | Which of a session's runs were recorded, read from their files' headers; nothing is … |
+| <a id="cmd-intan.eventpsth"></a>`intan.eventPsth` | `runId`, `code?`, `preMs`, `postMs`, `binMs`, `split`, `rasterChannel?` | [EventPsth](#shape-eventpsth) | A recorded run's PSTH around one named event, every site, from RHX's saved files … |
 | <a id="cmd-intan.forcestop"></a>`intan.forceStop` | — | `ok` | Stop waiting for boxes to finish their trials during a graceful end; the recording … |
 
 ### Session log
@@ -248,6 +250,7 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | `TASK_IMPORT_REPLACES` | `tasks.import` applied without `confirm` while a task with the same id is saved here. |
 | `TASK_INVALID` | The definition is not a definition — wrong shape, too large, an unusable id … |
 | `INTAN_UNAVAILABLE` | RHX is not reachable: not running, its Remote TCP Control command server not opened … |
+| `RECORDING_UNREADABLE` | A run has no recording Ephymeris can read: it was not recorded, RHX's folder … |
 | `INTAN_NOT_READY` | RHX is reachable but this cannot be done now — RHX is already recording … |
 | `INTAN_COMMAND_FAILED` | RHX refused a command, or **accepted it and stored something else** (a read-back mismatch … |
 | `ARCHIVE_BUSY` | A scan, tidy, recover, re-derive, data-folder move or move of animals already holds the … |
@@ -297,6 +300,8 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="shape-detectedboard"></a>DetectedBoard | `hardwareId`, `address`, `fqbn`, `boxId` | A board the out-of-band `arduino-cli board list` poll has seen. |
 | <a id="shape-disksession"></a>DiskSession | `cohortId`, `cohortName`, `prefixName`, `sessionNumber`, `date`, `folderPath`, `recorded` | One session folder found on disk, identified by name alone (`sessions/paths.py`). |
 | <a id="shape-ephymerissettings"></a>EphymerisSettings | `dataDirectory`, `backupDirectory`, `arduinoCliPath`, `defaultBaud`, `boxes`, `intan?`, `recordingDefaults?`, `reducedMotion`, `constellation`, `constellationSlots`, `taskDefaults` | The Tauri-side store's schema; the store is the source of truth (`ARCHITECTURE.md#settings`). |
+| <a id="shape-eventpsth"></a>EventPsth | `runPath`, `eventsFile`, `sync`, `events`, `code`, `preMs`, `postMs`, `binMs`, `responseMs`, `split`, `groups`, `sites`, `rasterChannel`, `rasters` | One recorded run's spikes around one named event (`RECORDING.md#event-psth`). |
+| <a id="shape-eventpsthsite"></a>EventPsthSite | `channel`, `counts`, `deltaHz`, `t`, `responsive` |  |
 | <a id="shape-flashboxstatus"></a>FlashBoxStatus | `box`, `job`, `carries` |  |
 | <a id="shape-flashjobstate"></a>FlashJobState | "queued" \| "waiting" \| "flashing" \| "done" \| "failed" | `waiting` = its turn came but its port has another owner; it waits up … |
 | <a id="shape-flashjobstatus"></a>FlashJobStatus | `origin`, `sketchPath`, `sketchName`, `state`, `detail` | The last flash queued for one box. |

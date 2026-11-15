@@ -136,6 +136,25 @@ class EdgeMatcher:
         self._edges.extend(samples)
         return self._drain()
 
+    @property
+    def anchored(self) -> bool:
+        """The first pair has been found."""
+        return self._anchor is not None
+
+    @property
+    def pending_edges(self) -> int:
+        """Edges held, unpaired. An offline feed keeps this small, as a live
+        stream does, so a whole session's edges never trip `MAX_PENDING`."""
+        return len(self._edges)
+
+    def flush(self) -> list[MatchedEvent]:
+        """The stream is over: every strobing time still waiting never got its
+        pulse. Offline only; live, a stream is never over."""
+        out: list[MatchedEvent] = []
+        while self._strobes:
+            self._release(out, None)
+        return out
+
     def _tolerance(self, gap_ms: float) -> float:
         return max(self.ABS_TOLERANCE_MS, abs(gap_ms) * self.REL_TOLERANCE)
 

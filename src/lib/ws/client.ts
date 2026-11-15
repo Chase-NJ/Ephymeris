@@ -115,6 +115,8 @@ const CALL_TIMEOUT_OVERRIDES: Readonly<Record<string, number>> = {
   [CMD.PORT_START_SESSION]: 45_000,
   // Several hundred `set`s on a 128-channel headstage, each batch confirmed.
   [CMD.INTAN_CONFIGURE]: 60_000,
+  // The first look at a run reads its whole recording (`RECORDING.md#event-psth`).
+  [CMD.INTAN_EVENT_PSTH]: 300_000,
 };
 
 const BACKOFF_MS = [250, 500, 1_000, 2_000, 4_000, 8_000] as const;

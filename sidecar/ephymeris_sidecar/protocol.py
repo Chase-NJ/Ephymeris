@@ -133,6 +133,8 @@ class Cmd:
     INTAN_IMPEDANCE_HISTORY: Final = "intan.impedanceHistory"
     INTAN_YIELD_HISTORY: Final = "intan.yieldHistory"
     INTAN_ACKNOWLEDGE_TETHER: Final = "intan.acknowledgeTether"
+    INTAN_RECORDED_RUNS: Final = "intan.recordedRuns"
+    INTAN_EVENT_PSTH: Final = "intan.eventPsth"
     INTAN_FORCE_STOP: Final = "intan.forceStop"
 
     # Session log
@@ -233,6 +235,7 @@ class ErrCode:
     TASK_IMPORT_REPLACES: Final = "TASK_IMPORT_REPLACES"
     TASK_INVALID: Final = "TASK_INVALID"
     INTAN_UNAVAILABLE: Final = "INTAN_UNAVAILABLE"
+    RECORDING_UNREADABLE: Final = "RECORDING_UNREADABLE"
     INTAN_NOT_READY: Final = "INTAN_NOT_READY"
     INTAN_COMMAND_FAILED: Final = "INTAN_COMMAND_FAILED"
     ARCHIVE_BUSY: Final = "ARCHIVE_BUSY"
@@ -423,6 +426,8 @@ SHAPES: Final[dict[str, Any]] = {
     "ImpedanceMeasurement": ('obj', (('animalId', 'str', False), ('measuredAt', 'str', False), ('box', 'int', False), ('sessionId', ('union', ('str', 'null')), False), ('frequencyHz', 'float', False), ('file', ('union', ('str', 'null')), False), ('sites', ('map', ('ref', 'ImpedanceSite')), False))),
     "ImpedanceComparison": ('obj', (('current', ('ref', 'ImpedanceMeasurement'), False), ('previous', ('union', (('ref', 'ImpedanceMeasurement'), 'null')), False))),
     "RunYield": ('obj', (('runId', 'str', False), ('sessionId', 'str', False), ('box', 'int', False), ('startedAt', ('union', ('str', 'null')), False), ('countedSeconds', 'float', False), ('runSeconds', 'float', False), ('threshold', ('union', (('map', 'any'), 'null')), False), ('counts', ('map', 'int'), False))),
+    "EventPsthSite": ('obj', (('channel', 'str', False), ('counts', ('list', ('list', 'int')), False), ('deltaHz', ('union', ('float', 'null')), False), ('t', ('union', ('float', 'null')), False), ('responsive', ('lit', ('up', 'down', 'none')), False))),
+    "EventPsth": ('obj', (('runPath', 'str', False), ('eventsFile', ('union', ('str', 'null')), False), ('sync', ('obj', (('matched', 'int', False), ('missed', 'int', False), ('stray', 'int', False), ('tickPulsed', 'bool', False))), False), ('events', ('list', ('obj', (('code', 'int', False), ('name', 'str', False), ('count', 'int', False), ('placed', 'int', False)))), False), ('code', ('union', ('int', 'null')), False), ('preMs', 'int', False), ('postMs', 'int', False), ('binMs', 'int', False), ('responseMs', 'int', False), ('split', ('lit', ('none', 'condition', 'outcome')), False), ('groups', ('list', ('obj', (('label', 'str', False), ('trials', 'int', False)))), False), ('sites', ('list', ('ref', 'EventPsthSite')), False), ('rasterChannel', ('union', ('str', 'null')), False), ('rasters', ('union', (('list', ('list', ('list', 'float'))), 'null')), False))),
     "IntanSpikes": ('obj', (('box', 'int', False), ('counts', ('map', 'int'), False), ('lagMs', ('union', ('float', 'null')), False), ('sentAt', 'float', False))),
     "NoteTag": ('lit', ('observation', 'intervention', 'hardware', 'animal-health', 'protocol-deviation')),
     "NoteScope": ('obj', (('kind', ('lit', ('session', 'animal', 'box')), False), ('animalId', ('union', ('str', 'null')), False), ('box', ('union', ('int', 'null')), False))),
@@ -521,6 +526,8 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "intan.impedanceHistory": ('obj', (('animalIds', ('list', 'str'), False),)),
     "intan.yieldHistory": ('obj', (('animalIds', ('list', 'str'), False), ('limit', 'int', True))),
     "intan.acknowledgeTether": ('obj', (('box', 'int', False),)),
+    "intan.recordedRuns": ('obj', (('sessionId', 'str', False),)),
+    "intan.eventPsth": ('obj', (('runId', 'str', False), ('code', ('union', ('int', 'null')), True), ('preMs', 'int', False), ('postMs', 'int', False), ('binMs', 'int', False), ('split', ('lit', ('none', 'condition', 'outcome')), False), ('rasterChannel', ('union', ('str', 'null')), True))),
     "intan.forceStop": ('obj', ()),
     "logbook.cohort": ('obj', (('cohortId', 'str', False),)),
     "logbook.addNote": ('obj', (('sessionId', 'str', False), ('tag', ('ref', 'NoteTag'), False), ('body', 'str', False), ('scope', ('ref', 'NoteScope'), True), ('carryForward', 'bool', True), ('at', 'str', True))),
@@ -617,6 +624,8 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "intan.impedanceHistory": ('obj', (('latest', ('map', ('ref', 'ImpedanceComparison')), False),)),
     "intan.yieldHistory": ('obj', (('history', ('map', ('list', ('ref', 'RunYield'))), False),)),
     "intan.acknowledgeTether": ('ref', 'IntanStatus'),
+    "intan.recordedRuns": ('obj', (('runIds', ('list', 'str'), False),)),
+    "intan.eventPsth": ('ref', 'EventPsth'),
     "intan.forceStop": ('obj', (('ok', 'bool', False),)),
     "logbook.cohort": ('ref', 'LogbookCohort'),
     "logbook.addNote": ('obj', (('note', ('ref', 'SessionNote'), False),)),

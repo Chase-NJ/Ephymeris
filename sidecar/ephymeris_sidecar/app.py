@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from .analytics import AnalyticsService, CohortArchive, simulation
+from .analytics import reader as analytics_reader
 from .analytics.archive import ArchiveChange
 from .analytics.repository import AnalyticsRepository
 from .backup import BackupManager
@@ -33,6 +34,7 @@ from .hardware import service as hardware_service
 from .hardware import store as hardware_store
 from .intan import probemap as intan_probemap
 from .intan.impedance_store import ImpedanceStore, Measurement
+from .intan.offline import NotRecorded, OfflineRuns, psth_view
 from .intan.yield_store import SpikeYieldStore
 from .intan.service import IntanService, channel_name
 from .logbook.service import LogbookService
@@ -138,6 +140,8 @@ class Application:
         self.sessions = SessionRepository(self.db)
         self.impedances = ImpedanceStore(self.db)
         self.spike_yields = SpikeYieldStore(self.db)
+        # Recorded runs read back for the named-event PSTH (`RECORDING.md#event-psth`).
+        self.offline_runs = OfflineRuns(lambda code: rig_registry.vocabulary().name_of(code))
         self.runner: SessionRunner | None = None
         self.backup: BackupManager | None = None
         self.archive: CohortArchive | None = None
@@ -308,6 +312,8 @@ class Application:
         self.server.register(Cmd.INTAN_IMPEDANCE_HISTORY, self._intan_impedance_history)
         self.server.register(Cmd.INTAN_YIELD_HISTORY, self._intan_yield_history)
         self.server.register(Cmd.INTAN_ACKNOWLEDGE_TETHER, self._intan_acknowledge_tether)
+        self.server.register(Cmd.INTAN_RECORDED_RUNS, self._intan_recorded_runs)
+        self.server.register(Cmd.INTAN_EVENT_PSTH, self._intan_event_psth)
 
         missing = self.server.unhandled()
         if missing:
@@ -1821,6 +1827,45 @@ class Application:
             if found is not None:
                 latest[animal_id] = await asyncio.to_thread(self._impedance_comparison, found)
         return {"latest": latest}
+
+    async def _intan_recorded_runs(self, args: Args) -> dict[str, Any]:
+        """Which runs name a recording, from their headers alone."""
+        session_id = _str_arg(args, "sessionId")
+
+        def find() -> list[str]:
+            out = []
+            for run in self.sessions.runs_for(session_id):
+                if not run.file_path:
+                    continue
+                result = analytics_reader.read_run(run.file_path)
+                if result.ok and result.document and result.document.get("intan_recording"):
+                    out.append(run.id)
+            return out
+
+        return {"runIds": await asyncio.to_thread(find)}
+
+    async def _intan_event_psth(self, args: Args) -> dict[str, Any]:
+        run_id = _str_arg(args, "runId")
+        split = args["split"]
+        pre, post, bin_ = args["preMs"], args["postMs"], args["binMs"]
+        if not (0 <= pre <= 10_000 and 1 <= post <= 20_000 and 1 <= bin_ <= 1_000):
+            raise CommandError(ErrCode.BAD_MESSAGE, "Window: before 0–10 s, after up to 20 s, bins 1–1000 ms.")
+        archive = self.archive
+        run = archive.run(run_id) if archive is not None else self.sessions.run(run_id)
+        if run is None or not run.file_path:
+            raise CommandError(ErrCode.RECORDING_UNREADABLE, "That run has no file.")
+
+        def build() -> dict[str, Any]:
+            loaded = self.offline_runs.get(run.file_path)
+            return psth_view(
+                loaded, args.get("code"), pre_ms=pre, post_ms=post, bin_ms=bin_,
+                split=split, raster_channel=args.get("rasterChannel"),
+            )
+
+        try:
+            return await asyncio.to_thread(build)
+        except NotRecorded as exc:
+            raise CommandError(ErrCode.RECORDING_UNREADABLE, str(exc)) from exc
 
     async def _intan_acknowledge_tether(self, args: Args) -> dict[str, Any]:
         intan = self._require_intan()

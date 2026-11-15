@@ -29,6 +29,7 @@ What lands on disk and in the database, and how it is read back. Metric definiti
     notes.md                                    ← the session log, derived
     behavior.tsv/<animal>_<prefix>_<number>_<date>_<HHMMSS>.tsv     ← written live
     behavior.json/….json  behavior.mat/….mat                         ← built at run end
+    events/….events.json  ….events.mat           ← a recorded run's events on RHX's clock, when first viewed
 ```
 
 Built by `sessions/paths.py` (`resolve_session_folder`, `resolve_animal_files`). Reusing a prefix and number on one day is allowed (`sessions.suggestNumber` warns via `sameDayNumbers`); the files land side by side.

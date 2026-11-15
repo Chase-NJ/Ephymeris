@@ -34,6 +34,7 @@ import { LearningCurves } from "@/components/analytics/LearningCurves";
 import { SessionRail } from "@/components/analytics/SessionRail";
 import { SessionStrategy } from "@/components/analytics/SessionStrategy";
 import { SessionSummary } from "@/components/analytics/SessionSummary";
+import { EventPsthPanel } from "@/components/analytics/EventPsthPanel";
 import { TidyRecords, describeTidy } from "@/components/analytics/TidyRecords";
 import { Button } from "@/components/common/controls";
 import { FolderButton } from "@/components/common/FolderButton";
@@ -218,6 +219,11 @@ export function Analytics() {
         ? null
         : (sessions.find((session) => session.id === sessionScope) ?? null),
     [sessions, sessionScope],
+  );
+  // Animal id -> name, for panels that name a run's animal.
+  const animalNames = useMemo(
+    () => new Map((summary?.animals ?? []).map((a) => [a.id, a.name])),
+    [summary],
   );
   // Every run in the selected session, whatever task it was on and whether
   // or not it decoded (`session.ts`) — the one list every session-scope panel
@@ -668,6 +674,16 @@ export function Analytics() {
                   />
                 )}
               </AnimatePresence>
+              {/* A recorded session's spikes around its named events
+                  (`RECORDING.md#event-psth`); nothing for a behaviour-only one. */}
+              {selectedSession && (
+                <EventPsthPanel
+                  key={selectedSession.id}
+                  sessionId={selectedSession.id}
+                  runs={sessionAllRuns}
+                  animalNames={animalNames}
+                />
+              )}
 
               {/* Across sessions: the roster, the strategy plane and the
               accuracy trend in one row, then effort and the outcome mix

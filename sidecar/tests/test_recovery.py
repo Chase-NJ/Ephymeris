@@ -1,0 +1,457 @@
+"""Crash-recovery backfill — `DATA.md#crash-recovery`.
+
+The invariant these protect: recovery is the inverse of `writer.AnimalWriter`.
+A `.json` backfilled from an orphaned `.tsv` must match what `finalize` would
+have written from the same strobes — same fields, same *types* — differing
+only where honesty requires it (`stop_reason`, when the crash means the real
+one was never recorded).
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime
+from pathlib import Path
+
+import pytest
+
+from ephymeris_sidecar.analytics import reader
+from ephymeris_sidecar.protocol import validate_command_result
+from ephymeris_sidecar.sessions import recovery
+from ephymeris_sidecar.sessions.paths import resolve_animal_files
+from ephymeris_sidecar.sessions.writer import AnimalWriter
+
+CORE = {
+    "rat": "remy1",
+    "serial_port": "COM3",
+    "session_id": "2O-Bdisc_25",
+    "sketch": "GRGL_2-Odor",
+    # A hex digest that happens to be all digits must come back a string.
+    "channel_set_hash": "0123456789012345",
+}
+CONFIG = {"correction_left": 0, "lazy_escalation": True, "trial_seed": 288577176}
+STROBES = [(101, 0), (249, 500), (103, 900), (248, 1400)]
+
+#: The snapshot a live run carries (`DATA.md#the-embedded-task-profile`) — real enough to parse,
+#: since the point of recovering it is that the other end can.
+PROFILE = {
+    "taskName": "GRGL 2-Odor",
+    "kind": "behavior",
+    "config": [],
+    "strobes": {"101": "ODOR_1_ON"},
+    "liveMetrics": [
+        {"id": "p_correct_1", "label": "P(right well | Go right)", "triggerCode": 101,
+         "successCode": 249, "alternateCode": 248, "windowSize": 20},
+    ],
+}
+
+
+def crash_a_run(session_folder: Path, animal: str = "remy1") -> Path:
+    """Write a real header + strobes through the real writer, then 'lose power'
+    — drop it without `finalize`, so no footer and no `.json`."""
+    files = resolve_animal_files(
+        session_folder, animal, "2O-Bdisc", "25", datetime(2026, 7, 22, 11, 31, 23)
+    )
+    writer = AnimalWriter(
+        files.tsv, files.json, files.mat, dict(CORE), dict(CONFIG),
+        profile_snapshot=PROFILE,
+    )
+    writer.open_files()
+    for code, ts in STROBES:
+        writer.record(code, ts)
+    del writer  # the crash: its handle closes as a dead process's does, unfinalized
+    return files.tsv
+
+
+def finalized_document() -> dict:
+    """What `finalize` would have produced from the same strobes — the target."""
+    doc = {**CORE, **CONFIG}
+    doc["task_profile"] = PROFILE
+    doc["stop_reason"] = recovery.RECOVERED_STOP_REASON
+    doc["n_events"] = len(STROBES)
+    doc["ts_data"] = [[code, ts] for code, ts in STROBES]
+    return doc
+
+
+def test_recovery_rebuilds_exactly_what_finalize_would_have(tmp_path: Path) -> None:
+    tsv = crash_a_run(tmp_path)
+    entry = recovery.recover_file(tsv)
+
+    assert entry["status"] == "recovered"
+    assert entry["nEvents"] == len(STROBES)
+    assert entry["stopReason"] == recovery.RECOVERED_STOP_REASON
+
+    document = json.loads(Path(entry["jsonPath"]).read_text(encoding="utf-8"))
+    # Field-for-field, *type*-for-type: ints back as ints, bools as bools,
+    # and an animal name that happens to look numeric would stay a string.
+    assert document == finalized_document()
+    # The .mat lands beside it, in the sibling format folder.
+    assert reader.sibling_mat(tsv).is_file()
+
+
+def test_a_footer_carrying_tsv_keeps_its_recorded_stop_reason(tmp_path: Path) -> None:
+    """The disk-full case (`DATA.md#crash-recovery`): `finalize` ran (footer written) but the
+    best-effort `.json` write failed. The recorded reason is the truth —
+    stamping it 'recovered after crash' would erase why the run ended."""
+    tsv = crash_a_run(tmp_path)
+    with open(tsv, "a", encoding="utf-8", newline="\n") as fh:
+        fh.write("# stop_reason: BF_END_SESSION received\n")
+        fh.write("# n_events: 4\n")
+
+    entry = recovery.recover_file(tsv)
+    assert entry["status"] == "recovered"
+    assert entry["stopReason"] == "BF_END_SESSION received"
+    document = json.loads(Path(entry["jsonPath"]).read_text(encoding="utf-8"))
+    assert document["stop_reason"] == "BF_END_SESSION received"
+
+
+def test_a_torn_final_line_costs_only_itself(tmp_path: Path) -> None:
+    """`DATA.md#crash-recovery` — power died mid-write. The partial line matches neither rule and
+    contributes nothing; every complete line before it survives."""
+    tsv = crash_a_run(tmp_path)
+    with open(tsv, "a", encoding="utf-8", newline="\n") as fh:
+        fh.write("24")  # a strobe line torn mid-write, no tab, no newline
+
+    entry = recovery.recover_file(tsv)
+    assert entry["status"] == "recovered"
+    assert entry["nEvents"] == len(STROBES)
+    document = json.loads(Path(entry["jsonPath"]).read_text(encoding="utf-8"))
+    assert document["ts_data"] == [[code, ts] for code, ts in STROBES]
+
+
+def _complete_lines(data: bytes) -> bytes:
+    """What a cut file holds whole: everything up to its last newline."""
+    end = data.rfind(b"\n")
+    return data[: end + 1] if end >= 0 else b""
+
+
+def test_a_cut_at_any_byte_costs_only_the_torn_line(tmp_path: Path) -> None:
+    """`DATA.md#crash-recovery`: a torn final line costs only itself. A power cut
+    can land on any byte, so the run is cut at every one. Whatever the cut, the
+    recovered document is exactly the one its complete lines make: a strobe cut
+    mid-timestamp (`249\\t5` of `249\\t500`) is never read as a strobe, and a
+    header line cut mid-value is never read as its value."""
+    tsv = crash_a_run(tmp_path)
+    with open(tsv, "a", encoding="utf-8", newline="\n") as fh:
+        fh.write("# stop_reason: BF_END_SESSION received\n# n_events: 4\n")
+    data = tsv.read_bytes()
+    cut, whole = tmp_path / "cut.tsv", tmp_path / "whole.tsv"
+    for k in range(1, len(data) + 1):
+        cut.write_bytes(data[:k])
+        whole.write_bytes(_complete_lines(data[:k]))
+        got = recovery.recovered_document(recovery.parse_tsv(cut))
+        assert got == recovery.recovered_document(recovery.parse_tsv(whole)), k
+    # And through the real entry point, on a cut mid-timestamp.
+    cut.write_bytes(data[: data.index(b"249\t500") + 5])
+    entry = recovery.recover_file(cut)
+    assert entry["status"] == "recovered" and entry["nEvents"] == 1
+
+
+def test_a_legacy_logs_unterminated_last_line_is_still_read(tmp_path: Path) -> None:
+    """The pre-Ephymeris software may not have ended its last line, and its
+    archive is fixed: a whole strobe there is still a strobe."""
+    folder = tmp_path / "recovery_tsv"
+    folder.mkdir()
+    path = folder / "remy2_shaping_43_06_12_26_121104.tsv"
+    path.write_bytes(LEGACY_LOG.rstrip(b"\r\n"))
+    parsed = recovery.parse_tsv(path)
+    assert parsed.events[-1] == [246, 106721]
+
+
+def test_n_events_is_recomputed_never_copied(tmp_path: Path) -> None:
+    """A footer's count describes the run `finalize` saw, which a torn file no
+    longer is — the recovered document must not claim events it doesn't hold."""
+    tsv = crash_a_run(tmp_path)
+    with open(tsv, "a", encoding="utf-8", newline="\n") as fh:
+        fh.write("# stop_reason: operator stop\n")
+        fh.write("# n_events: 999\n")
+
+    entry = recovery.recover_file(tsv)
+    document = json.loads(Path(entry["jsonPath"]).read_text(encoding="utf-8"))
+    assert document["n_events"] == len(STROBES)
+
+
+def test_a_stray_tsv_is_refused_not_invented(tmp_path: Path) -> None:
+    stray = tmp_path / "behavior.tsv" / "notes.tsv"
+    stray.parent.mkdir(parents=True)
+    stray.write_text("just some notes\nnot a session\n", encoding="utf-8")
+
+    entry = recovery.recover_file(stray)
+    assert entry["status"] == "failed"
+    assert entry["jsonPath"] is None
+    assert not reader.sibling_json(stray).exists()
+
+
+def test_the_walk_finds_only_tsvs_with_no_json_sibling(tmp_path: Path) -> None:
+    """`walk_orphaned_tsvs` shares `walk_session_files`' traversal — format
+    folders by name at any depth — and yields only the genuinely orphaned."""
+    # A finalized run: .tsv with its .json sibling — not an orphan.
+    session_a = tmp_path / "2O-Bdisc" / "2O-Bdisc_25_2026-07-22"
+    files = resolve_animal_files(
+        session_a, "remy1", "2O-Bdisc", "25", datetime(2026, 7, 22, 11, 0, 0)
+    )
+    writer = AnimalWriter(files.tsv, files.json, files.mat, dict(CORE), dict(CONFIG))
+    writer.open_files()
+    writer.record(101, 0)
+    writer.finalize("BF_END_SESSION received")
+
+    # A crashed run in the same folder — orphaned.
+    orphan = crash_a_run(session_a, animal="remy2")
+
+    # A legacy-layout orphan, sitting straight under the cohort root with the
+    # underscored folder names — the depth and spelling the archive walk (`DATA.md#orphan-adoption`) must read.
+    legacy_dir = tmp_path / "gr_01_07_22_26" / "recovery_tsv"
+    legacy_dir.mkdir(parents=True)
+    legacy = legacy_dir / "remy3_gr_01_07_22_26_090000.tsv"
+    legacy.write_text("# rat: remy3\n101\t0\n", encoding="utf-8")
+
+    # AppleDouble junk beside it — filtered, same as the .json walk.
+    (legacy_dir / "._remy3_gr_01_07_22_26_090000.tsv").write_text(
+        "\x00junk", encoding="utf-8"
+    )
+
+    found = reader.walk_orphaned_tsvs(tmp_path)
+    assert found == sorted([orphan, legacy])
+
+
+def test_legacy_layout_recovers_into_the_legacy_folders(tmp_path: Path) -> None:
+    """Layout-preserving on purpose: a `recovery_tsv/` orphan backfills into
+    `behavior_json/`/`behavior_mat/`, not a current-spelling folder minted
+    beside the archive's real ones."""
+    legacy_dir = tmp_path / "gr_01_07_22_26" / "recovery_tsv"
+    legacy_dir.mkdir(parents=True)
+    legacy = legacy_dir / "remy3_gr_01_07_22_26_090000.tsv"
+    legacy.write_text("# rat: remy3\n# sketch: Shape - L\n101\t0\n249\t500\n", encoding="utf-8")
+
+    entry = recovery.recover_file(legacy)
+    assert entry["status"] == "recovered"
+    assert Path(entry["jsonPath"]).parent.name == "behavior_json"
+    assert (legacy.parent.parent / "behavior_mat").is_dir()
+    document = json.loads(Path(entry["jsonPath"]).read_text(encoding="utf-8"))
+    assert document["rat"] == "remy3"
+    assert document["sketch"] == "Shape - L"  # core field: string, uncoerced
+
+
+def test_recover_cohort_returns_the_wire_shape(tmp_path: Path) -> None:
+    session = tmp_path / "2O-Bdisc" / "2O-Bdisc_25_2026-07-22"
+    crash_a_run(session)
+    stray = session / "behavior.tsv" / "notes.tsv"
+    stray.write_text("not a session\n", encoding="utf-8")
+
+    result = recovery.recover_cohort(str(tmp_path))
+    assert result["scanned"] == 2
+    assert result["recovered"] == 1
+    assert result["failed"] == 1
+    assert result["folderMissing"] is False
+    assert validate_command_result("sessions.recover", {**result, "cohortId": "c1"}) == []
+
+    # Idempotent by construction: the recovered .tsv now has a .json sibling,
+    # so a second pass sees only the stray.
+    again = recovery.recover_cohort(str(tmp_path))
+    assert again["scanned"] == 1
+    assert again["recovered"] == 0
+
+
+def test_recover_cohort_says_nowhere_to_look(tmp_path: Path) -> None:
+    result = recovery.recover_cohort(str(tmp_path / "unplugged-drive"))
+    assert result["folderMissing"] is True
+    assert result["scanned"] == 0
+    assert validate_command_result("sessions.recover", {**result, "cohortId": "c1"}) == []
+
+
+def test_a_recovered_orphan_is_adoptable_by_the_rescan_walk(tmp_path: Path) -> None:
+    """The end-to-end handoff (`DATA.md#crash-recovery` ↔ `DATA.md#orphan-adoption`): recovery writes the
+    `.json`, and the adoption walk — the same traversal — then finds it."""
+    session = tmp_path / "2O-Bdisc" / "2O-Bdisc_25_2026-07-22"
+    tsv = crash_a_run(session)
+    assert reader.walk_session_files(tmp_path) == []
+
+    entry = recovery.recover_file(tsv)
+    assert reader.walk_session_files(tmp_path) == [Path(entry["jsonPath"])]
+
+
+def test_a_recovered_file_is_still_self_describing(tmp_path: Path) -> None:
+    """`DATA.md#the-embedded-task-profile` — the recovered `.json` is exactly the file somebody carries to
+    another machine to find out what happened, so it has to keep the
+    declaration that decodes it."""
+    from ephymeris_sidecar.tasks.profile import embedded_profile
+
+    tsv = crash_a_run(tmp_path)
+    recovery.recover_file(tsv)
+
+    document = json.loads(reader.sibling_json(tsv).read_text(encoding="utf-8"))
+    profile = embedded_profile(document)
+    assert profile is not None
+    assert profile.live_metrics[0].id == "p_correct_1"
+
+
+def test_a_snapshot_torn_by_the_crash_is_dropped_not_kept_as_text(
+    tmp_path: Path,
+) -> None:
+    """Half a snapshot is worse than none: every reader downstream would have
+    to defend against a `task_profile` that is a string. The ladder below it
+    (`ANALYTICS.md#which-profile-decodes-a-run`) still scores the run, so dropping loses nothing but the shortcut."""
+    tsv = crash_a_run(tmp_path)
+    lines = tsv.read_text(encoding="utf-8").splitlines()
+    torn = [
+        line[: len(line) // 2] if line.startswith("# task_profile: ") else line
+        for line in lines
+    ]
+    tsv.write_text("\n".join(torn) + "\n", encoding="utf-8")
+
+    entry = recovery.recover_file(tsv)
+    assert entry["status"] == "recovered"
+    document = json.loads(reader.sibling_json(tsv).read_text(encoding="utf-8"))
+    assert "task_profile" not in document
+    # The data itself is untouched by any of this.
+    assert document["n_events"] == len(STROBES)
+
+
+# --- the pre-Ephymeris dialect ---------------------------------------------
+#
+# The lab's older software wrote `recovery_tsv/` logs of its own: a column
+# header, `# key\tvalue` comments, a name column on every strobe, CRLF, and no
+# footer. Byte-for-byte the shape of a real orphan in the lab's archive
+# (`Shaping/shaping_43_06_12_26/recovery_tsv/remy2_…_121104.tsv`), shortened.
+
+LEGACY_LOG = (
+    b"event_code\tevent_ms\tevent_name\r\n"
+    b"# correction_left\t0\r\n"
+    b"# lazy_escalation\t1\r\n"
+    b"# trial_seed\t93518744\r\n"
+    b"221\t0\tBF_START_SESSION\r\n"
+    b"222\t999\tBF_LIGHTS_ON\r\n"
+    b"223\t5002\tBF_LAZY_RAT\r\n"
+    b"234\t9002\tBF_INVALID_TRIAL\r\n"
+    b"246\t106721\tBF_END_SESSION\r\n"
+)
+
+
+def write_legacy(session_folder: Path, stem: str = "remy2_shaping_43_06_12_26_121104") -> Path:
+    tsv = session_folder / "recovery_tsv" / f"{stem}.tsv"
+    tsv.parent.mkdir(parents=True)
+    tsv.write_bytes(LEGACY_LOG)
+    return tsv
+
+
+def test_a_legacy_log_is_read_not_refused(tmp_path: Path) -> None:
+    """Read by this app's rules it holds no header and no strobes, so recovery
+    refused it as 'not a session .tsv' and its run could never come back."""
+    parsed = recovery.parse_tsv(write_legacy(tmp_path / "shaping_43_06_12_26"))
+    assert parsed.dialect == "legacy"
+    assert parsed.events == [[221, 0], [222, 999], [223, 5002], [234, 9002], [246, 106721]]
+    assert parsed.metadata == {"correction_left": 0, "lazy_escalation": 1, "trial_seed": 93518744}
+    assert parsed.stop_reason is None
+
+
+def test_a_recovered_legacy_run_lands_in_the_legacy_folder_and_claims_no_crash(
+    tmp_path: Path,
+) -> None:
+    tsv = write_legacy(tmp_path / "shaping_43_06_12_26")
+    entry = recovery.recover_file(tsv)
+
+    assert entry["status"] == "recovered" and entry["nEvents"] == 5
+    # The old software wrote no footer, so its absence is not evidence of a crash.
+    assert entry["stopReason"] == recovery.RECOVERED_LEGACY_STOP_REASON
+    json_path = Path(entry["jsonPath"])
+    assert json_path.parent.name == "behavior_json", "layout-preserving, as for any legacy file"
+    document = json.loads(json_path.read_text(encoding="utf-8"))
+    assert document["ts_data"][-1] == [246, 106721]
+    # Nothing the log does not hold: the animal is in the filename, and
+    # adoption reads it from there.
+    assert "rat" not in document and "sketch" not in document
+
+
+def test_a_legacy_header_with_no_strobes_is_still_refused(tmp_path: Path) -> None:
+    """129 of the archive's legacy logs are a header line and nothing else —
+    runs that never produced a strobe. Recovering one would mint an empty run."""
+    tsv = tmp_path / "S" / "recovery_tsv" / "remy5_S_125345.tsv"
+    tsv.parent.mkdir(parents=True)
+    tsv.write_bytes(b"event_code\tevent_ms\tevent_name\r\n")
+    entry = recovery.recover_file(tsv)
+    assert entry["status"] == "failed"
+    assert "never recorded a strobe" in entry["reason"]
+
+
+def test_the_name_column_is_admitted_only_in_a_legacy_file(tmp_path: Path) -> None:
+    """This app's own log keeps the strict two-column rule the live session
+    parser applies: a three-column line there is not a strobe it would have
+    written, so recovery must not admit it either."""
+    tsv = crash_a_run(tmp_path)
+    with open(tsv, "a", encoding="utf-8") as fh:
+        fh.write("246\t9000\tBF_END_SESSION\n")
+    parsed = recovery.parse_tsv(tsv)
+    assert parsed.dialect == "ephymeris"
+    assert [246, 9000] not in parsed.events
+
+
+# --- a torn structured file (`DATA.md#crash-safety`) ---------------------------
+
+
+def test_a_torn_json_is_offered_for_recovery_and_rebuilt(tmp_path: Path) -> None:
+    """A `.json` the power cut short under its real name is no `.json` at
+    all: its `.tsv` holds the run, and Recover offers it until the document
+    parses."""
+    tsv = crash_a_run(tmp_path)
+    torn = reader.sibling_json(tsv)
+    torn.parent.mkdir(parents=True, exist_ok=True)
+    torn.write_text('{\n  "rat": "remy1",\n  "serial_po', encoding="utf-8")
+
+    assert reader.walk_orphaned_tsvs(tmp_path, parse_json=True) == [tsv]
+    result = recovery.recover_cohort(str(tmp_path))
+
+    assert result["recovered"] == 1
+    assert json.loads(torn.read_text(encoding="utf-8")) == finalized_document()
+    assert reader.walk_orphaned_tsvs(tmp_path, parse_json=True) == []
+
+
+@pytest.mark.parametrize(("nth", "cut"), [(1, ".json"), (2, ".mat")])
+def test_a_power_cut_while_finalizing_leaves_nothing_torn(
+    tmp_path: Path, power_cut, nth: int, cut: str  # noqa: ANN001
+) -> None:
+    """Whichever structured file the power goes out on, nothing half-written
+    sits under its real name. A run cut at its `.json` is a `.tsv` Recover
+    finds, not a document every reader trips on."""
+    files = resolve_animal_files(
+        tmp_path, "remy1", "2O-Bdisc", "25", datetime(2026, 7, 22, 11, 31, 23)
+    )
+    writer = AnimalWriter(
+        files.tsv, files.json, files.mat, dict(CORE), dict(CONFIG), profile_snapshot=PROFILE
+    )
+    writer.open_files()
+    for code, ts in STROBES:
+        writer.record(code, ts)
+    power_cut("write", tmp_path, nth=nth)  # the .tsv was opened before the cut was armed
+    with pytest.raises(SystemExit):
+        writer.finalize("BF_END_SESSION received")
+
+    assert _whole_or_absent(files.json)
+    assert _whole_or_absent(files.mat)
+    assert reader.walk_orphaned_tsvs(tmp_path, parse_json=True) == ([files.tsv] if cut == ".json" else [])
+
+
+def test_a_power_cut_while_recovering_leaves_the_run_offered(tmp_path: Path, power_cut) -> None:  # noqa: ANN001
+    tsv = crash_a_run(tmp_path)
+    power_cut("write", tmp_path)
+    with pytest.raises(SystemExit):
+        recovery.recover_file(tsv)
+
+    assert _whole_or_absent(reader.sibling_json(tsv))
+    assert reader.walk_orphaned_tsvs(tmp_path, parse_json=True) == [tsv]
+    assert recovery.recover_cohort(str(tmp_path))["recovered"] == 1
+
+
+def _whole_or_absent(path: Path) -> bool:
+    """Nothing at `path`, or a document that reads back whole."""
+    if not path.exists():
+        return True
+    try:
+        if path.suffix == ".json":
+            json.loads(path.read_text(encoding="utf-8"))
+        else:
+            import scipy.io
+
+            scipy.io.loadmat(str(path))
+    except Exception:  # noqa: BLE001 - any failure to read it back is a torn file
+        return False
+    return True

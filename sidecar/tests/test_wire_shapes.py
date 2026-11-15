@@ -1,0 +1,501 @@
+"""Pins the sidecar's actual payload emitters to `protocol/schema.py`.
+
+The generated mirrors cannot drift from each other (they share one source),
+but a Python emitter can still drift from the schema — a field added in a
+`to_json` and forgotten in `schema.py`, or vice versa. The conformance tests
+here run the real emitters and validate their output; the validator tests pin
+the semantics that make the check trustworthy (optional vs nullable, unknown
+keys, bool-is-not-int).
+
+Events are covered more broadly than this file: `conftest.py` turns validation
+on inside `protocol.event()` itself, so every event any test emits is checked.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from ephymeris_sidecar.boards.tool import DetectedBoard
+from ephymeris_sidecar.cohorts.grouping import suggest_groups
+from ephymeris_sidecar.cohorts.models import Animal, Cohort, Group
+from ephymeris_sidecar.discovery import (
+    LIBRARY_ENV,
+    SketchDiscovery,
+    SketchLibraryStatus,
+    discover,
+    library_status,
+)
+from ephymeris_sidecar.ports.handler import OutputLine
+from ephymeris_sidecar.protocol import (
+    Evt,
+    WireShapeError,
+    event,
+    validate,
+    validate_command_result,
+    validate_event_data,
+)
+from ephymeris_sidecar.sessions.models import GroupRun, Prefix, Session
+from ephymeris_sidecar.tasks import profile as task_profile
+
+
+# --- Validator semantics ---------------------------------------------------
+
+
+def test_optional_is_not_nullable() -> None:
+    spec = ("obj", (("present", "str", False), ("maybe", "int", True)))
+    assert validate(spec, {"present": "x"}) == []
+    assert validate(spec, {"present": "x", "maybe": 3}) == []
+    # Optional means the key may be absent — not that null is acceptable.
+    assert validate(spec, {"present": "x", "maybe": None}) != []
+    assert validate(spec, {"maybe": 3}) != []
+
+
+def test_unknown_fields_are_drift_not_noise() -> None:
+    spec = ("obj", (("a", "str", False),))
+    problems = validate(spec, {"a": "x", "b": 1})
+    assert problems and "unknown field `b`" in problems[0]
+
+
+def test_bool_does_not_pass_as_number() -> None:
+    assert validate("int", True) != []
+    assert validate("float", True) != []
+    assert validate("float", 3) == []  # an int is a fine float on the wire
+
+
+def test_union_accepts_either_arm() -> None:
+    profile = task_profile.parse_profile({"taskName": "T"})
+    assert validate_command_result("tasks.getProfile", profile.to_json()) == []
+    assert validate_command_result("tasks.getProfile", {"profile": None}) == []
+    assert validate_command_result("tasks.getProfile", {"profile": "GRGL"}) != []
+
+
+def test_event_builder_rejects_drift_when_enabled() -> None:
+    good = {"box": 1, "state": "IDLE", "prev": "ERROR", "reason": "acknowledged"}
+    assert event(Evt.PORT_STATE, good)["data"] == good
+    with pytest.raises(WireShapeError):
+        event(Evt.PORT_STATE, {**good, "port": "COM3"})
+
+
+# --- Emitter conformance ---------------------------------------------------
+
+
+def _session() -> Session:
+    return Session(
+        id="s1",
+        cohort_id="c1",
+        prefix_id="p1",
+        prefix_name="2O-Bdisc",
+        session_number="25",
+        date="2026-07-27",
+        started_at="2026-07-27T09:00:00+00:00",
+        status="running",
+        folder_path="/data/Batch A/2O-Bdisc/2O-Bdisc_25_2026-07-27",
+        group_runs=[GroupRun("g1", 0, "2026-07-27T09:00:00+00:00")],
+    )
+
+
+def test_session_to_json_matches_schema() -> None:
+    assert validate(("ref", "Session"), _session().to_json()) == []
+
+
+def test_session_list_item_matches_schema() -> None:
+    assert validate(("ref", "SessionListItem"), _session().to_list_item(3)) == []
+    assert (
+        validate(("ref", "SessionListItem"), _session().to_list_item(3, run_count=2)) == []
+    )
+
+
+def test_prefix_matches_schema() -> None:
+    assert validate(("ref", "Prefix"), Prefix("p1", "2O-Bdisc").to_json()) == []
+
+
+def _cohort() -> Cohort:
+    return Cohort(
+        id="c1",
+        name="Batch A",
+        data_folder="/data/Batch A",
+        created_at="2026-07-01T00:00:00+00:00",
+        updated_at="2026-07-01T00:00:00+00:00",
+        animals=[
+            Animal("a1", "R-14", "g1", box_number=3, cage=2, sex="M"),
+            Animal("a2", "R-15", "g1"),  # every nullable field null
+        ],
+        groups=[Group("g1", "Group 1", 0)],
+    )
+
+
+def test_cohort_payloads_match_schema() -> None:
+    cohort = _cohort()
+    assert validate(("ref", "Cohort"), cohort.to_json()) == []
+    assert validate(("ref", "CohortSummary"), cohort.to_summary()) == []
+
+
+def test_group_proposal_matches_schema() -> None:
+    animals = [Animal(f"a{i}", f"R-{i}", "g1") for i in range(8)]
+    accepted = suggest_groups(animals, group_count=2)
+    assert validate(("ref", "GroupProposal"), accepted.to_json()) == []
+    # One group can't hold eight animals — the rejection arm is a payload too.
+    rejected = suggest_groups(animals, group_count=1)
+    assert rejected.to_json()["rejected"] is not None
+    assert validate(("ref", "GroupProposal"), rejected.to_json()) == []
+
+
+def test_a_metric_with_several_alternates_matches_schema() -> None:
+    from ephymeris_sidecar.rig import registry
+
+    code = registry.Vocabulary(registry.default_vocabulary_document()).code_of
+    profile = task_profile.parse_profile(
+        {
+            "taskName": "Go / no-go",
+            "strobes": {str(code("ODOR_5_ON")): "ODOR_5_ON",
+                        str(code("WATER_POKE_NONE")): "WATER_POKE_NONE"},
+            "liveMetrics": [
+                {"id": "p_withhold_1", "label": "P(withhold | Odor 5)",
+                 "triggerCode": code("ODOR_5_ON"), "successCode": code("WATER_POKE_NONE"),
+                 "alternateCodes": [code("WATER_POKE_L"), code("WATER_POKE_R")],
+                 "windowSize": 20}
+            ],
+        }
+    )
+    assert validate(("ref", "TaskProfile"), profile.to_json()) == []
+
+
+def test_task_profile_payloads_match_schema() -> None:
+    behavior = task_profile.parse_profile(
+        {
+            "taskName": "GRGL 2-Odor Discrimination",
+            "config": [
+                {
+                    "metadataKey": "correction_left",
+                    "wireKey": "CL",
+                    "label": "Correction left",
+                    "type": "int",
+                    "default": 0,
+                }
+            ],
+            "strobes": {"101": "ODOR_1_ON", "246": "END_SESSION"},
+            "liveMetrics": [
+                {
+                    "id": "p_r_odor1",
+                    "label": "P(R | Odor 1)",
+                    "triggerCode": 101,
+                    "successCode": 249,
+                    "alternateCode": 248,
+                    "windowSize": 20,
+                }
+            ],
+        }
+    )
+    assert validate(("ref", "TaskProfile"), behavior.to_json()) == []
+
+    utility = task_profile.parse_profile(
+        {
+            "taskName": "Clean & Flush",
+            "kind": "utility",
+            "controls": [
+                {"id": "alloff", "label": "All off", "type": "button", "command": "ALLOFF"},
+                {
+                    "id": "gear",
+                    "label": "Fluid set",
+                    "type": "select",
+                    "options": [{"label": "Set 1", "command": "SET GEAR=1"}],
+                },
+            ],
+            "telemetry": {"match": "STATUS", "fields": [{"key": "gear", "label": "Fluid set"}]},
+            "identify": {"on": "ON LIGHT", "off": "OFF LIGHT"},
+        }
+    )
+    assert validate(("ref", "TaskProfile"), utility.to_json()) == []
+
+
+def test_utility_baseline_payloads_match_schema() -> None:
+    """The baseline snapshot is one shape shared by two commands and an event."""
+    from ephymeris_sidecar.utility import BoxBaseline
+
+    box = BoxBaseline(box=2, state="restoring", detail="flashing BOX_Utility")
+    assert validate(("ref", "UtilityBoxState"), box.to_json()) == []
+    assert validate_command_result("utility.identify", {"delivered": False, "state": box.to_json()}) == []
+
+    status = {
+        "configured": True,
+        "sketchPath": "/sk/Utility/BOX_Utility",
+        "sketchName": "BOX_Utility",
+        "canIdentify": True,
+        "held": False,
+        "message": None,
+        "boxes": [box.to_json()],
+    }
+    assert validate_command_result("utility.ensure", status) == []
+    assert validate_event_data("utility.updated", status) == []
+
+
+async def test_flash_queue_status_matches_schema() -> None:
+    """One snapshot for three commands and an event, run for real: a box
+    flashed, one that failed, one waiting on its port, and boxes with nothing."""
+    import asyncio
+
+    from ephymeris_sidecar.boards.tool import FlashFailed
+
+    from .test_flash_queue import Rig, run_a_session
+
+    rig = Rig()
+    await rig.ports.poll_once()
+    rig.queue.submit([rig.job(1, "session"), rig.job(2, "debug", baud=9600)])
+    await rig.settle()
+    rig.tool.fail = FlashFailed("compile", "compile failed")
+    claim = run_a_session(rig, 3)  # busy, so its session flash waits
+    rig.queue.submit([rig.job(2, "debug"), rig.job(3, "session")])
+    for _ in range(100):
+        await asyncio.sleep(0.01)
+        if rig.row(3) and rig.row(3)["state"] == "waiting":
+            break
+
+    status = rig.queue.status()
+    claim.release("test over")
+    assert {rig.row(b)["state"] for b in (1, 2, 3)} == {"done", "failed", "waiting"}
+    for name in ("flash.enqueue", "flash.cancel", "flash.status", "sessions.flash"):
+        assert validate_command_result(name, status) == [], name
+    assert validate_event_data("flash.queue", status) == []
+    rig.queue.cancel()
+    await rig.queue.stop()
+
+
+def test_analytics_derive_payloads_match_schema() -> None:
+    """Every `to_json` in `analytics/stream/`, run for real and validated.
+
+    These are the emitters most likely to drift: a field is added to the maths
+    and shows up in the payload, and `schema.py` is a separate file that has to
+    be remembered. `RunSummary.to_json` is spread across `RunSummary` on the
+    wire rather than nested, so it is checked field-by-field against that shape
+    instead of by reference.
+    """
+    from ephymeris_sidecar.analytics import stream
+
+    profile = task_profile.parse_profile(
+        {
+            "taskName": "GRGL",
+            "strobes": {
+                "101": "ODOR_1_ON", "103": "ODOR_3_ON",
+                "222": "LIGHTS_ON", "224": "ODOR_POKE",
+                "226": "ODOR_UNPOKE", "225": "ODOR_UNPOKE_EARLY",
+                "248": "WATER_POKE_L", "249": "WATER_POKE_R",
+                "250": "WATER_UNPOKE_EARLY_L", "252": "FLUID_L", "253": "FLUID_R",
+                "257": "WATER_POKE_ERROR_L", "246": "END_SESSION",
+            },
+            "liveMetrics": [
+                {"id": "p_r_odor1", "label": "P(R | Odor 1)", "triggerCode": 101,
+                 "successCode": 249, "alternateCode": 248, "windowSize": 20},
+                {"id": "p_l_odor3", "label": "P(L | Odor 3)", "triggerCode": 103,
+                 "successCode": 248, "alternateCode": 249, "windowSize": 20},
+            ],
+        }
+    )
+    # One of everything: rewarded, hold-failed, wrong-well, unanswered, a
+    # pre-odor bail and a lazy trial — so no branch of any emitter is unreached.
+    # Repeated past `DEFAULT_MIN_COUNTED` in the *slower* condition (odor 3
+    # scores once per block), or the strategy trail never starts and its
+    # emitter goes unchecked.
+    codes = (
+        [222, 224, 101, 226, 249, 253] + [222, 224, 103, 226, 248, 250]
+        + [222, 224, 101, 226, 248, 257] + [222, 224, 103, 226]
+        + [222, 224, 225] + [222, 223]
+    ) * 12
+    document = {
+        "rat": "remy1",
+        "stop_reason": stream.CLEAN_STOP_REASON,
+        "trial_seed": 288577176,
+        "ts_data": [[code, index * 1000] for index, code in enumerate(codes)],
+    }
+
+    summary = stream.summarize(document, profile)
+    payload = summary.to_json()
+    assert summary.overall is not None
+    assert summary.outcomes is not None
+    assert summary.engagement is not None
+    assert summary.conditions
+
+    for name, value in (
+        ("MetricSummary", payload["metrics"][0]),
+        ("MetricSummary", payload["overall"]),
+        ("TrialOutcomes", payload["outcomes"]),
+        ("ConditionOutcomes", payload["conditions"][0]),
+        ("TrialEngagement", payload["engagement"]),
+    ):
+        assert validate(("ref", name), value) == [], name
+
+    for name, value in (
+        ("MetricSeries", stream.series(document, profile)[0].to_json()),
+        ("StrategyPoint", stream.strategy_trail(document, profile)[0].to_json()),
+        ("TrialRecord", stream.trials_of(document, profile)[0].to_json()),
+    ):
+        assert validate(("ref", name), value) == [], name
+
+    # And the nullable arms: a profile with no reward vocabulary and no trial
+    # light emits null for all three rather than an empty object.
+    bare = task_profile.parse_profile(
+        {
+            "taskName": "Bare",
+            "strobes": {"101": "ODOR_1_ON", "248": "WATER_POKE_L", "249": "WATER_POKE_R"},
+            "liveMetrics": [
+                {"id": "p_r_odor1", "label": "P", "triggerCode": 101,
+                 "successCode": 249, "alternateCode": 248, "windowSize": 20}
+            ],
+        }
+    )
+    thin = stream.summarize(document, bare).to_json()
+    assert thin["outcomes"] is None
+    assert thin["engagement"] is None
+    assert thin["conditions"] == []
+
+
+def test_a_legacy_trial_table_matches_schema() -> None:
+    """The legacy decoder's table (`ANALYTICS.md#how-a-legacy-run-becomes-a-trial-table`),
+    as `analytics.series` carries it, with every row kind and every nullable arm
+    reached: onset rows, an odor-less presentation, no clock, a no-go flag and two
+    conditions on one onset."""
+    from ephymeris_sidecar.analytics import stream
+
+    profile = task_profile.parse_profile(
+        {
+            "taskName": "Legacy",
+            "strobes": {
+                "101": "ODOR_1_ON", "105": "ODOR_5_ON", "222": "LIGHTS_ON", "224": "ODOR_POKE",
+                "226": "ODOR_UNPOKE", "248": "WATER_POKE_L", "249": "WATER_POKE_R",
+                "253": "FLUID_R", "256": "WATER_POKE_NONE",
+            },
+            "liveMetrics": [
+                {"id": "r1", "label": "P(R | 1)", "triggerCode": 101, "successCode": 249,
+                 "alternateCode": 248, "windowSize": 20},
+                {"id": "l1", "label": "P(L | 1)", "triggerCode": 101, "successCode": 248,
+                 "alternateCode": 249, "windowSize": 20},
+                {"id": "nogo", "label": "P(withhold | 5)", "triggerCode": 105, "successCode": 256,
+                 "alternateCodes": [248, 249], "windowSize": 20},
+            ],
+        }
+    )
+    codes = [222, 224, 101, 226, 249, 253, 222, 224, 105, 226, 256, 222, 224]
+    for clock in (lambda i: i * 100, lambda i: None):
+        document = {"rat": "r", "ts_data": [[code, clock(i)] for i, code in enumerate(codes)]}
+        table = stream.trial_table_of(document, profile)
+        assert table is not None and table["kind"] == "legacy" and len(table["trials"]) == 3
+        assert "no-go-outcomes" in table["gaps"]
+        assert validate(("ref", "TrialTable"), table) == []
+
+
+def test_a_populated_channel_set_import_plan_matches_schema() -> None:
+    from ephymeris_sidecar.rig.transfer import ImportPlan
+    from ephymeris_sidecar.strobes.store import MergePlan
+
+    plan = ImportPlan(
+        vocabulary=MergePlan(
+            adds=[{"name": "LEVER_ON", "code": 400, "retired": False}],
+            retires=[{"name": "OLD_ON", "code": 300}],
+            only_here=["DOOR_NOTE"],
+        ),
+        here_hash="aaaa",
+        imported_hash="bbbb",
+        file_hash="cccc",
+        file_hash_version=1,
+        conflicts=[{"kind": "not_here", "channel": "lever", "message": "lever …"},
+                   {"kind": "hash", "channel": None, "message": "changed"}],
+        changed=["fluid_2"],
+        breaks=[{"specId": "t1", "label": None, "codes": ["TSK101"]}],
+    )
+    assert validate(("ref", "ChannelSetImportPlan"), plan.to_json()) == []
+
+
+def test_a_populated_task_import_plan_matches_schema() -> None:
+    from ephymeris_sidecar.taskdef.transfer import ImportPlan
+
+    plan = ImportPlan(
+        task_id="t1",
+        name="Task one",
+        definition={"id": "t1", "name": "Task one"},
+        here_hash="aaaa",
+        file_hash="bbbb",
+        file_hash_version=2,
+        same_channel_set=False,
+        replaces=True,
+        replaces_name="Task one, before",
+        replaces_unreadable=False,
+        conflicts=[{"kind": "not_here", "channel": "lever", "message": "lever …"},
+                   {"kind": "code", "channel": None, "message": "FLUID_2_ON …"}],
+        diagnostics=[{"location": "rows[0].bind.port", "message": "…", "code": "SPN101",
+                      "target": {"kind": "row", "index": 0}}],
+    )
+    assert validate(("ref", "TaskImportPlan"), plan.to_json()) == []
+
+
+def test_hardware_payloads_match_schema() -> None:
+    line = OutputLine(dir="rx", text="READY", ts=1721600000.1)
+    assert validate(("ref", "OutputLine"), line.to_json()) == []
+    board = DetectedBoard(hardware_id="85735313", address="COM7", fqbn="arduino:avr:mega")
+    assert validate(("ref", "DetectedBoard"), board.to_json(box_id=2)) == []
+    assert validate(("ref", "DetectedBoard"), board.to_json()) == []
+
+
+def test_discovery_payloads_match_schema() -> None:
+    # The real resolver's answer on this machine, whatever state it is in —
+    # ok, empty and damaged all serialise to the same shape.
+    status = library_status()
+    assert validate(("ref", "SketchLibraryStatus"), status.to_json()) == []
+    assert validate(("ref", "SketchDiscovery"), SketchDiscovery(library=status).to_json()) == []
+    # The damaged arm explicitly, since a dev machine will rarely produce it.
+    damaged = SketchLibraryStatus("damaged", None, "missing", "bundled")
+    assert validate(("ref", "SketchLibraryStatus"), damaged.to_json()) == []
+
+
+def test_a_populated_discovery_matches_schema(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every sketch arm on the wire: bundled, rebuilt-bundled and rig.
+
+    Needs real entries: an empty `sketches` list validates whatever `SketchEntry`
+    says, so a field a `Sketch` gains would pass here and fail `sketches.updated`
+    on any real machine with validation on.
+    """
+
+    def make_sketch(root: Path, category: str, name: str) -> None:
+        folder = root / category / name
+        folder.mkdir(parents=True)
+        (folder / f"{name}.ino").write_text("void setup(){}\n", encoding="utf-8")
+
+    library, pinned, generated = tmp_path / "lib", tmp_path / "pinned", tmp_path / "tasks"
+    make_sketch(library, "Shaping", "shaping_GL")
+    make_sketch(library, "Discrimination", "disc_2O")
+    make_sketch(pinned, "Discrimination", "disc_2O")
+    make_sketch(generated, "Saved", "my_task")
+    monkeypatch.setenv(LIBRARY_ENV, str(library))
+
+    payload = discover(generated_root=generated, pinned_root=pinned).to_json()
+    assert {s["source"] for s in payload["sketches"]} == {"bundled", "rig"}
+    assert validate(("ref", "SketchDiscovery"), payload) == []
+    # Through the event builder too, which is what the connect replay sends.
+    assert event(Evt.SKETCHES_UPDATED, payload)["data"] == payload
+
+
+def test_event_data_specs_cover_every_event() -> None:
+    from ephymeris_sidecar.protocol import ALL_EVENTS, EVENT_DATA
+
+    assert set(EVENT_DATA) == set(ALL_EVENTS)
+    assert validate_event_data("no.such.event", {}) != []
+
+
+def test_tidy_plan_json_matches_schema() -> None:
+    """`sessions.tidy`'s reply, built by the one emitter the service uses."""
+    from dataclasses import replace
+
+    from ephymeris_sidecar.sessions import tidy
+
+    keep = _session()
+    other = replace(_session(), id="s2", status="completed")
+    empty = replace(_session(), id="s3", status="aborted", group_runs=[])
+    plan = tidy.TidyPlan(
+        merges=[tidy.Merge(keep, [other])],
+        empty=[tidy.Empty(empty, removes_folder=True)],
+        skipped=[tidy.Skipped(other, "in progress")],
+    )
+    payload = tidy.plan_json(plan, {"s1": 3}, cohort_id="c1", applied=False)
+    assert validate(("ref", "TidyPlan"), payload) == []

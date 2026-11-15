@@ -1,0 +1,4 @@
+{
+  "pinout": "behaviorbox_mega2560.v1",
+  "_why": "The pinout this build compiles for. One line, so a box generation is a one-file swap."
+}

@@ -1,0 +1,613 @@
+{
+  "vocab_version": 3,
+  "append_only": true,
+  "_readme": [
+    "THE DEFAULT strobe vocabulary -- a seed, not the registry.",
+    "",
+    "The first time the app starts on a machine it copies this file to",
+    "<data_dir>/strobes/vocabulary.json, and from then on THAT document is the one",
+    "source of every strobe code: the generated TaskPins.h defines BF_* from it, every",
+    "task profile's strobes map is filled from it at load time, and the Strobes page",
+    "on the Task tab edits it. After that, this file is read at each start for one",
+    "thing: a code declared here with a `since` past the document's `shipped_since`",
+    "watermark is added there at its number here (strobes/store.py's catch_up). A",
+    "new code here therefore carries the next `since`, so every machine gains it at",
+    "its next start. Edit a running machine's vocabulary in the app",
+    "(TASKS.md#strobe-vocabulary), never here: any other change here reaches only",
+    "machines that have not started yet.",
+    "",
+    "APPEND-ONLY IS A HARD RULE, NOT A CONVENTION. Downstream analysis depends on codes",
+    "and their ordering, and historical comparability is a hard requirement. A code is",
+    "never repurposed and never renumbered, and a name is never reissued with a",
+    "different number. Free codes are not listed: a code is free when it lies inside",
+    "`code_min`..`code_max`, outside `reserved`, and is neither live nor retired.",
+    "",
+    "DELETING IS POSSIBLE, AND THE BAR IS NOT 'UNUSED'. It is NO RECORDED SESSION HAS",
+    "EVER CONTAINED IT, checked against the archive rather than assumed -- the app",
+    "scans every cohort folder before it will remove a code. On 2026-08-09 thirty-four",
+    "numbers were reclaimed that way: the port-slot families for response ports 3-7,",
+    "and three codes belonging to a task-graph interpreter that was removed. A code",
+    "emitted ONCE, to a file that still exists, can never be reclaimed on any argument",
+    "at all -- it goes to `retired` instead, which is where stream grammar 1's two",
+    "terminators sit below.",
+    "",
+    "ONE EXCEPTION WAS MADE, ONCE, on 2026-11-06, while the lab had no ephys",
+    "recordings and could change its behaviour firmware freely: the dummy-solenoid",
+    "clicks (110-113, in 29 sessions from June 2026) were removed from `retired` and",
+    "are free again, and the phase spine's ten codes (TRIAL_START at 270, BLOCK_START",
+    "and the eight OUTCOME_* codes at 271-279, never recorded on a real box) were",
+    "withdrawn so stream grammar 2 could be issued under the names it wanted. The",
+    "spine strobes TRIAL_START at its new number, 220; BLOCK_START and the outcome",
+    "codes are added on the Strobes page by a machine that runs a spine task, until",
+    "the spine is ready and ships them again (docs/adr/0005).",
+    "",
+    "ORIGIN. 'firmware' codes were numbered by ~4 years of this lab's recorded",
+    "sessions before the app existed; 'ephymeris' codes were declared by the app;",
+    "'operator' codes were added on the Strobes page. Origin is history, not",
+    "authority -- every code is resolved from this one document the same way.",
+    "",
+    "DECLARED MEANS EMITTABLE. A real bug: GRGL_Sim declared 23 of 31 codes and",
+    "emitted codes it had not declared; nothing errored and each layer degraded",
+    "silently. The inverse is equally a bug, and it is what the reclamation above",
+    "corrected: thirty numbers sat here describing ports a two-port trial runner has",
+    "no way to poll. The test is whether a code has a MECHANISM that produces it --",
+    "ODOR_7_ON..ODOR_12_ON qualify because the trial-table editor offers all twelve",
+    "lines and a profile that binds line 7 emits one the moment it runs.",
+    "",
+    "ODOR ONSETS RUN 101-109 AND THEN 114-116, and the jump is the sharpest reason",
+    "nothing may compute a code from an index. 110-113 held the dummy-solenoid clicks",
+    "and are free again (above); the onsets were never renumbered to close the gap,",
+    "so odor 9 is 109 and odor 10 is 114, and 110-113 will mean whatever is issued",
+    "there next.",
+    "",
+    "A TRIAL TYPE'S CODE IS LOOKED UP TOO. TRIAL_TYPE_<n> sits at 400 + n and names",
+    "slot n of the trial table in every trial's header (stream grammar 2,",
+    "docs/TASKS.md#stream-grammar); the generated TaskTrials.h writes BF_TRIAL_TYPE_<n>",
+    "into each row by name. Twelve are declared, one per odor line the shipped",
+    "channel set binds; a further line gets the next number on the Strobes page.",
+    "",
+    "PORT SLOTS. `port_slots` below maps a response port's slot number to the six",
+    "codes it reports with. There are TWO, because the trial runner has two:",
+    "`checkResponse()` in BehaviorBox.h polls `rightWell` and `leftWell` and nothing",
+    "else. Slots 1 and 2 are the historical _L and _R families, so the recorded",
+    "archive decodes unchanged. A response channel declares its slot in",
+    "channels.v1.json, and a third port declared in the wiring editor is refused by",
+    "RIG104 rather than silently reporting nothing."
+  ],
+  "code_min": 0,
+  "code_max": 999,
+  "_code_max_why": [
+    "emitStrobe formats \"%03d\\t%lu\" (BehaviorBox.h) and the host's",
+    "IN_SESSION parser is ^\\d{1,3}\\t\\d+$ -- so a 4-digit code is",
+    "unparseable on the host and silently dropped. 999 is a wire-format limit, not a",
+    "preference.",
+    "",
+    "Six codes already exceed 255 (256, 257, 258, 262, 357, 369), so nothing may store",
+    "a strobe in a uint8."
+  ],
+  "reserved": [
+    [
+      0,
+      100
+    ]
+  ],
+  "_reserved_why": [
+    "Never issued. 0-100 sit below the first code this lab's firmware ever used,",
+    "and keeping them out of the free pool means a low number in a stream is",
+    "always a fault to investigate, never a code someone added last week."
+  ],
+  "codes": {
+    "START_SESSION": {
+      "code": 221,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "session entry, timestamp 0",
+      "rationale": "Anchors every timestamp in the run. Emitted by the sketch loop, not by a trial node."
+    },
+    "LIGHTS_ON": {
+      "code": 222,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the engagement window (trial cue on)",
+      "rationale": "The trial-available edge. Paired with nothing; its partner LIGHTS_OFF is not."
+    },
+    "LAZY_RAT": {
+      "code": 223,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the no-engagement penalty",
+      "paired_with": "LIGHTS_OFF",
+      "pair_order": "LAZY_RAT first",
+      "rationale": "Abstention. No stimulus was presented, so the trial carries no evidence about discrimination and is scored invalid. Strobed by runTrial() when the engagement wait times out."
+    },
+    "ODOR_POKE": {
+      "code": 224,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the commitment hold",
+      "rationale": "Separates an incidental beam-break from a committed initiation. NOTE: does NOT clear the abstention escalator: runTrial() resets it only after a completed CORRECT trial, a loophole closed deliberately."
+    },
+    "ODOR_UNPOKE_EARLY": {
+      "code": 225,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the broken-hold penalty",
+      "paired_with": "LIGHTS_OFF",
+      "pair_order": "ODOR_UNPOKE_EARLY first",
+      "rationale": "The commitment (pre-odor) hold released early. In stream grammar 1 runTrial() emitted this from two sites, the pre-odor hold and the sampling hold, and whether an odor-on code preceded told them apart: taskGraph in topology.ts draws two abort nodes from that; the engagement ladder in analytics/stream/engagement.py isolates only the pre-odor release (poked minus odor delivered); a sampling release is counted as TrialOutcomes.aborted. In grammar 2 the sampling release has its own code, ODOR_UNPOKE_EARLY_SAMPLING, and this one means only the pre-odor release: a timeline moment and the trial's outcome at once, emitted once, before LIGHTS_OFF."
+    },
+    "ODOR_UNPOKE": {
+      "code": 226,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the response window, after a complete sample",
+      "paired_with": "LIGHTS_OFF",
+      "pair_order": "ODOR_UNPOKE first",
+      "rationale": "Withdrawal from the odor port is the sampling/response boundary. LIGHTS_OFF follows it at once, exactly as it follows each abort path's own code: the behavioural code is first on all four paths (runTrial() in BehaviorBox.h)."
+    },
+    "LIGHTS_OFF": {
+      "code": 233,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to a zero-duration node that clears the trial light",
+      "rationale": "Always co-emitted with a behavioural code, never alone, and always second: LAZY_RAT, ODOR_UNPOKE_EARLY (two sites) or ODOR_UNPOKE comes first on every path through runTrial(). Modelled as its own zero-duration node so the order is authored rather than implicit."
+    },
+    "INVALID_TRIAL": {
+      "code": 234,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "the trial footer, before END_TRIAL, when the next trial re-presents this one: an abort, or an error a correction budget repeats",
+      "rationale": "The counter does not advance and the same trial is re-presented, so an unsampled trial never enters the record as a choice. In stream grammar 2 it is the footer's repeat flag (think TRIAL_REPEAT; the name is historical and never reissued) and END_TRIAL always follows it; in grammar 1 it closed an aborted trial by itself. Emitted by emitTrialFooter() in BehaviorBox.h, not by runTrial()."
+    },
+    "END_SESSION": {
+      "code": 246,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "session exit",
+      "rationale": "The clean-stop sentinel. Ephymeris keys its only hardcoded strobe string off this (sessions/runner.py:36)."
+    },
+    "ODOR_OFF": {
+      "code": 247,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the sampling-release WAIT_EXIT, and to an inter-stimulus gap",
+      "rationale": "Odor cleared and vacuum reopened. Reused for the inter-stimulus gap in chained-sampling tasks: the emitter-off event is the same physical event."
+    },
+    "WATER_POKE_L": {
+      "code": 248,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the response branch node, left channel",
+      "rationale": "Emitted BEFORE correctness is known: checkResponse() strobes the poke, then classifies the well. This is why the response branch is its own zero-duration node with the guard on its edges. Doubles as the false-alarm code on go/no-go."
+    },
+    "WATER_POKE_R": {
+      "code": 249,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the response branch node, right channel",
+      "rationale": "See WATER_POKE_L."
+    },
+    "WATER_UNPOKE_EARLY_L": {
+      "code": 250,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the response-hold-failure penalty, left",
+      "rationale": "The correct port was reached but released before the hold completed -- a consummatory failure, not a wrong choice. Scored separately so it never contaminates the discrimination measure."
+    },
+    "WATER_UNPOKE_EARLY_R": {
+      "code": 251,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the response-hold-failure penalty, right",
+      "rationale": "See WATER_UNPOKE_EARLY_L."
+    },
+    "FLUID_L": {
+      "code": 252,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the left reward PULSE",
+      "rationale": "Emitted before the solenoid opens (deliverReward() in BehaviorBox.h). Pulse width is the delivered volume."
+    },
+    "FLUID_R": {
+      "code": 253,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the right reward PULSE",
+      "rationale": "See FLUID_L."
+    },
+    "WATER_UNPOKE_L": {
+      "code": 254,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the ITI delay, after leaving the left well",
+      "rationale": "The only place the firmware observes the end of a consummatory bout, which makes it the anchor for consumption-duration measures. Not emitted on a wrong-well answer -- checkResponse() returns immediately without awaiting withdrawal."
+    },
+    "WATER_UNPOKE_R": {
+      "code": 255,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the ITI delay, after leaving the right well",
+      "rationale": "See WATER_UNPOKE_L."
+    },
+    "WATER_POKE_NONE": {
+      "code": 256,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the correct terminal path on a withhold trial",
+      "rationale": "Correct withholding. Strobed by the no-go branch of checkResponse() when neither well is poked for nogoWellPoll. A generated trial table can declare no-go types, so go/no-go reuses an existing code rather than needing a new one."
+    },
+    "WATER_POKE_ERROR_L": {
+      "code": 257,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the wrong-port penalty, left",
+      "rationale": "A genuine discrimination error: sampling completed and a choice was expressed, so it advances the session rather than repeating."
+    },
+    "WATER_POKE_ERROR_R": {
+      "code": 258,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the wrong-port penalty, right",
+      "rationale": "See WATER_POKE_ERROR_L."
+    },
+    "STOP_FLUID_G_R": {
+      "code": 357,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the right consumption WAIT_EXIT",
+      "rationale": "Emitted after the solenoid closes (deliverReward() in BehaviorBox.h). Modelling it as the entry strobe of the consumption state colocates the actuator close with its strobe -- semantically tidier than the current bracketing, and free."
+    },
+    "STOP_FLUID_G_L": {
+      "code": 369,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the left consumption WAIT_EXIT",
+      "rationale": "See STOP_FLUID_G_R."
+    },
+    "ODOR_1_ON": {
+      "code": 101,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to a sampling HOLD bound to odor line 1",
+      "rationale": "Stimulus identity. This is the one state whose entry code identifies WHAT was presented, which is why it is a per-trial @binding rather than a fixed field."
+    },
+    "ODOR_2_ON": {
+      "code": 102,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to a sampling HOLD bound to odor line 2",
+      "rationale": "See ODOR_1_ON."
+    },
+    "ODOR_3_ON": {
+      "code": 103,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to a sampling HOLD bound to odor line 3",
+      "rationale": "See ODOR_1_ON."
+    },
+    "ODOR_4_ON": {
+      "code": 104,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to a sampling HOLD bound to odor line 4",
+      "rationale": "See ODOR_1_ON."
+    },
+    "ODOR_5_ON": {
+      "code": 105,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to a sampling HOLD bound to odor line 5",
+      "rationale": "See ODOR_1_ON."
+    },
+    "ODOR_6_ON": {
+      "code": 106,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to a sampling HOLD bound to odor line 6",
+      "rationale": "See ODOR_1_ON."
+    },
+    "RESP_OMIT": {
+      "code": 262,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the omission penalty",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "Firmware used to emit NOTHING when the response window expired, so an omission was only inferable from the absence of a poke before END_INCORRECT_ITI -- and END_INCORRECT_ITI is reached by three different outcomes, so the class was recoverable only from the PRECEDING strobe, which an omission has none of. BehaviorBox.h's checkResponse() emits it now. Sessions recorded before that change still carry the silence."
+    },
+    "ODOR_7_ON": {
+      "code": 107,
+      "origin": "ephymeris",
+      "since": 2,
+      "emitted_on": "entry to a sampling HOLD bound to odor line 7",
+      "rationale": "Stimulus identity for odor line 7. Twelve lines have always existed in the pinout but only six could announce an onset, so lines 7-12 were plumbed and unusable as discriminanda. Numbered to continue 101-106 as closely as the reserved block allows -- see ODOR_10_ON for the gap."
+    },
+    "ODOR_8_ON": {
+      "code": 108,
+      "origin": "ephymeris",
+      "since": 2,
+      "emitted_on": "entry to a sampling HOLD bound to odor line 8",
+      "rationale": "Stimulus identity for odor line 8. Twelve lines have always existed in the pinout but only six could announce an onset, so lines 7-12 were plumbed and unusable as discriminanda. Numbered to continue 101-106 as closely as the reserved block allows -- see ODOR_10_ON for the gap."
+    },
+    "ODOR_9_ON": {
+      "code": 109,
+      "origin": "ephymeris",
+      "since": 2,
+      "emitted_on": "entry to a sampling HOLD bound to odor line 9",
+      "rationale": "Stimulus identity for odor line 9. Twelve lines have always existed in the pinout but only six could announce an onset, so lines 7-12 were plumbed and unusable as discriminanda. Numbered to continue 101-106 as closely as the reserved block allows -- see ODOR_10_ON for the gap."
+    },
+    "ODOR_10_ON": {
+      "code": 114,
+      "origin": "ephymeris",
+      "since": 2,
+      "emitted_on": "entry to a sampling HOLD bound to odor line 10",
+      "rationale": "Stimulus identity for odor line 10, and the code that carries the reason for the gap. Lines 7-9 continue the original run at 107-109; 110-113 are RETIRED (the dummy solenoid clicks, present in 29 recorded sessions) and can never be reissued, so the run resumes at 114. This is why nothing may compute an odor's code from its index."
+    },
+    "ODOR_11_ON": {
+      "code": 115,
+      "origin": "ephymeris",
+      "since": 2,
+      "emitted_on": "entry to a sampling HOLD bound to odor line 11",
+      "rationale": "Stimulus identity for odor line 11. Twelve lines have always existed in the pinout but only six could announce an onset, so lines 7-12 were plumbed and unusable as discriminanda. Numbered to continue 101-106 as closely as the reserved block allows -- see ODOR_10_ON for the gap."
+    },
+    "ODOR_12_ON": {
+      "code": 116,
+      "origin": "ephymeris",
+      "since": 2,
+      "emitted_on": "entry to a sampling HOLD bound to odor line 12",
+      "rationale": "Stimulus identity for odor line 12. Twelve lines have always existed in the pinout but only six could announce an onset, so lines 7-12 were plumbed and unusable as discriminanda. Numbered to continue 101-106 as closely as the reserved block allows -- see ODOR_10_ON for the gap."
+    },
+    "TRIAL_START": {
+      "code": 220,
+      "origin": "ephymeris",
+      "since": 4,
+      "emitted_on": "the trial runner scheduling a row, before its odor is primed: the first code of every trial",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "Stream grammar 2 (docs/TASKS.md#stream-grammar): every trial the trial runner emits is a header (TRIAL_START, its side, its TRIAL_TYPE code), the timeline runTrial() strobes, exactly one outcome code, INVALID_TRIAL when the same trial comes back, and END_TRIAL. This opens the header, so a reader splits the stream into trials on it and never matches a pattern. The phase spine strobes the same event under the same name, so a spine run opens its trials with this code too. Emitted by emitTrialHeader() in BehaviorBox.h."
+    },
+    "ODOR_UNPOKE_EARLY_SAMPLING": {
+      "code": 227,
+      "origin": "ephymeris",
+      "since": 4,
+      "emitted_on": "the sampling hold released early: the odor was delivered and the animal left before it was sampled",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "The second of runTrial()'s two early releases, with a code of its own. ODOR_UNPOKE_EARLY (225) once served both sites and the two were told apart by whether an odor-on code preceded; in grammar 2 each abort is the trial's one outcome code, so this release names itself. 225 now means only the pre-odor release. A timeline moment and the outcome at once, emitted once, before LIGHTS_OFF.",
+      "paired_with": "LIGHTS_OFF",
+      "pair_order": "ODOR_UNPOKE_EARLY_SAMPLING first"
+    },
+    "TRIAL_GO_LEFT": {
+      "code": 230,
+      "origin": "ephymeris",
+      "since": 4,
+      "emitted_on": "the trial header, after TRIAL_START: the scheduled row rewards the left well",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "Stream grammar 2 (docs/TASKS.md#stream-grammar): every trial the trial runner emits is a header (TRIAL_START, its side, its TRIAL_TYPE code), the timeline runTrial() strobes, exactly one outcome code, INVALID_TRIAL when the same trial comes back, and END_TRIAL. The header's second code says what the trial's correct answer is before the animal has done anything, so the per-trial table reads the side from the stream rather than from a profile."
+    },
+    "TRIAL_GO_RIGHT": {
+      "code": 231,
+      "origin": "ephymeris",
+      "since": 4,
+      "emitted_on": "the trial header, after TRIAL_START: the scheduled row rewards the right well",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "Stream grammar 2 (docs/TASKS.md#stream-grammar): every trial the trial runner emits is a header (TRIAL_START, its side, its TRIAL_TYPE code), the timeline runTrial() strobes, exactly one outcome code, INVALID_TRIAL when the same trial comes back, and END_TRIAL. See TRIAL_GO_LEFT."
+    },
+    "TRIAL_NO_GO": {
+      "code": 232,
+      "origin": "ephymeris",
+      "since": 4,
+      "emitted_on": "the trial header, after TRIAL_START: the scheduled row is answered by withholding",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "Stream grammar 2 (docs/TASKS.md#stream-grammar): every trial the trial runner emits is a header (TRIAL_START, its side, its TRIAL_TYPE code), the timeline runTrial() strobes, exactly one outcome code, INVALID_TRIAL when the same trial comes back, and END_TRIAL. A no-go row has no side: it never feeds the anti-bias estimate and never repeats as a correction trial, and this is how a reader knows that WATER_POKE_ERROR_L/R inside it is a false alarm rather than a wrong well."
+    },
+    "CORRECT": {
+      "code": 244,
+      "origin": "ephymeris",
+      "since": 4,
+      "emitted_on": "the correct well held to the end of its hold: the outcome of a rewarded go trial, just before FLUID_L/R",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "Stream grammar 2 (docs/TASKS.md#stream-grammar): every trial the trial runner emits is a header (TRIAL_START, its side, its TRIAL_TYPE code), the timeline runTrial() strobes, exactly one outcome code, INVALID_TRIAL when the same trial comes back, and END_TRIAL. The one outcome code a go trial earns. Emitted by checkResponse() before deliverReward(), so the verdict precedes the fluid it pays; analysis scores P(correct) from it and never from a WATER_POKE_L/R following an odor code. A withheld no-go's outcome stays WATER_POKE_NONE."
+    },
+    "END_TRIAL": {
+      "code": 245,
+      "origin": "ephymeris",
+      "since": 4,
+      "emitted_on": "the end of every trial, after its ITI, timeout or penalty has been served: the last code of the footer",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "Stream grammar 2 (docs/TASKS.md#stream-grammar): every trial the trial runner emits is a header (TRIAL_START, its side, its TRIAL_TYPE code), the timeline runTrial() strobes, exactly one outcome code, INVALID_TRIAL when the same trial comes back, and END_TRIAL. Replaces END_CORRECT_ITI and END_INCORRECT_ITI (retired below), which closed only completed trials and carried the verdict a dedicated outcome code now carries. An aborted trial is closed by it too, after INVALID_TRIAL. Emitted by emitTrialFooter() in BehaviorBox.h."
+    },
+    "TRIAL_TYPE_1": {
+      "code": 401,
+      "origin": "ephymeris",
+      "since": 4,
+      "emitted_on": "the trial header, after the side code: the scheduled row is slot 1 of the trial table",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "The row's own code, 400 + its 1-based slot in the trial table (kTrials[0]), so the per-trial table knows the type with no pattern matching. The generated TaskTrials.h writes BF_TRIAL_TYPE_<slot> into each row BY NAME, and the firmware never computes it. Twelve are declared because the trial-table editor binds one row per odor line and the shipped channel set has twelve lines; a thirteenth line gets TRIAL_TYPE_13 at 413 on the Strobes page, and the runner caps the table at 99 rows (401..499)."
+    },
+    "TRIAL_TYPE_2": {
+      "code": 402,
+      "origin": "ephymeris",
+      "since": 4,
+      "emitted_on": "the trial header, after the side code: the scheduled row is slot 2 of the trial table",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "The row's own code, 400 + its 1-based slot in the trial table (kTrials[1]), so the per-trial table knows the type with no pattern matching. The generated TaskTrials.h writes BF_TRIAL_TYPE_<slot> into each row BY NAME, and the firmware never computes it. Twelve are declared because the trial-table editor binds one row per odor line and the shipped channel set has twelve lines; a thirteenth line gets TRIAL_TYPE_13 at 413 on the Strobes page, and the runner caps the table at 99 rows (401..499)."
+    },
+    "TRIAL_TYPE_3": {
+      "code": 403,
+      "origin": "ephymeris",
+      "since": 4,
+      "emitted_on": "the trial header, after the side code: the scheduled row is slot 3 of the trial table",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "The row's own code, 400 + its 1-based slot in the trial table (kTrials[2]), so the per-trial table knows the type with no pattern matching. The generated TaskTrials.h writes BF_TRIAL_TYPE_<slot> into each row BY NAME, and the firmware never computes it. Twelve are declared because the trial-table editor binds one row per odor line and the shipped channel set has twelve lines; a thirteenth line gets TRIAL_TYPE_13 at 413 on the Strobes page, and the runner caps the table at 99 rows (401..499)."
+    },
+    "TRIAL_TYPE_4": {
+      "code": 404,
+      "origin": "ephymeris",
+      "since": 4,
+      "emitted_on": "the trial header, after the side code: the scheduled row is slot 4 of the trial table",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "The row's own code, 400 + its 1-based slot in the trial table (kTrials[3]), so the per-trial table knows the type with no pattern matching. The generated TaskTrials.h writes BF_TRIAL_TYPE_<slot> into each row BY NAME, and the firmware never computes it. Twelve are declared because the trial-table editor binds one row per odor line and the shipped channel set has twelve lines; a thirteenth line gets TRIAL_TYPE_13 at 413 on the Strobes page, and the runner caps the table at 99 rows (401..499)."
+    },
+    "TRIAL_TYPE_5": {
+      "code": 405,
+      "origin": "ephymeris",
+      "since": 4,
+      "emitted_on": "the trial header, after the side code: the scheduled row is slot 5 of the trial table",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "The row's own code, 400 + its 1-based slot in the trial table (kTrials[4]), so the per-trial table knows the type with no pattern matching. The generated TaskTrials.h writes BF_TRIAL_TYPE_<slot> into each row BY NAME, and the firmware never computes it. Twelve are declared because the trial-table editor binds one row per odor line and the shipped channel set has twelve lines; a thirteenth line gets TRIAL_TYPE_13 at 413 on the Strobes page, and the runner caps the table at 99 rows (401..499)."
+    },
+    "TRIAL_TYPE_6": {
+      "code": 406,
+      "origin": "ephymeris",
+      "since": 4,
+      "emitted_on": "the trial header, after the side code: the scheduled row is slot 6 of the trial table",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "The row's own code, 400 + its 1-based slot in the trial table (kTrials[5]), so the per-trial table knows the type with no pattern matching. The generated TaskTrials.h writes BF_TRIAL_TYPE_<slot> into each row BY NAME, and the firmware never computes it. Twelve are declared because the trial-table editor binds one row per odor line and the shipped channel set has twelve lines; a thirteenth line gets TRIAL_TYPE_13 at 413 on the Strobes page, and the runner caps the table at 99 rows (401..499)."
+    },
+    "TRIAL_TYPE_7": {
+      "code": 407,
+      "origin": "ephymeris",
+      "since": 4,
+      "emitted_on": "the trial header, after the side code: the scheduled row is slot 7 of the trial table",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "The row's own code, 400 + its 1-based slot in the trial table (kTrials[6]), so the per-trial table knows the type with no pattern matching. The generated TaskTrials.h writes BF_TRIAL_TYPE_<slot> into each row BY NAME, and the firmware never computes it. Twelve are declared because the trial-table editor binds one row per odor line and the shipped channel set has twelve lines; a thirteenth line gets TRIAL_TYPE_13 at 413 on the Strobes page, and the runner caps the table at 99 rows (401..499)."
+    },
+    "TRIAL_TYPE_8": {
+      "code": 408,
+      "origin": "ephymeris",
+      "since": 4,
+      "emitted_on": "the trial header, after the side code: the scheduled row is slot 8 of the trial table",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "The row's own code, 400 + its 1-based slot in the trial table (kTrials[7]), so the per-trial table knows the type with no pattern matching. The generated TaskTrials.h writes BF_TRIAL_TYPE_<slot> into each row BY NAME, and the firmware never computes it. Twelve are declared because the trial-table editor binds one row per odor line and the shipped channel set has twelve lines; a thirteenth line gets TRIAL_TYPE_13 at 413 on the Strobes page, and the runner caps the table at 99 rows (401..499)."
+    },
+    "TRIAL_TYPE_9": {
+      "code": 409,
+      "origin": "ephymeris",
+      "since": 4,
+      "emitted_on": "the trial header, after the side code: the scheduled row is slot 9 of the trial table",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "The row's own code, 400 + its 1-based slot in the trial table (kTrials[8]), so the per-trial table knows the type with no pattern matching. The generated TaskTrials.h writes BF_TRIAL_TYPE_<slot> into each row BY NAME, and the firmware never computes it. Twelve are declared because the trial-table editor binds one row per odor line and the shipped channel set has twelve lines; a thirteenth line gets TRIAL_TYPE_13 at 413 on the Strobes page, and the runner caps the table at 99 rows (401..499)."
+    },
+    "TRIAL_TYPE_10": {
+      "code": 410,
+      "origin": "ephymeris",
+      "since": 4,
+      "emitted_on": "the trial header, after the side code: the scheduled row is slot 10 of the trial table",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "The row's own code, 400 + its 1-based slot in the trial table (kTrials[9]), so the per-trial table knows the type with no pattern matching. The generated TaskTrials.h writes BF_TRIAL_TYPE_<slot> into each row BY NAME, and the firmware never computes it. Twelve are declared because the trial-table editor binds one row per odor line and the shipped channel set has twelve lines; a thirteenth line gets TRIAL_TYPE_13 at 413 on the Strobes page, and the runner caps the table at 99 rows (401..499)."
+    },
+    "TRIAL_TYPE_11": {
+      "code": 411,
+      "origin": "ephymeris",
+      "since": 4,
+      "emitted_on": "the trial header, after the side code: the scheduled row is slot 11 of the trial table",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "The row's own code, 400 + its 1-based slot in the trial table (kTrials[10]), so the per-trial table knows the type with no pattern matching. The generated TaskTrials.h writes BF_TRIAL_TYPE_<slot> into each row BY NAME, and the firmware never computes it. Twelve are declared because the trial-table editor binds one row per odor line and the shipped channel set has twelve lines; a thirteenth line gets TRIAL_TYPE_13 at 413 on the Strobes page, and the runner caps the table at 99 rows (401..499)."
+    },
+    "TRIAL_TYPE_12": {
+      "code": 412,
+      "origin": "ephymeris",
+      "since": 4,
+      "emitted_on": "the trial header, after the side code: the scheduled row is slot 12 of the trial table",
+      "emitted_by": [
+        "behaviorbox"
+      ],
+      "rationale": "The row's own code, 400 + its 1-based slot in the trial table (kTrials[11]), so the per-trial table knows the type with no pattern matching. The generated TaskTrials.h writes BF_TRIAL_TYPE_<slot> into each row BY NAME, and the firmware never computes it. Twelve are declared because the trial-table editor binds one row per odor line and the shipped channel set has twelve lines; a thirteenth line gets TRIAL_TYPE_13 at 413 on the Strobes page, and the runner caps the table at 99 rows (401..499)."
+    }
+  },
+  "port_slots": {
+    "_why": [
+      "Slot -> the six codes a response port on that slot reports with.",
+      "",
+      "TWO SLOTS, BECAUSE THE TRIAL RUNNER HAS TWO PORTS. BehaviorBox.h's",
+      "checkResponse() polls rightWell and leftWell; there is no third to poll, so a",
+      "third slot would be a promise the firmware cannot keep. Slots 3-7 were declared",
+      "here for a task-graph interpreter that was removed, and their thirty codes were",
+      "reclaimed with it.",
+      "",
+      "Slots 1 and 2 point at the historical _L and _R names, so a recorded session",
+      "decodes exactly as it always did.",
+      "",
+      "This table is why nothing downstream derives a code from a channel called",
+      "'left_well'. It used to: a _SIDE map and a matching sideSuffix() in the frontend",
+      "meant a box whose wells were named anything else silently got no per-port codes",
+      "at all."
+    ],
+    "1": {
+      "enter_code": "WATER_POKE_L",
+      "error_code": "WATER_POKE_ERROR_L",
+      "break_code": "WATER_UNPOKE_EARLY_L",
+      "exit_code": "WATER_UNPOKE_L",
+      "reward_code": "FLUID_L",
+      "reward_stop_code": "STOP_FLUID_G_L"
+    },
+    "2": {
+      "enter_code": "WATER_POKE_R",
+      "error_code": "WATER_POKE_ERROR_R",
+      "break_code": "WATER_UNPOKE_EARLY_R",
+      "exit_code": "WATER_UNPOKE_R",
+      "reward_code": "FLUID_R",
+      "reward_stop_code": "STOP_FLUID_G_R"
+    }
+  },
+  "retired": {
+    "_readme": [
+      "Codes that some recorded session contains and nothing may emit any more. This",
+      "is the third state: not live (the generated TaskPins.h does not define them, so",
+      "firmware that still emits one fails to compile) and not free (reissuing one",
+      "would silently merge two unrelated event types in any analysis spanning the",
+      "change). A retired code may be reinstated under its own name and meaning;",
+      "it can never be removed while a file that contains it exists.",
+      "",
+      "Task profiles decode them by name, so a legacy session reports 'retired code'",
+      "rather than 'unknown code' -- a distinction that matters, because one is",
+      "explained and the other is a question."
+    ],
+    "END_CORRECT_ITI": {
+      "code": 242,
+      "seen_in": "every GRGL session recorded before stream grammar 2 (November 2026)",
+      "rationale": "Scores correct, advances the counter, clears penalty escalation. Kept distinct from END_INCORRECT_ITI so reinforcement rate and timeout cost are separable. Retired with stream grammar 2: END_TRIAL closes every trial and a dedicated outcome code carries the verdict, so nothing emits this any more. The app still decodes a recorded stream that ends its trials with it (grammar 1)."
+    },
+    "END_INCORRECT_ITI": {
+      "code": 243,
+      "seen_in": "every GRGL session recorded before stream grammar 2 (November 2026)",
+      "rationale": "Reached by every non-correct outcome of checkResponse() -- wrong port, omission, response-hold failure, and a response on a no-go trial -- so outcome class is NOT recoverable from this code alone. It is recoverable from the preceding strobe, which is exactly why the invariant matters. Retired with stream grammar 2: END_TRIAL closes every trial and a dedicated outcome code carries the verdict, so nothing emits this any more. The app still decodes a recorded stream that ends its trials with it (grammar 1)."
+    }
+  }
+}

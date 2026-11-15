@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "scope",
+  "description": "Capabilities for a recording pop-up (SpikeScope, PSTH, ISI, probe map). Deliberately narrower than the main window's: a scope draws what the sidecar sends it over its own WebSocket and needs nothing from the shell but its own frame, plus the one window it can open itself (a probe-map site opens that channel's Spike Scope) — no store, no dialog, no filesystem, no opener.",
+  "windows": ["scope-*"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-is-maximized",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-title",
+    "core:webview:allow-create-webview-window"
+  ]
+}

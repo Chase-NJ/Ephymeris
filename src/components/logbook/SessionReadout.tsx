@@ -1,0 +1,275 @@
+import { ChartLine, ClipboardList, GitCompareArrows, Loader2, NotebookPen, UserRound } from "lucide-react";
+import { memo, useEffect, useMemo, type Ref } from "react";
+import { useNavigate } from "react-router";
+
+import { SessionTable, TableKey } from "@/components/analytics/session/SessionTable";
+import { Button } from "@/components/common/controls";
+import { HudTile } from "@/components/common/HudTile";
+import {
+  useAnalyticsStore,
+  useDataVersion,
+  useLoadState,
+  useSummary,
+} from "@/lib/analytics/context";
+import {
+  conditionColumns,
+  sessionFalseStartsOf,
+  sessionRunsOf,
+} from "@/lib/analytics/session";
+import { RestartedRuns } from "@/components/analytics/session/RestartedRuns";
+import type { SessionListItem } from "@/lib/analytics/types";
+import { buildAnimalColors } from "@/lib/analytics/view";
+import { addNote, deleteNote, editNote, resolveFlag, setSessionLog } from "@/lib/logbook/commands";
+import { useLogbookStore } from "@/lib/logbook/context";
+import type { LogbookEntry } from "@/lib/logbook/store";
+import { useReduceMotion } from "@/lib/useReduceMotion";
+import { useSidecar } from "@/lib/ws/context";
+
+import { ChangesList, ChangesStatus } from "./ChangesList";
+import { NoteComposer } from "./NoteComposer";
+import { NotesTimeline, noteAnchor } from "./NotesTimeline";
+import { ReadoutFade } from "./ReadoutFade";
+import { SessionClockHeader } from "./SessionClockHeader";
+import { SessionLogForm } from "./SessionLogForm";
+import type { RosterAnimal } from "./tags";
+
+/**
+ * One session's page of the log: its clock, its notes, how each animal did,
+ * what changed since last time, and who ran it. The selected tick on the rail
+ * opens this; switching sessions fades each tile's contents in over the same
+ * glass, so it reads as one readout changing channel rather than a new page.
+ * The tiles stay mounted across sessions (`ReadoutFade` says why).
+ *
+ * Memoized: the Log renders it from a *deferred* selection, so while the rail
+ * steps, the urgent render skips this page entirely and the page renders once
+ * the tape comes to rest (`routes/Log.tsx`).
+ *
+ * Everything shown is what the sidecar reported — a note appears when the
+ * `logbook.updated` it caused comes back, never optimistically.
+ */
+export const SessionReadout = memo(function SessionReadout({
+  cohortId,
+  session,
+  entry,
+  roster,
+  names,
+  composerRef,
+}: {
+  cohortId: string;
+  session: SessionListItem;
+  entry: LogbookEntry;
+  roster: RosterAnimal[];
+  names: Map<string, string>;
+  composerRef?: Ref<HTMLTextAreaElement> | undefined;
+}) {
+  const { client, status } = useSidecar();
+  const reduce = useReduceMotion();
+  const navigate = useNavigate();
+  const analytics = useAnalyticsStore();
+  const summary = useSummary(cohortId);
+  const summaryState = useLoadState(cohortId);
+  const version = useDataVersion();
+
+  // The performance table reads the Analytics summary — the same numbers, the
+  // same cache. A cold one can index the whole archive, so it is asked for
+  // only once the Log is actually showing a session.
+  useEffect(() => {
+    if (status !== "connected") return;
+    void analytics.load(client, cohortId);
+  }, [analytics, client, cohortId, status, version]);
+
+  // A fresh summary means the index has just read files — including recovered
+  // runs', whose parameters the log's what-changed is computed from
+  // (`DATA.md#what-changed`). The log is database-only and cheap; ask again.
+  const logStore = useLogbookStore();
+  useEffect(() => {
+    if (summary) void logStore.load(cohortId, true);
+  }, [summary, cohortId, logStore]);
+
+  const notes = entry.notesBySession.get(session.id) ?? NONE;
+  const changes = entry.changesBySession.get(session.id) ?? [];
+  const setAsideChanges = entry.falseStartsBySession.get(session.id) ?? [];
+  const log = entry.logs.get(session.id) ?? null;
+  const readOnly = session.id.startsWith("adopted:");
+
+  const runs = useMemo(
+    () => (summary ? sessionRunsOf(summary, session.id) : []),
+    [summary, session.id],
+  );
+  const columns = useMemo(
+    () => (summary ? conditionColumns(runs, summary.profileGroups) : []),
+    [runs, summary],
+  );
+  const colors = useMemo(() => buildAnimalColors(summary?.animals ?? []), [summary]);
+  const tableNames = useMemo(() => {
+    const merged = new Map((summary?.animals ?? []).map((a) => [a.id, a.name]));
+    for (const [id, name] of names) merged.set(id, name);
+    return merged;
+  }, [summary, names]);
+  const boxes = useMemo(() => {
+    const used = new Set<number>(
+      changes.flatMap((c) => (c.box === null ? [] : [c.box])),
+    );
+    for (const run of runs) if (run.boxNumber !== null) used.add(run.boxNumber);
+    return used.size > 0 ? [...used].sort((a, b) => a - b) : [1, 2, 3, 4, 5, 6];
+  }, [changes, runs]);
+  const animalCount = new Set([...runs.map((r) => r.animalId), ...changes.map((c) => c.animalId)])
+    .size;
+  // A former member who ran in this session can still be written about
+  // (`DATA.md#former-members`); one who didn't is not offered.
+  const pickable = useMemo(() => {
+    const ran = new Set(runs.map((r) => r.animalId));
+    const former = (summary?.animals ?? [])
+      .filter((a) => a.former && ran.has(a.id))
+      .map((a) => ({ id: a.id, name: a.name, box: null }));
+    return former.length > 0 ? [...roster, ...former] : roster;
+  }, [roster, runs, summary]);
+
+  function focusNote(noteId: string) {
+    document
+      .getElementById(noteAnchor(noteId))
+      ?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "center" });
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <SessionClockHeader
+        session={session}
+        notes={notes}
+        animalCount={animalCount}
+        onNote={focusNote}
+      />
+
+      <HudTile
+        icon={NotebookPen}
+        label="Notes"
+        status={`${notes.length} note${notes.length === 1 ? "" : "s"}`}
+      >
+        <ReadoutFade key={session.id}>
+          {readOnly ? (
+            <p className="border-b border-halo px-4 py-3 text-[12px] text-static">
+              This session was recovered from files and has no record to write notes against.
+            </p>
+          ) : (
+            <div className="border-b border-halo px-4 py-3">
+              <NoteComposer
+                key={session.id}
+                sessionDate={session.date}
+                roster={pickable}
+                boxes={boxes}
+                textareaRef={composerRef}
+                onSubmit={async (draft) => {
+                  await addNote(client, session.id, draft);
+                }}
+              />
+            </div>
+          )}
+          <NotesTimeline
+            notes={notes}
+            names={tableNames}
+            sessionDate={session.date}
+            roster={pickable}
+            boxes={boxes}
+            readOnly={readOnly}
+            onEdit={async (note, draft) => {
+              await editNote(client, note.id, draft);
+            }}
+            onDelete={async (note) => {
+              await deleteNote(client, note.id);
+            }}
+            onResolve={async (note, resolved) => {
+              await resolveFlag(client, note.id, resolved, null);
+            }}
+          />
+        </ReadoutFade>
+      </HudTile>
+
+      <HudTile
+        icon={ClipboardList}
+        label="Performance"
+        status={
+          <Button
+            variant="ghost"
+            onClick={() =>
+              navigate("/analytics", { state: { cohortId, sessionId: session.id } })
+            }
+          >
+            <ChartLine size={12} strokeWidth={1.75} />
+            Open in Analytics
+          </Button>
+        }
+      >
+        <ReadoutFade key={session.id}>
+          {summary && (runs.length > 0 || sessionFalseStartsOf(summary, session.id).length > 0) ? (
+            <div className="p-3">
+              {runs.length > 0 && (
+                <>
+                  <SessionTable
+                    runs={runs}
+                    columns={columns}
+                    names={tableNames}
+                    colors={colors}
+                    minCounted={summary.minCountedTrials}
+                    onSelect={null}
+                  />
+                  <TableKey />
+                </>
+              )}
+              <RestartedRuns
+                summary={summary}
+                sessionId={session.id}
+                names={tableNames}
+                interactive={!readOnly}
+              />
+            </div>
+          ) : (
+            <p className="flex items-center gap-2 px-4 py-4 text-[12px] text-static">
+              {summaryState === "loading" || (!summary && summaryState !== "error") ? (
+                <>
+                  <Loader2 size={13} strokeWidth={1.75} className="animate-spin" aria-hidden />
+                  Reading this cohort's runs…
+                </>
+              ) : summaryState === "error" ? (
+                "The runs couldn't be read — Analytics says why."
+              ) : session.status === "running" ? (
+                "Each animal appears here as its box finishes."
+              ) : (
+                "No runs were recorded in this session."
+              )}
+            </p>
+          )}
+        </ReadoutFade>
+      </HudTile>
+
+      <HudTile
+        icon={GitCompareArrows}
+        label="What changed"
+        status={<ChangesStatus changes={changes} />}
+      >
+        <ReadoutFade key={session.id}>
+          <ChangesList
+            changes={changes}
+            setAside={setAsideChanges}
+            names={tableNames}
+            colors={colors}
+          />
+        </ReadoutFade>
+      </HudTile>
+
+      <HudTile icon={UserRound} label="Operator and summary">
+        <ReadoutFade key={session.id}>
+          <SessionLogForm
+            key={session.id}
+            log={log}
+            readOnly={readOnly}
+            onSave={async (fields) => {
+              await setSessionLog(client, session.id, fields);
+            }}
+          />
+        </ReadoutFade>
+      </HudTile>
+    </div>
+  );
+});
+
+const NONE: never[] = [];

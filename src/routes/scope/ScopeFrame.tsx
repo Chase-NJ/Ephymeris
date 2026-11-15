@@ -1,0 +1,204 @@
+import { useReducedMotion } from "framer-motion";
+import { Minus, X } from "lucide-react";
+import type { ReactNode } from "react";
+
+import { Dropdown } from "@/components/common/Dropdown";
+import { useIntanStatus } from "@/lib/intan/context";
+import { channelNumber } from "@/lib/intan/scopeMath";
+import { shell } from "@/lib/shell";
+import { useSidecar } from "@/lib/ws/context";
+
+const { frame } = shell;
+
+/**
+ * The chrome every recording pop-up shares: a drag bar that says what the
+ * window is and whether the recording is live, a row of options, the view, and
+ * one line of status underneath.
+ *
+ * The windows are frameless like the main one, so this IS the title bar —
+ * `frame.dragRegion` makes it draggable and the two buttons are the only
+ * window controls a scope needs. The flat dot beside the title is the one
+ * thing a window parked on a second monitor needs to say at a glance: live,
+ * or frozen. Ion while recording, static otherwise, and the only motion is
+ * the opacity pulse the theme already uses.
+ *
+ * NO `useSettings` IN HERE, or in anything a scope window renders. A pop-up
+ * mounts no `SettingsProvider` on purpose (`main.tsx`), and the app's own
+ * reduced-motion hook reads settings — it threw, and every window opened
+ * blank. Only the OS preference is honoured here; the app toggle cannot
+ * reach a window that has no settings.
+ */
+export function ScopeFrame({
+  title,
+  subtitle,
+  options,
+  status,
+  error,
+  children,
+}: {
+  title: string;
+  subtitle?: string | null | undefined;
+  options?: ReactNode;
+  /** One mono line under the view: counts, rates, what it is waiting for. */
+  status?: ReactNode;
+  error?: string | null | undefined;
+  children: ReactNode;
+}) {
+  const { status: link } = useSidecar();
+  const intan = useIntanStatus();
+  const reduceMotion = Boolean(useReducedMotion());
+  const frozen =
+    link !== "connected"
+      ? "Reconnecting to Ephymeris…"
+      : !intan.recording
+        ? "No recording is running — this view is frozen."
+        : null;
+  const live = link === "connected" && intan.state === "recording";
+
+  return (
+    <div className="flex h-screen flex-col bg-void text-starlight">
+      <header
+        {...frame.dragRegion}
+        className="flex h-9 shrink-0 items-center justify-between border-b border-halo pl-3"
+      >
+        <div {...frame.dragRegion} className="pointer-events-none flex min-w-0 items-center gap-2">
+          <span
+            aria-hidden
+            title={live ? "recording" : "not recording"}
+            className={`size-1.5 shrink-0 rounded-full ${live && !reduceMotion ? "animate-pulse" : ""}`}
+            style={{ background: live ? "var(--color-ion)" : "var(--color-static)" }}
+          />
+          <span className="font-display text-[13px] font-semibold tracking-tight">{title}</span>
+          {subtitle && <span className="truncate font-mono text-[11px] text-static">{subtitle}</span>}
+        </div>
+        <div className="flex h-full items-stretch">
+          <FrameButton label="Minimize" onClick={() => void frame.minimize()}>
+            <Minus size={14} strokeWidth={1.5} />
+          </FrameButton>
+          <FrameButton label="Close" onClick={() => void frame.close()}>
+            <X size={15} strokeWidth={1.5} />
+          </FrameButton>
+        </div>
+      </header>
+
+      {options && (
+        <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-halo px-3 py-1.5">
+          {options}
+        </div>
+      )}
+
+      <main className="relative min-h-0 flex-1">{children}</main>
+
+      <footer className="flex h-7 shrink-0 items-center gap-3 border-t border-halo px-3 font-mono text-[11px] text-static">
+        {error ? (
+          <span style={{ color: "var(--color-status-error)" }}>{error}</span>
+        ) : frozen ? (
+          <span style={{ color: "var(--color-status-warning)" }}>{frozen}</span>
+        ) : (
+          status
+        )}
+      </footer>
+    </div>
+  );
+}
+
+function FrameButton({ label, onClick, children }: { label: string; onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      className="flex w-10 items-center justify-center text-static transition-colors hover:bg-halo/60 hover:text-starlight"
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * The pop-ups' shared empty state. As an `overlay` it floats over a canvas
+ * that is still drawing its axes, and lets pointer events through so a
+ * threshold line under it can still be grabbed.
+ */
+export function Waiting({
+  children,
+  detail,
+  overlay = false,
+}: {
+  children: ReactNode;
+  detail?: ReactNode;
+  overlay?: boolean;
+}) {
+  return (
+    <div
+      className={`absolute inset-0 flex flex-col items-center justify-center gap-1 px-8 text-center ${
+        overlay ? "pointer-events-none" : ""
+      }`}
+    >
+      <span className="text-[12px] text-static">{children}</span>
+      {detail && <span className="font-mono text-[10px] text-static/70">{detail}</span>}
+    </div>
+  );
+}
+
+/** A labelled option in the frame's options row. */
+export function ScopeOption({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="flex items-center gap-1.5 text-[11px] text-static">
+      {label}
+      {children}
+    </label>
+  );
+}
+
+/** A compact picker over a fixed numeric option set — RHX's own sets, mostly. */
+export function NumberPick({
+  label,
+  value,
+  options,
+  unit,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  options: readonly number[];
+  unit?: string;
+  onChange: (next: number) => void;
+}) {
+  return (
+    <ScopeOption label={label}>
+      <Dropdown
+        label={label}
+        value={String(value)}
+        placeholder="—"
+        options={options.map((n) => ({ value: String(n), label: unit ? `${n} ${unit}` : String(n) }))}
+        onChange={(v) => onChange(Number(v))}
+      />
+    </ScopeOption>
+  );
+}
+
+/** The channels this box records, in RHX's order. */
+export function ChannelPick({
+  channels,
+  value,
+  onChange,
+}: {
+  channels: readonly string[];
+  value: string | null;
+  onChange: (next: string) => void;
+}) {
+  const sorted = [...channels].sort((a, b) => a.localeCompare(b) || channelNumber(a) - channelNumber(b));
+  return (
+    <ScopeOption label="Channel">
+      <Dropdown
+        label="Channel"
+        value={value ?? ""}
+        placeholder="— channel —"
+        options={sorted.map((name) => ({ value: name, label: name }))}
+        onChange={onChange}
+      />
+    </ScopeOption>
+  );
+}

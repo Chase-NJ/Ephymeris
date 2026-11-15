@@ -1,0 +1,54 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Ephymeris",
+  "version": "1.1.4-alpha",
+  "identifier": "edu.hartlab.ephymeris",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Ephymeris",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 1024,
+        "minHeight": 700,
+        "resizable": true,
+        "fullscreen": false,
+        "backgroundColor": "#0B0B10",
+        "decorations": false,
+        "visible": false,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENGRTcwMzBCM0NFNjZFQTMKUldTamJ1WThDd1Bueng0SDNoSkdScFZTZys3SEE2U1hJYzRidWd4UFJhMFI3c2RFbjlGSTZQeGoK",
+      "endpoints": [
+        "https://raw.githubusercontent.com/Chase-NJ/Ephymeris/updates/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

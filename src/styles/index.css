@@ -1,0 +1,439 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   Theme tokens — see `ARCHITECTURE.md#theme`.
+   Values here are deliberate design calls, not defaults. In particular the
+   palette is MATTE: no gradients on Pulsar, no glow, saturation held around
+   30–35% so the purple reads as a material rather than a light source.
+   --------------------------------------------------------------------------- */
+@theme {
+  /* Color palette */
+  --color-void: #0b0b10; /* base app background */
+  --color-nebula: #16151f; /* elevated surfaces: cards, sidebar, panels */
+  --color-halo: #2c2a3a; /* hairline borders, dividers, idle indicators */
+  --color-pulsar: #8b7ec8; /* primary accent */
+  --color-ion: #7cc98f; /* success / connected / nominal — sparingly */
+  --color-starlight: #edebf6; /* primary text */
+  --color-static: #948fa8; /* secondary / muted text */
+
+  /* Semantic status — state only, never decorative */
+  --color-status-ok: #7cc98f;
+  --color-status-warning: #d9a15c;
+  --color-status-error: #c96c6c;
+
+  /* Typography — three roles, kept strictly separate.
+     Space Grotesk never leaves headers or it dilutes into "just another sans". */
+  --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", monospace;
+
+  /* Data-visualization ramps — see `DATA.md#colour-palette`. Added for Analytics;
+     nothing above changes. Pulsar is still the primary accent and the
+     no-gradient/no-glow rule still holds.
+
+     Series: six categorical colours anchored on Pulsar, for per-animal
+     identity across three linked panels. Worst-case separation is ΔE ≈ 10
+     under normal, deuteranopic AND protanopic vision — do NOT "fix" the
+     lightness spread to make them equal weight, that collapses two pairs to
+     ΔE 0.9 for red-green colour blindness. Chroma held ≤ 0.125 so they read
+     as matte beside Pulsar's 0.110. */
+  --color-series-1: #8b7ec8; /* oklch(0.635 0.110 291.0) — Pulsar */
+  --color-series-2: #229582; /* oklch(0.604 0.102 178.6) */
+  --color-series-3: #52b79d; /* oklch(0.713 0.103 173.8) */
+  --color-series-4: #9e9ff6; /* oklch(0.737 0.125 282.0) */
+  --color-series-5: #cba23e; /* oklch(0.731 0.125  85.8) */
+  --color-series-6: #be7031; /* oklch(0.619 0.125  56.0) */
+
+  /* Diverging accuracy ramp, centred on chance so below-chance reads as a
+     different *kind* of result rather than a smaller one. Quantized into seven
+     bins, not continuous: a continuous ramp passes through a mid-lightness
+     band where an in-cell label fails contrast against both Starlight and
+     Void. Every bin below clears WCAG AA. The top bin IS Ion, and the centre
+     sits just above Halo so chance reads as "nothing happening". */
+  --color-heat-1: #d4716f; /* < 0.20   oklch(0.660 0.125  22.0) */
+  --color-heat-2: #854a49; /* 0.20–35  oklch(0.480 0.080  22.0) */
+  --color-heat-3: #5a3e3d; /* 0.35–45  oklch(0.395 0.040  22.0) */
+  --color-heat-4: #3d3c44; /* 0.45–55  oklch(0.360 0.014 290.0) — chance */
+  --color-heat-5: #3e5743; /* 0.55–65  oklch(0.430 0.045 151.0) */
+  --color-heat-6: #447250; /* 0.65–85  oklch(0.510 0.075 151.0) */
+  --color-heat-7: #7cc98f; /* ≥ 0.85   oklch(0.770 0.113 151.0) — Ion */
+
+  /* Radius scale — sm/md/lg/xl. No ad hoc radii anywhere. */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+
+  /* The sidebar's width, as a spacing token rather than a literal.
+     The sidebar floats *over* the content region so the constellation runs
+     full-bleed beneath its glass, which means three places have to agree on
+     this number: the sidebar's own width, the left padding that keeps
+     ordinary routes clear of it, and the negative offset the sky views use to
+     reach back underneath it. One token, so they cannot drift apart. */
+  --spacing-sidebar: 200px;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    overflow: hidden; /* the shell owns scrolling, per-region */
+    background-color: var(--color-void);
+    color: var(--color-starlight);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Nothing in a desktop shell should be text-selectable by default; opt in
+     where reading and copying is the point (console scrollback, IDs). */
+  body {
+    user-select: none;
+    cursor: default;
+  }
+
+  code,
+  pre,
+  input,
+  textarea,
+  [data-selectable] {
+    user-select: text;
+  }
+
+  /* Interactive controls advertise themselves. The body default above is
+     `default` so the app doesn't feel like a web page, but that also means a
+     button gets no pointer from the UA stylesheet — controls have to opt in,
+     or nothing in the app ever signals that it can be clicked. */
+  button:not(:disabled),
+  select:not(:disabled),
+  a[href],
+  [role="switch"]:not(:disabled),
+  summary {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  select:disabled {
+    cursor: not-allowed;
+  }
+
+  /* The Electron shell's title bars (`frame.dragRegion` in `lib/shell/electron.ts`).
+     A drag region swallows clicks, so every control inside one opts back out. */
+  [data-app-drag] {
+    -webkit-app-region: drag;
+  }
+  [data-app-drag] :is(button, a, input, select, textarea, [role="button"]) {
+    -webkit-app-region: no-drag;
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    letter-spacing: -0.015em;
+  }
+
+  /* Pulsar is the focus ring colour. */
+  :focus-visible {
+    outline: 2px solid var(--color-pulsar);
+    outline-offset: 2px;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-halo);
+    border-radius: var(--radius-sm);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #3a3750;
+  }
+}
+
+@layer components {
+  /* Elevation: 1px Halo hairline + a subtle shadow. Flat and matte beats
+     skeuomorphic depth for this theme.
+
+     **Frosted, because there is no longer any page without sky behind it.** This
+     was opaque Nebula, which was right while Cohorts, Config, Task, Analytics and
+     Settings were plain scrolling documents. Every route now sits on the rig's
+     constellation (`SkyBackdrop` — for a reason that is about the shared canvas's
+     lifecycle, not about looks), and an opaque card over that punches a hole in
+     it. One definition here rather than a `.hud` swap in eighteen files.
+
+     `.surface` and `.hud` have converged to within a box-shadow, and that is
+     honest: they are the same material. What still separates them is *what they
+     dock over* — `.hud` sits on a live, close-up scene where a star can fill the
+     frame, `.surface` on the ambient sky. Keep both names; the distinction is
+     about intent and it is what tells you which one a new panel wants. */
+  .surface {
+    background-color: color-mix(in srgb, var(--color-nebula) 55%, transparent);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--color-halo);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+  }
+
+  /* A card nested *inside* a frosted panel — `NodeDetail`'s sections, and
+     anything else that sits on `.hud` rather than on the sky.
+
+     Frosting inside frosting is not a stronger frost: `backdrop-filter` samples
+     whatever is already composited behind it, so a nested one blurs an
+     already-blurred backdrop, costs a second full-panel filter pass, and reads
+     muddier than either surface alone. What a nested card actually wants is what
+     `.surface` used to be — a flat lift off its parent. */
+  /* Telemetry — Analytics' panels, drawn as segments of one large translucent
+     display (`ARCHITECTURE.md#telemetry-panels`). The `.hud` glass, thinner,
+     with a sharper radius; corner brackets where a card would have a rounded
+     edge; and a faint dot reticle, so the sky reads as being *behind* a
+     display surface rather than around floating cards.
+
+     Every mark is an SVG — no gradient, and nothing on Pulsar glows (the
+     theme's rule). The colours are Static's hex because a data URI cannot
+     read a custom property; change them with the token. */
+  .telemetry {
+    position: relative;
+    border: 1px solid color-mix(in srgb, var(--color-halo) 55%, transparent);
+    border-radius: 3px;
+    background-color: color-mix(in srgb, var(--color-nebula) 46%, transparent);
+    background-image:
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12'%3E%3Cpath d='M0.5 12V0.5H12' fill='none' stroke='%23948fa8' stroke-opacity='0.7' stroke-width='1'/%3E%3C/svg%3E"),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12'%3E%3Cpath d='M0 0.5H11.5V12' fill='none' stroke='%23948fa8' stroke-opacity='0.7' stroke-width='1'/%3E%3C/svg%3E"),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12'%3E%3Cpath d='M0.5 0V11.5H12' fill='none' stroke='%23948fa8' stroke-opacity='0.7' stroke-width='1'/%3E%3C/svg%3E"),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12'%3E%3Cpath d='M0 11.5H11.5V0' fill='none' stroke='%23948fa8' stroke-opacity='0.7' stroke-width='1'/%3E%3C/svg%3E"),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14'%3E%3Ccircle cx='0.75' cy='0.75' r='0.6' fill='%23948fa8' fill-opacity='0.16'/%3E%3C/svg%3E");
+    background-position:
+      top left,
+      top right,
+      bottom left,
+      bottom right,
+      0 0;
+    background-repeat: no-repeat, no-repeat, no-repeat, no-repeat, repeat;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+  }
+
+  /* A display's section heading: the segment's name in tracked mono, and a
+     hairline running out to the edge with a tick at its end. */
+  .telemetry-section {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--color-static);
+  }
+  .telemetry-section::after {
+    content: "";
+    flex: 1;
+    height: 5px;
+    border-top: 1px solid color-mix(in srgb, var(--color-halo) 80%, transparent);
+    border-right: 1px solid color-mix(in srgb, var(--color-halo) 80%, transparent);
+    transform: translateY(2px);
+  }
+
+  .surface-inset {
+    background-color: var(--color-nebula);
+    border: 1px solid var(--color-halo);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+  }
+
+  /* Vibrancy: translucent Nebula + backdrop blur. Persistent chrome
+     (sidebar) and transient overlays (modals) ONLY — never primary content
+     cards. Applying this to cards is the failure mode to guard against. */
+  /* Frosted chrome, for a backdrop of *content* — i.e. modals, which float
+     over dense tables and forms and need the blur to stay readable. */
+  .vibrancy {
+    background-color: color-mix(in srgb, var(--color-nebula) 72%, transparent);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+
+  /* The same treatment tuned for a backdrop of *sky*. The sidebar floats over
+     the constellation (see `AppShell`), and there its blur was worse than
+     useless: a starfield is 1px points on near-black, so even a 4px blur
+     spreads every star past visibility and the panel just reads darker. Frost
+     needs something with area to frost. So this one is tint alone — thin
+     enough that the sky shows through, and legible without the blur because
+     what's behind it is almost entirely Void to begin with.
+
+     Reserved, like `.vibrancy`, to exactly one surface. Anything docked over
+     the sky that isn't the shell wants `.hud`. */
+  .vibrancy-sky {
+    background-color: color-mix(in srgb, var(--color-nebula) 52%, transparent);
+  }
+
+  /* The squircle nod, spent exactly once: the app mark. Not buttons,
+     not cards. Referenced as an objectBoundingBox clipPath (see <SvgDefs>) so
+     the shape scales with the element instead of being pinned to one pixel
+     size the way an inline `path()` would be. */
+  .squircle {
+    clip-path: url(#ephymeris-squircle);
+  }
+
+  /* Draws the eye to the one control a guided flow is waiting on. A border
+     colour swell only — stays matte, no glow. */
+  .attention-border {
+    animation: attention-border 1.8s ease-in-out infinite;
+  }
+
+  /* A route on its way out must not still be clickable.
+     `AnimatePresence mode="popLayout"` stamps this attribute on the exiting
+     child and pins it `position: absolute`, which makes it paint *above* the
+     page that replaced it — so its `pointer-events-auto` tiles stay hit-testable
+     while they fade, sitting invisibly over the incoming page.
+     Done here rather than in the route's `exit` target on purpose:
+     `pointer-events` is not an animatable value, and the attribute framer
+     already stamps describes exactly the state we want to style — so this needs
+     no React state, covers every `popLayout` exit in the app at once, and
+     applies for precisely the lifetime of the exit.
+
+     **The whole subtree, and `!important`.** On the attributed element alone
+     this only set an inherited default, which every `pointer-events-auto` tile
+     inside the page overrides — and Tailwind's utilities layer outranks this
+     one besides. The exiting page's controls stayed live while invisible, over
+     the incoming page — for the length of the exit, or for good if an exit
+     never finished — eating its clicks while the sky between them still
+     orbited.
+
+     The shared canvas included: r3f sets `pointer-events: auto` on its own
+     wrapper, so a sky still inside an outgoing page would otherwise cover the
+     whole incoming one. */
+  [data-motion-pop-id],
+  [data-motion-pop-id] * {
+    pointer-events: none !important;
+  }
+
+  /* A scroller with no scrollbar at all — for the HUD rails floating over the
+     sky (the Dashboard's two tile columns, Mission Control's two).
+
+     The rule above gives every scroller in the app a classic 10px scrollbar,
+     which is right for a document and wrong for these: the rails are
+     `pointer-events-none` so the sky between their tiles stays orbitable, which
+     means their scrollbars cannot be grabbed even in principle. All they do is
+     take 10px off the content box the moment a rail overflows, shrinking every
+     tile inside it and — in Mission Control, whose journey bar spaces itself
+     across the rail — visibly resizing chrome that has no business resizing.
+     Wheel and trackpad scrolling are untouched, which is the only way these
+     ever scrolled.
+
+     Deliberately *not* `scrollbar-gutter: stable` like `main`: that reserves the
+     10px permanently instead of transiently, which is the right trade for a page
+     whose scrollbar is real and the wrong one for a rail whose scrollbar is
+     decoration. */
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* A hairline scrollbar for in-tile horizontal rails (the session
+     timeline). The document scrollbar's 10px is right for a page and heavy
+     for a strip of dots; this one stays out of the way and brightens under
+     the pointer. */
+  .scrollbar-slim {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--color-halo) 75%, transparent) transparent;
+  }
+  .scrollbar-slim::-webkit-scrollbar {
+    height: 5px;
+  }
+  .scrollbar-slim::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--color-halo) 75%, transparent);
+    border-radius: 999px;
+  }
+  .scrollbar-slim:hover::-webkit-scrollbar-thumb {
+    background: var(--color-halo);
+  }
+
+  /* HUD panels docked over a live 3D scene — the Dashboard's tile column,
+     following the treatment NodeDetail and StarPanel established. Translucent
+     so the sky reads through, blurred so the panel's own text stays legible.
+     Distinct from .vibrancy (persistent chrome + modals) and .surface (opaque
+     content cards): each of the three keeps its own rule. */
+  .hud {
+    background-color: color-mix(in srgb, var(--color-nebula) 55%, transparent);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--color-halo);
+  }
+
+  /* A HUD panel set IN FRONT of another — the task editor's popovers over
+     its state machine, a hint over its row. Depth comes from a denser glass
+     and a flat dark drop shadow, never a coloured one: the theme forbids glow
+     (`ARCHITECTURE.md#theme`). */
+  .hud-front {
+    background-color: color-mix(in srgb, var(--color-nebula) 72%, transparent);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid var(--color-halo);
+    box-shadow:
+      0 1px 2px rgb(0 0 0 / 0.35),
+      0 12px 32px rgb(0 0 0 / 0.45);
+  }
+}
+
+@keyframes attention-border {
+  0%,
+  100% {
+    border-color: var(--color-halo);
+  }
+  50% {
+    border-color: var(--color-pulsar);
+  }
+}
+
+/* Ambient motion must never compete with live data collection. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  /* The pulse dies with the rule above; keep the cue as a steady accent. */
+  .attention-border {
+    border-color: var(--color-pulsar);
+  }
+}
+
+/* The appearance panel's hue slider. A native range so the drag is native,
+   themed so the thumb is the app's and not the platform's. The track is set
+   inline — it is the hue circle itself. */
+.hue-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: var(--color-starlight);
+  border: 2px solid var(--color-void);
+  box-shadow: 0 0 0 1px var(--color-halo);
+  cursor: pointer;
+}
+.hue-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: var(--color-starlight);
+  border: 2px solid var(--color-void);
+  box-shadow: 0 0 0 1px var(--color-halo);
+  cursor: pointer;
+}

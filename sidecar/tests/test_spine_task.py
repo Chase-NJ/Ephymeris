@@ -1,0 +1,773 @@
+"""A phase-spine task, saved and generated — `TASKS.md#spine-tasks`.
+
+A spine definition is saved like any task and generates a sketch folder whose
+only firmware is the library's: a fixed `.ino`, this rig's pins and codes, and
+the lowered state table. These pin what that folder says, what the profile it
+carries tells replay, and what the diagnostics catch before a flash.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from ephymeris_sidecar.rig import registry
+from ephymeris_sidecar.taskdef import generate, lowering, pavlovian
+from ephymeris_sidecar.taskdef import spine as spine_module
+from ephymeris_sidecar.taskdef.model import TaskDefinition
+from ephymeris_sidecar.taskdef.store import TaskStore
+from ephymeris_sidecar.taskdef.validate import validate
+from ephymeris_sidecar.tasks import profile as task_profile
+from ephymeris_sidecar.tasks.start_command import build_start_command
+from tests.fixtures import spine as fixture
+
+FIRMWARE = Path(__file__).resolve().parents[2] / "firmware"
+
+
+@pytest.fixture(autouse=True)
+def _issued_rig():
+    fixture.install()
+    yield
+    fixture.uninstall()
+
+
+def tracer(**edits) -> TaskDefinition:
+    return TaskDefinition.from_json(fixture.tracer(**edits))
+
+
+def codes(definition: TaskDefinition) -> set[str]:
+    return {d.code for d in validate(definition)}
+
+
+def test_a_spine_definition_round_trips_and_a_legacy_one_is_untouched():
+    raw = fixture.tracer()
+    assert TaskDefinition.from_json(raw).to_json() == raw | {"legacyNames": [], "notes": ""}
+    legacy = TaskDefinition.from_json({"id": "plain", "name": "Plain"}).to_json()
+    assert "spine" not in legacy and "slots" not in legacy
+
+
+def test_the_tracer_is_clean_on_a_rig_whose_edges_have_codes():
+    assert validate(tracer()) == []
+
+
+def test_saving_generates_a_folder_with_no_hand_written_firmware(tmp_path):
+    store = TaskStore(tmp_path, library_root=FIRMWARE)
+    assert store.save(tracer()) == []
+    folder = tmp_path / "tasks" / "Tasks" / "Spine Tracer"
+    assert sorted(p.name for p in folder.iterdir()) == [
+        "Spine Tracer.ino", "TaskPins.h", "TaskSpine.h", "task.json"
+    ]
+    ino = (folder / "Spine Tracer.ino").read_text(encoding="utf-8")
+    assert "box_spine::setup();" in ino and "box_spine::loop();" in ino
+    assert ino.index('"TaskPins.h"') < ino.index('"TaskSpine.h"') < ino.index("<BoxSpine.h>")
+
+
+def test_the_table_names_pins_and_codes_from_the_rig_and_the_vocabulary(tmp_path):
+    channels, vocab = registry.channels(), registry.vocabulary()
+    header = generate.task_spine_h(tracer())
+    port, light = channels.get("odor_port"), channels.get("trial_light")
+    assert f"{{{port.index}, 0, {port.debounce_ms}, BF_ODOR_PORT_ENTER, BF_ODOR_PORT_EXIT}}" in header
+    assert f"{{{light.index}, BF_TRIAL_LIGHT_ON, BF_TRIAL_LIGHT_OFF}}" in header
+    assert "#define SPINE_NUM_STATES 8" in header and "#define SPINE_NUM_EDGES 2" in header
+    assert '{"BN1", 20UL, 1UL, ' in header and '{"T1", 1000UL, 0UL, ' in header
+    assert "#define SPINE_TRIALS_SLOT 255" in header, "no session cap: the one block ends the session"
+    pins = generate.task_pins_h(tracer())
+    assert f"#define BF_ODOR_PORT_ENTER {vocab.code_of('ODOR_PORT_ENTER')}" in pins
+    assert f"#define BF_TRIAL_START {vocab.code_of('TRIAL_START')}" in pins
+
+
+def test_the_profile_carries_everything_replay_needs():
+    profile = generate.build_profile(tracer())
+    spine = profile.spine
+    low = lowering.lower([p.to_json() for p in tracer().spine.phases],
+                         inputs=["port"], outputs=["cue", "sample", "reward"],
+                         rows=[r.to_json() for r in tracer().spine.rows],
+                         blocks=[b.to_json() for b in tracer().spine.blocks])
+    assert spine["interp"] == lowering.INTERP_VERSION
+    assert spine["table"] == {"states": [list(s) for s in low.states], "edges": [list(e) for e in low.edges],
+                              "phases": [0, 1, 2, 3, 3, 3, 4, 4], "rows": [0] * 7 + [None],
+                              "counter": None, "blocks": [list(b) for b in low.blocks], "entries": [],
+                              "overrides": [], "skipped": 0b11000000,
+                              "hits": 0b10001, "repeatAborts": False, "lazy": None}
+    #                             first count select n_min n_max k    n    window correct next errors
+    assert spine["table"]["blocks"] == [[0, 1, 0, 6, 6, 255, 255, 255, 255, 255, 0, 255, 255, 255, 255]]
+    assert spine["params"] == list(low.params)
+    assert spine["inputs"] == [{"slot": "port", "channel": "odor_port",
+                                "rise": "ODOR_PORT_ENTER", "fall": "ODOR_PORT_EXIT"}]
+    assert [o["channel"] for o in spine["outputs"]] == ["trial_light", "odor_line_1", "fluid_2"]
+    assert spine["structural"] == {"sessionStart": "START_SESSION", "blockStart": "BLOCK_START",
+                                   "trialStart": "TRIAL_START", "sessionEnd": "END_SESSION"}
+    # Every parameter slot is a declared field, so its value reaches the header.
+    assert [f.wire_key for f in profile.config] == list(low.params)
+    assert profile.live_metrics == [] and profile.end_code == registry.vocabulary().code_of("END_SESSION")
+
+
+def test_the_profile_round_trips_byte_for_byte_through_the_parser(tmp_path):
+    TaskStore(tmp_path, library_root=FIRMWARE).save(tracer())
+    folder = tmp_path / "tasks" / "Tasks" / "Spine Tracer"
+    loaded = task_profile.load_profile(folder)
+    again = task_profile.parse_profile(loaded.to_json())
+    assert json.dumps(again.to_json(), sort_keys=True) == json.dumps(loaded.to_json(), sort_keys=True)
+    assert task_profile.profile_hash(again) == task_profile.profile_hash(loaded)
+
+
+def test_a_legacy_profile_carries_no_spine_and_hashes_as_before():
+    profile = task_profile.parse_profile({"taskName": "GRGL"})
+    assert "spine" not in profile.to_json()
+
+
+def test_the_set_lines_carry_every_parameter_and_an_override_wins():
+    definition = tracer(params={"block_b1_trials": 5})
+    command = build_start_command(generate.build_profile(definition), {})
+    tokens = list(command.tokens)
+    assert "BN1=5" in tokens and "T1=1000" in tokens and "RW1=100" in tokens and "RP1=1000" in tokens
+
+
+def test_a_rig_whose_edges_have_no_codes_is_diagnosed():
+    fixture.uninstall()  # the shipped channel set names no edge codes
+    found = {(d.code, d.location) for d in validate(tracer())}
+    assert ("SPN103", "rows[0].bind.port") in found
+
+
+def test_a_vocabulary_without_the_trial_start_code_is_diagnosed():
+    rig, vocab = fixture.issued_rig()
+    del vocab["codes"]["TRIAL_START"]
+    fixture.install(rig, vocab)
+    assert "SPN104" in codes(tracer())
+    assert '#error "the strobe vocabulary has no TRIAL_START' in generate.task_spine_h(tracer())
+
+
+# --- the Response window, the contingency map and several rows (#101) ----------
+
+
+@pytest.mark.parametrize("make", [fixture.two_afc, fixture.go_no_go], ids=["2afc", "go_no_go"])
+def test_a_task_with_a_window_and_rows_round_trips_and_is_clean(make):
+    raw = make()
+    assert TaskDefinition.from_json(raw).to_json() == raw | {"legacyNames": [], "notes": ""}
+    assert validate(TaskDefinition.from_json(raw)) == []
+
+
+def test_the_go_no_go_snapshot_names_each_bit_and_annotates_each_state():
+    definition = TaskDefinition.from_json(fixture.go_no_go())
+    spine = generate.build_profile(definition).spine
+    assert spine["interp"] == lowering.INTERP_VERSION == 8
+    # One bit per channel: `sample` is two odor lines, one per row.
+    assert [(o["slot"], o["channel"]) for o in spine["outputs"]] == [
+        ("cue", "trial_light"), ("sample", "odor_line_1"), ("sample", "odor_line_2"), ("reward", "fluid_2")]
+    assert spine["outputs"][2] == {"slot": "sample", "channel": "odor_line_2",
+                                   "on": "ODOR_LINE_2_ON", "off": "ODOR_LINE_2_OFF"}
+    table = spine["table"]
+    assert len(table["phases"]) == len(table["rows"]) == len(table["states"])
+    assert table["phases"][0] is None and table["rows"][0] is None, "the pick state is no phase's and no row's"
+    assert table["states"][0][10] == lowering.STARTS_TRIAL | lowering.PICK
+    assert set(table["rows"][1:]) == {0, 1}
+    # Every class the two maps name is marked by exactly one state.
+    marked = sorted(lowering.OUTCOME_CLASSES[s[11] - 1] for s in table["states"] if s[11])
+    assert marked == ["correct", "false_alarm", "omission", "withheld"]
+
+
+def test_each_row_and_entry_has_its_own_parameter_keyed_by_row_id():
+    profile = generate.build_profile(TaskDefinition.from_json(fixture.two_afc()))
+    fields = {f.metadata_key: (f.wire_key, f.default) for f in profile.config}
+    assert fields == {
+        "present_1_ms": ("T1", 1000),
+        "response_2_ms": ("T2", 5000),
+        "response_2_hold_ms": ("H2", 200),
+        "outcome_3_ms": ("T3", 0),
+        "iti_4_ms": ("T4", 3000),
+        "reward_ms_odor_1": ("RW1", 100),
+        "reward_permille_odor_1_right": ("RP1_2", 1000),
+        "reward_ms_odor_2": ("RW2", 100),
+        "reward_permille_odor_2_left": ("RP2_1", 1000),
+        "block_b1_trials": ("BN1", 20),
+    }
+    assert [f.wire_key for f in profile.config] == profile.spine["params"]
+
+
+def test_the_tracer_s_reward_keys_name_its_row():
+    keys = [f.metadata_key for f in generate.build_profile(tracer()).config]
+    assert keys[-3:] == ["reward_ms_r1", "reward_permille_r1", "block_b1_trials"]
+
+
+def test_a_go_no_go_folder_carries_its_table():
+    header = generate.task_spine_h(TaskDefinition.from_json(fixture.go_no_go()))
+    assert "#define SPINE_INTERP 8" in header and "#error" not in header
+    assert "#define SPINE_NUM_STATES 15" in header and "#define SPINE_NUM_OUTPUTS 4" in header
+
+
+def _window(d: dict) -> dict:
+    return d["spine"][2]
+
+
+@pytest.mark.parametrize(
+    ("edit", "code", "where"),
+    [
+        (lambda d: _window(d).update(responses=["left", "left"]), "SPN105", "spine[2].responses"),
+        (lambda d: _window(d).update(responses=["cue"]), "SPN105", "spine[2].responses"),
+        (lambda d: _window(d).update(responses=[]), "SPN105", "spine[2].responses"),
+        (lambda d: _window(d).pop("ms"), "SPN105", "spine[2].ms"),
+        (lambda d: d["spine"].insert(3, dict(_window(d))), "SPN105", "spine"),
+        (lambda d: d["spine"].pop(3), "SPN105", "spine"),
+        (lambda d: d["spine"].insert(3, {"phase": "outcome", "ms": 0}), "SPN105", "spine"),
+        (lambda d: d["spine"][3].update(line="reward_r"), "SPN105", "spine[3].line"),
+        (lambda d: d["slots"].append({"id": "timeout", "type": "digital_in"}), "SPN105", "slots[7].id"),
+        (lambda d: d["spine"].insert(0, {"phase": "outcome", "line": "reward_r", "ms": 0}), "SPN105", "spine[0]"),
+        # A second Outcome would mark a trial's class twice.
+        (lambda d: d["spine"].insert(1, {"phase": "outcome", "line": "reward_r", "ms": 0}), "SPN105", "spine"),
+        # A block may draw some of the rows; a row no block draws is named.
+        (lambda d: d["blocks"][0].update(rows=["odor_1"]), "SPN106", "rows[1].id"),
+        (lambda d: d["blocks"][0].update(rows=["odor_1", "odor_1", "odor_2"]), "SPN106", "blocks[0].rows"),
+        (lambda d: d["rows"][1].update(id="odor_1"), "SPN106", "rows[1].id"),
+        (lambda d: d["rows"][1].update(id="Odor 2"), "SPN106", "rows[1].id"),
+        (lambda d: d["rows"][1].update(rewardMs=9000), "SPN106", "rows[1].rewardMs"),
+        (lambda d: d["rows"][1]["bind"].update(sample="fluid_1"), "SPN107", "rows[1].bind.sample"),
+        (lambda d: d["rows"][1].update(name=""), "SPN108", "rows[1].name"),
+        (lambda d: d["rows"][0]["map"].pop("left"), "SPN109", "rows[0].map.left"),
+        (lambda d: d["rows"][0]["map"].pop("timeout"), "SPN109", "rows[0].map.timeout"),
+        (lambda d: d["rows"][0]["map"].update(port={"outcome": "correct"}), "SPN109", "rows[0].map.port"),
+        (lambda d: d["rows"][0]["map"]["left"].update(outcome="great"), "SPN109", "rows[0].map.left.outcome"),
+        (lambda d: d["rows"][0]["map"]["left"].update(line="port"), "SPN109", "rows[0].map.left.line"),
+        (lambda d: d["rows"][0]["map"]["right"].update(rewardPermille=1001), "SPN109",
+         "rows[0].map.right.rewardPermille"),
+        (lambda d: d["rows"][0]["map"]["left"].update(rewardPermille=500), "SPN109",
+         "rows[0].map.left.rewardPermille"),
+        (lambda d: d["rows"][0]["map"]["timeout"].update(hold=True), "SPN109", "rows[0].map.timeout.hold"),
+        (lambda d: _window(d).pop("holdMs"), "SPN109", "rows[0].map.right.hold"),
+    ],
+)
+def test_each_window_and_map_problem_is_located(edit, code, where):
+    raw = fixture.two_afc()
+    edit(raw)
+    found = {(d.code, d.location) for d in validate(TaskDefinition.from_json(raw))}
+    assert (code, where) in found, found
+    if code == "SPN105":  # a spine of the wrong shape is no table: its folder refuses to compile
+        assert "#error" in generate.task_spine_h(TaskDefinition.from_json(raw))
+
+
+def test_a_task_whose_row_ids_collide_still_saves_and_says_why(tmp_path):
+    """Row ids name parameters, so two rows of one id would declare one key
+    twice: the profile is refused unless the table is withheld."""
+    raw = fixture.two_afc()
+    raw["rows"][1]["id"] = "odor_1"
+    raw["blocks"][0]["rows"] = ["odor_1"]
+    store = TaskStore(tmp_path, library_root=FIRMWARE)
+    problems = store.save(TaskDefinition.from_json(raw))
+    assert ("SPN106", "rows[1].id") in {(d["code"], d["location"]) for d in problems}
+    profile = task_profile.load_profile(store.sketch_dir(TaskDefinition.from_json(raw)))
+    assert profile.spine["table"] is None
+
+
+def test_a_tracer_saved_with_one_row_keys_keeps_its_reward_values(tmp_path):
+    """A one-row spine saved before rewards were keyed by row id stored
+    `reward_ms` and `reward_permille`. Those values are the row's: they reach
+    the profile, the folder and the START line, and a save stores them under
+    the row's keys. Never the row's default in their place."""
+    raw = fixture.tracer(params={"reward_ms": 250, "reward_permille": 600})
+    definition = TaskDefinition.from_json(raw)
+    assert validate(definition) == []
+    profile = generate.build_profile(definition)
+    fields = {f.metadata_key: f.default for f in profile.config}
+    assert fields["reward_ms_r1"] == 250 and fields["reward_permille_r1"] == 600
+    assert '{"RW1", 250UL' in generate.task_spine_h(definition)
+    tokens = list(build_start_command(profile, {}).tokens)
+    assert "RW1=250" in tokens and "RP1=600" in tokens
+
+    store = TaskStore(tmp_path, library_root=FIRMWARE)
+    assert store.save(definition) == []
+    stored = json.loads(next(tmp_path.rglob("spine_tracer.json")).read_text(encoding="utf-8"))
+    assert stored["params"] == {"reward_ms_r1": 250, "reward_permille_r1": 600}
+
+
+def test_a_stored_value_no_parameter_reads_is_named_not_dropped():
+    """A key the spine declares no parameter for would be ignored; the
+    diagnostic names it so the value is not lost without a word."""
+    raw = fixture.go_no_go(params={"reward_ms": 250, "present_9_ms": 5})
+    found = {(d.code, d.location) for d in validate(TaskDefinition.from_json(raw))}
+    assert {("SPN110", "params.reward_ms"), ("SPN110", "params.present_9_ms")} <= found
+
+
+def test_two_rows_whose_parameter_keys_collide_are_diagnosed(tmp_path):
+    """Row `odor_far` paying on slot `right` and row `odor` paying on slot
+    `far_right` would both be `reward_permille_odor_far_right`."""
+    raw = fixture.two_afc()
+    raw["slots"].insert(3, {"id": "far_right", "type": "digital_in"})
+    raw["spine"][2]["responses"] = ["left", "right", "far_right"]
+    first, second = raw["rows"]
+    first.update(id="odor_far", map={"right": {"outcome": "correct", "line": "reward_r", "rewardPermille": 1000},
+                                     "left": {"outcome": "wrong_response"},
+                                     "far_right": {"outcome": "wrong_response"},
+                                     "timeout": {"outcome": "omission"}})
+    second.update(id="odor", map={"far_right": {"outcome": "correct", "line": "reward_l", "rewardPermille": 1000},
+                                  "left": {"outcome": "wrong_response"},
+                                  "right": {"outcome": "wrong_response"},
+                                  "timeout": {"outcome": "omission"}})
+    raw["blocks"][0]["rows"] = ["odor_far", "odor"]
+    definition = TaskDefinition.from_json(raw)
+    found = {(d.code, d.location) for d in validate(definition)}
+    assert ("SPN106", "rows[1].id") in found
+    store = TaskStore(tmp_path, library_root=FIRMWARE)
+    store.save(definition)
+    assert task_profile.load_profile(store.sketch_dir(definition)).spine["table"] is None
+
+
+def test_two_windows_are_one_problem_not_a_map_problem_per_row():
+    raw = fixture.two_afc()
+    raw["spine"].insert(3, dict(raw["spine"][2]))
+    found = [(d.code, d.location) for d in validate(TaskDefinition.from_json(raw))]
+    assert ("SPN105", "spine") in found
+    assert not [f for f in found if f[0] == "SPN109"]
+
+
+def two_afc_rows(n_rows: int) -> dict:
+    raw = fixture.two_afc(id=f"spine_2afc_{n_rows}", name=f"Spine 2AFC {n_rows}")
+    raw["rows"] = [dict(raw["rows"][i % 2], id=f"row_{i}", name=f"Row {i}") for i in range(n_rows)]
+    raw["blocks"][0]["rows"] = [r["id"] for r in raw["rows"]]
+    return raw
+
+
+def test_a_table_over_the_ram_budget_is_refused_by_name():
+    """The table sits in the board's RAM. An 18-row 2AFC's states, edge rows and
+    parameters take 4965 B, within the budget; 19 rows take 5229 B."""
+    definition = TaskDefinition.from_json(two_afc_rows(19))
+    problems = [d for d in validate(definition) if d.code == "SPN105"]
+    assert [d.location for d in problems] == ["spine"] and "RAM" in problems[0].message
+    assert "#error" in generate.task_spine_h(definition)
+    assert validate(TaskDefinition.from_json(two_afc_rows(18))) == []
+
+
+def every_entry_pays(n_rows: int) -> dict:
+    """A 2AFC whose window watches the port too, every map entry paying: many
+    parameters per row, so a budget that counted only states would pass it."""
+    raw = fixture.two_afc()
+    raw["spine"][2]["responses"] = ["port", "left", "right"]
+    rows = []
+    for i in range(n_rows):
+        row = dict(raw["rows"][i % 2], id=f"row_{i}", name=f"Row {i}")
+        row["map"] = {key: {"outcome": "correct", "line": "reward_r", "rewardPermille": 500}
+                      for key in ("port", "left", "right", "timeout")}
+        rows.append(row)
+    raw["rows"], raw["blocks"][0]["rows"] = rows, [r["id"] for r in rows]
+    return raw
+
+
+def test_the_ram_budget_counts_parameters_and_channels_too():
+    """13 rows: their states and edge rows fit the budget, their 71 parameters do not."""
+    definition = TaskDefinition.from_json(every_entry_pays(13))
+    low = lowering.lower([p.to_json() for p in definition.spine.phases],
+                         inputs=["port", "left", "right"], outputs=["cue", "sample", "reward_l", "reward_r"],
+                         rows=[r.to_json() for r in definition.spine.rows])
+    assert lowering.table_bytes(len(low.states), len(low.edges)) <= spine_module.TASK_RAM_MAX
+    problems = [d for d in validate(definition) if d.code == "SPN105"]
+    assert [d.location for d in problems] == ["spine"] and "RAM" in problems[0].message
+
+
+arduino = shutil.which("arduino-cli")
+
+
+def _avr_globals(folder: Path) -> int:
+    built = subprocess.run([arduino, "compile", "--fqbn", "arduino:avr:mega", "--warnings", "all",
+                            "--libraries", str(FIRMWARE / "libraries"), str(folder)],
+                           capture_output=True, text=True)
+    assert built.returncode == 0, built.stdout + built.stderr
+    return int(re.search(r"Global variables use (\d+) bytes", built.stdout).group(1))
+
+
+@pytest.mark.skipif(arduino is None and os.environ.get("REQUIRE_ARDUINO_CLI") != "1", reason="no arduino-cli")
+def test_the_ram_budget_is_what_an_avr_build_adds_for_the_task(tmp_path):
+    """Compiled for a Mega, each task's globals are at most the runner's own plus
+    the bytes `task_ram_bytes` counts, and within a few bytes of it, so the
+    per-row sizes are pinned and the budget bounds the real build. The largest
+    task under the budget leaves the board the free RAM TASKS.md promises.
+
+    CI sets REQUIRE_ARDUINO_CLI=1 in the firmware job, where this must run."""
+    assert arduino is not None, "REQUIRE_ARDUINO_CLI=1, and arduino-cli is not on PATH"
+    store = TaskStore(tmp_path, library_root=FIRMWARE)
+
+    def refused(raw: dict) -> bool:
+        return any(d.code == "SPN105" for d in validate(TaskDefinition.from_json(raw)))
+
+    largest = max(n for n in range(1, 16) if not refused(every_entry_pays(n)))
+    assert refused(every_entry_pays(largest + 1)), "one row past the edge is refused"
+    assert not refused(two_afc_rows(18)) and refused(two_afc_rows(19))
+    # The held trial has three inputs and three outputs, so nothing folds and its
+    # build is the sum to within a byte: the linker pads `.data`, where the
+    # constant tables sit, to an even size. A task of one input or two outputs comes in
+    # under it: the compiler folds a small constant channel array away (the PR
+    # task, by 19 B).
+    # Blocks with entries, an override and two pairs pin those rows' sizes too.
+    blocks = fixture.two_afc(id="spine_blocks", name="Spine Blocks", sessionTrials=50, blocks=[
+        {"id": "a", "rows": ["odor_1", "odor_2"], "select": "antibias", "criterion": {"correct": 3, "of": 4},
+         "phaseMs": {"4": 100}},
+        {"id": "b", "rows": ["odor_2"], "select": "bag", "trials": 2, "trialsMax": 5, "next": "a"}])
+    cases = [fixture.tracer(), fixture.go_no_go(), fixture.held_trial(), fixture.progressive_ratio(),
+             fixture.reversal(), blocks,
+             two_afc_rows(18), dict(every_entry_pays(largest), id="spine_edge", name="Spine Edge")]
+    for raw in cases:
+        definition = TaskDefinition.from_json(raw)
+        assert store.save(definition) == [], raw["id"]
+        low = spine_module._resolve(definition).lowered
+        globals_ = _avr_globals(store.sketch_dir(definition))
+        counted = spine_module.RUNNER_RAM_BYTES + spine_module.task_ram_bytes(low)
+        if raw["id"] == "spine_held":
+            assert 0 <= counted - globals_ <= 1, (globals_, counted)
+        assert 0 <= counted - globals_ <= 24, (raw["id"], globals_, counted)
+    assert globals_ <= spine_module.RUNNER_RAM_BYTES + spine_module.TASK_RAM_MAX
+    assert 8192 - (spine_module.RUNNER_RAM_BYTES + spine_module.TASK_RAM_MAX) == 2604
+
+    # Driven outputs (TASKS.md#driven-outputs), with a tone and without one: the
+    # drives and tone()'s own globals are counted too. So are Pavlovian trace and
+    # delay conditioning (TASKS.md#pavlovian-conditioning), on a lick sensor.
+    fixture.install(*fixture.issued_rig(driven=True, lick=True))
+    for raw in (fixture.stimulus(), no_tone(fixture.stimulus()), pavlovian.definition(),
+                pavlovian.definition(trace=False)):
+        definition = TaskDefinition.from_json(raw)
+        assert store.save(definition) == [], raw["id"]
+        low = spine_module._resolve(definition).lowered
+        globals_ = _avr_globals(store.sketch_dir(definition))
+        counted = spine_module.RUNNER_RAM_BYTES + spine_module.task_ram_bytes(low)
+        assert 0 <= counted - globals_ <= 16, (raw["id"], globals_, counted)
+
+
+def no_tone(raw: dict) -> dict:
+    """`fixture.stimulus()` without its tone slot: PWM and a train only."""
+    raw = dict(raw, id="spine_no_tone", name="Spine No Tone")
+    raw["slots"] = [s for s in raw["slots"] if s["id"] != "tone"]
+    raw["spine"][1]["outputs"] = ["light", "laser"]
+    for row in raw["rows"]:
+        row["bind"].pop("tone")
+        row["drive"].pop("tone")
+    return raw
+
+
+def test_a_tables_bytes_are_its_rows_at_the_c_structs_sizes():
+    low = generate.build_profile(TaskDefinition.from_json(fixture.go_no_go())).spine["table"]
+    assert lowering.table_bytes(len(low["states"]), len(low["edges"])) == \
+        len(low["states"]) * lowering.STATE_ROW_BYTES + len(low["edges"]) * lowering.EDGE_ROW_BYTES
+
+
+@pytest.mark.skipif(shutil.which("clang++") is None and shutil.which("g++") is None, reason="no host C++ compiler")
+def test_the_row_sizes_are_boxinterp_hs_structs_as_avr_packs_them(tmp_path):
+    """AVR aligns nothing, so a struct's size there is its members' sizes. A host
+    build packed to 1 byte gives the same: a member added to either struct moves it."""
+    source = tmp_path / "sizes.cpp"
+    source.write_text(
+        "#include <cstdio>\n#pragma pack(push, 1)\n#include \"BoxInterp.h\"\n#pragma pack(pop)\n"
+        "int main() { std::printf(\"%u %u\", (unsigned)sizeof(InterpStateRow), (unsigned)sizeof(InterpEdgeRow)); }\n",
+        encoding="utf-8")
+    binary = tmp_path / "sizes"
+    compiler = shutil.which("clang++") or shutil.which("g++")
+    subprocess.run([compiler, "-std=c++11", f"-I{FIRMWARE / 'libraries' / 'BehaviorBox'}", str(source),
+                    "-o", str(binary)], check=True)
+    out = subprocess.run([str(binary)], capture_output=True, text=True, check=True).stdout
+    assert out == f"{lowering.STATE_ROW_BYTES} {lowering.EDGE_ROW_BYTES}"
+
+
+def test_a_map_on_a_spine_with_no_window_is_diagnosed():
+    raw = fixture.tracer()
+    raw["rows"][0]["map"] = {"timeout": {"outcome": "omission"}}
+    assert ("SPN109", "rows[0].map") in {(d.code, d.location) for d in validate(TaskDefinition.from_json(raw))}
+
+
+def test_a_table_over_the_format_s_size_is_diagnosed():
+    raw = fixture.go_no_go()
+    raw["rows"] = [dict(raw["rows"][i % 2], id=f"row_{i}", name=f"Row {i}") for i in range(40)]
+    raw["blocks"][0]["rows"] = [r["id"] for r in raw["rows"]]
+    found = {(d.code, d.location) for d in validate(TaskDefinition.from_json(raw))}
+    assert ("SPN105", "spine") in found
+
+
+@pytest.mark.parametrize(
+    ("edit", "code"),
+    [
+        (lambda d: d["rows"][0]["bind"].pop("sample"), "SPN101"),
+        (lambda d: d["rows"][0]["bind"].update(sample="no_such_line"), "SPN101"),
+        (lambda d: d["rows"][0]["bind"].update(port="fluid_2"), "SPN102"),
+        (lambda d: d["spine"].pop(), "SPN105"),
+        (lambda d: d["spine"].insert(0, {"phase": "juggle"}), "SPN105"),
+        (lambda d: d["spine"][0].update(on="cue"), "SPN105"),
+        (lambda d: d["rows"].append(dict(d["rows"][0], id="r2", name="Odor 2")), "SPN106"),
+        (lambda d: d["blocks"][0].update(rows=["nope"]), "SPN106"),
+        (lambda d: d["rows"][0].update(rewardMs=9000), "SPN106"),
+        (lambda d: d["rows"][0]["bind"].update(sample="trial_light"), "SPN107"),
+        (lambda d: d["rows"][0].update(name="  "), "SPN108"),
+    ],
+)
+def test_each_problem_is_located_rather_than_refused(edit, code):
+    raw = fixture.tracer()
+    edit(raw)
+    assert code in codes(TaskDefinition.from_json(raw))
+
+
+# --- Hold, Wait on an exit, aborts and the Counter (#102) ----------------------
+
+ALL_NEW = [fixture.fixed_ratio, fixture.variable_ratio, fixture.progressive_ratio, fixture.held_trial]
+
+
+@pytest.mark.parametrize("make", ALL_NEW, ids=["fr", "vr", "pr", "held"])
+def test_each_new_phase_round_trips_and_is_clean(make):
+    raw = make()
+    assert TaskDefinition.from_json(raw).to_json() == raw | {"legacyNames": [], "notes": ""}
+    assert validate(TaskDefinition.from_json(raw)) == []
+
+
+def test_a_counter_declares_its_n_and_its_limit_as_parameters():
+    fr = generate.build_profile(TaskDefinition.from_json(fixture.fixed_ratio(5)))
+    fields = {f.metadata_key: (f.wire_key, f.default, f.min, f.max) for f in fr.config}
+    assert fields["counter_0_count"] == ("N0", 5, 1, spine_module.COUNT_MAX)
+    vr = generate.build_profile(TaskDefinition.from_json(fixture.variable_ratio(1, 9)))
+    fields = {f.metadata_key: (f.wire_key, f.default) for f in vr.config}
+    assert fields["counter_0_count"] == ("N0", 1) and fields["counter_0_count_max"] == ("NX0", 9)
+    pr = generate.build_profile(TaskDefinition.from_json(fixture.progressive_ratio(2000)))
+    fields = {f.metadata_key: (f.wire_key, f.default) for f in pr.config}
+    assert fields["counter_0_timeout_ms"] == ("T0", 2000)
+    assert not any(key.startswith("counter_0_count") for key in fields), "a sequence is compiled, not SET"
+
+
+def test_the_snapshot_and_the_folder_carry_the_counter():
+    pr = TaskDefinition.from_json(fixture.progressive_ratio())
+    table = generate.build_profile(pr).spine["table"]
+    assert table["counter"] == {"min": lowering.NONE, "max": lowering.NONE, "ratios": fixture.RICHARDSON_ROBERTS}
+    header = generate.task_spine_h(pr)
+    assert "#define SPINE_INTERP 8" in header and "#error" not in header
+    assert "#define SPINE_NUM_RATIOS 10" in header and "1, 2, 4, 6, 9, 12, 15, 20, 25, 32" in header
+    fr = generate.build_profile(TaskDefinition.from_json(fixture.fixed_ratio()))
+    assert fr.spine["table"]["counter"] == {"min": 0, "max": 0, "ratios": []}, "slot 0: no session cap"
+    assert generate.build_profile(tracer()).spine["table"]["counter"] is None
+    assert "#define SPINE_COUNT_MIN 255" in generate.task_spine_h(tracer())
+
+
+def test_every_early_exit_marks_its_class_once_in_an_end_the_rows_share():
+    table = generate.build_profile(TaskDefinition.from_json(fixture.held_trial())).spine["table"]
+    marked = sorted(lowering.OUTCOME_CLASSES[s[11] - 1] for s in table["states"] if s[11])
+    assert marked == ["abort_before_stimulus", "abort_during_sampling", "correct", "hold_broken"]
+    ends = [s for s, row in enumerate(table["states"]) if row[11] and table["rows"][s] is None]
+    assert len(ends) == 3 and all(table["phases"][s] == 5 for s in ends), "each end is the ITI"
+
+
+def test_the_ram_budget_counts_a_counter_s_ratios():
+    pr = spine_module._resolve(TaskDefinition.from_json(fixture.progressive_ratio())).lowered
+    fr = spine_module._resolve(TaskDefinition.from_json(fixture.fixed_ratio())).lowered
+    # The same table, less FR's N0 parameter, plus ten 2-byte ratios for one placeholder.
+    assert len(pr.states) == len(fr.states) + 1   # the limit's end
+    assert spine_module.task_ram_bytes(pr) - spine_module.task_ram_bytes(fr) == \
+        lowering.STATE_ROW_BYTES + (spine_module.PARAM_BYTES + len("T0") + 1) \
+        - (spine_module.PARAM_BYTES + len("N0") + 1) + 2 * (10 - 1)
+
+
+def _counter(d: dict) -> dict:
+    return d["spine"][0]
+
+
+def _held(d: dict, i: int) -> dict:
+    return d["spine"][i]
+
+
+@pytest.mark.parametrize(
+    ("make", "edit", "code", "where"),
+    [
+        (fixture.ratio, lambda d: _counter(d).update(on="light"), "SPN105", "spine[0].on"),
+        (fixture.ratio, lambda d: _counter(d).pop("count"), "SPN105", "spine[0].count"),
+        (fixture.ratio, lambda d: _counter(d).update(ratios=[1, 2]), "SPN105", "spine[0].count"),
+        (fixture.ratio, lambda d: _counter(d).update(count=0), "SPN105", "spine[0].count"),
+        (fixture.ratio, lambda d: _counter(d).update(countMax=4), "SPN105", "spine[0].countMax"),
+        (fixture.progressive_ratio, lambda d: _counter(d).update(ratios=[1, 0]), "SPN105", "spine[0].ratios"),
+        (fixture.progressive_ratio, lambda d: _counter(d).update(countMax=4), "SPN105", "spine[0].countMax"),
+        (fixture.progressive_ratio, lambda d: _counter(d).pop("timeoutMs"), "SPN105", "spine[0].endsSession"),
+        (fixture.ratio, lambda d: d["spine"].insert(1, dict(_counter(d))), "SPN105", "spine"),
+        (fixture.held_trial, lambda d: _held(d, 1).pop("ms"), "SPN105", "spine[1].ms"),
+        (fixture.held_trial, lambda d: _held(d, 1).update(on="cue"), "SPN105", "spine[1].on"),
+        (fixture.held_trial, lambda d: _held(d, 0).update(edge="sideways"), "SPN105", "spine[0].edge"),
+        (fixture.held_trial, lambda d: _held(d, 3).update(abortOnEnter="cue"), "SPN105", "spine[3].abortOnEnter"),
+        (fixture.held_trial, lambda d: _held(d, 3).update(abortOnRelease="sample"), "SPN105",
+         "spine[3].abortOnRelease"),
+        # A phase's watch names input slots, each once (`TASKS.md#what-a-spine-task-holds`).
+        (fixture.held_trial, lambda d: _held(d, 3).update(watch=["cue"]), "SPN105", "spine[3].watch"),
+        (fixture.held_trial, lambda d: _held(d, 3).update(watch=["early", "early"]), "SPN105", "spine[3].watch"),
+        # A release the core can only see if the input is held when the phase starts.
+        (fixture.held_trial, lambda d: _held(d, 0).update(edge="exit"), "SPN111", "spine[1].on"),
+        (fixture.held_trial, lambda d: _held(d, 3).update(abortOnRelease="early"), "SPN111",
+         "spine[3].abortOnRelease"),
+    ],
+)
+def test_each_hold_abort_and_counter_problem_is_located(make, edit, code, where):
+    raw = make()
+    edit(raw)
+    found = {(d.code, d.location) for d in validate(TaskDefinition.from_json(raw))}
+    assert (code, where) in found, found
+    if code == "SPN105":
+        assert "#error" in generate.task_spine_h(TaskDefinition.from_json(raw))
+
+
+@pytest.mark.parametrize("stored", [
+    {"counter_0_count": 8, "counter_0_count_max": 3},
+    {"counter_0_count": 10},
+])
+def test_a_drawn_count_whose_stored_range_is_inverted_is_refused_at_save(stored):
+    """The spine says 1 to 9; stored values that run as countMax below count would
+    fix N at the low end every trial, VR run as FR. Judged as it will run."""
+    definition = TaskDefinition.from_json(fixture.variable_ratio(1, 9, params=stored))
+    found = {(d.code, d.location) for d in validate(definition)}
+    key = "counter_0_count_max" if "counter_0_count_max" in stored else "counter_0_count"
+    assert ("SPN105", f"params.{key}") in found, found
+    assert "#error" in generate.task_spine_h(definition)
+
+
+def test_a_watch_round_trips_and_a_watched_held_trial_is_clean():
+    raw = fixture.held_trial()
+    raw["spine"][3]["watch"] = ["early", "port"]
+    definition = TaskDefinition.from_json(raw)
+    assert definition.spine.phases[3].to_json()["watch"] == ["early", "port"]
+    assert "watch" not in definition.spine.phases[2].to_json(), "an empty watch is not written"
+    assert validate(definition) == []
+
+
+def test_a_drawn_count_whose_stored_range_is_in_order_is_clean():
+    definition = TaskDefinition.from_json(fixture.variable_ratio(1, 9, params={"counter_0_count": 4,
+                                                                             "counter_0_count_max": 12}))
+    assert validate(definition) == []
+
+
+def test_a_release_watched_on_an_input_that_may_not_be_held_still_lowers():
+    """SPN111 says the task may not do what it says; it is still a table."""
+    raw = fixture.held_trial()
+    raw["spine"][3]["abortOnRelease"] = "early"
+    definition = TaskDefinition.from_json(raw)
+    assert [d.code for d in validate(definition)] == ["SPN111"]
+    assert "#error" not in generate.task_spine_h(definition)
+
+
+# --- blocks (#103) ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize("make", [fixture.reversal, fixture.bandit])
+def test_a_task_of_blocks_round_trips_and_is_clean(make):
+    definition = TaskDefinition.from_json(make())
+    assert TaskDefinition.from_json(definition.to_json()) == definition
+    assert validate(definition) == []
+
+
+def test_each_block_value_is_a_parameter_keyed_by_the_block_s_id():
+    """Block and row counts are compiled; their values ride the SET lines."""
+    profile = generate.build_profile(TaskDefinition.from_json(fixture.reversal()))
+    fields = {f.metadata_key: (f.wire_key, f.default, f.max) for f in profile.config
+              if f.metadata_key.startswith("block_")}
+    assert fields == {
+        "block_a_criterion_correct": ("BK1", 8, 32),
+        "block_a_criterion_of": ("BKN1", 10, 32),
+        "block_a_correction_max": ("BC1", 1, 100),
+        "block_b_trials": ("BN2", 4, 10000),
+    }
+    bandit = {f.metadata_key: (f.wire_key, f.default) for f in
+              generate.build_profile(TaskDefinition.from_json(fixture.bandit())).config}
+    assert bandit["session_trials"] == ("NT", 130)
+    assert bandit["block_a_trials"] == ("BN1", 40) and bandit["block_a_trials_max"] == ("BNX1", 60)
+    command = build_start_command(generate.build_profile(TaskDefinition.from_json(fixture.bandit())),
+                                  {"block_b_trials_max": 55})
+    assert "NT=130" in command.tokens and "BNX2=55" in command.tokens
+
+
+def test_weights_overrides_and_pairs_reach_the_folder():
+    raw = fixture.two_afc(blocks=[
+        {"id": "pool", "rows": ["odor_1", "odor_2"], "select": "bag", "weights": [3, 1], "trials": 8,
+         "trialsMax": 12, "phaseMs": {"4": 6000}},
+        {"id": "ab", "rows": ["odor_1", "odor_2"], "select": "antibias", "biasWindow": 12,
+         "criterion": {"correct": 3, "of": 4}, "next": "pool"}])
+    raw["sessionTrials"] = 200
+    definition = TaskDefinition.from_json(raw)
+    assert validate(definition) == []
+    fields = {f.metadata_key: f for f in generate.build_profile(definition).config}
+    assert fields["block_pool_weight_odor_1"].default == 3 and fields["block_pool_weight_odor_1"].max == 16
+    assert fields["block_ab_weight_odor_2"].max == 1000
+    assert fields["block_pool_iti_4_ms"].default == 6000 and fields["block_ab_bias_window"].default == 12
+    header = generate.task_spine_h(definition)
+    low = spine_module._resolve(definition).lowered
+    assert "#define SPINE_NUM_BLOCKS 2" in header and "#define SPINE_NUM_ENTRIES 4" in header
+    assert "#define SPINE_NUM_OVERRIDES 1" in header
+    slot = {k: low.params.index(k) for k in ("NT", "BN1", "BNX1", "BK2", "BKN2", "T4", "B1T4")}
+    assert f"#define SPINE_TRIALS_SLOT {slot['NT']}" in header
+    assert f"{{{slot['BN1']}, {slot['BNX1']}}}" in header and f"{{{slot['BK2']}, {slot['BKN2']}}}" in header
+    assert f"{{0, {slot['T4']}, {slot['B1T4']}}}" in header
+    assert low.blocks[1][9] == 0, "block ab loops back to pool"
+
+
+def test_the_ram_budget_counts_blocks_entries_overrides_and_pairs():
+    plain = spine_module._resolve(TaskDefinition.from_json(fixture.two_afc())).lowered
+    raw = fixture.two_afc(blocks=[{"id": "b1", "rows": ["odor_1", "odor_2"], "select": "weighted", "trials": 4,
+                                   "trialsMax": 6, "phaseMs": {"4": 10}}])
+    low = spine_module._resolve(TaskDefinition.from_json(raw)).lowered
+    added = (2 * lowering.ENTRY_BYTES + lowering.OVERRIDE_BYTES + spine_module.PAIR_BYTES
+             + sum(spine_module.PARAM_BYTES + len(k) + 1 for k in ("BNX1", "W1_1", "W1_2", "B1T4")))
+    assert spine_module.task_ram_bytes(low) - spine_module.task_ram_bytes(plain) == added
+    assert lowering.BLOCK_BYTES == 16 and spine_module.task_ram_bytes(plain) == (
+        lowering.table_bytes(len(plain.states), len(plain.edges), 1)
+        + sum(spine_module.PARAM_BYTES + len(k) + 1 for k in plain.params)
+        + 3 * spine_module.INPUT_BYTES + 5 * spine_module.OUTPUT_BYTES + spine_module.RATIO_BYTES)
+
+
+def test_a_one_block_task_s_stored_trial_count_is_its_block_s():
+    definition = TaskDefinition.from_json(fixture.tracer(params={"block_trials": 7}))
+    assert definition.params == {"block_b1_trials": 7}
+    assert "BN1=7" in build_start_command(generate.build_profile(definition), {}).tokens
+
+
+def _blocks(*blocks) -> dict:  # noqa: ANN002
+    return fixture.two_afc(blocks=list(blocks))
+
+
+AB = {"id": "a", "rows": ["odor_1", "odor_2"], "trials": 10}
+
+
+@pytest.mark.parametrize(
+    ("raw", "code", "where"),
+    [
+        (_blocks(), "SPN106", "blocks"),
+        (_blocks(dict(AB, id="A b")), "SPN106", "blocks[0].id"),
+        (_blocks(AB, AB), "SPN106", "blocks[1].id"),
+        (_blocks(dict(AB, rows=[])), "SPN106", "blocks[0].rows"),
+        (_blocks(dict(AB, rows=["odor_1", "odor_1"])), "SPN106", "blocks[0].rows"),
+        (_blocks(dict(AB, select="lottery")), "SPN106", "blocks[0].select"),
+        (_blocks(dict(AB, select="weighted", weights=[1])), "SPN106", "blocks[0].weights"),
+        (_blocks(dict(AB, weights=[2, 1])), "SPN106", "blocks[0].weights"),
+        (_blocks(dict(AB, select="bag", weights=[20, 20])), "SPN106", "blocks[0].weights"),
+        (_blocks(dict(AB, trials=0)), "SPN106", "blocks[0].trials"),
+        (_blocks(dict(AB, trialsMax=5)), "SPN106", "blocks[0].trialsMax"),
+        (_blocks(dict(AB, criterion={"correct": 9, "of": 8})), "SPN106", "blocks[0].criterion"),
+        (_blocks(dict(AB, criterion={"correct": 9, "of": 40})), "SPN106", "blocks[0].criterion"),
+        (_blocks(dict(AB, next="nope")), "SPN106", "blocks[0].next"),
+        (_blocks(dict(AB, correction=101)), "SPN106", "blocks[0].correction"),
+        (_blocks(dict(AB, biasWindow=10)), "SPN106", "blocks[0].biasWindow"),
+        (_blocks(dict(AB, correction=1, correctionAfter=["oops"])), "SPN106", "blocks[0].correctionAfter"),
+        (_blocks(dict(AB, correction=1, correctionAfter=["correct"])), "SPN106", "blocks[0].correctionAfter"),
+        (_blocks(dict(AB, correctionAfter=["omission"])), "SPN106", "blocks[0].correctionAfter"),
+        (_blocks(dict(AB, phaseMs={"0": 10})), "SPN106", "blocks[0].phaseMs.0"),
+        (_blocks(dict(AB, rows=["odor_1"])), "SPN106", "rows[1].id"),
+        # Nothing but End Session would end it.
+        (_blocks(dict(AB, next="a")), "SPN106", "sessionTrials"),
+        (_blocks({"id": "a", "rows": ["odor_1", "odor_2"]}), "SPN106", "sessionTrials"),
+    ],
+)
+def test_each_block_problem_is_located(raw, code, where):
+    found = {(d.code, d.location) for d in validate(TaskDefinition.from_json(raw))}
+    assert (code, where) in found, found
+
+
+def test_an_antibias_block_needs_each_row_on_one_side():
+    """A row's side is its one response mapped correct; the bandit's rows have two."""
+    raw = fixture.bandit()
+    raw["blocks"][0]["select"] = "antibias"
+    found = {(d.code, d.location) for d in validate(TaskDefinition.from_json(raw))}
+    assert ("SPN106", "blocks[0].rows") in found
+    assert validate(TaskDefinition.from_json(_blocks(dict(AB, select="antibias", biasWindow=8)))) == []
+
+
+def test_a_stored_criterion_whose_n_is_below_its_k_is_refused_at_save():
+    raw = fixture.reversal(params={"block_a_criterion_of": 5})
+    found = {(d.code, d.location) for d in validate(TaskDefinition.from_json(raw))}
+    assert ("SPN106", "params.block_a_criterion_of") in found
+    assert "#error" in generate.task_spine_h(TaskDefinition.from_json(raw))

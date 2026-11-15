@@ -1,0 +1,272 @@
+import { motion } from "framer-motion";
+import { ArrowLeft, CircleAlert, FolderTree, TriangleAlert } from "lucide-react";
+import type { ReactNode } from "react";
+
+import { Button } from "@/components/common/controls";
+import { TaskDetailsBody, detailsSummary } from "@/components/task/TaskDetails";
+import { TaskGlyph } from "@/components/task/TaskGlyph";
+import { isSpine } from "@/lib/taskdef/spine";
+import type { TaskDiagnostic, TaskDocument } from "@/lib/taskdef/types";
+import type { useTask } from "@/lib/taskdef/useTask";
+
+import { Popover } from "./Popover";
+
+/** Where a diagnostic lives on the page, for the Problems list and its jump. */
+export type ProblemHome =
+  | { kind: "row"; row: number }
+  | { kind: "generation" }
+  | { kind: "holds" }
+  | { kind: "task" };
+
+/** What the editor route hands each kind of editor body: the open document's
+ *  session and the header's own state, whichever body draws the header. */
+export interface EditorShared {
+  session: ReturnType<typeof useTask>;
+  /** Whether this task exists on disk. */
+  saved: boolean;
+  categories: readonly string[];
+  detailsOpen: boolean;
+  onDetailsOpen: (open: boolean) => void;
+  problemsOpen: boolean;
+  onProblemsOpen: (open: boolean) => void;
+  onBack: () => void;
+  onSave: () => void;
+  listError: string | null;
+}
+
+/** How the Problems list groups and labels a diagnostic: its section and, when
+ *  it is about one thing in a list, which. */
+export interface ProblemPlace {
+  section: string;
+  which: string | null;
+}
+
+const HOME_TITLE: Record<ProblemHome["kind"], string> = {
+  row: "Trial types",
+  generation: "Trial generation",
+  holds: "Holds & shaping",
+  task: "Task",
+};
+
+/** A trial-table task's diagnostics, placed by `homeOf`. */
+export function trialTablePlace(diagnostic: TaskDiagnostic): ProblemPlace {
+  const home = homeOf(diagnostic);
+  return { section: HOME_TITLE[home.kind], which: home.kind === "row" ? `row ${home.row + 1}` : null };
+}
+
+export function homeOf(diagnostic: TaskDiagnostic): ProblemHome {
+  const row = /^trials\[(\d+)\]/.exec(diagnostic.location);
+  if (row) return { kind: "row", row: Number(row[1]) };
+  if (diagnostic.location === "trials") return { kind: "generation" };
+  if (diagnostic.location.startsWith("stages")) return { kind: "holds" };
+  return { kind: "task" };
+}
+
+/**
+ * The editor's header: the way back, the task's mark and name, and the three
+ * things that are about the whole task — its problems, its `START` line, its
+ * details — then Revert and Save.
+ */
+export function EditorHeader({
+  session,
+  saved,
+  diagnostics,
+  categories,
+  detailsOpen,
+  onDetailsOpen,
+  problemsOpen,
+  onProblemsOpen,
+  onJump,
+  placeOf = trialTablePlace,
+  actions,
+  onBack,
+  onSave,
+}: {
+  session: ReturnType<typeof useTask>;
+  /** Whether this task exists on disk — the readout says "unsaved" if not. */
+  saved: boolean;
+  /** Server diagnostics plus the editor's own (TSK112). */
+  diagnostics: TaskDiagnostic[];
+  categories: readonly string[];
+  detailsOpen: boolean;
+  onDetailsOpen: (open: boolean) => void;
+  problemsOpen: boolean;
+  onProblemsOpen: (open: boolean) => void;
+  onJump: (diagnostic: TaskDiagnostic) => void;
+  /** Where the Problems list files each diagnostic. */
+  placeOf?: (diagnostic: TaskDiagnostic) => ProblemPlace;
+  /** A body's own header controls, before Revert and Save: the spine editor's Simulate jump. */
+  actions?: ReactNode;
+  onBack: () => void;
+  onSave: () => void;
+}) {
+  const { definition, setDefinition } = session;
+  if (!definition) return null;
+  const problems = diagnostics.length;
+
+  return (
+    <header className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2">
+      <Button variant="ghost" onClick={onBack} title="Back to the task library">
+        <ArrowLeft size={13} strokeWidth={1.75} />
+      </Button>
+
+      {/* The shared element from the landing's row: the mark the eye picked
+          out of the list is still on screen after the route changes. */}
+      <motion.span layoutId={`task-glyph-${definition.id}`} className="flex shrink-0">
+        <TaskGlyph size={34} task={glyphTask(definition, problems)} />
+      </motion.span>
+
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 font-mono text-[9px] tracking-[0.18em] text-static/70 uppercase">
+          <span>Telemetry · Task editor</span>
+          <span aria-hidden className={`size-1.5 rounded-full ${saved ? "bg-ion" : "bg-halo"}`} />
+          <span className="truncate normal-case tracking-normal">
+            {saved ? definition.id : "unsaved"}
+          </span>
+        </div>
+        <h1 className="m-0">
+          <input
+            value={definition.name}
+            onChange={(e) => setDefinition({ ...definition, name: e.target.value })}
+            aria-label="Task name"
+            className="-ml-1.5 w-full max-w-[520px] rounded-sm border border-transparent bg-transparent px-1.5 font-display text-[20px] leading-tight text-starlight transition-colors hover:border-halo focus:border-pulsar focus:outline-none"
+          />
+        </h1>
+      </div>
+
+      <div className="flex shrink-0 items-center gap-2">
+        {problems > 0 && (
+          <Popover
+            open={problemsOpen}
+            onOpenChange={onProblemsOpen}
+            label="Problems"
+            width={380}
+            trigger={
+              <span className="flex items-center gap-1.5 text-status-error">
+                <CircleAlert size={12} strokeWidth={1.75} />
+                {problems} problem{problems === 1 ? "" : "s"}
+              </span>
+            }
+          >
+            <ProblemsList diagnostics={diagnostics} placeOf={placeOf} onJump={(d) => {
+              onProblemsOpen(false);
+              onJump(d);
+            }} />
+          </Popover>
+        )}
+
+        <Popover
+          open={detailsOpen}
+          onOpenChange={onDetailsOpen}
+          label="Details"
+          width={360}
+          trigger={
+            <>
+              <FolderTree size={12} strokeWidth={1.75} />
+              <span className="max-w-[140px] truncate">{detailsSummary(definition)}</span>
+            </>
+          }
+        >
+          <TaskDetailsBody definition={definition} categories={categories} onChange={setDefinition} />
+        </Popover>
+
+        {actions}
+        {session.checking && <span className="text-[10px] text-static/60">checking…</span>}
+
+        {session.dirty && (
+          <>
+            {session.baseline && (
+              <button
+                type="button"
+                onClick={session.revert}
+                className="text-[11px] text-static transition-colors hover:text-starlight"
+              >
+                Revert
+              </button>
+            )}
+            {/* The page's ONE primary control — matte Pulsar fill. Everything
+                else on the header is quiet, which is what lets "there are
+                unsaved edits" read at a glance. */}
+            <button
+              type="button"
+              onClick={onSave}
+              disabled={session.saving}
+              className="rounded-sm bg-pulsar px-3 py-1 text-[11px] font-medium text-void transition-[filter] hover:brightness-108 disabled:opacity-50"
+            >
+              {session.saving ? "Saving…" : "Save"}
+            </button>
+          </>
+        )}
+      </div>
+
+      {session.actionError && (
+        <p className="w-full text-[11px] text-status-error">{session.actionError}</p>
+      )}
+    </header>
+  );
+}
+
+function ProblemsList({
+  diagnostics,
+  placeOf,
+  onJump,
+}: {
+  diagnostics: TaskDiagnostic[];
+  placeOf: (diagnostic: TaskDiagnostic) => ProblemPlace;
+  onJump: (diagnostic: TaskDiagnostic) => void;
+}) {
+  const groups = new Map<string, TaskDiagnostic[]>();
+  for (const d of diagnostics) {
+    const section = placeOf(d).section;
+    groups.set(section, [...(groups.get(section) ?? []), d]);
+  }
+  return (
+    <div className="scrollbar-slim flex max-h-[60vh] flex-col gap-3 overflow-y-auto">
+      <p className="text-[11px] leading-relaxed text-static">
+        A task saves and flashes with problems outstanding — read these first, because most of
+        them run and record the wrong thing rather than fail.
+      </p>
+      {[...groups].map(([section, list]) => (
+        <section key={section} className="flex flex-col gap-1">
+          <h3 className="font-mono text-[9px] tracking-[0.18em] text-static/70 uppercase">
+            {section}
+          </h3>
+          {list.map((d, i) => {
+            const which = placeOf(d).which;
+            return (
+              <button
+                key={i}
+                type="button"
+                onClick={() => onJump(d)}
+                className="flex items-start gap-1.5 rounded-sm px-1.5 py-1 text-left text-[11px] leading-snug text-starlight/90 transition-colors hover:bg-halo/40"
+              >
+                <TriangleAlert size={11} strokeWidth={1.75} className="mt-0.5 shrink-0 text-status-error" />
+                <span>
+                  <span className="font-mono text-[10px] text-status-error">{d.code}</span>
+                  {which && <span className="font-mono text-[10px] text-static"> · {which}</span>}{" "}
+                  {d.message}
+                </span>
+              </button>
+            );
+          })}
+        </section>
+      ))}
+    </div>
+  );
+}
+
+/** What the task glyph draws, from the definition on screen. */
+function glyphTask(definition: TaskDocument, problems: number) {
+  // A spine task's conditions are its rows; it has no ramp and no
+  // trial-table selection mode, so it draws as one stage with none.
+  if (isSpine(definition)) {
+    return { id: definition.id, trials: definition.rows.length, stages: 1, selectionMode: null, problems };
+  }
+  return {
+    id: definition.id,
+    trials: definition.trials.length,
+    stages: definition.stages.length,
+    selectionMode: definition.selectionMode,
+    problems,
+  };
+}

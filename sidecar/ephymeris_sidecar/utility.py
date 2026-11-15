@@ -1,0 +1,662 @@
+"""The hardware utility baseline — `ARCHITECTURE.md#hardware-utility-baseline`.
+
+The baseline is one idea: **a box that isn't doing anything else is a box
+Ephymeris can talk to.** The sketch is not a choice: it is the box utility
+the app generates from this rig (`TASKS.md#the-box-utility`) — the one bundled
+sketch that includes `UtilityChannels.h` — and the app quietly returns every
+idle, bound box to it — at startup, when a board appears, and whenever a run or
+session ends. Nothing about that is announced; it is the resting state, not an
+operation. What *is* announced is failure, because a box that can't be restored
+is a box whose firmware nobody knows.
+
+Two rules keep this from being hostile:
+
+* **A restore only ever takes an `IDLE` port.** Never a console the user has
+  open, never a flash, never a running session. Entering `FLASHING` may
+  force-release `PASSTHROUGH` (`ARCHITECTURE.md#exclusivity`) — exactly what
+  must not happen here — so a restore's flash job takes `IDLE_ONLY`
+  (`ports/flashing.py`'s `TAKES`), and `PortHandler.release_for` refuses
+  anything else. `_decide` checks `IDLE` too, but only to report the box as
+  busy rather than queue a flash that would be refused.
+* **A confirmed session mapping holds the whole rig.** Between
+  `sessions.confirmMapping` and the session ending, boxes carry task sketches
+  and land in `IDLE` constantly; restoring then would erase the very sketch the
+  runner is about to start. `hold()`/`release()` bracket that window.
+* **A deliberate flash is pinned.** An operator who flashes a sketch from Debug
+  Mode has said what that box should carry, and the port falls `IDLE` the moment
+  the flash completes — which is exactly the trigger a restore listens for. With
+  no pin the task was overwritten by the baseline within seconds of being put
+  there, silently. The pin is respected by every *automatic* trigger and is
+  released only by something the operator did: asking for the baseline
+  (`utility.ensure`), running a session, replugging the board, or flashing the
+  utility sketch themselves.
+
+The payoff is `identify()`: with a known sketch on the board, the app can ask
+one box to point at itself (`ARCHITECTURE.md#mapping-and-the-placement-walk`). The commands come
+from the profile's `identify` pair, never from anything hardcoded here.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable, Iterable
+
+from .ports.flashing import FlashJob, FlashQueue, sketch_name
+from .ports.handler import PortBusy
+from .ports.manager import BoardNotDetected, PortManager, PortNotBound
+from .ports.states import IllegalTransition, PortState, TakeRefused
+from .settings import BOX_COUNT, SidecarSettings
+from .tasks import profile as task_profile
+from .tasks.profile import TaskProfile
+
+log = logging.getLogger(__name__)
+
+#: How long to wait for the board to say *anything* after opening its port. The
+#: open toggles DTR, which reboots the Mega, so the first line marks the end of
+#: `setup()` — waiting for it beats guessing a sleep long enough for every
+#: sketch.
+BOOT_TIMEOUT_S = 3.0
+#: How long to wait for the sketch's own telemetry line confirming it acted on
+#: the identify command. Short: a utility sketch reports on every state change.
+CONFIRM_TIMEOUT_S = 2.5
+#: Poll granularity while waiting on either of the above.
+WAIT_TICK_S = 0.05
+
+
+class UtilityUnavailable(Exception):
+    """No usable utility sketch is configured — a whole-feature problem.
+
+    Distinct from a *box* being unrestorable, which is reported as that box's
+    state rather than raised: "box 4 has no board" is a fact about the rig, not
+    a failure of the command.
+    """
+
+
+@dataclass
+class BoxBaseline:
+    """What the sidecar believes about one box."""
+
+    box: int
+    state: str = "unknown"
+    detail: str | None = None
+    identifying: bool = False
+    #: A restore that failed. Sticky, so the ERROR→IDLE acknowledgement we
+    #: perform below can't bounce straight back into another doomed flash;
+    #: cleared only by a new board, new settings, or an explicit `force`.
+    failed: bool = False
+    #: The operator flashed something other than the baseline here ON PURPOSE
+    #: (Debug Mode), so no automatic trigger may take it back. Not the same
+    #: fact as what the board carries (`PortManager.carried`): a session flash
+    #: changes that too, and that one the baseline is *supposed* to reclaim
+    #: once the session lets go.
+    pinned: bool = False
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "box": self.box,
+            "state": self.state,
+            "detail": self.detail,
+            "identifying": self.identifying,
+        }
+
+
+class UtilityBaseline:
+    def __init__(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        ports: PortManager,
+        discovery: Callable[[], Any],
+        broadcast: Callable[[dict[str, Any]], Awaitable[None]],
+        load_profile: Callable[[str], TaskProfile | None] = task_profile.load_profile,
+        is_utility: Callable[[Any], bool] | None = None,
+        *,
+        flashes: FlashQueue,
+        wiring_problem: Callable[[], str | None] = lambda: None,
+    ) -> None:
+        self._loop = loop
+        #: `RigDefinition.wiring_problem`. While the stored wiring did not
+        #: load, the utility is built on the SHIPPED pins: its setup drives
+        #: every listed output and identify lights the shipped cue pin. So no
+        #: restore flashes and identify refuses (ARCHITECTURE.md#hardware-utility-baseline).
+        self._wiring_problem = wiring_problem
+        self._ports = ports
+        self._discovery = discovery
+        self._broadcast = broadcast
+        self._load_profile = load_profile
+        #: Which discovered sketch is the box utility. Injected so a test can
+        #: name one without a folder on disk; the real answer reads the `.ino`.
+        self._is_utility = is_utility or _is_generated_utility
+        #: The rig's one flash queue (`ports/flashing.py`). A restore is a job
+        #: on it, so it never compiles beside a session's or Debug's flash.
+        self._flashes = flashes
+
+        self._settings = SidecarSettings()
+        self._boxes: dict[int, BoxBaseline] = {
+            box: BoxBaseline(box=box) for box in range(1, BOX_COUNT + 1)
+        }
+        self._held = False
+        # Identify is a multi-step serial conversation; two overlapping ones on
+        # the same box would interleave their opens and closes.
+        self._identify_lock = asyncio.Lock()
+        # Passthrough this module opened, and must therefore close again. A box
+        # the *user* opened in Debug Mode keeps its console.
+        self._opened: set[int] = set()
+        self._profile_cache: tuple[str, TaskProfile | None] | None = None
+
+    # --- configuration ----------------------------------------------------
+
+    def update_settings(self, settings: SidecarSettings) -> None:
+        """Take the shell's settings."""
+        self._settings = settings
+
+    def rebuilt(self) -> None:
+        """The utility was just regenerated — a wiring change or a vocabulary
+        edit (`RigDefinition._rebuild`). What is on every box is now an OLD
+        build of it, with the old pins, codes and channel names, so what every
+        box carries is forgotten and every idle box is restored. Pins stay: a box the operator
+        deliberately flashed with something else keeps it."""
+        self._profile_cache = None
+        for box, state in self._boxes.items():
+            self._ports.forget(box)
+            state.failed = False
+        self.ensure()
+
+    def hold(self) -> None:
+        """Suspend restores — a confirmed session mapping owns the boxes."""
+        if self._held:
+            return
+        self._held = True
+        # A restore already flashing finishes; the session's flash of that box
+        # queues behind it.
+        self._flashes.cancel(origins=("baseline",))
+        log.info("utility baseline held: a session mapping owns the boxes")
+        self._loop.create_task(self._on_hold())
+
+    def release(self) -> None:
+        """The session is over; the rig goes back to baseline."""
+        if not self._held:
+            return
+        self._held = False
+        log.info("utility baseline released")
+        for state in self._boxes.values():
+            # A session has used the rig since; whatever was pinned before it
+            # has been flashed over, and the rig goes back to baseline whole.
+            state.pinned = False
+            if state.state == "held":
+                state.state = "unknown"
+                state.detail = None
+
+    async def _on_hold(self) -> None:
+        await self.identify_all_off()
+        await self.publish()
+
+    async def stop(self) -> None:
+        """Leave no box lit and no port held open on the way out."""
+        await self.identify_all_off()
+
+    # --- beliefs ----------------------------------------------------------
+
+    def note_flashed(self, box: int, sketch_path: str, *, pin: bool = False) -> None:
+        """Take a flash — any flash, from anywhere — into this box's state.
+
+        What the board now carries is the port manager's record, written by the
+        flash itself; this decides only what that means for the baseline.
+
+        `pin` marks a flash the operator asked for by hand (Debug Mode), as
+        opposed to the session flash sequence. A pinned box is left alone by
+        every automatic restore until the operator releases it — see the module
+        docstring. Flashing the utility sketch itself is, by definition, a
+        return to baseline, so it clears the pin whatever `pin` says.
+        """
+        state = self._boxes.get(box)
+        if state is None:
+            return
+        entry = self._sketch_entry()
+        if entry is not None and sketch_path == entry.path:
+            state.state, state.detail, state.failed = "ready", None, False
+            state.pinned = False
+            return
+        state.pinned = pin
+        if pin:
+            state.state, state.detail = "pinned", _pinned_detail(sketch_path)
+        elif state.state in ("ready", "pinned"):
+            # The board now carries something else; say so rather than keep
+            # claiming a baseline that a session flash has just overwritten.
+            state.state, state.detail = "unknown", None
+
+    def note_presence(self, hardware_ids: Iterable[str]) -> None:
+        """Boards appeared or vanished — re-examine every box they map to."""
+        present = set(hardware_ids)
+        for box, state in self._boxes.items():
+            bound = self._settings.hardware_id_for(box)
+            if bound is not None and bound not in present:
+                # A board that leaves takes its pin and its failure with it: the
+                # next one to answer to this box number may be a different board
+                # entirely. The port manager forgets what it carried.
+                state.failed = False
+                state.pinned = False
+                if state.state in ("ready", "failed", "busy", "pinned"):
+                    state.state, state.detail = "unavailable", f"no board detected for box {box}"
+            elif bound is not None and state.failed:
+                # Replugging a board is the operator's usual "try again".
+                state.failed = False
+
+    def unpin(self, boxes: Iterable[int] | None = None) -> None:
+        """The operator asked for the baseline back on these boxes (all, if None).
+
+        Called for every `utility.ensure` that arrives over the wire — Config's
+        restore, the placement walk, Debug Mode's "Return to baseline" — and
+        for nothing automatic. That split is the whole rule: a pin yields to a
+        person and to nothing else.
+        """
+        targets = list(boxes) if boxes is not None else list(self._boxes)
+        for box in targets:
+            state = self._boxes.get(box)
+            if state is not None and state.pinned:
+                state.pinned = False
+                state.state, state.detail = "unknown", None
+
+    # --- restores ---------------------------------------------------------
+
+    def ensure(self, boxes: Iterable[int] | None = None, force: bool = False) -> None:
+        """Queue a baseline restore. Returns immediately; work runs in the background.
+
+        Deliberately fire-and-forget: flashing six boxes takes minutes, which
+        no reply timeout should ever be asked to cover. `utility.updated`
+        carries the progress.
+        """
+        if self._held or self._sketch_name() is None:
+            # No utility in the library is a damaged install, reported by
+            # `status()`'s message; there is nothing to restore boxes to.
+            return
+        targets = sorted(set(boxes) if boxes is not None else set(self._boxes))
+        self._flashes.submit(
+            FlashJob(
+                box=box,
+                origin="baseline",
+                prepare=lambda box=box, force=force: self._prepare_restore(box, force),
+                finished=lambda exc, box=box: self._restored(box, exc),
+                force=force,
+            )
+            for box in targets
+            if box in self._boxes
+        )
+
+    def _prepare_restore(self, box: int, force: bool) -> str | None:
+        """Decide, as the queue is about to flash, whether this box still
+        wants the utility: the folder to flash, or None to leave it.
+
+        Runs under the rig definition's read side, at the job's turn rather
+        than when the restore was queued. "Only an IDLE port" does not rest on
+        it: the flash itself takes only `IDLE` (`ports/flashing.py`'s `TAKES`).
+        """
+        state = self._boxes[box]
+        before = (state.state, state.detail)
+        path = self._decide(state, force)
+        if (state.state, state.detail) != before:
+            self._publish_soon()
+        return path
+
+    def _decide(self, state: BoxBaseline, force: bool) -> str | None:
+        box = state.box
+        entry = self._sketch_entry()
+        if entry is None:
+            state.state, state.detail = "unavailable", self._unavailable_reason()
+            return None
+        if self._held:
+            state.state, state.detail = "held", "a session mapping owns this box"
+            return None
+        if (problem := self._wiring_problem()) is not None:
+            # Before `force`: Reflash boxes must not drive the shipped pins either.
+            state.state, state.detail = "held", problem
+            return None
+        if state.failed and not force:
+            return None
+
+        try:
+            self._ports.resolve_address(box)
+        except (PortNotBound, BoardNotDetected) as exc:
+            state.state, state.detail = "unavailable", str(exc)
+            return None
+
+        if state.pinned and not force:
+            # Not a fault: the operator put this sketch here by hand, and may
+            # have its console open. The idle transition that follows their
+            # flash lands exactly here.
+            state.state, state.detail = "pinned", _pinned_detail(self._carried_path(box))
+            return None
+        port_state = self._ports.handler(box).state
+        if port_state is not PortState.IDLE:
+            # Not a fault either: a console, a flash, or a run legitimately
+            # owns this port. The flash would refuse it; say so instead.
+            state.state, state.detail = "busy", f"port is {port_state.value}"
+            return None
+        if self._carries(box, entry.path) and not force:
+            state.state, state.detail = "ready", None
+            return None
+
+        state.state, state.detail = "restoring", f"flashing {entry.name}"
+        log.info("box %d: restoring utility baseline (%s)", box, entry.name)
+        return entry.path
+
+    def _restored(self, box: int, exc: BaseException | None) -> None:
+        state = self._boxes[box]
+        if exc is None:
+            state.state, state.detail, state.failed = "ready", None, False
+            state.pinned = False
+        elif isinstance(exc, TakeRefused):
+            # The flash refused a port that was no longer IDLE at the take:
+            # nothing was flashed, and the box is busy, not failed.
+            state.state, state.detail = "busy", f"port is {exc.current.value}"
+        else:
+            state.state = "failed"
+            state.detail = str(exc)
+            state.failed = True
+            log.warning("box %d: utility baseline restore failed: %s", box, exc)
+            # A failed flash leaves the port in ERROR, which the operator would
+            # then have to acknowledge by hand — for work they never asked for.
+            # Clear it: the fault is reported here, where it belongs, and
+            # leaving six boxes needing an acknowledgement would make a broken
+            # arduino-cli lock the rig instead of merely degrading it.
+            self._clear_error(box)
+        self._publish_soon()
+
+    def _carries(self, box: int, sketch_path: str) -> bool:
+        carried = self._ports.carried(box)
+        return carried is not None and carried.is_of(sketch_path)
+
+    def _carried_path(self, box: int) -> str | None:
+        carried = self._ports.carried(box)
+        return carried.path if carried is not None else None
+
+    def _clear_error(self, box: int) -> None:
+        try:
+            if self._ports.handler(box).state is PortState.ERROR:
+                self._ports.acknowledge_error(box)
+        except (IllegalTransition, PortNotBound) as exc:
+            log.debug("box %d: couldn't clear the baseline error state: %s", box, exc)
+
+    # --- identify ---------------------------------------------------------
+
+    async def identify(self, box: int, on: bool) -> tuple[bool, dict[str, Any]]:
+        """Ask one box to point at itself, per its profile's `identify` pair.
+
+        Returns `(delivered, box_state)`. `delivered` is false whenever the
+        signal can't be trusted to have reached the board — an unavailable box,
+        a port someone else owns, or a board that never answered. The caller is
+        expected to carry on without it: a placement walk that refuses to
+        continue because a bulb didn't light is worse than one that tells the
+        operator the box number.
+        """
+        if (problem := self._wiring_problem()) is not None:
+            from .rig.definition import WiringNotLoaded
+
+            raise WiringNotLoaded(problem)
+        entry = self._sketch_entry()
+        if entry is None:
+            raise UtilityUnavailable(self._unavailable_reason() or "no utility sketch configured")
+        state = self._boxes.get(box)
+        if state is None:
+            raise UtilityUnavailable(f"box {box} does not exist")
+
+        profile = self._profile()
+        if profile is None or profile.identify is None:
+            raise UtilityUnavailable(
+                f"{entry.name} doesn't declare an identify command, so a box "
+                "can't be asked to point at itself."
+            )
+
+        async with self._identify_lock:
+            delivered = await self._identify_locked(state, entry, profile, on)
+        await self.publish()
+        return delivered, state.to_json()
+
+    async def _identify_locked(
+        self, state: BoxBaseline, entry: Any, profile: TaskProfile, on: bool
+    ) -> bool:
+        box = state.box
+        assert profile.identify is not None
+        command = profile.identify.on if on else profile.identify.off
+
+        if not on:
+            # Turning off must be best-effort to the point of never raising:
+            # it runs on unmount and on session start, and a box that already
+            # went away is a signal that is already off.
+            delivered = self._send_quietly(box, command)
+            self._close_if_ours(box)
+            state.identifying = False
+            return delivered
+
+        if not self._carries(box, entry.path):
+            state.detail = state.detail or "box isn't at the utility baseline yet"
+            return False
+
+        try:
+            opened = self._open_if_idle(box)
+        except Exception as exc:  # noqa: BLE001 - absent, busy, permissions
+            state.state, state.detail = "failed", f"couldn't open the port: {exc}"
+            return False
+        if opened is None:
+            state.detail = f"port is {self._ports.handler(box).state.value}"
+            return False
+
+        handler = self._ports.handler(box)
+        token = profile.telemetry.match if profile.telemetry else None
+        if opened:
+            # The open rebooted the board; wait for it to say anything at all
+            # rather than guessing how long `setup()` takes.
+            await self._await_line(handler, time.time(), None)
+
+        since = time.time()
+        try:
+            self._ports.send(box, command)
+        except (PortBusy, OSError) as exc:
+            state.detail = f"couldn't send the identify command: {exc}"
+            self._close_if_ours(box)
+            return False
+        state.identifying = True
+
+        if token is None:
+            # Nothing to listen for — the sketch declares no telemetry, so the
+            # send is the only evidence there is.
+            return True
+
+        if await self._await_line(handler, since, token):
+            state.detail = None
+            return True
+
+        # Sent, but the board never answered. Overwhelmingly this is a baud
+        # mismatch — the sketch's own `baudRate` against the configured
+        # `defaultBaud` — so name that rather than shrug.
+        state.state = "failed"
+        state.detail = (
+            f"box {box} didn't answer at {self._ports_baud()} baud — check the "
+            "default baud rate in Config."
+        )
+        state.identifying = False
+        self._close_if_ours(box)
+        return False
+
+    async def identify_all_off(self) -> None:
+        """Extinguish every box we lit. Never raises."""
+        profile = self._profile()
+        command = profile.identify.off if profile and profile.identify else None
+        async with self._identify_lock:
+            for state in self._boxes.values():
+                if not state.identifying and state.box not in self._opened:
+                    continue
+                if command is not None:
+                    self._send_quietly(state.box, command)
+                self._close_if_ours(state.box)
+                state.identifying = False
+
+    def _open_if_idle(self, box: int) -> bool | None:
+        """Open passthrough if we may. True = we opened it, False = already
+        open by someone else, None = the port has another owner entirely."""
+        handler = self._ports.handler(box)
+        if handler.state is PortState.PASSTHROUGH:
+            return False
+        if handler.state is not PortState.IDLE:
+            return None
+        self._ports.open_passthrough(box)
+        self._opened.add(box)
+        return True
+
+    def _close_if_ours(self, box: int) -> None:
+        if box not in self._opened:
+            return
+        self._opened.discard(box)
+        try:
+            self._ports.close_passthrough(box)
+        except Exception as exc:  # noqa: BLE001 - already gone is fine
+            log.debug("box %d: couldn't close the identify console: %s", box, exc)
+
+    def _send_quietly(self, box: int, command: str) -> bool:
+        try:
+            self._ports.send(box, command)
+            return True
+        except Exception as exc:  # noqa: BLE001 - wrong state, board gone
+            log.debug("box %d: identify send failed: %s", box, exc)
+            return False
+
+    async def _await_line(self, handler: Any, since: float, token: str | None) -> bool:
+        """Wait for a received line newer than `since`, optionally matching `token`.
+
+        Reads the handler's scrollback rather than the batched `port.output`
+        stream: this needs an answer within a couple of seconds, and the
+        broadcast path is for the UI, not for control flow.
+        """
+        deadline = time.monotonic() + (BOOT_TIMEOUT_S if token is None else CONFIRM_TIMEOUT_S)
+        while time.monotonic() < deadline:
+            for line in _scrollback(handler):
+                if line.dir != "rx" or line.ts < since:
+                    continue
+                if token is None or line.text.strip().startswith(token):
+                    return True
+            await asyncio.sleep(WAIT_TICK_S)
+        return False
+
+    def _ports_baud(self) -> int:
+        return self._settings.default_baud
+
+    # --- resolution -------------------------------------------------------
+
+    def _sketch_name(self) -> str | None:
+        """The box utility's name, found in the current discovery.
+
+        Found every time rather than cached: discovery is replaced on every
+        rescan, and the entry it serves is the copy rebuilt for this rig.
+        """
+        sketches = getattr(self._discovery(), "sketches", [])
+        return next((s.name for s in sketches if self._is_utility(s)), None)
+
+    def _sketch_entry(self) -> Any | None:
+        """The box utility, as the current discovery knows it."""
+        name = self._sketch_name()
+        if not name:
+            return None
+        sketches = getattr(self._discovery(), "sketches", [])
+        entry = next((s for s in sketches if s.name == name), None)
+        if entry is None:
+            return None
+        profile = self._profile()
+        if profile is None or profile.kind != "utility":
+            return None
+        return entry
+
+    def _profile(self) -> TaskProfile | None:
+        name = self._sketch_name()
+        if not name:
+            return None
+        sketches = getattr(self._discovery(), "sketches", [])
+        entry = next((s for s in sketches if s.name == name), None)
+        if entry is None:
+            return None
+        if self._profile_cache is not None and self._profile_cache[0] == entry.path:
+            return self._profile_cache[1]
+        try:
+            profile = self._load_profile(entry.path)
+        except task_profile.TaskProfileError as exc:
+            log.warning("utility sketch %s has an unreadable task.json: %s", entry.path, exc)
+            profile = None
+        self._profile_cache = (entry.path, profile)
+        return profile
+
+    def _unavailable_reason(self) -> str | None:
+        """Why the baseline can't operate at all, in words worth showing."""
+        name = self._sketch_name()
+        if not name:
+            return (
+                "This install's sketch library has no box utility, so idle boxes "
+                "can't be returned to a known sketch. Reinstalling restores it."
+            )
+        profile = self._profile()
+        if profile is None:
+            return (
+                "The hardware utility sketch has no readable task.json, so the "
+                "app can't tell what it can be asked to do."
+            )
+        if profile.kind != "utility":
+            return (
+                f"{profile.task_name} is a {profile.kind} sketch — the hardware "
+                "utility sketch must declare `kind: \"utility\"`."
+            )
+        return None
+
+    # --- status -----------------------------------------------------------
+
+    def status(self) -> dict[str, Any]:
+        entry = self._sketch_entry()
+        profile = self._profile()
+        return {
+            "configured": self._sketch_name() is not None,
+            # Found, not stored: which sketch is the box utility, and where its
+            # rebuilt copy lives, are facts about this install and this rig.
+            "sketchPath": entry.path if entry is not None else None,
+            "sketchName": self._sketch_name(),
+            "canIdentify": entry is not None and profile is not None and profile.identify is not None,
+            "held": self._held,
+            "message": self._unavailable_reason(),
+            "boxes": [state.to_json() for _, state in sorted(self._boxes.items())],
+        }
+
+    async def publish(self) -> None:
+        from .protocol import Evt, event
+
+        await self._broadcast(event(Evt.UTILITY_UPDATED, self.status()))
+
+    def _publish_soon(self) -> None:
+        # From inside a flash-queue job, which must not yield before its flash.
+        self._loop.create_task(self.publish())
+
+
+def _pinned_detail(sketch_path: str | None) -> str:
+    return f"holding {sketch_name(sketch_path) or 'a sketch'}, flashed from Debug Mode"
+
+
+def _scrollback(handler: Any) -> list[Any]:
+    """Snapshot a handler's ring buffer, tolerating the reader thread.
+
+    The ring is a `deque` the port's reader thread appends to, and copying one
+    mid-append can raise. Retrying costs a microsecond; the alternative is a
+    rare crash inside a wait loop.
+    """
+    for _ in range(3):
+        try:
+            return handler.scrollback()
+        except RuntimeError:
+            continue
+    return []
+
+
+def _is_generated_utility(sketch: Any) -> bool:
+    """A bundled sketch whose `.ino` asks for the generated channel table."""
+    from pathlib import Path
+
+    from .taskdef.utility import wants_utility
+
+    return getattr(sketch, "source", "bundled") == "bundled" and wants_utility(Path(sketch.path))
+

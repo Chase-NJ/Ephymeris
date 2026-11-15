@@ -1,0 +1,1162 @@
+"""Derived metrics — `ANALYTICS.md#how-a-strobe-stream-is-scored`.
+
+These numbers are the scientific output, so the tests are written against the
+definition rather than against the implementation. The most important one is
+`test_offline_scoring_equals_the_live_run`: everything else could pass while
+the dashboard quietly disagreed with what the operator watched on Mission
+Control, and that disagreement is the failure nobody would notice.
+"""
+
+from __future__ import annotations
+
+from collections import Counter
+
+import pytest
+
+from ephymeris_sidecar.analytics import stream
+from ephymeris_sidecar.analytics.stream.legacy import compute_series
+from ephymeris_sidecar.tasks.profile import parse_profile, profile_hash
+
+# The real GRGL profile: odor 1 should be answered right, odor 3 left.
+GRGL = {
+    "taskName": "GRGL 2-Odor Discrimination",
+    "strobes": {
+        "101": "ODOR_1_ON",
+        "103": "ODOR_3_ON",
+        "248": "WATER_POKE_L",
+        "249": "WATER_POKE_R",
+        "246": "END_SESSION",
+    },
+    "liveMetrics": [
+        {
+            "id": "p_r_odor1", "label": "P(R | Odor 1)",
+            "triggerCode": 101, "successCode": 249, "alternateCode": 248,
+            "windowSize": 20,
+        },
+        {
+            "id": "p_l_odor3", "label": "P(L | Odor 3)",
+            "triggerCode": 103, "successCode": 248, "alternateCode": 249,
+            "windowSize": 20,
+        },
+    ],
+}
+
+PROFILE = parse_profile(GRGL)
+
+#: Two odors per well — the shape that broke both strategy panels, because the
+#: plane demanded exactly two metrics and this declares four.
+FOUR_ODOR = {
+    "taskName": "GRGL 4-Odor",
+    "strobes": {**GRGL["strobes"], "102": "ODOR_2_ON", "104": "ODOR_4_ON"},
+    "liveMetrics": [
+        {"id": "odor1_r", "label": "P(R | Odor 1)", "triggerCode": 101,
+         "successCode": 249, "alternateCode": 248, "windowSize": 20},
+        {"id": "odor2_r", "label": "P(R | Odor 2)", "triggerCode": 102,
+         "successCode": 249, "alternateCode": 248, "windowSize": 20},
+        {"id": "odor3_l", "label": "P(L | Odor 3)", "triggerCode": 103,
+         "successCode": 248, "alternateCode": 249, "windowSize": 20},
+        {"id": "odor4_l", "label": "P(L | Odor 4)", "triggerCode": 104,
+         "successCode": 248, "alternateCode": 249, "windowSize": 20},
+    ],
+}
+
+HIT_1 = [101, 249]        # odor 1 → right: correct
+MISS_1 = [101, 248]       # odor 1 → left: wrong, but a response
+HIT_2 = [102, 249]        # odor 2 → right: correct
+MISS_2 = [102, 248]
+HIT_3 = [103, 248]        # odor 3 → left: correct
+MISS_3 = [103, 249]
+HIT_4 = [104, 248]        # odor 4 → left: correct
+
+
+def document(codes: list[int], **extra) -> dict:
+    """A session document with plausible 1s spacing between events."""
+    return {
+        "rat": "remy1",
+        "sketch": "GRGL_2-Odor",
+        "stop_reason": stream.CLEAN_STOP_REASON,
+        "n_events": len(codes),
+        "ts_data": [[code, index * 1000] for index, code in enumerate(codes)],
+        **extra,
+    }
+
+
+# The full GRGL vocabulary, as a real task.json declares it — the outcome
+# tally (`ANALYTICS.md#rewarded-and-response-accuracy`) reads these by name, so the names matter as much as the codes.
+GRGL_FULL = {
+    **GRGL,
+    "strobes": {
+        **GRGL["strobes"],
+        "222": "LIGHTS_ON",
+        "233": "LIGHTS_OFF",
+        "224": "ODOR_POKE",
+        "226": "ODOR_UNPOKE",
+        "225": "ODOR_UNPOKE_EARLY",
+        "223": "LAZY_RAT",
+        "250": "WATER_UNPOKE_EARLY_L",
+        "251": "WATER_UNPOKE_EARLY_R",
+        "252": "FLUID_L",
+        "253": "FLUID_R",
+        "257": "WATER_POKE_ERROR_L",
+        "258": "WATER_POKE_ERROR_R",
+        "357": "STOP_FLUID_G_R",
+        "369": "STOP_FLUID_G_L",
+    },
+}
+
+FULL_PROFILE = parse_profile(GRGL_FULL)
+
+#: Odor 1, sampled to completion, right well, fluid delivered, delivery ends.
+REWARDED_1 = [101, 226, 249, 253, 357]
+#: Odor 1, correct well, released before the hold — no fluid.
+HOLD_FAIL_1 = [101, 226, 249, 251]
+#: Odor 1, wrong well.
+WRONG_1 = [101, 226, 248, 257]
+#: Odor 1, sampled but never answered.
+NO_RESPONSE_1 = [101, 226]
+#: Odor 1, the animal left the odor port early — never administered.
+ABORTED_1 = [101, 225]
+
+# The presentation layer above all of those (`ANALYTICS.md#engagement-ladder`). The firmware strobes the
+# trial light first and unconditionally, then the odor poke, and only reaches an
+# odor-on code once the pre-odor hold has cleared — so these prefix the trial
+# fixtures above rather than replacing them.
+#: Light on, animal engaged the odor port. Prefixes an engaged trial.
+ENGAGED = [222, 224]
+#: Light on, never poked. `LAZY_RAT`, then loop()'s `INVALID_TRIAL`.
+LAZY = [222, 223, 234]
+#: Light on, poked, then let go before the pre-odor hold cleared. No odor ever
+#: reaches the animal, so no trial boundary is emitted at all.
+POKE_BAIL = [222, 224, 225, 234]
+
+
+# --- trial outcomes: rewarded vs side accuracy (`ANALYTICS.md#rewarded-and-response-accuracy`) ---
+
+
+def test_each_outcome_lands_in_its_own_bucket() -> None:
+    codes = REWARDED_1 + HOLD_FAIL_1 + WRONG_1 + NO_RESPONSE_1 + ABORTED_1
+    out = stream.outcomes_of(codes, FULL_PROFILE)
+    assert out is not None
+    assert (out.rewarded, out.hold_failed, out.wrong_well) == (1, 1, 1)
+    assert (out.no_response, out.aborted) == (1, 1)
+    assert out.trials == 5
+    # A trial the animal never engaged with is not evidence about
+    # discrimination, so it stays out of the denominator.
+    assert out.administered == 4
+
+
+def test_side_accuracy_credits_a_hold_failure_and_rewarded_accuracy_does_not() -> None:
+    """The whole point of rewarded vs response accuracy: the animal chose right, and earned nothing."""
+    out = stream.outcomes_of(REWARDED_1 + HOLD_FAIL_1, FULL_PROFILE)
+    assert out is not None
+    assert out.p_rewarded == 0.5, "a hold failure is not a reward"
+    assert out.p_side == 1.0, "but the correct side was chosen both times"
+
+
+def test_side_accuracy_is_never_below_rewarded_accuracy() -> None:
+    codes = REWARDED_1 * 3 + HOLD_FAIL_1 * 2 + WRONG_1 + NO_RESPONSE_1
+    out = stream.outcomes_of(codes, FULL_PROFILE)
+    assert out is not None
+    assert out.p_side is not None and out.p_rewarded is not None
+    assert out.p_side >= out.p_rewarded
+
+
+def test_the_end_of_delivery_is_not_a_second_reward() -> None:
+    """`STOP_FLUID_G_R` contains the word FLUID and marks delivery *ending*.
+
+    An unanchored match would count it, doubling every rewarded trial — and the
+    number would still look plausible, which is what makes it worth a test.
+    """
+    out = stream.outcomes_of(REWARDED_1, FULL_PROFILE)
+    assert out is not None
+    assert out.rewarded == 1
+
+
+def test_an_early_odor_unpoke_is_not_a_completed_sample() -> None:
+    """`ODOR_UNPOKE_EARLY` is the opposite event to `ODOR_UNPOKE`."""
+    out = stream.outcomes_of(ABORTED_1, FULL_PROFILE)
+    assert out is not None
+    assert out.administered == 0 and out.aborted == 1
+    assert out.p_rewarded is None, "no administered trials is null, never zero"
+
+
+def test_an_unanswered_trial_closes_at_the_next_odor() -> None:
+    """Same boundary rule the metrics use — otherwise the next trial's reward
+    would be attributed to the trial that was abandoned."""
+    out = stream.outcomes_of(NO_RESPONSE_1 + REWARDED_1, FULL_PROFILE)
+    assert out is not None
+    assert out.no_response == 1 and out.rewarded == 1
+
+
+def test_a_profile_without_the_vocabulary_reports_no_outcomes() -> None:
+    """The bare GRGL fixture declares no FLUID or ODOR_UNPOKE codes.
+
+    Absent, not zeroed: "this task has no notion of reward delivery" is a
+    different claim from "this animal earned nothing".
+    """
+    assert stream.outcomes_of(HIT_1 + HIT_3, PROFILE) is None
+    assert stream.outcomes_of(HIT_1, None) is None
+
+
+def test_outcomes_ride_along_on_the_summary() -> None:
+    summary = stream.summarize(document(REWARDED_1 + WRONG_1), FULL_PROFILE)
+    assert summary.outcomes is not None
+    payload = summary.to_json()["outcomes"]
+    assert payload["rewarded"] == 1 and payload["wrongWell"] == 1
+    assert payload["pRewarded"] == 0.5
+    # A band needs an interval, and it must stay inside the unit range.
+    assert 0.0 <= payload["rewardedLow"] <= payload["pRewarded"] <= payload["rewardedHigh"] <= 1.0
+
+
+def test_a_run_whose_profile_lacks_the_vocabulary_has_null_outcomes() -> None:
+    assert stream.summarize(document(HIT_1), PROFILE).to_json()["outcomes"] is None
+
+
+def test_rewarded_accuracy_is_independent_of_the_declared_metrics() -> None:
+    """A side-biased animal scores at chance on the pooled metric while its
+    rewarded accuracy reflects what it actually earned — the two answer
+    different questions and must not track each other by construction."""
+    # Always goes right: correct on odor 1, wrong on odor 3.
+    codes = (REWARDED_1 + [103, 226, 249, 258]) * 5
+    summary = stream.summarize(document(codes), FULL_PROFILE)
+    assert summary.overall is not None and summary.overall.p_session == 0.5
+    assert summary.outcomes is not None and summary.outcomes.p_rewarded == 0.5
+    # ...and with hold failures on the rewarded half, they diverge.
+    codes2 = (HOLD_FAIL_1 + [103, 226, 249, 258]) * 5
+    summary2 = stream.summarize(document(codes2), FULL_PROFILE)
+    assert summary2.overall is not None and summary2.overall.p_session == 0.5
+    assert summary2.outcomes is not None and summary2.outcomes.p_rewarded == 0.0
+    assert summary2.outcomes.p_side == 0.5
+
+
+# --- the engagement ladder (`ANALYTICS.md#engagement-ladder`) -------------------
+
+
+def test_the_ladder_counts_each_stage_a_presentation_reached() -> None:
+    codes = (
+        ENGAGED + REWARDED_1      # offered, poked, odor delivered, paid out
+        + ENGAGED + ABORTED_1     # offered, poked, odor delivered, left sampling
+        + POKE_BAIL               # offered, poked, no odor
+        + LAZY + LAZY             # offered, never poked
+    )
+    ladder = stream.engagement_of(codes, FULL_PROFILE)
+    assert ladder is not None
+    assert (ladder.presented, ladder.poked, ladder.odor_delivered) == (5, 3, 2)
+    assert ladder.p_engaged == 3 / 5
+    assert ladder.p_delivered == 2 / 5
+
+
+def test_the_ladder_measures_what_every_other_figure_is_conditioned_on() -> None:
+    """The failure this exists to close.
+
+    Two animals with identical, perfect accuracy: one worked every trial, the
+    other ignored four fifths of them. Nothing delimited on odor onset can tell
+    them apart, because the trials the second one skipped never produced a
+    boundary to be counted.
+    """
+    diligent = (ENGAGED + REWARDED_1) * 10
+    checked_out = (ENGAGED + REWARDED_1) * 10 + LAZY * 40
+
+    both = [stream.summarize(document(c), FULL_PROFILE) for c in (diligent, checked_out)]
+    assert both[0].outcomes == both[1].outcomes, "indistinguishable by outcome"
+    assert both[0].overall == both[1].overall, "and by accuracy"
+
+    assert both[0].engagement is not None and both[1].engagement is not None
+    assert both[0].engagement.p_engaged == 1.0
+    assert both[1].engagement.p_engaged == 0.2
+
+
+def test_a_pre_odor_bail_is_not_the_same_event_as_an_aborted_trial() -> None:
+    """Both are the animal letting go of the odor port, and they differ in the
+    one way that matters: whether it had smelled anything yet. `ODOR_UNPOKE_EARLY`
+    carries the same code in both, so only the presentation window separates
+    them."""
+    ladder = stream.engagement_of(POKE_BAIL + ENGAGED + ABORTED_1, FULL_PROFILE)
+    outcomes = stream.outcomes_of(POKE_BAIL + ENGAGED + ABORTED_1, FULL_PROFILE)
+    assert ladder is not None and outcomes is not None
+
+    assert ladder.poked - ladder.odor_delivered == 1, "bailed before odor"
+    assert outcomes.aborted == 1, "received odor, left during sampling"
+    # The pre-odor bail never reaches a trial boundary, so the outcome tally
+    # cannot see it at all — which is exactly why the ladder is needed.
+    assert outcomes.trials == 1
+
+
+def test_the_ladder_is_monotone() -> None:
+    """`presented >= poked >= odorDelivered` by construction, so the two
+    reported gaps can never come out negative however malformed the stream."""
+    for codes in (
+        [224, 224, 101, 226],                       # strobes before any light
+        ENGAGED + ENGAGED + REWARDED_1,             # a doubled poke in one window
+        LAZY + POKE_BAIL,
+        [222],                                      # a window nothing closed
+        [],
+    ):
+        ladder = stream.engagement_of(codes, FULL_PROFILE)
+        assert ladder is not None
+        assert ladder.presented >= ladder.poked >= ladder.odor_delivered
+        payload = ladder.to_json()
+        assert payload["noPoke"] >= 0 and payload["pokeAborted"] >= 0
+
+
+def test_odor_delivery_implies_the_poke_that_earned_it() -> None:
+    """The firmware cannot reach its odor-on code without a held odor poke, so a
+    stream that dropped the poke line must not report a delivery with no poke."""
+    ladder = stream.engagement_of([222, 101, 226, 249], FULL_PROFILE)
+    assert ladder is not None
+    assert (ladder.presented, ladder.poked, ladder.odor_delivered) == (1, 1, 1)
+
+
+def test_the_last_presentation_is_counted_even_if_nothing_closed_it() -> None:
+    """A board drop truncates the final window. It was still offered."""
+    ladder = stream.engagement_of(ENGAGED + REWARDED_1 + ENGAGED, FULL_PROFILE)
+    assert ladder is not None
+    assert (ladder.presented, ladder.poked, ladder.odor_delivered) == (2, 2, 1)
+
+
+def test_odor_delivered_agrees_with_the_outcome_tally() -> None:
+    """Two passes counting the same trials from opposite ends. They are not
+    derived from each other, so their agreement is worth asserting rather than
+    assuming — a disagreement means the stream isn't shaped the way both
+    passes believe."""
+    codes = (
+        ENGAGED + REWARDED_1 + ENGAGED + WRONG_1 + LAZY
+        + ENGAGED + REWARDED_3 + POKE_BAIL + ENGAGED + ABORTED_3
+    )
+    summary = stream.summarize(document(codes), FULL_PROFILE)
+    assert summary.engagement is not None and summary.outcomes is not None
+    assert summary.engagement.odor_delivered == summary.outcomes.trials
+
+
+def test_the_lights_going_off_never_opens_a_presentation() -> None:
+    """`LIGHTS_OFF` is the same word and the opposite edge. An unanchored match
+    would roughly double `presented` — and the number would still look
+    plausible, which is what makes it worth a test."""
+    ladder = stream.engagement_of([222, 224, 101, 226, 249, 233], FULL_PROFILE)
+    assert ladder is not None
+    assert ladder.presented == 1
+
+
+def test_a_profile_without_a_trial_light_reports_no_ladder() -> None:
+    """Null, not zeroed: a zeroed ladder reads as an animal that never engaged
+    rather than as a task that cannot say."""
+    assert stream.engagement_of(ENGAGED + REWARDED_1, PROFILE) is None
+    assert stream.engagement_of(ENGAGED, None) is None
+    # The light alone is a denominator with no numerator.
+    light_only = parse_profile(
+        {**GRGL, "strobes": {**GRGL["strobes"], "222": "LIGHTS_ON"}}
+    )
+    assert stream.engagement_of(ENGAGED + REWARDED_1, light_only) is None
+
+
+def test_the_ladder_rides_along_on_the_summary() -> None:
+    payload = stream.summarize(
+        document(ENGAGED + REWARDED_1 + LAZY + POKE_BAIL), FULL_PROFILE
+    ).to_json()["engagement"]
+    assert payload["presented"] == 3
+    assert payload["poked"] == 2
+    assert payload["odorDelivered"] == 1
+    assert payload["noPoke"] == 1 and payload["pokeAborted"] == 1
+    assert payload["pEngaged"] == round(2 / 3, 6)
+    assert 0.0 <= payload["engagedLow"] <= payload["pEngaged"] <= payload["engagedHigh"] <= 1.0
+    # And null on a profile that can't express it.
+    assert stream.summarize(document(HIT_1), PROFILE).to_json()["engagement"] is None
+
+
+def test_a_run_that_offered_nothing_reports_null_rates_not_zero() -> None:
+    ladder = stream.engagement_of([221], FULL_PROFILE)
+    assert ladder is not None
+    assert ladder.presented == 0
+    assert ladder.p_engaged is None and ladder.p_delivered is None
+
+
+# --- the same tally, per condition (`ANALYTICS.md#per-condition-tally`) ---------
+
+#: Odor 3's mirror of the odor-1 fixtures above — left is the correct well.
+REWARDED_3 = [103, 226, 248, 252, 369]
+HOLD_FAIL_3 = [103, 226, 248, 250]
+WRONG_3 = [103, 226, 249, 258]
+NO_RESPONSE_3 = [103, 226]
+ABORTED_3 = [103, 225]
+
+
+def test_conditions_split_the_tally_by_which_odor_opened_the_trial() -> None:
+    """The question the session tile asks: how many go-right trials were
+    administered, and how many of those actually paid out."""
+    codes = REWARDED_1 * 3 + WRONG_1 + REWARDED_3 + WRONG_3 * 2
+    conditions = stream.conditions_of(codes, FULL_PROFILE)
+    assert [c.metric_id for c in conditions] == ["p_r_odor1", "p_l_odor3"]
+
+    odor1, odor3 = (c.outcomes for c in conditions)
+    assert (odor1.administered, odor1.rewarded) == (4, 3)
+    assert (odor3.administered, odor3.rewarded) == (3, 1)
+
+
+def test_the_conditions_sum_to_the_pooled_tally() -> None:
+    """Every trial belongs to exactly one condition, so the split is a
+    partition rather than a second, independently-drifting count."""
+    codes = (
+        REWARDED_1 * 2 + HOLD_FAIL_1 + WRONG_1 + NO_RESPONSE_1 + ABORTED_1
+        + REWARDED_3 + HOLD_FAIL_3 * 2 + WRONG_3 + ABORTED_3
+    )
+    pooled = stream.outcomes_of(codes, FULL_PROFILE)
+    conditions = stream.conditions_of(codes, FULL_PROFILE)
+    assert pooled is not None
+
+    for attribute in (
+        "trials",
+        "administered",
+        "rewarded",
+        "hold_failed",
+        "wrong_well",
+        "no_response",
+        "aborted",
+    ):
+        assert getattr(pooled, attribute) == sum(
+            getattr(c.outcomes, attribute) for c in conditions
+        ), attribute
+
+
+def test_a_condition_the_animal_never_saw_is_zeroed_not_missing() -> None:
+    """A declared condition with no trials still gets a row — "odor 3 never
+    came up" is a fact about the session, not an absent one."""
+    conditions = stream.conditions_of(REWARDED_1 * 3, FULL_PROFILE)
+    assert len(conditions) == 2
+    assert conditions[1].outcomes.trials == 0
+    # And a rate over nothing stays None rather than collapsing to 0.0.
+    assert conditions[1].outcomes.p_rewarded is None
+
+
+def test_conditions_are_empty_when_the_vocabulary_cannot_express_an_outcome() -> None:
+    assert stream.conditions_of(HIT_1 + HIT_3, PROFILE) == []
+    assert stream.conditions_of(HIT_1, None) == []
+
+
+def test_conditions_ride_along_on_the_summary() -> None:
+    payload = stream.summarize(document(REWARDED_1 + WRONG_3), FULL_PROFILE).to_json()
+    assert [c["metricId"] for c in payload["conditions"]] == ["p_r_odor1", "p_l_odor3"]
+    assert payload["conditions"][0]["label"] == "P(R | Odor 1)"
+    assert payload["conditions"][0]["triggerCode"] == 101
+    assert payload["conditions"][0]["outcomes"]["rewarded"] == 1
+    assert payload["conditions"][1]["outcomes"]["wrongWell"] == 1
+    # Empty, not null, when the profile can't express an outcome at all.
+    assert stream.summarize(document(HIT_1), PROFILE).to_json()["conditions"] == []
+
+
+# --- the per-trial tape (`ANALYTICS.md#per-trial-tape`) -------------------------
+
+
+def test_the_tape_tallied_reproduces_the_outcome_tally() -> None:
+    """The load-bearing identity: the tape and the tallies are one pass.
+
+    If a second classifier ever crept in, the tape could disagree with the
+    numbers printed beside it and nothing else would notice — this is the
+    alarm for that.
+    """
+    codes = (REWARDED_1 + HOLD_FAIL_1 + WRONG_1 + NO_RESPONSE_1 + ABORTED_1) * 3
+    tape = stream.trials_of(document(codes), FULL_PROFILE)
+    tallied = Counter(t.outcome for t in tape)
+    out = stream.outcomes_of(codes, FULL_PROFILE)
+    assert out is not None
+    assert tallied["rewarded"] == out.rewarded
+    assert tallied["hold_failed"] == out.hold_failed
+    assert tallied["wrong_well"] == out.wrong_well
+    assert tallied["no_response"] == out.no_response
+    assert tallied["aborted"] == out.aborted
+    assert len(tape) == out.trials
+
+
+def test_the_tape_grouped_by_trigger_reproduces_the_conditions() -> None:
+    codes = REWARDED_1 + WRONG_3 + HOLD_FAIL_1 + NO_RESPONSE_3
+    tape = stream.trials_of(document(codes), FULL_PROFILE)
+    for condition in stream.conditions_of(codes, FULL_PROFILE):
+        own = [t for t in tape if t.trigger_code == condition.trigger_code]
+        assert len(own) == condition.outcomes.trials
+        assert (
+            sum(1 for t in own if t.outcome == "rewarded")
+            == condition.outcomes.rewarded
+        )
+
+
+def test_the_tape_is_in_stream_order_with_contiguous_indices() -> None:
+    tape = stream.trials_of(document(REWARDED_1 + WRONG_1 + ABORTED_1), FULL_PROFILE)
+    assert [t.index for t in tape] == [0, 1, 2]
+    assert [t.outcome for t in tape] == ["rewarded", "wrong_well", "aborted"]
+
+
+def test_the_tape_is_empty_when_the_vocabulary_cannot_express_an_outcome() -> None:
+    assert stream.trials_of(document(HIT_1 + HIT_3), PROFILE) == []
+    assert stream.trials_of(document(HIT_1), None) == []
+
+
+def test_tape_times_are_relative_to_the_earliest_timestamp() -> None:
+    # 1s spacing from `document`: trial 0 opens at code index 0, trial 1 at
+    # index 5 (REWARDED_1 is five codes long).
+    tape = stream.trials_of(document(REWARDED_1 + WRONG_1), FULL_PROFILE)
+    assert tape[0].at_ms == 0
+    assert tape[1].at_ms == 5000
+    # Latency: odor 1 at index 0 settles on FLUID at index 3 → 3s.
+    assert tape[0].latency_ms == 3000
+    # Wrong well: opens at 5, settles on WATER_POKE_ERROR_L at 8 → 3s.
+    assert tape[1].latency_ms == 3000
+
+
+def test_unsettled_trials_carry_no_latency() -> None:
+    tape = stream.trials_of(document(NO_RESPONSE_1 + ABORTED_1), FULL_PROFILE)
+    assert [t.outcome for t in tape] == ["no_response", "aborted"]
+    assert all(t.latency_ms is None for t in tape)
+
+
+def test_a_clockless_file_nulls_times_without_dropping_trials() -> None:
+    doc = {"ts_data": [[code] for code in REWARDED_1 + WRONG_1]}
+    tape = stream.trials_of(doc, FULL_PROFILE)
+    assert [t.outcome for t in tape] == ["rewarded", "wrong_well"]
+    assert all(t.at_ms is None and t.latency_ms is None for t in tape)
+
+
+def test_the_wire_spelling_is_hyphenated() -> None:
+    tape = stream.trials_of(document(HOLD_FAIL_1 + NO_RESPONSE_1), FULL_PROFILE)
+    assert [t.to_json()["outcome"] for t in tape] == ["hold-failed", "no-response"]
+
+
+# --- the within-session strategy walk (`DATA.md#strategy-plane`) -----------
+
+
+def test_the_trail_pairs_both_conditions_on_one_clock() -> None:
+    """The whole reason this lives in the sidecar: the per-metric series are
+    indexed by each metric's *own* counted trials, which interleave, so index
+    k of one is not the same moment as index k of the other."""
+    codes = (HIT_1 + HIT_3) * 15
+    trail = stream.strategy_trail(document(codes), PROFILE)
+    assert trail, "thirty counted trials should produce a walk"
+    # A perfect discriminator sits in the top-right corner the whole way.
+    assert all(point.x == 1.0 and point.y == 1.0 for point in trail)
+    # The clock counts trials across both conditions, so it is strictly
+    # increasing and ends at the total.
+    assert [p.trial for p in trail] == sorted({p.trial for p in trail})
+    assert trail[-1].trial == 30
+
+
+def test_the_trail_shows_a_bias_becoming_discrimination_within_one_session() -> None:
+    """The shape the cross-session space cannot show: an animal that answered
+    right for the first half and discriminated in the second lands in the same
+    end-of-session place as one that was steady throughout."""
+    biased = (HIT_1 + MISS_3) * 20  # always right: on the bias anti-diagonal
+    learned = (HIT_1 + HIT_3) * 20  # discriminating: the corner
+    trail = stream.strategy_trail(document(biased + learned), PROFILE)
+    start, end = trail[0], trail[-1]
+    assert start.y < 0.25, "the run opens answering the same side regardless"
+    assert end.y > 0.75, "and closes discriminating"
+    # The window is rolling, so the ending point is the *current* strategy —
+    # not the whole-session average, which would still be near chance here.
+    assert end.x == 1.0
+
+
+def test_the_trail_needs_two_opposing_SIDES_not_two_conditions() -> None:
+    """The generalization, and why it was needed.
+
+    The plane's meaning is that an animal answering the same way regardless of
+    stimulus sits on `x + y = 1`, so its axes have to be OPPOSING answers. With
+    two conditions that was automatic and the code just took `liveMetrics[0]`
+    and `[1]` — which silently blanked both strategy panels for every task
+    presenting more than two, including the four-odor task that most needs
+    reading. Now any number of conditions folds onto the two sides.
+    """
+    one_metric = parse_profile({**GRGL, "liveMetrics": [GRGL["liveMetrics"][0]]})
+    assert stream.strategy_trail(document(HIT_1 * 4), one_metric) == []
+    assert stream.strategy_trail(document(HIT_1), None) == []
+
+    # Two conditions that reward the SAME well are not a plane: nothing on
+    # these axes could distinguish discriminating from answering one side.
+    same_side = parse_profile({
+        **GRGL,
+        "liveMetrics": [
+            GRGL["liveMetrics"][0],
+            {**GRGL["liveMetrics"][1], "successCode": 249, "alternateCode": 248},
+        ],
+    })
+    assert stream.strategy_axes(same_side) is None
+    assert stream.strategy_trail(document((HIT_1 + HIT_3) * 15), same_side) == []
+
+
+def test_four_conditions_fold_onto_two_sides() -> None:
+    four = parse_profile(FOUR_ODOR)
+    axes = stream.strategy_axes(four)
+    assert axes is not None
+    # x takes the FIRST declared metric's side, so a two-condition task keeps
+    # exactly the orientation it has always had and no familiar plot silently
+    # transposes.
+    assert (axes.x_side, axes.y_side) == ("right", "left")
+    assert axes.x_metrics == ("odor1_r", "odor2_r")
+    assert axes.y_metrics == ("odor3_l", "odor4_l")
+
+    perfect = (HIT_1 + HIT_2 + HIT_3 + HIT_4) * 8
+    trail = stream.strategy_trail(document(perfect), four)
+    assert trail, "a four-odor task must produce a walk"
+    assert all(p.x == 1.0 and p.y == 1.0 for p in trail)
+
+
+def test_a_side_pools_over_integers_not_over_proportions() -> None:
+    """A condition the animal barely met must not drag its side as hard as one
+    it met constantly — which is exactly what averaging the two conditions'
+    proportions would do."""
+    four = parse_profile(FOUR_ODOR)
+    # Right side: 20 correct odor-1 trials, and 4 odor-2 trials all wrong.
+    # Pooled over integers that is 20/24 = 0.833; averaged proportions would
+    # read 0.5, which is a different animal.
+    codes = HIT_1 * 20 + MISS_2 * 4 + (HIT_3 + HIT_4) * 12
+    trail = stream.strategy_trail(document(codes), four)
+    assert trail
+    # Pooled over integers, the right side is 20 of 24. The mean of the two
+    # conditions' proportions would be 0.5 — a different animal entirely.
+    assert abs(trail[-1].x - 20 / 24) < 0.02
+    assert abs(trail[-1].x - 0.5) > 0.3
+
+
+def test_a_withhold_condition_is_not_an_axis() -> None:
+    """A withhold is the ABSENCE of an answer, so it has no opposing side to be
+    plotted against — and a no-go metric's `alternateCode` says "any port will
+    do", which is precisely the value a careless axis would pick up."""
+    with_nogo = parse_profile({
+        **GRGL,
+        "strobes": {**GRGL["strobes"], "256": "WATER_POKE_NONE"},
+        "liveMetrics": [
+            *GRGL["liveMetrics"],
+            {
+                "id": "p_withhold", "label": "P(withhold | Odor 5)",
+                "triggerCode": 105, "successCode": 256, "alternateCode": 248,
+                "windowSize": 20,
+            },
+        ],
+    })
+    axes = stream.strategy_axes(with_nogo)
+    assert axes is not None
+    assert "p_withhold" not in (*axes.x_metrics, *axes.y_metrics)
+
+
+def test_the_answer_side_is_never_taken_from_the_alternate() -> None:
+    """The one derivation here that can print a LIE rather than a blank."""
+    unreadable = parse_profile({
+        **GRGL,
+        "liveMetrics": [
+            # A success code that resolves to nothing an answer can be read
+            # from, beside a perfectly readable — and opposite — alternate.
+            {**GRGL["liveMetrics"][0], "successCode": 246},
+            GRGL["liveMetrics"][1],
+        ],
+    })
+    assert stream.legacy.answer_side_of(unreadable, unreadable.live_metrics[0]) is None
+    # ...and with only one readable side left, there is no plane at all.
+    assert stream.strategy_axes(unreadable) is None
+
+
+def test_the_trail_starts_only_once_both_conditions_have_scored() -> None:
+    """A coordinate and a blank is not a point."""
+    assert stream.strategy_trail(document(HIT_1 * 30), PROFILE) == []
+
+
+def test_the_trail_does_not_begin_pinned_to_a_corner() -> None:
+    """A rolling proportion over one trial is exactly 0.0 or 1.0.
+
+    Left unfiltered the walk opens in a corner of the plane and thrashes
+    between the edges — an artefact of the estimator that reads as a behaviour,
+    which is the failure worth a test rather than the obvious one.
+    """
+    codes = (HIT_1 + MISS_1 + HIT_3 + MISS_3) * 10
+    trail = stream.strategy_trail(document(codes), PROFILE)
+    assert trail
+    # Every point rests on a real window, so none of them can be a bare 0/1.
+    assert all(point.n >= stream.DEFAULT_MIN_COUNTED for point in trail)
+    assert 0.0 < trail[0].x < 1.0 and 0.0 < trail[0].y < 1.0
+
+
+def test_the_trail_reports_the_weaker_of_the_two_windows() -> None:
+    """A point is only as trustworthy as the condition supporting it least."""
+    # Odor 1 fills its window well ahead of odor 3, so odor 3 is the binding
+    # constraint on both when the walk starts and on `n` throughout.
+    codes = HIT_1 * 25 + (HIT_1 + HIT_3) * 10
+    point = stream.strategy_trail(document(codes), PROFILE)[0]
+    assert point.n == stream.DEFAULT_MIN_COUNTED
+    assert point.to_json() == {"trial": 45, "x": 1.0, "y": 1.0, "n": 10}
+
+
+def test_a_window_shorter_than_the_floor_still_produces_a_walk() -> None:
+    """Capping the requirement at the authored window is what keeps a
+    small-window profile from silently getting no walk at all."""
+    short = parse_profile({
+        **GRGL,
+        "liveMetrics": [{**m, "windowSize": 4} for m in GRGL["liveMetrics"]],
+    })
+    trail = stream.strategy_trail(document((HIT_1 + HIT_3) * 6), short)
+    assert trail and all(point.n == 4 for point in trail)
+
+
+# --- the boundary-code trap (`ANALYTICS.md#boundary-codes`) --------------------
+
+
+def test_boundaries_are_the_union_of_every_trigger() -> None:
+    assert stream.legacy.boundaries_for(PROFILE) == frozenset({101, 103})
+
+
+def test_an_unanswered_trial_is_excluded_not_mis_scored() -> None:
+    """The single most important behaviour in this module.
+
+    Odor 1 fires, the animal doesn't respond, odor 3 fires, and *then* it pokes
+    left. That left poke belongs to the odor-3 trial. Scored with only its own
+    trigger as a boundary — `compute_series`' default — metric 1 would still be
+    waiting and would count the poke as its own miss.
+    """
+    codes = [101, 103, 248]
+    metric = PROFILE.live_metrics[0]
+
+    correct = compute_series(metric, codes, stream.legacy.boundaries_for(PROFILE))
+    wrong = compute_series(metric, codes)  # the default: own trigger only
+
+    assert correct == [], "the abandoned odor-1 trial must be excluded entirely"
+    assert wrong == [0.0], "this is the mis-scoring the union of triggers prevents"
+
+
+def test_offline_scoring_equals_the_live_run() -> None:
+    """Replaying a recorded stream must reproduce what Mission Control showed.
+
+    The live path feeds `MetricAccumulator` one strobe at a time; the offline
+    path replays the whole list. If these ever disagree, every recorded number
+    in the app is subtly wrong and nothing else in this file would catch it.
+    """
+    codes = (
+        HIT_1 + HIT_3 + MISS_1 + HIT_3 + [101, 103, 248] + HIT_1 + MISS_3 + HIT_1
+    )
+    summary = stream.summarize(document(codes), PROFILE)
+    live = dict((mid, (value, n)) for mid, value, n in stream.legacy.live_equivalent(PROFILE, codes))
+
+    for metric in summary.metrics:
+        live_value, live_n = live[metric.id]
+        assert metric.p_window == live_value, f"{metric.id} rolling value drifted from live"
+        assert metric.counted == live_n, f"{metric.id} counted trials drifted from live"
+
+
+# --- two probabilities, never one (`ANALYTICS.md#two-probabilities-per-metric`) ---
+
+
+def test_p_session_and_p_window_differ_when_the_window_is_short() -> None:
+    """They are not interchangeable, which is why both are reported."""
+    narrow = parse_profile(
+        {**GRGL, "liveMetrics": [{**GRGL["liveMetrics"][0], "windowSize": 2}]}
+    )
+    # Four wrong, then two right: the last-2 window sees 1.0, the session 0.33.
+    codes = MISS_1 * 4 + HIT_1 * 2
+    metric = stream.summarize(document(codes), narrow).metrics[0]
+
+    assert metric.p_window == 1.0
+    assert metric.p_session is not None and abs(metric.p_session - 2 / 6) < 1e-9
+    assert metric.counted == 6, "counted is every scored trial, not the window length"
+
+
+def test_p_session_ignores_the_authored_window_entirely() -> None:
+    codes = HIT_1 * 30 + MISS_1 * 30
+    metric = stream.summarize(document(codes), PROFILE).metrics[0]
+    assert metric.p_session == 0.5
+    # The rolling window (20) sits entirely inside the trailing misses.
+    assert metric.p_window == 0.0
+
+
+# --- pooled accuracy -------------------------------------------------------
+
+
+def test_a_side_biased_animal_scores_at_chance_overall() -> None:
+    """Why the pooled figure exists at all.
+
+    An animal that pokes right on every trial is correct on every odor-1 trial
+    and wrong on every odor-3 trial. Read on either metric alone it looks like
+    one of the best or one of the worst animals in the cohort; pooled, it sits
+    at chance — which is the truth, and what any readout asking "who is
+    stuck" has to show.
+    """
+    always_right = ([101, 249] + [103, 249]) * 20
+    summary = stream.summarize(document(always_right), PROFILE)
+    by_id = {m.id: m for m in summary.metrics}
+
+    assert by_id["p_r_odor1"].p_session == 1.0, "perfect, read alone"
+    assert by_id["p_l_odor3"].p_session == 0.0, "hopeless, read alone"
+    assert summary.overall is not None
+    assert summary.overall.p_session == 0.5, "at chance, which is the honest reading"
+
+
+def test_overall_pools_trials_rather_than_averaging_proportions() -> None:
+    """Weighted by how the session actually ran, not by condition count."""
+    # 10 odor-1 trials all correct, 2 odor-3 trials both wrong: 10/12, not 0.5.
+    codes = HIT_1 * 10 + MISS_3 * 2
+    summary = stream.summarize(document(codes), PROFILE)
+    assert summary.overall is not None
+    assert abs(summary.overall.p_session - 10 / 12) < 1e-9
+    assert summary.overall.counted == 12
+
+
+def test_the_pooled_row_still_counts_a_condition_that_never_scored() -> None:
+    """Twenty odor-3 trials the animal never answered are twenty real trials.
+
+    They can't move the pooled rate — there is no proportion to weight — but
+    leaving them out of `triggered`/`excluded` made the pooled row assert the
+    animal was never offered them, which is a different and false claim.
+    """
+    codes = HIT_1 * 10 + [103, 103] * 10  # odor 3 fires 20 times, never answered
+    summary = stream.summarize(document(codes), PROFILE)
+    assert summary.overall is not None
+
+    assert summary.overall.p_session == 1.0, "only odor 1 scored, and it was perfect"
+    assert summary.overall.counted == 10
+    assert summary.overall.triggered == 30, "10 odor-1 + 20 odor-3 presentations"
+    assert summary.overall.excluded == 20
+
+
+def test_the_pooled_row_balances_its_own_trial_counts() -> None:
+    """`triggered == counted + excluded` — the identity that makes the pooled
+    row readable next to the per-condition rows it sits above."""
+    codes = HIT_1 * 4 + MISS_1 + [101, 103, 248] + HIT_3 * 3 + [103, 101, 249]
+    overall = stream.summarize(document(codes), PROFILE).overall
+    assert overall is not None
+    assert overall.triggered == overall.counted + overall.excluded
+
+
+def test_whole_session_p_is_the_exact_ratio_of_scored_trials() -> None:
+    """Computed independently of the module, so a refactor of how the two
+    probabilities are obtained can't quietly redefine one of them."""
+    trials = [HIT_1, MISS_1, HIT_1, HIT_1, MISS_1, HIT_1, HIT_1]
+    codes = [code for trial in trials for code in trial]
+    hits = sum(1 for trial in trials if trial is HIT_1)
+
+    metric = stream.summarize(document(codes), PROFILE).metrics[0]
+    assert metric.counted == len(trials)
+    assert metric.p_session == hits / len(trials)
+    # And the interval is the one for that exact integer numerator, 5 of 7.
+    assert (metric.wilson_low, metric.wilson_high) == pytest.approx((0.3589, 0.9178), abs=5e-5)
+
+
+def test_overall_is_absent_when_nothing_scored() -> None:
+    assert stream.summarize(document([101, 101]), PROFILE).overall is None
+
+
+def test_a_profile_less_run_has_no_overall() -> None:
+    assert stream.summarize(document([221, 222]), None).overall is None
+
+
+# --- trial counts (`ANALYTICS.md#trial-counts`) ---------------------------------
+
+
+def test_excluded_counts_the_unanswered_trials() -> None:
+    codes = HIT_1 + [101, 103, 248] + HIT_1
+    metric = stream.summarize(document(codes), PROFILE).metrics[0]
+    assert metric.triggered == 3
+    assert metric.counted == 2
+    assert metric.excluded == 1
+
+
+# --- uncertainty (`ANALYTICS.md#uncertainty`) -----------------------------------
+
+
+def test_a_wilson_interval_never_leaves_the_unit_range() -> None:
+    """The reason for Wilson over the normal approximation.
+
+    Three of three correct is where the normal approximation gives a zero-width
+    interval at exactly 1.0, or runs past it.
+    """
+    low, high = stream.wilson_interval(3, 3)
+    assert 0.0 <= low < high <= 1.0
+    assert low < 1.0, "a 3/3 estimate must not claim certainty"
+
+
+def test_a_wilson_interval_is_the_95_percent_score_interval() -> None:
+    """The literals are SciPy's (`binomtest(k, n).proportion_ci(method="wilson")`)
+    and the published values for these cases, so a wrong z or a dropped term
+    in the margin fails here rather than redrawing every error bar."""
+    assert stream.wilson_interval(8, 10) == pytest.approx((0.4902, 0.9433), abs=5e-5)
+    assert stream.wilson_interval(3, 3) == pytest.approx((0.4385, 1.0), abs=5e-5)
+    assert stream.wilson_interval(0, 10) == pytest.approx((0.0, 0.2775), abs=5e-5)
+
+
+def test_wilson_narrows_as_n_grows() -> None:
+    small_low, small_high = stream.wilson_interval(8, 10)
+    large_low, large_high = stream.wilson_interval(800, 1000)
+    assert (large_high - large_low) < (small_high - small_low)
+
+
+def test_no_interval_without_trials() -> None:
+    assert stream.wilson_interval(0, 0) is None
+
+
+def test_low_confidence_is_flagged_but_the_value_is_still_reported() -> None:
+    """The sidecar never suppresses — presentation decides (`ANALYTICS.md#uncertainty`)."""
+    metric = stream.summarize(document(HIT_1 * 3), PROFILE, min_counted=10).metrics[0]
+    assert metric.low_confidence is True
+    assert metric.p_session == 1.0, "the value is reported regardless"
+    assert metric.counted == 3
+
+
+# --- edge cases (`ANALYTICS.md#edge-cases`) -------------------------------------
+
+
+def test_zero_counted_trials_is_null_never_zero() -> None:
+    """Zero percent and 'no trials' are opposite claims about an animal."""
+    metric = stream.summarize(document([101, 101, 101]), PROFILE).metrics[0]
+    assert metric.p_session is None
+    assert metric.p_window is None
+    assert metric.counted == 0
+    assert metric.triggered == 3
+    assert metric.wilson_low is None
+
+
+def test_a_profile_less_run_is_listed_with_no_metrics() -> None:
+    """Still worth listing — it has a real duration, event count and reason."""
+    summary = stream.summarize(document([221, 222, 223]), None)
+    assert summary.status == "no-metrics"
+    assert summary.metrics == []
+    assert summary.total_events == 3
+    assert summary.duration_ms == 2000
+
+
+def test_a_utility_profile_is_scored_but_left_out_of_aggregates() -> None:
+    utility = parse_profile({**GRGL, "kind": "utility"})
+    summary = stream.summarize(document(HIT_1 * 3), utility)
+    assert summary.status == "ok"
+    assert summary.excluded_by_default is True
+    assert summary.metrics[0].counted == 3
+
+
+def test_a_board_drop_is_included_and_marked_unclean() -> None:
+    summary = stream.summarize(
+        document(HIT_1 * 20, stop_reason="board disconnected"), PROFILE
+    )
+    assert summary.status == "ok"
+    assert summary.clean is False
+    assert summary.stop_reason == "board disconnected"
+    assert summary.metrics[0].counted == 20, "a drop at trial 20 is still 20 good trials"
+
+
+def test_a_clean_end_is_marked_clean() -> None:
+    assert stream.summarize(document(HIT_1), PROFILE).clean is True
+
+
+def test_malformed_ts_data_rows_are_skipped_not_fatal() -> None:
+    """A hand-edited or recovery-produced file must not kill an indexing pass."""
+    doc = {
+        "stop_reason": "operator stop",
+        "ts_data": [[101, 0], "nonsense", [], [249, 1000], [None, 2000], 42],
+    }
+    summary = stream.summarize(doc, PROFILE)
+    assert summary.total_events == 2
+    assert summary.metrics[0].counted == 1
+
+
+def test_duration_is_a_span_and_can_never_come_out_negative() -> None:
+    """A concatenated or hand-edited file need not be in arrival order, and
+    `last - first` on one of those puts a negative duration on a session tile."""
+    doc = {"stop_reason": "operator stop", "ts_data": [[101, 9000], [249, 1000]]}
+    assert stream.summarize(doc, PROFILE).duration_ms == 8000
+    # One event is a moment, not a span.
+    assert stream.summarize({"ts_data": [[101, 500]]}, PROFILE).duration_ms is None
+
+
+def test_a_document_with_no_ts_data_at_all() -> None:
+    summary = stream.summarize({"stop_reason": "sidecar error"}, PROFILE)
+    assert summary.total_events == 0
+    assert summary.duration_ms is None
+    assert summary.metrics[0].p_session is None
+
+
+def test_the_seed_is_carried_when_present() -> None:
+    assert stream.summarize(document(HIT_1, trial_seed=288577176), PROFILE).seed == 288577176
+    assert stream.summarize(document(HIT_1), PROFILE).seed is None
+
+
+# --- the within-session series --------------------------------------------
+
+
+def test_the_series_has_one_point_per_counted_trial() -> None:
+    codes = HIT_1 + MISS_1 + HIT_1 + [101, 103, 248]
+    metrics = stream.series(document(codes), PROFILE)
+    first = next(m for m in metrics if m.id == "p_r_odor1")
+    assert first.values == [1.0, 0.5, 2 / 3]
+    assert len(first.counts) == len(first.values)
+
+
+def test_series_counts_are_window_lengths_not_cumulative_totals() -> None:
+    """The n a confidence band must use is the window, capped at windowSize."""
+    narrow = parse_profile(
+        {**GRGL, "liveMetrics": [{**GRGL["liveMetrics"][0], "windowSize": 3}]}
+    )
+    metrics = stream.series(document(HIT_1 * 5), narrow)
+    assert metrics[0].counts == [1, 2, 3, 3, 3]
+
+
+def test_cumulative_mode_widens_the_window() -> None:
+    codes = MISS_1 * 4 + HIT_1 * 2
+    narrow = parse_profile(
+        {**GRGL, "liveMetrics": [{**GRGL["liveMetrics"][0], "windowSize": 2}]}
+    )
+    rolling = stream.series(document(codes), narrow, mode="rolling")[0]
+    cumulative = stream.series(document(codes), narrow, mode="cumulative")[0]
+    assert rolling.values[-1] == 1.0
+    assert abs(cumulative.values[-1] - 2 / 6) < 1e-9
+
+
+def test_series_can_be_filtered_to_one_metric() -> None:
+    metrics = stream.series(document(HIT_1 + HIT_3), PROFILE, metric_ids=["p_l_odor3"])
+    assert [m.id for m in metrics] == ["p_l_odor3"]
+
+
+def test_a_profile_less_run_has_no_series() -> None:
+    assert stream.series(document([221, 222]), None) == []
+
+
+# --- wire shaping ----------------------------------------------------------
+
+
+def test_values_are_rounded_on_the_wire() -> None:
+    """Six decimals — smaller frames, and no 0.8500000000000001 in a tooltip."""
+    codes = HIT_1 * 2 + MISS_1
+    payload = stream.summarize(document(codes), PROFILE).to_json()
+    value = payload["metrics"][0]["pSession"]
+    assert value == round(2 / 3, 6)
+
+
+# --- the payload's own contract --------------------------------------------
+
+
+def test_the_payload_shape_is_spelled_out() -> None:
+    """A cached row is served VERBATIM, so the payload's shape is part of what
+    the cache must answer to, whether or not the arithmetic moved.
+
+    This is the check that would have caught the `answerSide` regression. Adding
+    two fields to every metric summary changed nothing about the numbers, so
+    the old `CODEC_VERSION` was left alone — and every run already in a warm
+    cache went on answering with a payload that had no `answerSide` in it at
+    all. The strategy plane read that as "no condition says which well it
+    rewards" and refused to draw, on an archive whose profiles say exactly
+    that. Nothing threw; the cache was simply older than the question.
+
+    The cache version now moves by itself when the shape does (the score
+    canary hashes the whole payload, keys included —
+    `test_analytics_scoring.py`'s pin), so this list is the readable spec: a
+    change to it is a change every machine's cache re-reads for. Spelled out as
+    a literal rather than derived from today's dataclasses, for
+    `test_migrations.py`'s reason — a shape derived from the code under test
+    agrees with it by construction and proves nothing.
+    """
+    payload = stream.summarize(document((HIT_1 + HIT_3) * 12), FULL_PROFILE).to_json()
+
+    assert sorted(payload) == [
+        "clean", "conditions", "detail", "divergence", "durationMs", "engagement",
+        "excludedByDefault", "metrics", "outcomes", "overall", "replay", "seed",
+        "status", "stopReason", "totalEvents",
+    ]
+    assert sorted(payload["metrics"][0]) == [
+        "answerSide", "counted", "excluded", "hits", "id", "label",
+        "lowConfidence", "pSession", "pWindow", "triggered", "wilsonHigh",
+        "wilsonLow", "windowSize",
+    ]
+    assert sorted(payload["outcomes"]) == [
+        "aborted", "administered", "falseAlarm", "holdFailed", "noResponse", "pResponse", "pRewarded",
+        "pSide", "responded", "responseHigh", "responseLow", "rewarded", "rewardedHigh", "rewardedLow",
+        "sideHigh", "sideLow", "trials", "unpaid", "withheld", "wrongWell",
+    ]
+    assert sorted(payload["conditions"][0]) == [
+        "answerSide", "label", "metricId", "outcomes", "triggerCode",
+    ]
+    assert sorted(payload["engagement"]) == [
+        "engagedHigh", "engagedLow", "noPoke", "odorDelivered", "pDelivered",
+        "pEngaged", "pokeAborted", "poked", "presented",
+    ]
+
+
+def test_an_unevidenced_condition_gets_a_stable_arbitrary_side() -> None:
+    """A known limit of the inferred path, pinned so it stays known.
+
+    `infer.py` votes on the codes `checkResponse()` only ever emits at the
+    correct well (`FLUID_x`, `WATER_UNPOKE_EARLY_x`) or only at the wrong one
+    (`WATER_POKE_ERROR_x`). A bare `WATER_POKE_x` is not evidence either way —
+    it says an answer happened, not whether it was right — so a condition whose
+    trials never settle is oriented by a deterministic fallback instead.
+
+    Two things follow, and the second is why this is tolerable:
+
+    * That orientation is **arbitrary**, so such a condition can land on either
+      axis of the strategy plane.
+    * It is arbitrary the **same way on every pass**, so a rescan never moves a
+      run between profile groups — which is the failure that would actually
+      hurt, since a group is a comparability set.
+
+    In real data the case is close to unreachable: every settled trial emits one
+    of the evidence codes, so a condition with trials has evidence. Fixing it
+    properly would mean recording "inferred without evidence" on the metric,
+    which changes `LiveMetric`, the wire, and therefore `profile_hash` —
+    splitting every historical run from its future ones to correct an edge that
+    real streams do not reach.
+    """
+    from ephymeris_sidecar.analytics.stream.legacy import infer
+
+    # Odor 1 answered right and odor 3 answered left, both with real evidence;
+    # odor 4 only ever produced bare pokes.
+    codes = [101, 249, 253] * 6 + [103, 248, 252] * 6 + [104, 249] * 4
+    first = infer.infer_profile(codes, sketch_name="GRGL 3-Odor")
+    second = infer.infer_profile(codes, sketch_name="GRGL 3-Odor")
+    assert first is not None and second is not None
+
+    sides = [stream.legacy.answer_side_of(first, m) for m in first.live_metrics]
+    # Every condition gets *a* side — the axes are never silently short one.
+    assert all(side in ("left", "right") for side in sides), sides
+    # And the same one every time, so a rescan cannot move the run's group.
+    assert sides == [stream.legacy.answer_side_of(second, m) for m in second.live_metrics]
+    assert profile_hash(first) == profile_hash(second)
+
+
+# --- the guide's worked example (`ANALYTICS.md#a-worked-example`) ------------
+
+
+def test_the_guides_worked_example_scores_as_printed() -> None:
+    """Every figure in the guide's worked-example table, from the same thirty
+    strobes. The guide is what a new reader trusts first; if scoring changes,
+    this fails before the table can go stale.
+
+    Written by name through the vocabulary, as the guide is, and decoded by
+    inference — odor 1 rewarded at the right well and odor 3 at the left is
+    exactly what that stream says.
+    """
+    from ephymeris_sidecar.analytics.stream.legacy import infer
+    from ephymeris_sidecar.rig import registry
+
+    vocabulary = registry.vocabulary()
+    presentations = [
+        "LIGHTS_ON ODOR_POKE ODOR_1_ON ODOR_UNPOKE WATER_POKE_R FLUID_R STOP_FLUID_G_R",
+        "LIGHTS_ON ODOR_POKE ODOR_3_ON ODOR_UNPOKE WATER_POKE_L WATER_UNPOKE_EARLY_L",
+        "LIGHTS_ON ODOR_POKE ODOR_1_ON ODOR_UNPOKE WATER_POKE_L WATER_POKE_ERROR_L",
+        "LIGHTS_ON ODOR_POKE ODOR_3_ON ODOR_UNPOKE",
+        "LIGHTS_ON ODOR_POKE ODOR_1_ON ODOR_UNPOKE_EARLY",
+        "LIGHTS_ON LAZY_RAT LIGHTS_OFF",
+    ]
+    codes = [vocabulary.code_of(name) for line in presentations for name in line.split()]
+    assert len(codes) == 30
+    profile = infer.infer_profile(codes, vocabulary=vocabulary)
+    summary = stream.summarize(document(codes), profile)
+
+    odor_1, odor_3 = summary.metrics
+    assert (odor_1.p_session, odor_1.hits, odor_1.counted, odor_1.triggered, odor_1.excluded) == (
+        0.5, 1, 2, 3, 1,
+    )
+    assert (odor_3.p_session, odor_3.hits, odor_3.counted, odor_3.triggered, odor_3.excluded) == (
+        1.0, 1, 1, 2, 1,
+    )
+    overall = summary.overall
+    assert (overall.hits, overall.counted, overall.triggered, overall.excluded) == (2, 3, 5, 2)
+
+    outcomes = summary.outcomes
+    assert (outcomes.rewarded, outcomes.hold_failed, outcomes.wrong_well) == (1, 1, 1)
+    assert (outcomes.no_response, outcomes.aborted, outcomes.administered) == (1, 1, 4)
+    assert (outcomes.p_rewarded, outcomes.p_side) == (0.25, 0.5)
+    assert outcomes.p_response == 2 / 3, "the no-response trial leaves response accuracy's denominator"
+
+    engagement = summary.engagement
+    assert (engagement.presented, engagement.poked, engagement.odor_delivered) == (6, 5, 5)
+
+    assert [t.outcome for t in stream.trials_of(document(codes), profile)] == [
+        "rewarded", "hold_failed", "wrong_well", "no_response", "aborted",
+    ]

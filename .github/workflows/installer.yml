@@ -1,0 +1,126 @@
+# Builds the Windows installers on a clean machine and hands them on as the `installer`
+# artifact. Called, never run on its own: release.yml builds a tagged version with it,
+# ship-main.yml a build of main.
+#
+# Two shells while ADR 0006's move to Electron is under way, packaged from one staging run:
+#   Tauri     Ephymeris_<v>_x64-setup.exe and its .sig, which latest.json names
+#   Electron  Ephymeris-<v>-setup.exe, its .blockmap, and latest.yml, the Electron feed; plus a
+#             .sig with the Tauri key, which makes it the update Tauri copies install (crossover)
+#
+# One copy of these steps, so a tagged release and a main build can't drift apart in what
+# they bundle.
+
+name: Installer
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "Overrides tauri.conf.json's version; empty builds the version as committed"
+        type: string
+        default: ""
+
+# Narrower than the callers' contents: write, which a called workflow would
+# otherwise inherit: this job holds the signing key and needs only a checkout.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      # Stable Rust ships with the runner image; installing it again is one more
+      # download that can fail. Cargo.toml's rust-version is far behind it.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      # Pinned: this copy ships inside the installer, and the action's default
+      # picks up release candidates. Move it on purpose, after a lab compile.
+      - uses: arduino/setup-arduino-cli@v2
+        with:
+          version: "1.5.1"
+
+      # package-resources.mjs freezes from exactly sidecar/.venv.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: |
+          python -m venv sidecar\.venv
+          sidecar\.venv\Scripts\pip.exe install -e "sidecar[dev]"
+
+      - run: npm ci
+
+      # The app reports tauri.conf.json's version (getVersion) and the updater compares
+      # against it, so an override merged in at build time is the whole of a version bump.
+      - name: Version override
+        if: inputs.version != ''
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          node -e 'require("fs").writeFileSync(process.argv[1], JSON.stringify({ version: process.env.VERSION }))' \
+            "$RUNNER_TEMP/version.conf.json"
+          echo "VERSION_CONFIG=--config $RUNNER_TEMP/version.conf.json" >> "$GITHUB_ENV"
+          echo "ELECTRON_VERSION_CONFIG=-c.extraMetadata.version=$VERSION" >> "$GITHUB_ENV"
+
+      # tauri.updater.conf.json turns on the updater's signature, which needs the
+      # private key; a local `npm run package` leaves it off and needs no key.
+      - shell: bash
+        run: npm run package -- --config src-tauri/tauri.updater.conf.json $VERSION_CONFIG
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      # The Electron installer, from the resources and dist/ the Tauri build just used.
+      # Its feed entry (latest.yml, with the installer's sha512) is written beside it.
+      - shell: bash
+        run: |
+          npm run build:electron
+          node node_modules/electron-builder/cli.js --win --publish never $ELECTRON_VERSION_CONFIG
+
+      # The crossover (ADR 0006): signed with the Tauri updater's key too, so installed
+      # Tauri copies accept it as an update. publish-update.yml then points latest.json at
+      # it, and each Tauri copy becomes an Electron one when the operator clicks Install.
+      - name: Sign the Electron installer for Tauri copies
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          for exe in release/Ephymeris-*-setup.exe; do
+            node node_modules/@tauri-apps/cli/tauri.js signer sign "$exe"
+          done
+          ls release/Ephymeris-*-setup.exe.sig
+
+      # The installers' names carry the version they were built as. Refuse ones that
+      # don't carry the version asked for, rather than ship them under the wrong one.
+      - name: Installers carry the version
+        if: inputs.version != ''
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          ls src-tauri/target/release/bundle/nsis/ release/
+          ls "src-tauri/target/release/bundle/nsis/Ephymeris_${VERSION}_x64-setup.exe.sig"
+          ls "release/Ephymeris-${VERSION}-setup.exe"
+          grep -qx "version: ${VERSION}" release/latest.yml
+
+      # One flat folder, so the release jobs attach `installer/*`.
+      - shell: bash
+        run: |
+          mkdir out
+          cp src-tauri/target/release/bundle/nsis/*-setup.exe src-tauri/target/release/bundle/nsis/*-setup.exe.sig out/
+          cp release/*-setup.exe release/*-setup.exe.sig release/*-setup.exe.blockmap release/latest.yml out/
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: installer
+          path: out/*
+          if-no-files-found: error
+          retention-days: 7

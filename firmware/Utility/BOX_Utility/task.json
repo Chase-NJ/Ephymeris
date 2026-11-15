@@ -1,0 +1,32 @@
+{
+  "taskName": "Box Utility",
+  "kind": "utility",
+  "legacyNames": ["PRIME_Lines", "PRIME_Bolus", "TEST_Box"],
+  "controls": [
+    { "id": "selftest", "type": "button", "label": "Full self-test", "command": "SELFTEST" },
+    { "id": "stop", "type": "button", "label": "Stop test", "command": "STOP" },
+    { "id": "alloff", "type": "button", "label": "All off", "command": "ALLOFF" },
+    {
+      "id": "pulse_ms",
+      "type": "select",
+      "label": "Pulse width",
+      "options": [
+        { "label": "50 ms", "command": "SET PULSE=50" },
+        { "label": "100 ms", "command": "SET PULSE=100" },
+        { "label": "200 ms", "command": "SET PULSE=200" },
+        { "label": "500 ms", "command": "SET PULSE=500" },
+        { "label": "1 s", "command": "SET PULSE=1000" }
+      ]
+    }
+  ],
+  "telemetry": {
+    "match": "STATUS",
+    "fields": [
+      { "key": "mode", "label": "Mode" },
+      { "key": "test", "label": "Test" },
+      { "key": "step", "label": "Step" },
+      { "key": "pass", "label": "Checks passed" },
+      { "key": "pulse", "label": "Pulse width (ms)" }
+    ]
+  }
+}

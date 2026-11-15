@@ -1,0 +1,16 @@
+# Line-ending normalization for cross-platform development (macOS <-> Windows 11).
+#
+# Every sketch/library source and shell script is stored as LF in the repo AND
+# checked out as LF on every platform, Windows included. This keeps diffs clean
+# and keeps run.sh (the header host-test) working. `text=auto` detects any
+# binary that lands here and leaves it untouched.
+
+* text=auto eol=lf
+
+# The host-test runner: always LF, never CRLF.
+*.sh text eol=lf
+
+# Compiled Arduino / test artifacts, if any ever escape .gitignore.
+*.hex binary
+*.bin binary
+*.elf binary

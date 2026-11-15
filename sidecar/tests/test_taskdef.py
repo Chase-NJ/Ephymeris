@@ -1,0 +1,1418 @@
+"""Task profiles: the model, the generator, the store, and the traps.
+
+Everything here fails QUIETLY without a check. The generator writes C that
+compiles either way, so a wrong pin is a valve that never fires and a wrong
+strobe code is an event that decodes as something else — neither raises, and
+neither is visible in a session that otherwise looks normal.
+
+`conftest.py` sets `EPHYMERIS_WIRE_VALIDATE=1` globally, so the payload shapes
+built here are checked against `protocol/schema.py` on the way out.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from ephymeris_sidecar.rig import registry
+from ephymeris_sidecar.taskdef import generate, store
+from tests.fixtures import task_definitions as presets
+from tests.live_sidecar import LiveSidecar, Refused, create_cohort, hold_the_rig
+from ephymeris_sidecar.taskdef.model import (
+    StageRow,
+    TaskDefinition,
+    TaskDefinitionError,
+    TrialTypeDef,
+)
+from ephymeris_sidecar.taskdef.validate import validate
+from ephymeris_sidecar.tasks.start_command import SET_LINE_MAX, build_start_command
+
+
+@pytest.fixture(autouse=True)
+def _shipped_wiring():
+    registry.set_rig_source(None)
+    yield
+    registry.set_rig_source(None)
+
+
+def a_task(**edits) -> TaskDefinition:
+    """The shipped 2-odor discrimination, with edits applied."""
+    from dataclasses import replace
+
+    return replace(presets.instantiate("grgl_2odor", "probe"), **edits)
+
+
+def codes(definition: TaskDefinition) -> set[str]:
+    return {d.code for d in validate(definition)}
+
+
+# --------------------------------------------------------------------------- #
+# The model
+# --------------------------------------------------------------------------- #
+
+
+def test_a_document_that_is_not_a_definition_is_refused():
+    for bad in (None, [], "task", {"id": "x"}, {"id": "x", "name": ""}):
+        with pytest.raises(TaskDefinitionError):
+            TaskDefinition.from_json(bad)
+
+
+def test_an_id_that_would_not_survive_being_a_filename_is_refused():
+    for bad in ("../evil", "Has Caps", "", "9leading", "x" * 60):
+        with pytest.raises(TaskDefinitionError):
+            TaskDefinition.from_json({"id": bad, "name": "Fine"})
+
+
+def test_an_unfinished_trial_row_parses_and_is_reported_rather_than_refused():
+    """A half-filled row is an incomplete TASK, not a non-definition.
+
+    It used to be refused at parse time, which meant `tasks.preview` failed
+    outright the moment "Add trial type" was pressed: the state machine, the
+    parameter rail and every other diagnostic left the screen until both
+    dropdowns were filled. Nothing caught it while every task started from a
+    preset with its rows already filled.
+    """
+    definition = TaskDefinition.from_json({
+        "id": "fresh",
+        "name": "Fresh",
+        "trials": [
+            {"odorChannel": "", "onsetStrobe": "", "isGo": True, "label": ""}
+        ],
+    })
+    assert definition.trials[0].odor_channel == ""
+
+    found = {(d.code, d.location) for d in validate(definition)}
+    assert ("TSK101", "trials[0].odorChannel") in found
+    assert ("TSK104", "trials[0].onsetStrobe") in found
+    # And the empty row says "not filled in yet" rather than naming '' as a
+    # channel this rig has lost — a different thing to do about it.
+    message = next(
+        d.message for d in validate(definition) if d.location == "trials[0].odorChannel"
+    )
+    assert "no stimulus channel yet" in message
+
+
+def test_a_name_that_would_not_survive_being_a_sketch_folder_is_refused():
+    # It becomes `<name>/<name>.ino`, which is arduino-cli's own rule.
+    for bad in ("../evil", "trailing/slash", "", "x" * 60):
+        with pytest.raises(TaskDefinitionError):
+            TaskDefinition.from_json({"id": "ok", "name": bad})
+
+
+def test_a_definition_round_trips():
+    original = presets.instantiate("shaping_right", "probe", "Probe")
+    assert TaskDefinition.from_json(original.to_json()) == original
+
+
+def test_a_true_weight_is_not_a_one():
+    """`True` is an int in Python and would silently become weight 1."""
+    with pytest.raises(TaskDefinitionError):
+        TrialTypeDef.from_json(
+            {"odorChannel": "odor_line_1", "onsetStrobe": "ODOR_1_ON", "weight": True}
+        )
+
+
+def test_a_definition_saved_before_reward_time_existed_pays_what_it_paid():
+    """Every fluid line paid 100 ms then; a row without the key reads as that."""
+    row = TrialTypeDef.from_json({"odorChannel": "odor_line_1", "onsetStrobe": "ODOR_1_ON"})
+    assert row.reward_time == 100
+    assert row.to_json()["rewardTime"] == 100
+    with pytest.raises(TaskDefinitionError):
+        TrialTypeDef.from_json(
+            {"odorChannel": "odor_line_1", "onsetStrobe": "ODOR_1_ON", "rewardTime": True}
+        )
+
+
+# --------------------------------------------------------------------------- #
+# The presets
+# --------------------------------------------------------------------------- #
+
+
+def test_every_preset_validates_and_generates_against_the_shipped_wiring():
+    """If a preset does not run on the wiring the app ships with, it is the
+    preset that is wrong — nothing else in the app has been touched."""
+    for preset in presets.PRESETS:
+        definition = presets.instantiate(preset["id"], preset["id"])
+        assert validate(definition) == [], preset["id"]
+        profile = generate.build_profile(definition)
+        assert profile.config and profile.strobes and profile.live_metrics
+
+
+def test_every_preset_fits_the_set_lines():
+    """Checked rather than trusted: `readLineInto()` truncates in silence, so a
+    parameter too long for a `SET` line would reach the board cut."""
+    for preset in presets.PRESETS:
+        definition = presets.instantiate(preset["id"], preset["id"])
+        profile = generate.build_profile(definition)
+        config = {f.metadata_key: f.default for f in profile.config}
+        command = build_start_command(profile, config)
+        assert all(len(line) < SET_LINE_MAX for line in command.set_lines), preset["id"]
+
+
+def test_a_preset_is_a_starting_point_not_a_task():
+    """Instantiating twice from one preset yields two independent tasks. If the
+    preset's own id came through, the second would overwrite the first."""
+    first = presets.instantiate("grgl_2odor", "cohort_a", "Cohort A")
+    second = presets.instantiate("grgl_2odor", "cohort_b", "Cohort B")
+    assert (first.id, first.name) == ("cohort_a", "Cohort A")
+    assert (second.id, second.name) == ("cohort_b", "Cohort B")
+    assert first.trials == second.trials
+
+
+# --------------------------------------------------------------------------- #
+# The generator — where a wrong answer still compiles
+# --------------------------------------------------------------------------- #
+
+
+def test_the_odor_table_is_in_declaration_order_not_pin_order():
+    """THE TRAP THIS WHOLE FILE EXISTS FOR.
+
+    `Odors[i]` is odor line i+1, and the pins behind those lines are NOT
+    monotonic — 22,24,26,28,30,32 then 23,25,27,29,31,33. `of_kind()` sorts by
+    pin, so using a position from it as an odor index puts line 7 second and
+    swaps ten of the twelve lines. The sketch compiles, drives the wrong valve,
+    and announces it with the wrong onset code; every trial still looks correct
+    in the record.
+    """
+    pins = generate.task_pins_h(a_task())
+    assert "#define BOX_ODOR_PINS {22, 24, 26, 28, 30, 32, 23, 25, 27, 29, 31, 33}" in pins
+
+
+def test_an_onset_code_is_the_vocabulary_s_own_never_derived():
+    """The codes are not contiguous — the onsets run 101-109 and then 114-116,
+    because 110-113 are retired codes 29 recorded sessions contain. Odor 9 is
+    109 and odor 10 is 114, so anything computing one from an index is wrong by
+    construction."""
+    vocab = registry.vocabulary()
+    definition = a_task(trials=[
+        TrialTypeDef("odor_line_7", "ODOR_7_ON", True, "right_well", "fluid_2"),
+        TrialTypeDef("odor_line_12", "ODOR_12_ON", True, "left_well", "fluid_0"),
+    ])
+    pins = generate.task_pins_h(definition)
+    assert f"#define BF_ODOR_7_ON {vocab.code_of('ODOR_7_ON')}" in pins
+    assert f"#define BF_ODOR_12_ON {vocab.code_of('ODOR_12_ON')}" in pins
+    # ...and the table indexes the same declaration-ordered list the pins do.
+    trials = generate.task_trials_h(definition)
+    assert "Odors[6]" in trials and "Odors[11]" in trials
+
+
+def test_the_trial_table_reproduces_the_hand_written_one():
+    """The shipped `GRGL/TaskTrials.h` was written by hand before any of this
+    existed. Generating something different from the same task would mean the
+    generator and the firmware disagree about what GRGL is."""
+    trials = generate.task_trials_h(a_task())
+    assert (
+        "TrialType(true, Odors[0], rightWell, 2, BF_ODOR_1_ON, BF_FLUID_R, "
+        "BF_STOP_FLUID_G_R, 100, BF_TRIAL_TYPE_1)" in trials
+    )
+    assert (
+        "TrialType(true, Odors[2], leftWell, 0, BF_ODOR_3_ON, BF_FLUID_L, "
+        "BF_STOP_FLUID_G_L, 100, BF_TRIAL_TYPE_2)" in trials
+    )
+    # The stream can name at most 99 rows, and the table says so at build time.
+    assert "static_assert(kTrialCount <= BOX_TRIAL_TYPE_LIMIT," in trials
+    # Not const: the last argument is overwritten from the START line.
+    assert "static TrialType kTrials[]" in trials
+    assert "static const TrialType" not in trials
+
+
+def test_the_reward_volume_rides_the_row_into_the_table_and_the_wire():
+    """Two conditions paying from ONE fluid line may pay differently -- that is
+    the whole reason the volume moved off the line and onto the type."""
+    from dataclasses import replace
+
+    task = a_task()
+    task = replace(task, trials=[
+        replace(task.trials[0], reward_time=150),
+        replace(task.trials[1], reward_time=80),
+    ])
+    trials = generate.task_trials_h(task)
+    assert "BF_STOP_FLUID_G_R, 150, BF_TRIAL_TYPE_1)" in trials
+    assert "BF_STOP_FLUID_G_L, 80, BF_TRIAL_TYPE_2)" in trials
+    profile = generate.build_profile(task)
+    by_key = {f.wire_key: f for f in profile.config}
+    assert by_key["RW1"].default == 150 and by_key["RW2"].default == 80
+    assert by_key["RW1"].group == "Reward volume"
+    assert not any(k.startswith("FL") for k in by_key)
+
+
+def test_a_reward_field_is_read_off_the_row_never_out_of_params():
+    """`params` merges only catalogue fields. A stale `reward_time_1` entry --
+    say from a row that was deleted and re-added -- must not reach the wire."""
+    from dataclasses import replace
+
+    task = replace(a_task(), params={"reward_time_1": 999})
+    profile = generate.build_profile(task)
+    assert next(f for f in profile.config if f.wire_key == "RW1").default == 100
+
+
+def test_the_stage_count_and_its_key_list_always_agree():
+    """A key list LONGER than the count writes past the end of `stage[]`. The
+    two are emitted together for exactly this reason."""
+    for n in (1, 2, 5, 8):
+        definition = a_task(stages=[StageRow(trials=i * 10) for i in range(n)])
+        pins = generate.task_pins_h(definition)
+        assert f"#define NUM_STAGES {n}" in pins
+        keys = " ".join(f"P_STAGE({i})" for i in range(n))
+        assert f"#define BOX_STAGE_KEY_LIST {keys}" in pins
+
+
+def test_the_trial_count_and_its_pool_keys_always_agree():
+    trials = [
+        TrialTypeDef("odor_line_1", "ODOR_1_ON", True, "right_well", "fluid_2"),
+        TrialTypeDef("odor_line_2", "ODOR_2_ON", True, "right_well", "fluid_2"),
+        TrialTypeDef("odor_line_3", "ODOR_3_ON", True, "left_well", "fluid_0"),
+    ]
+    pins = generate.task_pins_h(a_task(trials=trials))
+    assert "#define BOX_MAX_TRIAL_TYPES 3" in pins
+    assert 'P_INT("PW3", poolWeights[2])' in pins
+    assert 'P_INT("PW4"' not in pins
+
+
+def test_the_trial_count_and_its_reward_keys_always_agree():
+    """Same pairing rule as the pool list, and the no-go slot keeps its key so
+    the list is exactly BOX_MAX_TRIAL_TYPES long; only task.json omits it."""
+    trials = [
+        TrialTypeDef("odor_line_1", "ODOR_1_ON", True, "right_well", "fluid_2"),
+        TrialTypeDef("odor_line_5", "ODOR_5_ON", is_go=False, label="Withhold"),
+        TrialTypeDef("odor_line_3", "ODOR_3_ON", True, "left_well", "fluid_0"),
+    ]
+    definition = a_task(trials=trials)
+    pins = generate.task_pins_h(definition)
+    assert "#define BOX_MAX_TRIAL_TYPES 3" in pins
+    assert (
+        '#define BOX_REWARD_KEY_LIST P_INT("RW1", rewardTimes[0]) '
+        'P_INT("RW2", rewardTimes[1]) P_INT("RW3", rewardTimes[2])' in pins
+    )
+    assert 'P_INT("RW4"' not in pins
+    keys = {f.wire_key for f in generate.build_profile(definition).config}
+    assert "RW1" in keys and "RW3" in keys and "RW2" not in keys
+    # An empty table: bare macros, not the guarded four-slot defaults.
+    empty = generate.task_pins_h(a_task(trials=[]))
+    assert "#define BOX_REWARD_KEY_LIST\n" in empty
+    assert "#define BOX_POOL_KEY_LIST\n" in empty
+
+
+def test_a_one_row_ramp_declares_no_stage_group_and_no_engage_field():
+    """Row 0 is live from trial 0 by construction — `liveStage()` never reads
+    its count — so a task that does not ramp has no "Stage 0" to speak of."""
+    profile = generate.build_profile(a_task())
+    groups = {f.group for f in profile.config}
+    assert "Holds & windows" in groups and "Stage 0" not in groups
+    assert not any(f.wire_key == "S0T" for f in profile.config)
+
+
+def test_a_ramped_task_declares_every_row_in_full():
+    """A single field per ramped value would appear to work and then be silently
+    overwritten around trial 15-20, when the firmware rewrites all four from the
+    next `stage[]` row."""
+    profile = generate.build_profile(presets.instantiate("shaping_right", "probe"))
+    for row in range(5):
+        keys = {f.wire_key for f in profile.config}
+        for suffix in ("P", "H", "W", "O"):
+            assert f"S{row}{suffix}" in keys, (row, suffix)
+        assert (f"S{row}T" in keys) == (row > 0)
+
+
+def test_the_selection_mode_reaches_the_firmware():
+    assert "#define BOX_SELECTION_MODE BOX_SELECT_ANTIBIAS" in generate.task_pins_h(a_task())
+    assert "#define BOX_SELECTION_MODE BOX_SELECT_POOL" in generate.task_pins_h(
+        a_task(selection_mode="pool")
+    )
+    weighted = generate.task_pins_h(a_task(selection_mode="weighted"))
+    assert "#define BOX_SELECTION_MODE BOX_SELECT_WEIGHTED" in weighted
+    assert "#define BOX_SELECT_WEIGHTED 2" in weighted
+
+
+def test_an_unknown_selection_mode_is_refused_not_defaulted():
+    with pytest.raises(TaskDefinitionError):
+        TaskDefinition.from_json({"id": "x", "name": "X", "selectionMode": "novelty"})
+
+
+def test_the_weights_are_front_row_only_where_they_are_read():
+    """Under plain anti-bias the weight column does nothing, so it folds behind
+    the advanced disclosure and the mapping step's quick-tune strip skips it."""
+    def weight_fields(mode):
+        return [f for f in generate.build_profile(a_task(selection_mode=mode)).config
+                if f.wire_key.startswith("PW")]
+    assert all(f.advanced for f in weight_fields("antibias"))
+    assert not any(f.advanced for f in weight_fields("pool"))
+    assert not any(f.advanced for f in weight_fields("weighted"))
+    assert "ITS side" in weight_fields("weighted")[0].help
+
+
+def test_a_no_go_type_carries_the_sentinel_and_no_reward():
+    definition = a_task(trials=[
+        TrialTypeDef("odor_line_1", "ODOR_1_ON", True, "right_well", "fluid_2",
+                     label="Go right"),
+        TrialTypeDef("odor_line_5", "ODOR_5_ON", is_go=False, label="Withhold"),
+    ])
+    assert validate(definition) == []
+    trials = generate.task_trials_h(definition)
+    assert "TrialType(false, Odors[4], SENTINEL, SENTINEL, BF_ODOR_5_ON, 0, 0, 0, BF_TRIAL_TYPE_2)" in trials
+
+
+def test_exposed_parameters_ride_the_definition_into_the_profile_and_never_its_hash():
+    """`TASKS.md#parameters`: the editor's choice of parameters to show is saved
+    with the task and generated into `task.json`, so the Start dialog offers
+    the same ones; a key the catalogue does not declare is dropped there; and
+    exposing a field moves no history, so it stays out of `profile_hash`."""
+    from dataclasses import replace
+
+    from ephymeris_sidecar.tasks.profile import profile_hash
+
+    plain = a_task()
+    assert plain.exposed == [] and TaskDefinition.from_json(plain.to_json()).exposed == []
+    chosen = replace(plain, exposed=["error_delay", "num_trials", "no_such_key", "error_delay"])
+    round_tripped = TaskDefinition.from_json(chosen.to_json())
+    assert round_tripped.exposed == ["error_delay", "num_trials", "no_such_key"]
+    assert generate.profile_json(chosen)["exposed"] == ["error_delay", "num_trials"]
+    assert generate.build_profile(chosen).exposed == ["error_delay", "num_trials"]
+    assert generate.build_profile(plain).exposed == []
+    assert profile_hash(generate.build_profile(chosen)) == profile_hash(generate.build_profile(plain))
+    with pytest.raises(TaskDefinitionError):
+        TaskDefinition.from_json({**plain.to_json(), "exposed": "error_delay"})
+
+
+def test_a_row_s_header_code_is_its_slot_in_the_table_never_its_slot_in_the_definition():
+    """The header code names the row's position in `kTrials[]` (stream
+    grammar 2), and a row the generator drops is not in `kTrials[]`: the rows
+    after it move up, and so do their codes."""
+    definition = a_task(trials=[
+        TrialTypeDef("odor_line_1", "ODOR_1_ON", True, "right_well", "fluid_2", label="Go right"),
+        TrialTypeDef("odor_line_99", "ODOR_2_ON", True, "right_well", "fluid_2", label="Dropped"),
+        TrialTypeDef("odor_line_3", "ODOR_3_ON", True, "left_well", "fluid_1", label="Go left"),
+    ])
+    trials = generate.task_trials_h(definition)
+    assert "BF_ODOR_1_ON, BF_FLUID_R, BF_STOP_FLUID_G_R, 100, BF_TRIAL_TYPE_1)" in trials
+    assert "BF_ODOR_3_ON, BF_FLUID_L, BF_STOP_FLUID_G_L, 100, BF_TRIAL_TYPE_2)" in trials
+    assert "BF_TRIAL_TYPE_3" not in trials
+
+
+def test_a_row_past_the_declared_type_codes_is_reported():
+    """TSK115: the vocabulary names twelve rows; a thirteenth presentable row
+    would be built against a `BF_TRIAL_TYPE_13` nothing defines."""
+    from ephymeris_sidecar.strobes import store as strobe_store
+
+    doc = registry.default_vocabulary_document()
+    for n in range(2, 13):
+        doc = strobe_store.remove(doc, f"TRIAL_TYPE_{n}", sessions_containing=0)
+    definition = a_task()
+    with registry.hypothetical(vocabulary=doc):
+        reported = {d.code: d.location for d in validate(definition)}
+    assert reported.get("TSK115") == "trials[1]"
+    assert "TSK115" not in codes(a_task())
+
+
+def test_a_repin_moves_the_generated_header_and_nothing_else():
+    """A task profile names channels and never numbers, so re-wiring changes
+    what every task compiles to while its identity is unchanged."""
+    from ephymeris_sidecar.hardware import store as rig_store
+
+    before = generate.task_pins_h(a_task())
+    doc = rig_store.default_document()
+    doc["pins"]["odor_line_1"]["index"] = 12
+    registry.set_rig_source(lambda: doc)
+    after = generate.task_pins_h(a_task())
+
+    assert "{22, 24," in before and "{12, 24," in after
+    # The trial table names Odors[0] either way -- the indirection is the point.
+    assert generate.task_trials_h(a_task()).count("Odors[0]") == 1
+
+
+def test_the_sync_pin_is_always_stated_and_minus_one_means_none():
+    """Every other undeclared pin is left unmentioned and keeps BoxPins.h's
+    number. This one must not: the shipped default would pulse pin 49 on a rig
+    whose wiring declares no sync channel, while the app -- reading the same
+    document -- tells the operator the box has no sync line. So absence is
+    written down, and a saved rig.json from before the channel existed (which
+    REPLACES the shipped pair, and so has none) compiles the pulse out."""
+    from ephymeris_sidecar.hardware import store as rig_store
+
+    for header in (generate.task_pins_h(a_task()), generate.bundled_pins_h("BOX_Utility")):
+        assert "#define BOX_PIN_SYNC_OUT 49" in header
+
+    doc = rig_store.default_document()
+    doc["channels"].pop("sync_out")
+    doc["pins"].pop("sync_out")
+    registry.set_rig_source(lambda: doc)
+    for header in (generate.task_pins_h(a_task()), generate.bundled_pins_h("BOX_Utility")):
+        assert "#define BOX_PIN_SYNC_OUT -1" in header
+
+    # By KIND, like the engagement port: a rig may call it anything.
+    doc = rig_store.default_document()
+    doc["channels"]["intan_ttl"] = doc["channels"].pop("sync_out")
+    doc["pins"]["intan_ttl"] = {"index": 12}
+    doc["pins"].pop("sync_out")
+    registry.set_rig_source(lambda: doc)
+    assert "#define BOX_PIN_SYNC_OUT 12" in generate.task_pins_h(a_task())
+
+
+def test_the_generated_profile_is_parsed_by_the_same_code_an_authored_one_is():
+    """Round-tripping through `parse_profile` is what subjects a generated
+    profile to every check an authored one gets — a duplicate wire key, a
+    reserved key, a default of the wrong type."""
+    profile = generate.build_profile(presets.instantiate("shaping_eased", "probe"))
+    keys = [f.wire_key for f in profile.config]
+    assert len(keys) == len(set(keys))
+    assert "SEED" not in keys
+
+
+def test_live_metrics_gate_the_state_machine_drawing():
+    """`topology.ts` gives a stimulus an arm only when a metric SCORES it. So
+    the metrics are not only the charts: they are what makes the diagram
+    describe the task rather than the whole twelve-odor vocabulary."""
+    profile = generate.build_profile(a_task())
+    assert len(profile.live_metrics) == 2
+    triggers = {m.trigger_code for m in profile.live_metrics}
+    assert triggers == {101, 103}
+    for metric in profile.live_metrics:
+        assert metric.success_code != metric.alternate_code
+
+
+def test_a_go_metric_is_scored_on_the_outcome_codes():
+    """Stream grammar 2: the verdict is the trial's one outcome code, never the
+    first well poked. `CORRECT` is the hit; the wrong well, a hold let go of
+    early and no answer at all are the misses -- so a hold failure is a miss,
+    where the grammar-1 metric counted the correct well as a hit."""
+    from ephymeris_sidecar.rig.registry import Vocabulary
+
+    seed = Vocabulary(registry.default_vocabulary_document())
+    code = seed.code_of
+    metrics = {m.trigger_code: m for m in generate.build_profile(a_task()).live_metrics}
+    right = metrics[code("ODOR_1_ON")]
+    assert right.success_code == code("CORRECT")
+    assert right.alternate_codes == tuple(code(n) for n in generate.GO_ERROR_OUTCOMES)
+    assert right.label == "P(correct | Go right)"
+
+
+def test_a_no_go_metric_misses_at_every_response_port():
+    """A no-go trial is wrong at ANY port: the runner answers a poke at either
+    well with that well's error code, and both score the miss. One alternate
+    left a poke at the other matching nothing, so the trial fell out of
+    P(withhold)."""
+    definition = a_task(trials=[
+        TrialTypeDef("odor_line_1", "ODOR_1_ON", True, "right_well", "fluid_2",
+                     label="Go right"),
+        TrialTypeDef("odor_line_5", "ODOR_5_ON", is_go=False, label="Withhold"),
+    ])
+    from ephymeris_sidecar.rig.registry import Vocabulary
+
+    seed = Vocabulary(registry.default_vocabulary_document())
+    code = seed.code_of
+    metrics = {m.trigger_code: m for m in generate.build_profile(definition).live_metrics}
+    no_go = metrics[code("ODOR_5_ON")]
+    assert no_go.success_code == code("WATER_POKE_NONE")
+    assert no_go.alternate_codes == (code("WATER_POKE_ERROR_L"), code("WATER_POKE_ERROR_R"))
+
+
+# --------------------------------------------------------------------------- #
+# Validation
+# --------------------------------------------------------------------------- #
+
+
+def test_a_channel_this_rig_lacks_is_reported():
+    assert "TSK101" in codes(a_task(trials=[
+        TrialTypeDef("odor_line_99", "ODOR_1_ON", True, "right_well", "fluid_2")
+    ]))
+
+
+def test_a_channel_of_the_wrong_kind_is_reported():
+    assert "TSK102" in codes(a_task(trials=[
+        TrialTypeDef("trial_light", "ODOR_1_ON", True, "right_well", "fluid_2")
+    ]))
+
+
+def test_rewarding_the_other_well_is_reported():
+    """THE ONE THAT LOOKS CORRECT ON SCREEN. The row reads "odor 3 → left well",
+    the animal answers left, and the water arrives on the right."""
+    assert "TSK103" in codes(a_task(trials=[
+        TrialTypeDef("odor_line_3", "ODOR_3_ON", True, "left_well", "fluid_2")
+    ]))
+
+
+def test_an_undeclared_strobe_is_reported():
+    assert "TSK104" in codes(a_task(trials=[
+        TrialTypeDef("odor_line_1", "NOT_A_CODE", True, "right_well", "fluid_2")
+    ]))
+
+
+def test_two_types_sharing_an_odor_line_are_reported():
+    """Two conditions reporting one code are indistinguishable in the data —
+    every analysis would pool them without saying so. A line declares one onset
+    code (`TASKS.md#onset-codes`), so sharing a code is sharing a line."""
+    assert "TSK105" in codes(a_task(trials=[
+        TrialTypeDef("odor_line_1", "ODOR_1_ON", True, "right_well", "fluid_2"),
+        TrialTypeDef("odor_line_1", "ODOR_1_ON", True, "left_well", "fluid_0"),
+    ]))
+
+
+def test_an_onset_code_that_is_not_its_line_s_own_is_reported():
+    """TSK114: the row records odor line 3 under line 1's code — every session
+    it runs labels one bottle as another, and nothing else looks wrong."""
+    found = codes(a_task(trials=[
+        TrialTypeDef("odor_line_3", "ODOR_1_ON", True, "right_well", "fluid_2", label="A"),
+    ]))
+    assert "TSK114" in found
+
+
+def test_a_line_that_declares_no_onset_is_not_second_guessed():
+    """An undeclared line is RIG106's problem, on the Rig tab. The trial row has
+    nothing to disagree WITH, so TSK114 stays silent rather than inventing one."""
+    from ephymeris_sidecar.hardware import store as rig_store
+
+    doc = rig_store.default_document()
+    doc["channels"]["odor_line_3"].pop("onset_strobe")
+    registry.set_rig_source(lambda: doc)
+    assert "TSK114" not in codes(a_task(trials=[
+        TrialTypeDef("odor_line_3", "ODOR_1_ON", True, "right_well", "fluid_2", label="A"),
+    ]))
+
+
+def test_editing_a_line_s_onset_declaration_changes_no_generated_byte():
+    """The declaration decides what the EDITOR writes into a row; the generator
+    emits the row's own code. So rewiring an onset must leave every generated
+    file — and with it `profile_hash` — exactly as it was."""
+    from ephymeris_sidecar.hardware import store as rig_store
+
+    task = a_task()
+    before = (generate.task_trials_h(task), generate.task_pins_h(task),
+              json.dumps(generate.build_profile(task).to_json(), sort_keys=True))
+    doc = rig_store.default_document()
+    doc["channels"]["odor_line_1"]["onset_strobe"] = "ODOR_9_ON"
+    doc["channels"]["odor_line_9"]["onset_strobe"] = "ODOR_1_ON"
+    registry.set_rig_source(lambda: doc)
+    after = (generate.task_trials_h(task), generate.task_pins_h(task),
+             json.dumps(generate.build_profile(task).to_json(), sort_keys=True))
+    assert before == after
+
+
+def test_an_unnamed_condition_is_reported():
+    """The name is the only handle every readout has on a condition: it titles
+    the live sparkline, the learning curve and a strategy axis. Unnamed, the
+    generator falls back to the channel — so the chart is titled after whatever
+    line happened to carry it, which is a fact about the bench and not the
+    task."""
+    assert "TSK110" in codes(a_task(trials=[
+        TrialTypeDef("odor_line_1", "ODOR_1_ON", True, "right_well", "fluid_2"),
+    ]))
+    # Whitespace is not a name.
+    assert "TSK110" in codes(a_task(trials=[
+        TrialTypeDef("odor_line_1", "ODOR_1_ON", True, "right_well", "fluid_2",
+                     label="   "),
+    ]))
+
+
+def test_two_conditions_under_one_name_are_reported():
+    """The same argument TSK105 makes about onset codes, one layer up: two
+    curves under one title, and nothing downstream can tell which is which.
+    Compared the way a reader compares them — case and spacing are not what
+    distinguishes two conditions."""
+    assert "TSK111" in codes(a_task(trials=[
+        TrialTypeDef("odor_line_1", "ODOR_1_ON", True, "right_well", "fluid_2",
+                     label="Go right"),
+        TrialTypeDef("odor_line_3", "ODOR_3_ON", True, "left_well", "fluid_0",
+                     label="go  RIGHT"),
+    ]))
+    assert "TSK111" not in codes(a_task())
+
+
+def test_a_condition_s_name_titles_its_live_metric():
+    """What the operator typed is what Mission Control's strip, the learning
+    curve and the strategy axis read back."""
+    profile = generate.build_profile(a_task(trials=[
+        TrialTypeDef("odor_line_1", "ODOR_1_ON", True, "right_well", "fluid_2",
+                     label="orange → right"),
+    ]))
+    assert [m.label for m in profile.live_metrics] == ["P(correct | orange → right)"]
+
+
+def test_an_unordered_ramp_is_reported():
+    """`liveStage()` scans DOWN, so an out-of-order row never engages — the
+    schedule simply appears to skip a step."""
+    assert "TSK106" in codes(a_task(stages=[
+        StageRow(trials=0), StageRow(trials=50), StageRow(trials=20)
+    ]))
+
+
+def test_a_long_ramp_is_spread_over_set_lines_not_refused():
+    """The cap is on each `SET` line, not on the run (`TASKS.md#the-length-cap`):
+    forty stages are two hundred tokens, which take several lines and fit."""
+    task = a_task(stages=[StageRow(trials=i * 10) for i in range(40)])
+    profile = generate.build_profile(task)
+    command = build_start_command(profile, {f.metadata_key: f.default for f in profile.config})
+    assert len(command.set_lines) > 1
+
+
+def test_a_table_with_no_presentable_trial_is_reported():
+    assert "TSK108" in codes(a_task(trials=[]))
+
+
+def _answered_at(channel: str | None) -> TaskDefinition:
+    """The shipped task with every row answered at one channel (or none)."""
+    from dataclasses import replace
+
+    task = a_task()
+    return replace(task, trials=[replace(t, response_channel=channel) for t in task.trials])
+
+
+def _without_port_slots(*channels: str) -> None:
+    """Rewire the rig so each of `channels` reports no strobe slot."""
+    from ephymeris_sidecar.hardware import store as rig_store
+
+    doc = rig_store.default_document()
+    for channel in channels:
+        doc["channels"][channel].pop("port_slot")
+    registry.set_rig_source(lambda: doc)
+
+
+def test_a_table_whose_go_rows_have_no_usable_port_presents_nothing():
+    """The generator drops a go row it cannot resolve a port and a slot for, so
+    a table of only those emits an empty trial table, and TSK108 must say so
+    rather than count a row for its reward line alone."""
+    for why, table in {
+        "unset": _answered_at(None),
+        "unknown": _answered_at("no_such_port"),
+        "wrong kind": _answered_at("odor_line_1"),
+    }.items():
+        assert "TSK108" in codes(table), why
+
+    _without_port_slots("left_well", "right_well")
+    assert "TSK108" in codes(_answered_at("left_well"))
+
+
+def test_a_wrong_kind_port_that_declares_a_slot_is_still_not_a_port():
+    """Nothing stops a slot being declared on a reward line. The generator must
+    not answer a trial at the left well's codes because `fluid_1` says it is
+    slot 1, and TSK108 must say the table presents nothing."""
+    from ephymeris_sidecar.hardware import store as rig_store
+
+    doc = rig_store.default_document()
+    doc["channels"]["fluid_1"]["port_slot"] = 1
+    registry.set_rig_source(lambda: doc)
+
+    table = _answered_at("fluid_1")
+    assert "TSK108" in codes(table)
+    assert "TrialType(true" not in generate.task_trials_h(table)
+
+
+def _resolve(**edit):
+    from dataclasses import replace
+    from ephymeris_sidecar.taskdef.rows import resolve_row
+
+    trial = replace(a_task().trials[0], **edit)
+    return resolve_row(trial, registry.channels(), registry.vocabulary())
+
+
+def test_a_row_resolves_unless_one_thing_it_names_is_missing():
+    """`resolve_row` is the rule both the validator and the generator lean on,
+    so each reason to drop a row is pinned on its own here: the agreement test
+    can only catch the two disagreeing, not this rule being wrong."""
+    from ephymeris_sidecar.hardware import store as rig_store
+
+    doc = rig_store.default_document()
+    doc["channels"]["fluid_1"]["port_slot"] = 1     # a slot on a non-response line
+    registry.set_rig_source(lambda: doc)
+
+    assert _resolve() is not None
+    assert _resolve(is_go=False, response_channel=None, reward_channel=None) is not None
+
+    dropped = {
+        "unknown odor line": dict(odor_channel="no_such_line"),
+        "odor line of the wrong kind": dict(odor_channel="left_well"),
+        "undeclared onset code": dict(onset_strobe="NOT_A_CODE"),
+        "no response port": dict(response_channel=None),
+        "unknown response port": dict(response_channel="no_such_port"),
+        "response port of the wrong kind, slot declared": dict(response_channel="fluid_1"),
+        "no reward line": dict(reward_channel=None),
+        "unknown reward line": dict(reward_channel="no_such_reward"),
+        "reward line of the wrong kind": dict(reward_channel="left_well"),
+    }
+    for why, edit in dropped.items():
+        assert _resolve(**edit) is None, why
+
+    _without_port_slots("left_well", "right_well")
+    assert _resolve(response_channel="left_well") is None, "response port with no slot"
+    for edit in ({"odor_channel": "no_such_line"}, {"onset_strobe": "NOT_A_CODE"}):
+        assert _resolve(is_go=False, response_channel=None, reward_channel=None, **edit) is None
+
+
+def test_a_row_the_generator_drops_gets_no_live_metric():
+    """A live metric is also what gives a stimulus an arm in the state-machine
+    drawing, so one for a row that is not in the trial table draws a branch for
+    a trial that never runs."""
+    from dataclasses import replace
+    from ephymeris_sidecar.hardware import store as rig_store
+
+    doc = rig_store.default_document()
+    doc["channels"]["fluid_1"]["port_slot"] = 1
+    registry.set_rig_source(lambda: doc)
+
+    base = a_task()
+    for why, table in {
+        "go row answered at a reward line": _answered_at("fluid_1"),
+        "go row on an unknown odor line": replace(base, trials=[
+            replace(t, odor_channel="no_such_line") for t in base.trials]),
+        "go row with no reward line": replace(base, trials=[
+            replace(t, reward_channel=None) for t in base.trials]),
+        "no-go row on an unknown odor line": replace(base, selection_mode="pool", trials=[
+            replace(t, is_go=False, response_channel=None, reward_channel=None,
+                    odor_channel="no_such_line") for t in base.trials]),
+    }.items():
+        assert generate.build_profile(table).live_metrics == [], why
+
+    assert len(generate.build_profile(base).live_metrics) == len(base.trials)
+
+
+def test_tsk108_only_advises_pool_when_pool_would_present_a_row():
+    from dataclasses import replace
+
+    base = a_task()
+
+    def advice(odor_channel: str) -> str:
+        nogo = [replace(t, is_go=False, response_channel=None, reward_channel=None,
+                        odor_channel=odor_channel) for t in base.trials]
+        table = replace(base, trials=nogo, selection_mode="antibias")
+        return next(d.message for d in validate(table) if d.code == "TSK108")
+
+    assert "Switch to Pool" in advice(base.trials[0].odor_channel)
+    assert "Switch to Pool" not in advice("no_such_line")
+
+
+def test_the_validator_and_the_generator_agree_on_what_a_presentable_row_is():
+    """Pinned over the same definitions: TSK108 fires exactly when the generated
+    trial table holds no row the selector can draw."""
+    from dataclasses import replace
+    from ephymeris_sidecar.hardware import store as rig_store
+
+    # A reward line that declares a slot, so "wrong-kind port" reaches the kind
+    # check rather than being dropped earlier for having no slot.
+    doc = rig_store.default_document()
+    doc["channels"]["fluid_1"]["port_slot"] = 1
+    registry.set_rig_source(lambda: doc)
+
+    base = a_task()
+    nogo = [replace(t, is_go=False, response_channel=None, reward_channel=None)
+            for t in base.trials]
+    badly = lambda **edit: replace(base, trials=[replace(t, **edit) for t in base.trials])  # noqa: E731
+    tables = {
+        "shipped": base,
+        "empty": replace(base, trials=[]),
+        "one bad odor": replace(base, trials=[
+            replace(base.trials[0], odor_channel="no_such_line"), *base.trials[1:]]),
+        "all bad odor": badly(odor_channel="no_such_line"),
+        "bad onset": badly(onset_strobe="NOT_A_CODE"),
+        "bad reward": badly(reward_channel="no_such_reward"),
+        "reward at the other well": replace(base, trials=[
+            replace(t, reward_channel="fluid_1" if t.response_channel == "right_well" else "fluid_2")
+            for t in base.trials]),
+        "unset port": _answered_at(None),
+        "unknown port": _answered_at("no_such_port"),
+        "wrong-kind port": _answered_at("fluid_1"),
+        "no reward channel": badly(reward_channel=None),
+    }
+    for mode in ("antibias", "weighted", "pool"):
+        tables[f"no-go only, {mode}"] = replace(base, trials=nogo, selection_mode=mode)
+        tables[f"no-go on a bad odor, {mode}"] = replace(base, selection_mode=mode, trials=[
+            replace(t, odor_channel="no_such_line") for t in nogo])
+
+    def drawable(table: TaskDefinition) -> int:
+        header = generate.task_trials_h(table)
+        return header.count("\n    TrialType(") if table.selection_mode == "pool" \
+            else header.count("\n    TrialType(true")
+
+    for why, table in tables.items():
+        assert ("TSK108" in codes(table)) == (drawable(table) == 0), why
+
+    _without_port_slots("left_well", "right_well")
+    slotless = _answered_at("left_well")
+    assert drawable(slotless) == 0
+    assert "TSK108" in codes(slotless)
+
+
+def test_a_pool_that_adds_up_to_nothing_is_reported():
+    """The firmware SURVIVES this, which is why it needs saying.
+    `generateTrials()` would divide by the summed weight, so an all-zero pool
+    falls back to weighting every row equally — the box runs a uniform pool and
+    reports nothing unusual while the table on screen says otherwise."""
+    from dataclasses import replace
+
+    task = a_task(selection_mode="pool")
+    assert "TSK109" not in codes(task)
+    zeroed = replace(task, trials=[replace(t, weight=0) for t in task.trials])
+    assert "TSK109" in codes(zeroed)
+
+
+def test_a_zero_weight_on_some_rows_is_a_parked_type_not_a_fault():
+    """A zero is how a trial type is disabled without deleting it — the
+    firmware simply never draws it. Only the TOTAL is a problem."""
+    from dataclasses import replace
+
+    task = a_task(selection_mode="pool")
+    parked = replace(task, trials=[
+        replace(task.trials[0], weight=0), *task.trials[1:]
+    ])
+    assert "TSK109" not in codes(parked)
+
+
+def test_an_all_zero_pool_is_silent_under_anti_bias_selection():
+    """Anti-bias draws a SIDE and weights nothing, so the pool column is inert
+    there. Reporting it would be a diagnostic against a field with no effect."""
+    from dataclasses import replace
+
+    task = a_task(selection_mode="antibias")
+    zeroed = replace(task, trials=[replace(t, weight=0) for t in task.trials])
+    assert "TSK109" not in codes(zeroed)
+
+
+def test_an_all_zero_table_is_reported_under_weighted_selection_too():
+    """The weighted selector reads the same weights and makes the same uniform
+    fallback, so the same silent-wrong-data case applies."""
+    from dataclasses import replace
+
+    task = a_task(selection_mode="weighted")
+    assert "TSK109" not in codes(task)
+    zeroed = replace(task, trials=[replace(t, weight=0) for t in task.trials])
+    assert "TSK109" in codes(zeroed)
+
+
+def test_weighted_selection_reports_a_side_that_weighs_nothing():
+    """`pickWeighted` draws a SIDE first, then weighs the types on it — so one
+    side zeroed out is drawn uniformly while the total still looks fine."""
+    from dataclasses import replace
+
+    task = a_task(selection_mode="weighted")
+    side = task.trials[0].response_channel
+    one_side = replace(task, trials=[
+        replace(t, weight=0) if t.response_channel == side else t for t in task.trials
+    ])
+    assert sum(t.weight for t in one_side.trials) > 0
+    assert "TSK109" in codes(one_side)
+
+
+def test_a_no_go_only_table_presents_nothing_outside_the_pool():
+    """Both anti-bias selectors draw a side first, and a withhold has none —
+    only the pool presents a no-go type."""
+    from dataclasses import replace
+
+    task = a_task()
+    nogo = [replace(t, is_go=False, response_channel=None, reward_channel=None)
+            for t in task.trials]
+    assert "TSK108" in codes(replace(task, trials=nogo, selection_mode="antibias"))
+    assert "TSK108" in codes(replace(task, trials=nogo, selection_mode="weighted"))
+    assert "TSK108" not in codes(replace(task, trials=nogo, selection_mode="pool"))
+
+
+def test_a_pool_weight_is_read_off_the_row_never_out_of_params():
+    """The same rule as reward volume: the generator reads `trial.weight`, so a
+    stale `pool_weight_1` in `params` must not reach the wire."""
+    from dataclasses import replace
+
+    task = replace(a_task(selection_mode="pool"), params={"pool_weight_1": 99})
+    profile = generate.build_profile(task)
+    assert next(f for f in profile.config if f.wire_key == "PW1").default == task.trials[0].weight
+
+
+def test_a_go_condition_paying_nothing_is_reported():
+    """The line opens for 0 ms between two fluid strobes: a dry well that every
+    readout scores as rewarded. A no-go pays nothing by definition and is not."""
+    from dataclasses import replace
+
+    task = a_task()
+    dry = replace(task, trials=[replace(task.trials[0], reward_time=0), task.trials[1]])
+    found = validate(dry)
+    assert [d.code for d in found] == ["TSK113"]
+    assert found[0].location == "trials[0].rewardTime"
+    nogo = a_task(trials=[
+        task.trials[0],
+        TrialTypeDef("odor_line_5", "ODOR_5_ON", is_go=False, label="Withhold"),
+    ])
+    assert "TSK113" not in codes(nogo)
+
+
+def test_every_problem_is_reported_not_just_the_first():
+    found = codes(a_task(
+        trials=[TrialTypeDef("odor_line_99", "NOT_A_CODE", True, "right_well", "fluid_0")],
+        stages=[StageRow(trials=0), StageRow(trials=0)],
+    ))
+    assert {"TSK101", "TSK104", "TSK103", "TSK106"} <= found
+
+
+# --------------------------------------------------------------------------- #
+# The store
+# --------------------------------------------------------------------------- #
+
+
+def test_saving_writes_a_definition_and_a_flashable_sketch(tmp_path, library):
+    s = store.TaskStore(tmp_path, library_root=library)
+    definition = presets.instantiate("grgl_2odor", "probe", "Probe Task")
+    assert s.save(definition) == []
+
+    folder = s.sketch_dir(definition)
+    # The folder-name-matches-.ino rule is arduino-cli's, and the single most
+    # common reason a sketch silently fails to appear.
+    assert (folder / "Probe Task.ino").is_file()
+    assert (folder / "TaskPins.h").is_file()
+    assert (folder / "TaskTrials.h").is_file()
+    assert json.loads((folder / "task.json").read_text(encoding="utf-8"))["taskName"] == "Probe Task"
+
+
+def test_a_definition_with_diagnostics_still_saves(tmp_path, library):
+    """A half-finished task must be savable — the gate is flashing, not saving."""
+    s = store.TaskStore(tmp_path, library_root=library)
+    definition = presets.instantiate("grgl_2odor", "probe")
+    definition = TaskDefinition.from_json({**definition.to_json(), "trials": []})
+    assert s.save(definition)          # diagnostics returned...
+    assert s.get("probe") is not None   # ...and it is on disk
+
+
+def test_renaming_a_task_takes_its_old_folder_with_it(tmp_path, library):
+    """Otherwise the previous folder stays discoverable, the picker offers two
+    sketches for one task, and flashing the wrong one is silent."""
+    from dataclasses import replace
+
+    s = store.TaskStore(tmp_path, library_root=library)
+    definition = presets.instantiate("grgl_2odor", "probe", "Before")
+    s.save(definition)
+    assert (s.root / definition.category / "Before").is_dir()
+
+    s.save(replace(definition, name="After"))
+    assert not (s.root / definition.category / "Before").exists()
+    assert (s.root / definition.category / "After").is_dir()
+
+
+def test_deleting_removes_both_halves(tmp_path, library):
+    s = store.TaskStore(tmp_path, library_root=library)
+    definition = presets.instantiate("grgl_2odor", "probe")
+    s.save(definition)
+    assert s.delete("probe") is True
+    assert s.get("probe") is None
+    assert not s.sketch_dir(definition).exists()
+    # Idempotent: two clients racing on one task is not an error.
+    assert s.delete("probe") is False
+
+
+def test_a_rewiring_regenerates_every_stored_sketch(tmp_path, library):
+    """THE REASON `hardware.save` CALLS THIS. A pin is compiled into TaskPins.h,
+    so a folder generated under the old wiring flashes the old pins — silently,
+    because it still compiles and the only symptom is a valve that never fires.
+    """
+    from ephymeris_sidecar.hardware import store as rig_store
+
+    s = store.TaskStore(tmp_path, library_root=library)
+    definition = presets.instantiate("grgl_2odor", "probe")
+    s.save(definition)
+    header = s.sketch_dir(definition) / "TaskPins.h"
+    assert "#define BOX_PIN_TRIAL_LIGHT 36" in header.read_text(encoding="utf-8")
+
+    doc = rig_store.default_document()
+    doc["pins"]["trial_light"]["index"] = 12
+    registry.set_rig_source(lambda: doc)
+    assert s.regenerate_all() == 1
+    assert "#define BOX_PIN_TRIAL_LIGHT 12" in header.read_text(encoding="utf-8")
+
+
+def test_a_broken_definition_does_not_make_the_library_unlistable(tmp_path, library):
+    s = store.TaskStore(tmp_path, library_root=library)
+    s.save(presets.instantiate("grgl_2odor", "good"))
+    s.root.joinpath("broken.json").write_text("{ not json", encoding="utf-8")
+    assert [d.id for d in s.list_definitions()] == ["good"]
+
+
+def test_failures_reads_the_wiring_in_force(tmp_path, library):
+    """`impact_of` asks again under a HYPOTHETICAL wiring, so this must
+    consult the registries live rather than anything cached — that difference is
+    the entire mechanism by which a rewiring's cost is known before the write."""
+    from ephymeris_sidecar.hardware import store as rig_store
+
+    s = store.TaskStore(tmp_path, library_root=library)
+    s.save(presets.instantiate("grgl_2odor", "probe"))
+    assert s.failures("probe") == set()
+
+    doc = rig_store.default_document()
+    doc["channels"].pop("odor_line_1")
+    doc["pins"].pop("odor_line_1")
+    registry.set_rig_source(lambda: doc)
+    assert "TSK101" in s.failures("probe")
+
+
+@pytest.fixture
+def library(tmp_path_factory):
+    """A minimal bundled library holding the root sketch.
+
+    Only `GRGL/GRGL.ino` matters — the store copies it verbatim, so its contents
+    are irrelevant here and its PRESENCE is what is being exercised.
+    """
+    root = tmp_path_factory.mktemp("library")
+    sketch = root / "Olfactory Behavior" / "GRGL"
+    sketch.mkdir(parents=True)
+    (sketch / "GRGL.ino").write_text("// root sketch\n", encoding="utf-8")
+    return root
+
+
+# --------------------------------------------------------------------------- #
+# The vocabulary against the firmware
+# --------------------------------------------------------------------------- #
+
+
+def _firmware_names() -> set[str] | None:
+    """Every `BF_*` the firmware NAMES, or None outside a checkout.
+
+    Read from the repo's `firmware/`, which `discovery.library_root()` serves
+    in a checkout. Skipped rather than failed when it is absent: a
+    packaged sidecar has no library beside it, and this is a developer guard.
+    The firmware holds no numbers any more — `BoxStrobes.h` refuses to compile
+    without the generated ones — so names are all there is to compare.
+    """
+    from ephymeris_sidecar import discovery
+    from ephymeris_sidecar.strobes.usage import firmware_refs
+
+    root, _ = discovery.library_root()
+    if root is None or not (root / "libraries" / "BehaviorBox" / "BoxStrobes.h").is_file():
+        return None
+    return set(firmware_refs([(root, "sketch")]))
+
+
+def test_the_firmware_defines_no_strobe_code_of_its_own():
+    """ONE SOURCE. `BoxStrobes.h` used to hold a hand-written copy of every
+    number, kept in step with the app's by a test; now it holds none, and stops
+    the build when the generated header has not supplied them."""
+    from ephymeris_sidecar import discovery
+
+    root, _ = discovery.library_root()
+    header = (root / "libraries" / "BehaviorBox" / "BoxStrobes.h") if root else None
+    if header is None or not header.is_file():
+        pytest.skip("no firmware/ beside the sidecar (a packaged build)")
+    text = header.read_text(encoding="utf-8")
+    assert "#define BF_" not in text
+    assert "#error" in text
+
+
+def test_everything_the_firmware_emits_is_in_the_default_vocabulary():
+    """EMITTED MEANS DECLARED. A code the firmware names and the default
+    vocabulary lacks would stop every fresh machine compiling — the generated
+    header would not define it."""
+    names = _firmware_names()
+    if names is None:
+        pytest.skip("no firmware/ beside the sidecar (a packaged build)")
+    vocab = registry.Vocabulary(registry.default_vocabulary_document())
+    # BoxSpine.h names the spine's own codes, withdrawn from the default while
+    # the spine is in development
+    # (`DECISIONS.md#0005-a-spine-run-strobes-each-trials-outcome-class`); a
+    # machine running a spine task adds them on the Strobes page, and the spine
+    # fixture adds them.
+    from ephymeris_sidecar.taskdef import lowering
+    from tests.fixtures.spine import SPINE_CODES
+
+    assert set(SPINE_CODES) == {"BLOCK_START", *lowering.OUTCOME_CODES}
+    assert names - set(SPINE_CODES) <= vocab.names(), \
+        f"named in firmware, not in the vocabulary: {sorted(names - set(SPINE_CODES) - vocab.names())}"
+
+
+def test_every_default_code_has_a_mechanism_that_emits_it():
+    """DECLARED MEANS EMITTABLE. Thirty codes once sat in the vocabulary for
+    response ports 3-7 that a two-port trial runner has no way to poll — names
+    in every picker that no session would ever contain. A default code must be
+    named by the firmware, or be a stimulus onset the trial-table editor can
+    bind to a line (which is how ODOR_7_ON..ODOR_12_ON reach a sketch: through
+    a generated `TaskTrials.h`, never by name in the library)."""
+    import re
+
+    names = _firmware_names()
+    if names is None:
+        pytest.skip("no firmware/ beside the sidecar (a packaged build)")
+    vocab = registry.Vocabulary(registry.default_vocabulary_document())
+    # A row's header code reaches a sketch the way an onset does: through the
+    # generated `TaskTrials.h`, one per row the table binds.
+    orphaned = {
+        n for n in vocab.names() - names
+        if not re.search(r"_\d+_ON$", n) and not re.fullmatch(r"TRIAL_TYPE_\d+", n)
+    }
+    assert not orphaned, f"declared with nothing to emit them: {sorted(orphaned)}"
+
+
+def test_a_retired_code_is_never_reissued_and_never_free():
+    """The third state, and the reason it exists.
+
+    `retired` is for codes a REAL SESSION contains. Reissuing one would silently
+    merge two unrelated event types in any analysis spanning the change, so it
+    is excluded from `free_ranges` as well as from `codes` — dropping either
+    half would let `is_free()` hand it out.
+    """
+    vocab = registry.vocabulary()
+    assert vocab.retired, "stream grammar 1's terminators are in the recorded archive"
+    for code, name in vocab.retired.items():
+        assert not vocab.is_free(code), name
+        assert vocab.name_of(code) is None, name
+        assert vocab.retired_name(code) == name
+
+
+def test_the_odor_onsets_keep_stepping_over_110_to_113():
+    """The gap is history, and history is never rewritten.
+
+    110-113 held the dummy solenoid clicks; they were freed on 2026-11-06. The
+    onsets still run 101-109 and then 114-116: renumbering odor 10 to 110 would
+    make a `110` in a recorded file mean one thing before some date and another
+    after it, the exact silent merge the append-only rule exists to prevent.
+    """
+    vocab = registry.vocabulary()
+    assert [vocab.code_of(f"ODOR_{n}_ON") for n in range(1, 13)] == [
+        101, 102, 103, 104, 105, 106, 107, 108, 109, 114, 115, 116
+    ]
+    for code in (110, 111, 112, 113):
+        assert vocab.is_free(code), code
+
+
+def test_the_free_ranges_are_exactly_what_is_unallocated():
+    """A number that is neither used, retired, reserved nor free is LOST —
+    nothing will ever issue it. One was (259) while the ranges were stored;
+    they are derived now, and this pins the derivation."""
+    vocab = registry.vocabulary()
+    allocated = {e.code for e in vocab} | set(vocab.retired)
+    for code in range(vocab.code_min, vocab.code_max + 1):
+        expected = code not in allocated and not vocab.is_reserved(code)
+        assert vocab.is_free(code) == expected, code
+    assert vocab.free_ranges()[:2] == [(110, 113), (117, 219)]
+
+
+# --------------------------------------------------------------------------- #
+# Rig-pinned copies of the bundled sketches
+# --------------------------------------------------------------------------- #
+
+
+def _bundle(root, *sketches, pins=True):
+    """A miniature bundled library. `pins` decides whether each opts in."""
+    for category, name in sketches:
+        folder = root / category / name
+        folder.mkdir(parents=True)
+        include = '#include "TaskPins.h"\n' if pins else ""
+        (folder / f"{name}.ino").write_text(
+            include + "#include <BehaviorBox.h>\n", encoding="utf-8"
+        )
+        if pins:
+            (folder / "TaskPins.h").write_text("#ifndef TASK_PINS_H\n#endif\n", encoding="utf-8")
+    return root
+
+
+def test_a_sketch_opts_in_by_including_the_header(tmp_path):
+    """The signal is the `#include` itself. A manifest key would be a second
+    declaration, and the two disagreeing means a sketch that includes the header,
+    gets the shipped copy that declares nothing, and runs the wrong pins."""
+    from ephymeris_sidecar.taskdef import bundled
+
+    root = _bundle(tmp_path / "yes", ("Utility", "Wants"))
+    plain = _bundle(tmp_path / "no", ("Utility", "Plain"), pins=False)
+    assert bundled.wants_pinning(root / "Utility" / "Wants")
+    assert not bundled.wants_pinning(plain / "Utility" / "Plain")
+
+
+def test_a_rebuild_carries_this_rig_s_pins_and_the_rest_of_the_sketch(tmp_path):
+    from ephymeris_sidecar.hardware import store as rig_store
+    from ephymeris_sidecar.taskdef import bundled
+
+    library = _bundle(tmp_path / "lib", ("Utility", "Probe"))
+    # A file the sketch owns but the generator knows nothing about. Copying the
+    # `.ino` alone would drop `extras/`, `task.json`, everything.
+    (library / "Utility" / "Probe" / "task.json").write_text('{"taskName":"Probe"}', encoding="utf-8")
+
+    doc = rig_store.default_document()
+    doc["pins"]["trial_light"]["index"] = 12
+    registry.set_rig_source(lambda: doc)
+
+    out = tmp_path / "pinned"
+    landed = bundled.repin(library / "Utility" / "Probe", "Utility", out)
+    assert landed == out / "Utility" / "Probe"
+    assert (landed / "Probe.ino").is_file()
+    assert (landed / "task.json").is_file()
+    assert "#define BOX_PIN_TRIAL_LIGHT 12" in (landed / "TaskPins.h").read_text(encoding="utf-8")
+
+
+def test_a_rebuild_replaces_the_bundled_entry_rather_than_joining_it(tmp_path, monkeypatch):
+    """A rebuild is the SAME sketch with the right pins, not a second one.
+    Offering both would make flashing a coin flip, and the picker would show a
+    name twice with nothing to choose between."""
+    from ephymeris_sidecar import discovery
+    from ephymeris_sidecar.taskdef import bundled
+
+    library = _bundle(tmp_path / "lib", ("Utility", "Probe"))
+    monkeypatch.setenv(discovery.LIBRARY_ENV, str(library))
+    (library / "libraries").mkdir()
+
+    plain = discovery.discover()
+    assert [(s.name, s.source) for s in plain.sketches] == [("Probe", "bundled")]
+
+    out = tmp_path / "pinned"
+    bundled.repin_all(out)
+    rebuilt = discovery.discover(None, out)
+    assert len(rebuilt.sketches) == 1
+    entry = rebuilt.sketches[0]
+    # Still `bundled`: what it IS has not changed, only which pins it compiles
+    # against, and nothing downstream should have to know which copy it got.
+    assert (entry.name, entry.source) == ("Probe", "bundled")
+    assert str(out) in entry.path
+
+
+def test_a_rebuild_of_a_sketch_this_version_no_longer_ships_is_reported(tmp_path, monkeypatch):
+    """Not offered, and not silently dropped either. Flashing it would run
+    firmware this build does not contain, and dropping it in silence would hide
+    that the folder is there at all."""
+    from ephymeris_sidecar import discovery
+    from ephymeris_sidecar.taskdef import bundled
+
+    library = _bundle(tmp_path / "lib", ("Utility", "Probe"))
+    monkeypatch.setenv(discovery.LIBRARY_ENV, str(library))
+    (library / "libraries").mkdir()
+    out = tmp_path / "pinned"
+    bundled.repin_all(out)
+
+    # An app update dropped a sketch; its rebuild is still on disk, and it is
+    # perfectly well-formed — which is exactly why it has to be reported rather
+    # than left to the folder-name rule to catch.
+    orphan = out / "Utility" / "Retired"
+    orphan.mkdir(parents=True)
+    (orphan / "Retired.ino").write_text("//\n", encoding="utf-8")
+
+    result = discovery.discover(None, out)
+    assert [s.name for s in result.sketches] == ["Probe"]
+    assert any("no longer ships" in s.reason for s in result.skipped), result.skipped
+
+
+def test_repinning_sweeps_what_no_bundled_sketch_claims(tmp_path, monkeypatch):
+    """Otherwise a renamed or dropped sketch stays discoverable forever — and it
+    would be served in place of nothing at all."""
+    from ephymeris_sidecar import discovery
+    from ephymeris_sidecar.taskdef import bundled
+
+    library = _bundle(tmp_path / "lib", ("Utility", "Probe"))
+    monkeypatch.setenv(discovery.LIBRARY_ENV, str(library))
+    (library / "libraries").mkdir()
+    out = tmp_path / "pinned"
+    bundled.repin_all(out)
+
+    stale = out / "Utility" / "Gone"
+    stale.mkdir(parents=True)
+    (stale / "Gone.ino").write_text("//\n", encoding="utf-8")
+    assert bundled.repin_all(out) == 1
+    assert not stale.exists()
+    assert (out / "Utility" / "Probe").is_dir()
+
+
+def test_a_sketch_that_does_not_opt_in_is_left_alone(tmp_path, monkeypatch):
+    from ephymeris_sidecar import discovery
+    from ephymeris_sidecar.taskdef import bundled
+
+    library = _bundle(tmp_path / "lib", ("Utility", "Plain"), pins=False)
+    monkeypatch.setenv(discovery.LIBRARY_ENV, str(library))
+    (library / "libraries").mkdir()
+    out = tmp_path / "pinned"
+    assert bundled.repin_all(out) == 0
+    assert str(out) not in discovery.discover(None, out).sketches[0].path
+
+
+def test_every_bundled_sketch_that_drives_a_pin_asks_to_be_rebuilt():
+    """The one that matters on the real library.
+
+    A sketch driving hardware against `BoxPins.h`'s shipped defaults is silently
+    wrong on a rewired rig — `utility.identify` lights the old pin, the
+    simulator opens the old valve — and it still compiles and still reports a
+    perfect strobe stream. Opting in is one `#include`; forgetting it is
+    invisible.
+    """
+    from pathlib import Path
+
+    from ephymeris_sidecar import discovery
+    from ephymeris_sidecar.taskdef import bundled
+
+    result = discovery.discover()
+    if not result.sketches:
+        pytest.skip("no firmware/ beside the sidecar (a packaged build)")
+    missing = [
+        s.name for s in result.sketches if not bundled.wants_pinning(Path(s.path))
+    ]
+    assert missing == [], f"these do not include TaskPins.h: {missing}"
+
+
+def test_rebuilding_twice_keeps_the_copies_and_moves_their_pins(tmp_path, monkeypatch):
+    """THE BUG THIS CAUGHT, and the only way to see it.
+
+    `repin_all` used to take a sketch list, and the caller's nearest one was
+    `Application.discovery` — whose entries point at the PREVIOUS rebuild once
+    one exists. Every source became its own target, `repin` cleared the target
+    first, and the copy was destroyed. Silently: discovery fell back to the
+    bundle and the rig ran the SHIPPED pins, which is the exact failure this
+    whole mechanism exists to prevent.
+
+    One rebuild always worked. It took a second one to show.
+    """
+    from ephymeris_sidecar import discovery
+    from ephymeris_sidecar.hardware import store as rig_store
+    from ephymeris_sidecar.taskdef import bundled
+
+    library = _bundle(tmp_path / "lib", ("Utility", "Probe"))
+    monkeypatch.setenv(discovery.LIBRARY_ENV, str(library))
+    (library / "libraries").mkdir()
+    out = tmp_path / "pinned"
+
+    assert bundled.repin_all(out) == 1
+    header = out / "Utility" / "Probe" / "TaskPins.h"
+    assert "#define BOX_PIN_TRIAL_LIGHT 36" in header.read_text(encoding="utf-8")
+
+    # ...now rewire and rebuild again, exactly as `hardware.save` does.
+    doc = rig_store.default_document()
+    doc["pins"]["trial_light"]["index"] = 12
+    registry.set_rig_source(lambda: doc)
+
+    assert bundled.repin_all(out) == 1
+    assert header.is_file(), "the second rebuild destroyed the copy"
+    assert "#define BOX_PIN_TRIAL_LIGHT 12" in header.read_text(encoding="utf-8")
+    # ...and it is still the sketch, not just a header.
+    assert (out / "Utility" / "Probe" / "Probe.ino").is_file()
+
+
+def test_a_rebuild_refuses_to_be_its_own_source(tmp_path):
+    """Belt and braces under the fix above: even handed a path inside the
+    output root, `repin` declines rather than deleting it."""
+    from ephymeris_sidecar.taskdef import bundled
+
+    out = tmp_path / "pinned"
+    inside = out / "Utility" / "Probe"
+    inside.mkdir(parents=True)
+    (inside / "Probe.ino").write_text('#include "TaskPins.h"\n', encoding="utf-8")
+
+    assert bundled.repin(inside, "Utility", out) is None
+    assert (inside / "Probe.ino").is_file(), "it deleted the thing it refused to copy"
+
+
+async def test_saving_refuses_a_name_another_task_already_uses(sidecar: LiveSidecar) -> None:
+    """Two saved tasks sharing a name share a sketch folder — saving one would
+    overwrite the other's firmware, and deleting either would remove both.
+    Duplicating a task makes that the easy mistake, so `tasks.save` refuses."""
+    probe = presets.instantiate("grgl_2odor", "probe", "Probe Task")
+    await sidecar.call("tasks.save", definition=probe.to_json())
+    copy = presets.instantiate("grgl_2odor", "probe_copy", "probe task")
+    with pytest.raises(Refused, match="already called"):
+        await sidecar.call("tasks.save", definition=copy.to_json())
+
+    # Re-saving the task under its own name is, of course, fine.
+    reply = await sidecar.call("tasks.save", definition=probe.to_json())
+    assert reply["entry"]["id"] == "probe"
+
+
+async def test_no_task_is_saved_or_deleted_while_a_session_is_set_up(
+    sidecar: LiveSidecar, tmp_path: Path
+) -> None:
+    """A task's folder is what its box is flashed from, and the session read its
+    profile from that folder at mapping (`TASKS.md#the-rig-definition`)."""
+    probe = presets.instantiate("grgl_2odor", "probe", "Probe Task")
+    await sidecar.call("tasks.save", definition=probe.to_json())
+    await hold_the_rig(sidecar, await create_cohort(sidecar, tmp_path / "Batch A"))
+
+    with pytest.raises(Refused) as refused:
+        await sidecar.call("tasks.save", definition=probe.to_json())
+    assert refused.value.code == "RIG_IN_USE"
+    with pytest.raises(Refused) as refused:
+        await sidecar.call("tasks.delete", taskId="probe")
+    assert refused.value.code == "RIG_IN_USE"
+    await sidecar.call("tasks.get", taskId="probe")

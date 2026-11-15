@@ -1,0 +1,332 @@
+"""The pure layer behind the live recording views.
+
+The `EdgeMatcher` tests are the ones that matter. Everything it can get wrong
+yields a PSTH that looks like data -- events attributed to their neighbours --
+rather than an error.
+"""
+
+from __future__ import annotations
+
+from ephymeris_sidecar.intan.analysis import (
+    EdgeDetector,
+    EdgeMatcher,
+    SpikeRing,
+    WaveformRing,
+    isi_histogram,
+    psth,
+)
+
+FS = 30000.0
+
+
+def samples(ms: float, *, offset: int = 900_000, drift: float = 1.0) -> int:
+    """Where an Arduino-ms instant lands on the recording clock."""
+    return offset + int(round(ms * drift * FS / 1000.0))
+
+
+# --- edges ------------------------------------------------------------------
+
+
+def test_an_edge_is_seen_once_even_across_a_block_boundary():
+    detector = EdgeDetector(digital_in=3)
+    bit = 0b100
+    first = detector.feed((0, 1, 2, 3), (0, 0, bit, bit))
+    second = detector.feed((4, 5, 6, 7), (bit, bit, 0, bit))
+    assert first == [2]
+    assert second == [7]  # still high at 4 is not a second edge
+
+
+def test_a_line_that_is_high_when_the_stream_opens_is_not_an_event():
+    detector = EdgeDetector(digital_in=1)
+    assert detector.feed((0, 1, 2), (1, 1, 1)) == []
+    assert detector.feed((3, 4, 5), (1, 0, 1)) == [5]
+
+
+def test_other_boxes_inputs_are_not_this_box_s_edges():
+    detector = EdgeDetector(digital_in=2)
+    detector.feed((0,), (0,))
+    assert detector.feed((1, 2, 3), (0b0001, 0b0101, 0b1000)) == []
+    assert detector.feed((4, 5), (0b0000, 0b0010)) == [5]
+
+
+# --- matching ---------------------------------------------------------------
+
+
+def run(matcher: EdgeMatcher, strobes, edges):
+    out = []
+    for code, ms in strobes:
+        out += matcher.add_strobe(code, ms)
+    out += matcher.add_edges(edges)
+    return out
+
+
+def test_every_strobe_gets_its_own_edge():
+    strobes = [(101, 0), (222, 640), (233, 1900), (246, 2400)]
+    got = run(EdgeMatcher(FS), strobes, [samples(ms) for _, ms in strobes])
+    assert [(e.code, e.sample) for e in got] == [(c, samples(ms)) for c, ms in strobes]
+
+
+def test_a_spurious_leading_edge_does_not_shift_every_event_by_one():
+    """THE TRAP. The Mega's pins twitch as it resets, before START. Matched by
+    count, that one edge attributes every event in the session to the strobe
+    before it -- and the PSTH still looks like a PSTH."""
+    strobes = [(101, 0), (222, 640), (233, 1900), (246, 2400), (101, 9000)]
+    edges = [samples(-350)] + [samples(ms) for _, ms in strobes]
+    matcher = EdgeMatcher(FS)
+    got = run(matcher, strobes, edges)
+    assert [(e.code, e.sample) for e in got] == [(c, samples(ms)) for c, ms in strobes]
+    assert matcher.spurious_edges == 1 and matcher.unmatched_strobes == 0
+
+
+def test_a_glitch_in_the_middle_is_dropped_and_the_next_event_still_lands():
+    strobes = [(101, 0), (222, 500), (233, 4000), (246, 4600)]
+    edges = [samples(0), samples(500), samples(2100), samples(4000), samples(4600)]
+    matcher = EdgeMatcher(FS)
+    got = run(matcher, strobes, edges)
+    assert [e.sample for e in got] == [samples(ms) for _, ms in strobes]
+    assert matcher.spurious_edges == 1
+
+
+def test_a_missing_pulse_costs_one_event_not_the_rest_of_the_session():
+    strobes = [(101, 0), (222, 500), (233, 1500), (246, 2600)]
+    edges = [samples(0), samples(500), samples(2600)]  # 233's pulse never came
+    matcher = EdgeMatcher(FS)
+    got = run(matcher, strobes, edges)
+    assert [(e.code, e.sample is not None) for e in got] == [
+        (101, True), (222, True), (233, False), (246, True)
+    ]
+    assert got[-1].sample == samples(2600)
+
+
+def test_half_a_percent_of_clock_drift_is_not_a_mismatch():
+    """The Mega runs on a ceramic resonator. Over a twenty-second gap the two
+    clocks honestly disagree by ~100 ms; a fixed tolerance would call that a
+    missing pulse, every long inter-trial interval."""
+    strobes = [(101, 0), (222, 700), (233, 20_700), (246, 21_300), (101, 61_300)]
+    edges = [samples(ms, drift=1.005) for _, ms in strobes]
+    matcher = EdgeMatcher(FS)
+    got = run(matcher, strobes, edges)
+    assert all(e.sample is not None for e in got) and len(got) == 5
+    assert matcher.spurious_edges == 0
+
+
+def test_it_does_not_matter_which_stream_arrives_first():
+    strobes = [(101, 0), (222, 640), (233, 1900)]
+    edges = [samples(ms) for _, ms in strobes]
+    matcher = EdgeMatcher(FS)
+    got = matcher.add_edges(edges)  # TCP beat the serial line
+    for code, ms in strobes:
+        got += matcher.add_strobe(code, ms)
+    assert [e.sample for e in got] == edges
+
+
+def test_an_unconnected_sync_line_does_not_queue_strobes_forever():
+    matcher = EdgeMatcher(FS)
+    got = []
+    for n in range(200):
+        got += matcher.add_strobe(101, n * 1000)
+    assert len(got) == 200 - EdgeMatcher.MAX_PENDING
+    assert all(e.sample is None for e in got)
+
+
+# A spine run's stream, as BoxSpine.h strobes it: every strobe of a tick carries
+# that tick's ms, and a tick-pulsed board pulses once per tick that strobes.
+TICKS = [
+    (0, [17, 48, 29, 42]), (10, [40, 44]), (110, [43, 45, 46]), (140, [47]), (191, [48, 29, 42]),
+]
+
+
+def tick_strobes(ticks):
+    return [(code, ms) for ms, codes in ticks for code in codes]
+
+
+def test_a_tick_pulsed_run_gives_every_strobe_of_a_tick_its_tick_s_one_edge():
+    matcher = EdgeMatcher(FS, tick_pulsed=True)
+    got = run(matcher, tick_strobes(TICKS), [samples(ms) for ms, _ in TICKS])
+    assert [(e.code, e.ms, e.sample) for e in got] == [(c, ms, samples(ms)) for c, ms in tick_strobes(TICKS)]
+    assert matcher.spurious_edges == 0 and matcher.unmatched_strobes == 0
+
+
+def test_a_per_strobe_run_still_takes_one_edge_per_strobe_sharing_a_ms_or_not():
+    """GRGL pulses once per strobe, 0.7 ms apart: two strobes of one ms are two
+    edges, and the second is the second strobe's."""
+    strobes = [(101, 0), (230, 640), (243, 640), (222, 1900)]
+    edges = [samples(0), samples(640), samples(640.7), samples(1900)]
+    matcher = EdgeMatcher(FS)
+    got = run(matcher, strobes, edges)
+    assert [(e.code, e.sample) for e in got] == list(zip([c for c, _ in strobes], edges))
+    assert matcher.spurious_edges == 0 and matcher.unmatched_strobes == 0
+
+
+def test_a_strobe_of_a_tick_whose_edge_is_already_paired_takes_that_edge():
+    """The edges can beat the serial line, so a tick's edge may be paired on its
+    first strobes, before the rest of that tick's strobes have arrived."""
+    matcher = EdgeMatcher(FS, tick_pulsed=True)
+    got = matcher.add_edges([samples(ms) for ms, _ in TICKS])
+    for code, ms in tick_strobes(TICKS):
+        got += matcher.add_strobe(code, ms)
+    assert [(e.code, e.sample) for e in got] == [(c, samples(ms)) for c, ms in tick_strobes(TICKS)]
+    assert matcher.unmatched_strobes == 0 and matcher.spurious_edges == 0
+
+
+def test_an_owed_rise_still_pairs_with_its_own_tick():
+    """Two ticks that strobe, stepped in one pass where millis() skipped 110:
+    110's edge rises when the pass runs, at 111, and 111's is owed a pulse and
+    a gap later. Each tick keeps its own edge."""
+    ticks = [(0, [17]), (10, [40]), (110, [46]), (111, [47]), (140, [42])]
+    edges = [samples(0), samples(10), samples(111), samples(111.7), samples(140)]
+    matcher = EdgeMatcher(FS, tick_pulsed=True)
+    got = run(matcher, tick_strobes(ticks), edges)
+    assert [e.sample for e in got] == edges
+    assert matcher.spurious_edges == 0 and matcher.unmatched_strobes == 0
+
+
+def test_a_tick_pulsed_run_drops_the_reset_twitch_too():
+    matcher = EdgeMatcher(FS, tick_pulsed=True)
+    got = run(matcher, tick_strobes(TICKS), [samples(-350)] + [samples(ms) for ms, _ in TICKS])
+    assert [e.sample for e in got] == [samples(ms) for _, ms in tick_strobes(TICKS)]
+    assert matcher.spurious_edges == 1 and matcher.unmatched_strobes == 0
+
+
+def test_a_tick_whose_pulse_never_came_releases_each_of_its_strobes():
+    edges = [samples(ms) for ms, _ in TICKS if ms != 110]
+    matcher = EdgeMatcher(FS, tick_pulsed=True)
+    got = run(matcher, tick_strobes(TICKS), edges)
+    assert [(e.code, e.sample is not None) for e in got] == [
+        (c, ms != 110) for c, ms in tick_strobes(TICKS)]
+    assert matcher.unmatched_strobes == 3 and matcher.spurious_edges == 0
+
+
+def test_a_tick_pulsed_anchor_gives_up_on_leading_ticks_not_strobes():
+    """MAX_LEAD counts strobing times: two leading ticks of six strobes whose
+    pulses never came are two to skip, not six."""
+    edges = [samples(ms) for ms, _ in TICKS[2:]]
+    matcher = EdgeMatcher(FS, tick_pulsed=True)
+    got = run(matcher, tick_strobes(TICKS), edges)
+    assert [e.sample is not None for e in got] == [ms >= 110 for _, ms in tick_strobes(TICKS)]
+    assert matcher.unmatched_strobes == 6
+
+
+def test_an_unconnected_tick_pulsed_line_does_not_queue_strobes_forever():
+    matcher = EdgeMatcher(FS, tick_pulsed=True)
+    got = []
+    for n in range(200):
+        for code in (40, 44, 46):
+            got += matcher.add_strobe(code, n * 1000)
+    assert len(got) == 3 * (200 - EdgeMatcher.MAX_PENDING)
+    assert all(e.sample is None for e in got) and matcher.unmatched_strobes == len(got)
+
+
+# --- histograms -------------------------------------------------------------
+
+
+def test_isi_bins_intervals_and_owns_up_to_the_ones_it_cannot_show():
+    spikes = [0, 300, 600, 1500, 30_000]  # 10, 10, 30, 950 ms
+    result = isi_histogram(spikes, FS, span_ms=50, bin_ms=5)
+    assert result["counts"][2] == 2 and result["counts"][6] == 1
+    assert result["beyond"] == 1 and result["intervals"] == 4
+    assert sum(result["counts"]) + result["beyond"] == result["intervals"]
+
+
+def test_psth_counts_only_trials_whose_window_has_closed():
+    """A trial still filling would add its early bins and not its late ones, and
+    the right of the histogram would sag by however recent the last trigger is."""
+    triggers = [30_000, 90_000, 150_000]
+    spikes = sorted(t + d for t in triggers for d in (-1500, 300, 3000))
+    kwargs = dict(sample_rate=FS, pre_ms=100, post_ms=200, bin_ms=50, max_trials=50)
+
+    early = psth(spikes, triggers, newest_sample=152_000, **kwargs)  # third still open
+    assert early["trials"] == 2 and len(early["rasters"]) == 2
+
+    late = psth(spikes, triggers, newest_sample=160_000, **kwargs)
+    assert late["trials"] == 3
+    assert late["rasters"][0] == [-50.0, 10.0, 100.0]
+    assert late["counts"] == [0, 3, 3, 0, 3, 0]
+    # 3 spikes in a 50 ms bin over 3 trials = 20 Hz.
+    assert late["rateHz"][1] == 20.0
+
+
+def test_psth_keeps_the_newest_trials_when_there_are_too_many():
+    triggers = [n * 30_000 for n in range(1, 8)]
+    result = psth([], triggers, FS, 100, 100, 50, max_trials=3, newest_sample=10**7)
+    assert result["trials"] == 3
+
+
+def test_psth_refuses_a_trial_older_than_the_spikes_it_still_holds():
+    """A trial whose window reaches back past the ring's coverage would be
+    drawn with whichever of its spikes survived -- a unit that "fired less
+    back then". It is left out, not drawn short."""
+    triggers = [30_000, 90_000, 150_000]
+    spikes = sorted(t + 300 for t in triggers)
+    kwargs = dict(sample_rate=FS, pre_ms=100, post_ms=200, bin_ms=50, max_trials=50, newest_sample=10**6)
+    assert psth(spikes, triggers, **kwargs)["trials"] == 3
+    # Coverage begins 1 ms into the first trial's pre-window.
+    assert psth(spikes, triggers, complete_since=30_000 - 3000 + 30, **kwargs)["trials"] == 2
+    # ...and exactly at its start is fine.
+    assert psth(spikes, triggers, complete_since=30_000 - 3000, **kwargs)["trials"] == 3
+
+
+def test_a_span_that_is_not_a_whole_number_of_bins_gets_a_partial_last_bin():
+    """50 ms at 20 ms bins is three bins, the last covering 40-50 ms. Rounding
+    to two would report every 40-50 ms interval as beyond a 50 ms span."""
+    isi = isi_histogram([0, 1350, 2700], FS, span_ms=50, bin_ms=20)  # 45 ms twice
+    assert len(isi["counts"]) == 3 and isi["counts"] == [0, 0, 2] and isi["beyond"] == 0
+    assert isi["spanMs"] == 50
+
+    # PSTH: -50..+100 at 20 ms bins is 8 bins; the last is 10 ms wide and its
+    # rate is normalised by 10 ms, not 20.
+    result = psth([30_000 + 95 * 30], [30_000], FS, 50, 100, 20, 50, newest_sample=10**6)
+    assert len(result["counts"]) == 8 and result["counts"][7] == 1
+    assert result["rateHz"][7] == 100.0  # one spike in 10 ms over one trial
+
+
+# --- rings ------------------------------------------------------------------
+
+
+def test_a_snippet_is_cut_by_sample_number_or_not_at_all():
+    ring = WaveformRing(capacity=1000)
+    ring.extend(5000, tuple(range(128)))
+    ring.extend(5128, tuple(range(128, 256)))
+    assert ring.cut(5130, before=2, after=3) == [128, 129, 130, 131, 132, 133]
+    assert ring.cut(5250, before=2, after=30) is None  # the tail has not arrived
+    assert ring.cut(5001, before=5, after=5) is None   # before the ring begins
+
+
+def test_a_gap_in_the_timestamps_empties_the_ring():
+    """A snippet cut across a gap is two unrelated pieces of signal drawn as
+    one spike."""
+    ring = WaveformRing(capacity=1000)
+    ring.extend(0, tuple(range(128)))
+    ring.extend(1024, tuple(range(128)))  # blocks were lost in between
+    assert ring.cut(100, before=5, after=5) is None
+    assert ring.cut(1030, before=5, after=5) is not None
+
+
+def test_the_spike_ring_counts_a_recent_window():
+    ring = SpikeRing(capacity=4)
+    for t in (10, 20, 30, 40, 50):
+        ring.add(t)
+    assert list(ring.snapshot()) == [20, 30, 40, 50]
+    assert ring.count_since(35) == 2
+    assert ring.count_since(0) == 4 and ring.count_since(51) == 0
+
+
+def test_the_spike_ring_knows_how_far_back_it_is_complete():
+    """Evicting the oldest spike means everything before the next one may be
+    gone; a reopened stream means everything before it was never seen."""
+    ring = SpikeRing(capacity=3)
+    assert ring.complete_since == 0
+    for t in (100, 200, 300):
+        ring.add(t)
+    assert ring.complete_since == 0
+    ring.add(400)                        # 100 evicted
+    assert ring.complete_since == 101
+    assert list(ring.snapshot()) == [200, 300, 400]
+    ring.reopened(1000)
+    assert ring.complete_since == 1000
+    ring.reopened(50)                    # never moves backwards
+    assert ring.complete_since == 1000
+    for t in range(2000, 2000 + 10):
+        ring.add(t)
+    assert list(ring.snapshot()) == [2007, 2008, 2009]
+    assert len(ring) == 3

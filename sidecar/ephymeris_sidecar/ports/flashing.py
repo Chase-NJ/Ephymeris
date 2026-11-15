@@ -1,0 +1,529 @@
+"""The flash queue: every flash the app performs (`ARCHITECTURE.md#the-flash-queue`).
+
+Three kinds of caller want a box flashed — the utility baseline's restores, the
+session's placement walk, and Debug Mode — and all of them under the same
+rules, once the box's port is free: one compile at a time, rig-wide; a session
+or Debug flash alone on the rig; restores beside one another, sharing one
+compile and uploading to their boxes in turn; and never two jobs on one box.
+This is the only caller of `PortManager.flash`, so the rules hold across
+callers rather than within each.
+It lives here and not in the frontend because a queue in a component dies
+with the component, mid-walk, while the boxes it promised are still unflashed.
+
+A job's origin fixes its policy:
+
+* **session** — the sketch is read from the held mapping *when the job runs*,
+  not when it was queued, so a re-confirmed mapping can never get the old
+  one's sketch. Waits for its port; lands in `IDLE` for the runner.
+* **debug** — a sketch the operator chose. Waits for its port; resumes a
+  console it took, or opens one at the requested baud. Pinned against
+  automatic restores (`utility.py`).
+* **baseline** — never waits: its `prepare` decides, at the job's turn,
+  whether the box is still wanted. Its flash takes only an `IDLE` port
+  (`IDLE_ONLY`, `PortHandler.release_for`), so "only an IDLE port" holds by
+  what the verb accepts, whatever happens between `prepare` and the take.
+
+What the queue is doing is published as `flash.queue` and replayed on connect,
+so a component that unmounts, a window that reloads, or a second window loses
+nothing.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import time
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
+from itertools import count
+from typing import (
+    Any, AsyncContextManager, AsyncIterator, Awaitable, Callable, Iterable, Literal,
+)
+
+from ..boards.tool import FlashFailed
+from ..settings import BOX_COUNT
+from .manager import BoardNotDetected, PortManager, PortNotBound
+from .states import IDLE_ONLY, IDLE_OR_CONSOLE, PortState, TakeRefused
+
+log = logging.getLogger(__name__)
+
+Origin = Literal["baseline", "session", "debug"]
+
+#: How long a queued session or Debug flash waits for its port to come free
+#: before it gives up. A baseline restore takes well under a minute, and a cold
+#: start's restores run side by side; three covers them with room to spare.
+PORT_WAIT_S = 180.0
+#: How often a waiting job re-checks its deadline when no port changes.
+TICK_S = 1.0
+
+#: What each origin's flash may take (`ARCHITECTURE.md#port-verbs`). Entering
+#: `FLASHING` force-releases a console (`ARCHITECTURE.md#exclusivity`), which is
+#: right when a person asked and never for a background restore.
+TAKES: dict[Origin, frozenset[PortState]] = {
+    "session": IDLE_OR_CONSOLE,
+    "debug": IDLE_OR_CONSOLE,
+    "baseline": IDLE_ONLY,
+}
+
+
+@dataclass
+class FlashJob:
+    """One box to flash.
+
+    `prepare` runs under the rig definition's read side, immediately before
+    the flash, and returns the sketch folder to flash or None to drop the job.
+    `finished` hears the outcome: None on success, else the exception.
+    """
+
+    box: int
+    origin: Origin
+    prepare: Callable[[], str | None]
+    sketch_path: str | None = None
+    finished: Callable[[BaseException | None], None] | None = None
+    #: Debug only: open a console at this baud once the flash lands, if the
+    #: flash did not resume one it took.
+    baud: int | None = None
+    #: Baseline only: a reflash the operator asked for.
+    force: bool = False
+    id: int = field(default_factory=lambda: next(_ids))
+    #: When it first found its port busy: the wait is for the port, not for
+    #: the jobs queued ahead of it.
+    waiting_since: float | None = None
+
+
+_ids = count(1)
+
+
+@dataclass
+class _Row:
+    """What one box's last job is doing, as the client sees it."""
+
+    origin: Origin
+    sketch_path: str | None
+    state: str  # queued | waiting | flashing | done | failed
+    detail: str | None = None
+    job_id: int = 0
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "origin": self.origin,
+            "sketchPath": self.sketch_path,
+            "sketchName": sketch_name(self.sketch_path),
+            "state": self.state,
+            "detail": self.detail,
+        }
+
+
+@dataclass
+class _Build:
+    """One sketch folder's build, from its compile until its last upload."""
+
+    fingerprint: str
+    built: asyncio.Event = field(default_factory=asyncio.Event)
+    error: BaseException | None = None
+    users: int = 0
+    drained: asyncio.Event = field(default_factory=asyncio.Event)
+
+
+class SharedBuilds:
+    """The `BuildGate` every queued flash passes to `PortManager.flash`.
+
+    One compile at a time, rig-wide: two `arduino-cli` builds at once are
+    slower than one after the other on the lab machines. A flash that finds
+    its folder's build already live, at the same fingerprint, uploads from it
+    instead of compiling again, so a cold start's six restores compile once.
+    A build is live from its compile until the last upload reading it ends;
+    after that the next flash compiles afresh. The upload reads the folder's
+    build from `arduino-cli`'s build directory, so a compile of a folder whose
+    build is still being uploaded waits for those uploads to end.
+
+    One upload at a time, rig-wide, too: six `avrdude`s at once loaded a
+    marginal USB path until a box's verify failed
+    (`docs/adr/DECISIONS.md#0004-restores-share-one-compile-and-upload-in-turn`).
+    A flash waiting its turn keeps its build live, so the restores still
+    share one compile.
+    """
+
+    def __init__(self) -> None:
+        self._compiling = asyncio.Lock()
+        self._uploading = asyncio.Lock()
+        self._live: dict[str, _Build] = {}
+
+    @asynccontextmanager
+    async def gate(
+        self, sketch_dir: str, fingerprint: str, compile: Callable[[], Awaitable[None]]
+    ) -> AsyncIterator[None]:
+        key = os.path.normcase(os.path.normpath(sketch_dir))
+        while (live := self._live.get(key)) is not None and live.fingerprint != fingerprint:
+            await live.drained.wait()
+        compiles = live is None
+        if live is None:
+            live = self._live[key] = _Build(fingerprint)
+        live.users += 1
+        try:
+            if compiles:
+                try:
+                    async with self._compiling:
+                        await compile()
+                except BaseException as exc:
+                    # Whoever is waiting on this build fails with it; the next
+                    # flash of the folder compiles afresh.
+                    live.error = (
+                        exc if isinstance(exc, Exception)
+                        else FlashFailed("compile", "the build was abandoned")
+                    )
+                    self._retire(key, live)
+                    raise
+                finally:
+                    live.built.set()
+            else:
+                await live.built.wait()
+                if live.error is not None:
+                    raise live.error
+            async with self._uploading:
+                yield
+        finally:
+            live.users -= 1
+            if not live.users:
+                self._retire(key, live)
+
+    def _retire(self, key: str, live: _Build) -> None:
+        if self._live.get(key) is live:
+            del self._live[key]
+        live.drained.set()
+
+
+class FlashQueue:
+    def __init__(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        ports: PortManager,
+        discovery: Callable[[], Any],
+        broadcast: Callable[[dict[str, Any]], Awaitable[None]],
+        reading: Callable[[], AsyncContextManager[None]],
+        on_flashed: Callable[[int, str, Origin], None] = lambda *_a: None,
+        box_count: int = BOX_COUNT,
+    ) -> None:
+        self._loop = loop
+        self._ports = ports
+        self._discovery = discovery
+        self._broadcast = broadcast
+        #: The rig definition's read side (`TASKS.md#the-rig-definition`):
+        #: held from choosing the sketch until what it carries is recorded.
+        self._reading = reading
+        #: Told of every successful flash before anything can yield, so the
+        #: idle transition the flash just queued sees the result.
+        self._on_flashed = on_flashed
+        self._boxes = range(1, box_count + 1)
+        self._jobs: list[FlashJob] = []
+        #: The jobs under way, by box, and the task running each.
+        self._running: dict[int, tuple[FlashJob, asyncio.Task[None]]] = {}
+        self._builds = SharedBuilds()
+        self._rows: dict[int, _Row] = {}
+        self._worker: asyncio.Task[None] | None = None
+        self._wake = asyncio.Event()
+
+    # --- submitting -------------------------------------------------------
+
+    def submit(self, jobs: Iterable[FlashJob]) -> None:
+        """Queue jobs behind whatever is queued. Returns immediately.
+
+        A box already queued by the same origin keeps its place and takes the
+        newer job's terms: a second request is the same request, restated.
+        """
+        changed = False
+        for job in jobs:
+            queued = next(
+                (j for j in self._jobs if j.box == job.box and j.origin == job.origin), None
+            )
+            if queued is not None:
+                job.force = job.force or queued.force
+                self._jobs[self._jobs.index(queued)] = job
+            else:
+                self._jobs.append(job)
+            if job.origin != "baseline":
+                # A baseline job shows only once it decides to flash; most
+                # decide not to, and a row for each would bury the real ones.
+                self._rows[job.box] = _Row(job.origin, job.sketch_path, "queued", job_id=job.id)
+                changed = True
+        if changed:
+            self._publish_soon()
+        self._kick()
+
+    def cancel(
+        self,
+        origins: Iterable[Origin] = ("session", "debug"),
+        boxes: Iterable[int] | None = None,
+        *,
+        clear: bool = False,
+    ) -> None:
+        """Drop queued jobs. A flash already under way always finishes, however
+        many are: stopping an upload part-way leaves a board nobody can name.
+
+        `clear` also forgets these origins' rows, finished or in flight, for a
+        new mapping that starts clean: a flash of the old mapping that lands
+        afterwards then reports nothing.
+        """
+        origins = set(origins)
+        targets = set(boxes) if boxes is not None else set(self._boxes)
+        dropped = [j for j in self._jobs if j.origin in origins and j.box in targets]
+        if not dropped and not clear:
+            return
+        self._jobs = [j for j in self._jobs if j not in dropped]
+        for job in dropped:
+            row = self._rows.get(job.box)
+            if row is not None and row.job_id == job.id:
+                del self._rows[job.box]
+        if clear:
+            for box, row in list(self._rows.items()):
+                if box in targets and row.origin in origins:
+                    del self._rows[box]
+        self._publish_soon()
+
+    def port_changed(self, _box: int) -> None:
+        """A port moved; a job waiting on it may be able to run."""
+        self._wake.set()
+
+    @property
+    def idle(self) -> bool:
+        """Nothing queued and nothing flashing."""
+        return not self._jobs and not self._running and self._worker is None
+
+    async def stop(self) -> None:
+        if self._worker is not None:
+            self._worker.cancel()
+            self._worker = None
+        for _job, task in list(self._running.values()):
+            task.cancel()
+        self._running.clear()
+        self._jobs.clear()
+
+    # --- status -----------------------------------------------------------
+
+    def status(self) -> dict[str, Any]:
+        boxes = []
+        for box in self._boxes:
+            row = self._rows.get(box)
+            carried = self._ports.carried(box)
+            boxes.append(
+                {
+                    "box": box,
+                    "job": row.to_json() if row is not None else None,
+                    "carries": (
+                        {"path": carried.path, "name": sketch_name(carried.path)}
+                        if carried is not None
+                        else None
+                    ),
+                }
+            )
+        return {"boxes": boxes}
+
+    async def publish(self) -> None:
+        from ..protocol import Evt, event
+
+        await self._broadcast(event(Evt.FLASH_QUEUE, self.status()))
+
+    def _publish_soon(self) -> None:
+        # Never awaited inside the worker, so a baseline job's `prepare`
+        # decides on the port its flash then takes.
+        self._loop.create_task(self.publish())
+
+    # --- the worker -------------------------------------------------------
+
+    def _kick(self) -> None:
+        self._wake.set()
+        if self._jobs and self._worker is None:
+            self._worker = self._loop.create_task(self._run(), name="flash-queue")
+
+    async def _run(self) -> None:
+        try:
+            while self._jobs or self._running:
+                job = self._next_runnable()
+                if job is None:
+                    self._wake.clear()
+                    try:
+                        await asyncio.wait_for(self._wake.wait(), TICK_S)
+                    except asyncio.TimeoutError:
+                        pass
+                    continue
+                self._jobs.remove(job)
+                task = self._loop.create_task(self._run_one(job), name=f"flash-box{job.box}")
+                self._running[job.box] = (job, task)
+        finally:
+            self._worker = None
+
+    async def _run_one(self, job: FlashJob) -> None:
+        try:
+            await self._execute(job)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - one box must not stop the rest
+            log.exception("flash queue: box %d's job failed unexpectedly", job.box)
+        finally:
+            running = self._running.get(job.box)
+            if running is not None and running[0] is job:
+                del self._running[job.box]
+            self._wake.set()
+
+    def _next_runnable(self) -> FlashJob | None:
+        """The first job, in queue order, that can run now. Jobs that can
+        never run (no board, a faulted port, a wait that timed out) fail here.
+
+        A baseline job runs beside other baseline jobs, though their uploads
+        take turns (`SharedBuilds`). A session or Debug job
+        runs alone: it waits for the jobs under way, and once its port is free
+        nothing queued behind it starts first. A box's job under way finishes
+        before its next one starts, whatever their origins."""
+        if any(job.origin != "baseline" for job, _task in self._running.values()):
+            return None
+        for job in list(self._jobs):
+            if job.box in self._running:
+                continue
+            if job.origin == "baseline":
+                return job  # `prepare` decides, at the last moment
+            reason = self._blocked(job)
+            if reason is None:
+                return None if self._running else job
+            if reason[0] == "fail":
+                self._jobs.remove(job)
+                self._fail_row(job, reason[1])
+                continue
+            if job.waiting_since is None:
+                job.waiting_since = time.monotonic()
+            if time.monotonic() - job.waiting_since > PORT_WAIT_S:
+                self._jobs.remove(job)
+                self._fail_row(
+                    job, f"the port stayed {reason[1]} for three minutes — retry once it is free."
+                )
+            else:
+                self._set_row(job, "waiting", f"waiting for the port ({reason[1]})")
+        return None
+
+    def _blocked(self, job: FlashJob) -> tuple[str, str] | None:
+        try:
+            self._ports.resolve_address(job.box)
+        except (PortNotBound, BoardNotDetected) as exc:
+            return ("fail", str(exc))
+        state = self._ports.handler(job.box).state
+        if state is PortState.ERROR:
+            return ("fail", "the box is in an error state — acknowledge it, then retry the flash.")
+        if state in TAKES[job.origin]:
+            return None
+        return ("wait", state.value.lower())
+
+    async def _execute(self, job: FlashJob) -> None:
+        async with self._reading():
+            # From here to the flash taking the port nothing yields, so what
+            # `prepare` saw is what the flash meets. The flash's `from_` is
+            # what makes a wrong take impossible; this keeps it from happening.
+            path = job.prepare()
+            if path is None:
+                self._drop_row(job)
+                return
+            sketch = next(
+                (s for s in getattr(self._discovery(), "sketches", []) if s.path == path),
+                None,
+            )
+            if sketch is None:
+                error = LookupError(f"{sketch_name(path)} isn't in the sketch library any more.")
+                self._fail_row(job, str(error))
+                if job.finished is not None:
+                    job.finished(error)
+                return
+            self._rows[job.box] = _Row(job.origin, path, "flashing", job_id=job.id)
+            self._publish_soon()
+            try:
+                # Takes the port before its first await (`PortManager.flash`).
+                _state, resumed = await self._ports.flash(
+                    job.box,
+                    sketch.path,
+                    sketch.name,
+                    getattr(self._discovery(), "libraries_path", None),
+                    self._progress(job),
+                    suppress_passthrough_resume=job.origin != "debug",
+                    from_=TAKES[job.origin],
+                    build=self._builds.gate,
+                )
+            except TakeRefused as exc:
+                # The port was not taken and nothing was flashed. A restore
+                # refused a port someone holds, which is not a failed flash.
+                # A refusal after the take (landing) is a failure, below.
+                log.info("box %d: %s flash refused: %s", job.box, job.origin, exc)
+                if job.origin == "baseline":
+                    self._drop_row(job)
+                else:
+                    self._fail_row(job, str(exc))
+                if job.finished is not None:
+                    job.finished(exc)
+                return
+            except Exception as exc:  # noqa: BLE001 - compile, upload, port, missing cli
+                log.warning("box %d: %s flash of %s failed: %s", job.box, job.origin, sketch.name, exc)
+                self._fail_row(job, str(exc))
+                if job.finished is not None:
+                    job.finished(exc)
+                return
+            # Before anything yields: the idle transition this flash just
+            # queued must find the result already recorded.
+            self._on_flashed(job.box, sketch.path, job.origin)
+            if job.finished is not None:
+                job.finished(None)
+        detail = None
+        if job.origin == "debug" and job.baud is not None and not resumed:
+            try:
+                self._ports.open_passthrough(job.box, job.baud)
+                detail = "console open"
+            except Exception as exc:  # noqa: BLE001 - the flash itself landed
+                detail = f"flashed, but the console didn't open: {exc}"
+        self._set_row(job, "done", detail)
+
+    def _progress(self, job: FlashJob) -> Callable[[str, str, str], None]:
+        from ..protocol import Evt, event
+
+        def on_progress(phase: str, stream: str, text: str) -> None:
+            if job.origin == "baseline":
+                # A restore nobody asked to watch; `utility.updated` says enough.
+                log.debug("box %d baseline %s/%s: %s", job.box, phase, stream, text.rstrip())
+                return
+            self._loop.create_task(
+                self._broadcast(
+                    event(
+                        Evt.FLASH_PROGRESS,
+                        {"box": job.box, "phase": phase, "stream": stream, "text": text},
+                    )
+                )
+            )
+
+        return on_progress
+
+    # --- rows -------------------------------------------------------------
+
+    def _set_row(self, job: FlashJob, state: str, detail: str | None) -> None:
+        """Update this job's row. Never creates one: a row that is gone was
+        cleared or replaced, and a late outcome must not bring it back. A
+        baseline job that never flashed has none, and reports through the
+        utility instead."""
+        row = self._rows.get(job.box)
+        if row is None or row.job_id != job.id:
+            return
+        if (row.state, row.detail) == (state, detail):
+            return
+        row.state, row.detail = state, detail
+        self._publish_soon()
+
+    def _fail_row(self, job: FlashJob, detail: str) -> None:
+        self._set_row(job, "failed", detail)
+
+    def _drop_row(self, job: FlashJob) -> None:
+        row = self._rows.get(job.box)
+        if row is not None and row.job_id == job.id:
+            del self._rows[job.box]
+            self._publish_soon()
+
+
+def sketch_name(path: str | None) -> str | None:
+    """A sketch folder's name, from either separator: the sidecar runs on
+    Windows and is tested on POSIX. The folder name is the sketch name."""
+    if not path:
+        return None
+    return path.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1] or None

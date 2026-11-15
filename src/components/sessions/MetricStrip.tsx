@@ -1,0 +1,157 @@
+import { LINK_STROKE } from "@/components/chrome/constellationStyle";
+import { useMetricHistory } from "@/lib/sessions/context";
+import { liveScoring } from "@/lib/sessions/liveScoring";
+import type { TelemetryMetric } from "@/lib/sessions/types";
+
+/**
+ * Live rolling metrics for one box (`ANALYTICS.md#trials-hits-misses-and-exclusions`).
+ *
+ * A sketch with no Task Profile has no metrics to show — the doc's fallback is
+ * the raw strobe log, which Debug Mode already provides, so this says so rather
+ * than rendering an empty frame.
+ */
+export function MetricStrip({
+  box,
+  metrics,
+  labels,
+  note = liveScoring(null).note,
+  bare = false,
+  intervals,
+}: {
+  box: number;
+  metrics: TelemetryMetric[];
+  /**
+   * `liveMetrics` id → the profile's title for it (`metricLabels`).
+   *
+   * Telemetry carries the id and nothing else, so without this a row reads
+   * `p_correct_2` — a slot number, which names no condition. Absent (a sketch
+   * with no profile, or one still being fetched) the id is shown, because a row
+   * with a value and no title still says the box is scoring something.
+   */
+  labels?: Record<string, string>;
+  /**
+   * What the strip says while it has no value: `liveScoring(profile).note`, so
+   * a spine task reads that it is not scored live yet, not that its metrics
+   * are coming (`lib/sessions/liveScoring.ts`).
+   */
+  note?: string;
+  /**
+   * True inside a section that already provides its own chrome (`StarPanel`'s
+   * Live metrics card) — drops the tile-flow margin and divider the strip
+   * carries when it sits at the bottom of a `BoxCard`.
+   */
+  bare?: boolean;
+  /**
+   * Metric id → its 95% Wilson interval, when the sidecar sent one (a spine
+   * run's `session.replay`, `replayStrip`): every number travels with its
+   * sample size and its interval (`ANALYTICS.md#uncertainty`).
+   */
+  intervals?: Record<string, [number, number]>;
+}) {
+  if (metrics.length === 0) {
+    return (
+      <p className={`text-[11px] text-static ${bare ? "" : "mt-3"}`}>
+        {note}
+      </p>
+    );
+  }
+  return (
+    <div
+      className={`flex flex-col gap-2 ${bare ? "" : "mt-3 border-t border-halo pt-3"}`}
+    >
+      {metrics.map((metric) => (
+        <MetricRow
+          key={metric.id}
+          box={box}
+          metric={metric}
+          label={labels?.[metric.id] ?? metric.id}
+          interval={intervals?.[metric.id] ?? null}
+        />
+      ))}
+    </div>
+  );
+}
+
+function MetricRow({
+  box,
+  metric,
+  label,
+  interval,
+}: {
+  box: number;
+  metric: TelemetryMetric;
+  label: string;
+  interval: [number, number] | null;
+}) {
+  const history = useMetricHistory(box, metric.id);
+  /* Titled as well as truncated: the label is a full sentence
+     ("P(right well | orange → right)") and the strip is narrow, so the
+     hover is where the tail of it lives. */
+  const title = (
+    <span className="min-w-0 flex-1 truncate text-[11px] text-static" title={label}>
+      {label}
+    </span>
+  );
+  const figures = (
+    <>
+      <Sparkline history={history} />
+      <span className="w-[52px] text-right font-mono text-[12px] tabular-nums text-starlight">
+        {metric.value === null ? "—" : metric.value.toFixed(2)}
+      </span>
+      <span className="w-[42px] text-right font-mono text-[10px] tabular-nums text-static">
+        n={metric.n}
+      </span>
+    </>
+  );
+  if (!interval) {
+    return (
+      <div className="flex items-center gap-3">
+        {title}
+        {figures}
+      </div>
+    );
+  }
+  // With an interval the row has no room left for its label, so the label
+  // takes a line of its own above the figures.
+  return (
+    <div className="flex flex-col gap-0.5">
+      {title}
+      <div className="flex items-center justify-end gap-3">
+        {figures}
+        <span
+          className="w-[64px] text-right font-mono text-[10px] tabular-nums text-static"
+          title="95% Wilson interval"
+        >
+          {interval[0].toFixed(2)}–{interval[1].toFixed(2)}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The rolling value over time. Deliberately axis-less at this size — it answers
+ * "which way is this animal trending"; the number beside it answers "where is
+ * it now". The 0–1 range is fixed, so height is comparable across boxes.
+ */
+function Sparkline({ history }: { history: number[] }) {
+  if (history.length < 2) return <span className="w-[90px]" />;
+
+  const step = 100 / (history.length - 1);
+  const points = history
+    .map((value, index) => `${(index * step).toFixed(2)},${((1 - value) * 30).toFixed(2)}`)
+    .join(" ");
+
+  return (
+    <svg viewBox="0 0 100 30" width={90} height={22} preserveAspectRatio="none" aria-hidden>
+      <polyline
+        points={points}
+        fill="none"
+        stroke={LINK_STROKE}
+        strokeWidth={1.5}
+        strokeLinejoin="round"
+        vectorEffect="non-scaling-stroke"
+      />
+    </svg>
+  );
+}

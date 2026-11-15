@@ -1,0 +1,175 @@
+# Every push to main: run the same suites a maintainer runs by hand (README "Commands").
+# Nothing here touches hardware; the tests that need arduino-cli, RHX or the lab's
+# probe maps skip themselves when those are absent.
+
+name: Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read # checkout only; no job writes
+
+# A newer push to the same branch makes an older run's answer irrelevant.
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+# A cache restore GitHub won't serve (an account egress limit, an outage) waits
+# out the cache library's 10-minute download timeout before the job goes on
+# uncached. Every cache here rebuilds in well under a minute, so give up sooner.
+env:
+  SEGMENT_DOWNLOAD_TIMEOUT_MINS: 1
+
+jobs:
+  frontend:
+    name: Protocol, typecheck, vitest
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: npm ci
+      - run: npm run check
+
+  sidecar:
+    name: Sidecar (${{ matrix.os }})
+    # Windows is what the lab runs; Linux catches anything that only worked by
+    # accident of Windows paths.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    # Windows takes about five minutes; a hang should fail, not hold the PR for
+    # GitHub's six-hour default.
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: sidecar/pyproject.toml
+      # The suite is file-heavy (databases, session files, relocates), and the
+      # runner's C: drive makes every file operation slow. A Dev Drive took a
+      # third off the Windows suite; pytest's temp folder goes on it below.
+      - if: runner.os == 'Windows'
+        uses: samypr100/setup-dev-drive@v3
+        with:
+          drive-size: 4GB
+      - run: pip install -e "sidecar[dev]"
+      # One worker per hosted-runner vCPU; worksteal keeps the slow RHX and
+      # utility tests from piling onto one worker. --durations shows what
+      # Windows in particular is slow at.
+      - shell: bash
+        run: python -m pytest -n 4 --dist worksteal --durations=25 -m "not load" ${DEV_DRIVE:+--basetemp="$DEV_DRIVE/pytest"}
+        working-directory: sidecar
+      # The load test times fsyncs, so it runs alone: beside the parallel suite,
+      # other workers' file traffic stalls an fsync by up to a few hundred ms
+      # whether live scoring is on or not.
+      - shell: bash
+        run: python -m pytest -m load -p no:xdist ${DEV_DRIVE:+--basetemp="$DEV_DRIVE/pytest-load"}
+        working-directory: sidecar
+
+  firmware:
+    name: Firmware host tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - run: sh firmware/libraries/BehaviorBox/extras/host_test/run.sh
+      - run: sh firmware/libraries/BehaviorBox/extras/host_test/run_box.sh
+      - run: sh firmware/libraries/BehaviorBox/extras/host_test/run_stream.sh
+      - run: sh firmware/libraries/BehaviorBox/extras/host_test/run_interp.sh
+      - run: sh firmware/libraries/BehaviorBox/extras/host_test/run_spine.sh
+      # The C interpreter core against the Python replay (docs/adr/0003).
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: sh firmware/libraries/BehaviorBox/extras/host_test/run_diff.sh
+
+  # The host tests are the strict type check; this is the real AVR build. The
+  # sketches only compile from a folder the app generated, so generate them the
+  # way a startup does (taskdef/bundled.py) against the default rig, then build
+  # each with --warnings all (firmware/README.md "Building and testing").
+  firmware-compile:
+    name: Firmware compile
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: sidecar/pyproject.toml
+      - uses: arduino/setup-arduino-cli@v2
+      - run: arduino-cli core update-index && arduino-cli core install arduino:avr
+      - run: pip install -e "sidecar[dev]"
+      # A spine task's RAM budget (docs/TASKS.md#spine-diagnostics) is counted
+      # at the AVR sizes of the runner's rows; these compile generated tasks for
+      # the Mega and hold the count to the build. This is the one job with
+      # arduino-cli, so here they must run, never skip.
+      - name: Pin a spine task's RAM count to the AVR build
+        working-directory: sidecar
+        env:
+          REQUIRE_ARDUINO_CLI: "1"
+        run: >-
+          python -m pytest -p no:cacheprovider
+          "tests/test_spine_task.py::test_the_ram_budget_is_what_an_avr_build_adds_for_the_task"
+          "tests/test_spine_task.py::test_the_row_sizes_are_boxinterp_hs_structs_as_avr_packs_them"
+      - name: Generate the bundled sketches
+        run: python -c "import sys, pathlib; from ephymeris_sidecar.taskdef.bundled import repin_all; n = repin_all(pathlib.Path(sys.argv[1])); print(n, 'sketches'); sys.exit(n == 0)" "$RUNNER_TEMP/sketches"
+      # A saved spine task has no bundled sketch of its own: its folder is the
+      # library's BoxSpine.h plus generated headers. Save the tasks the tests
+      # use (the tracer, a progressive ratio, a held trial with every early
+      # exit, a reversal and a looping bandit), on a rig whose edges have codes,
+      # and build those folders too; and
+      # the task that drives PWM, a tone and a pulse train, on a rig that has
+      # them, with that rig's box utility.
+      - name: Generate spine tasks
+        working-directory: sidecar
+        run: python -c "import sys, pathlib; from tests.fixtures import spine; from ephymeris_sidecar.taskdef.model import TaskDefinition; from ephymeris_sidecar.taskdef.store import TaskStore; spine.install(); store = TaskStore(pathlib.Path(sys.argv[1]), library_root=pathlib.Path('../firmware')); problems = [p for make in (spine.tracer, spine.progressive_ratio, spine.held_trial, spine.reversal, spine.bandit) for p in store.save(TaskDefinition.from_json(make()))]; print(problems); sys.exit(1 if problems else 0)" "$RUNNER_TEMP/spine"
+      - name: Generate a spine task with driven outputs
+        working-directory: sidecar
+        run: python -c "import sys, pathlib; from tests.fixtures import spine; from ephymeris_sidecar.taskdef.bundled import repin_all; from ephymeris_sidecar.taskdef.model import TaskDefinition; from ephymeris_sidecar.taskdef.store import TaskStore; spine.install(*spine.issued_rig(driven=True)); problems = TaskStore(pathlib.Path(sys.argv[1]), library_root=pathlib.Path('../firmware')).save(TaskDefinition.from_json(spine.stimulus())); print(problems); repin_all(pathlib.Path(sys.argv[2])); sys.exit(1 if problems else 0)" "$RUNNER_TEMP/spine" "$RUNNER_TEMP/driven"
+      - name: Compile each for the Mega 2560
+        shell: bash
+        run: |
+          shopt -s nullglob
+          for sketch in "$RUNNER_TEMP"/sketches/*/*/ "$RUNNER_TEMP"/spine/tasks/*/*/ "$RUNNER_TEMP"/driven/Utility/*/; do
+            echo "::group::$sketch"
+            arduino-cli compile --fqbn arduino:avr:mega --warnings all \
+              --libraries firmware/libraries "$sketch"
+            echo "::endgroup::"
+          done
+
+  shell:
+    name: Tauri shell
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      # Stable Rust ships with the runner image; installing it again is one more
+      # download that can fail. Cargo.toml's rust-version is far behind it.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      # The shell embeds ../dist at compile time, so the frontend must exist first.
+      - run: npm ci
+      - run: npm run build
+      - run: cargo test
+        working-directory: src-tauri

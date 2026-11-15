@@ -1,0 +1,77 @@
+[project]
+name = "ephymeris-sidecar"
+version = "0.1.0"
+description = "Ephymeris backend sidecar — owns serial I/O, arduino-cli, storage, and analytics"
+requires-python = ">=3.12"
+dependencies = [
+    "pyserial>=3.5",
+    "websockets>=14",
+    # Every entry below the first two is admitted and fenced under
+    # ARCHITECTURE.md#dependency-policy.
+    #
+    # The arduino-cli gRPC daemon client (ARCHITECTURE.md#flashing): the
+    # subprocess backend remains as a fallback, so a failed grpcio install
+    # degrades flashing to the old path, never breaks it.
+    "grpcio>=1.60",
+    "protobuf>=5",
+    # Validation for the two operator-authored documents: the rig wiring
+    # (hardware/store.py) and a task profile. A weaker fence than grpcio's —
+    # grpcio has the subprocess backend behind it, so a failed wheel degrades
+    # flashing rather than removing it, and there is no second validator to
+    # fall back to. So the
+    # fence is around SCOPE instead: every import of it is inside the function
+    # that needs it, a failure disables the wiring and profile editors, and
+    # flashing, the session flow and everything already saved keep working.
+    # jsonschema drags the native rpds-py, which is the part that can actually
+    # fail to install; a packaged build resolves it once and freezes the result,
+    # so lab machines never run pip for it.
+    "jsonschema>=4.20",
+    # The .mat mirror (sessions/matwriter.py, DATA.md#the-mat-mirror), in place
+    # of a hand-written MAT-5 writer. Imported only there and preloaded at
+    # startup off the session path; a failure costs the .mat, never the .tsv
+    # or .json beside it.
+    "scipy>=1.14",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    # CI runs the suite across workers (`-n`); a plain `pytest` stays serial.
+    "pytest-xdist>=3",
+    # Codegen for the vendored arduino-cli protos (scripts/gen_grpc.py).
+    # Build-time only: the generated stubs are committed, like the wire mirrors.
+    "grpcio-tools>=1.60",
+    # `package` rides along with dev rather than standing apart: a dev venv that
+    # can't run `npm run package` looks identical to one that can until the build
+    # fails, and rebuilding a venv from the documented `.[dev]` line was silently
+    # dropping PyInstaller. Declared once, below, so the pin can't drift.
+    "ephymeris-sidecar[package]",
+]
+# Only needed to build a shipped installer.
+package = [
+    "pyinstaller>=6",
+]
+
+[project.scripts]
+ephymeris-sidecar = "ephymeris_sidecar.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["ephymeris_sidecar*"]
+
+# The registries. `rig/paths.py` resolves both directories package-relative and
+# treats them as present in every install, so a wheel that dropped them would
+# import cleanly and then be unable to name a single pin or strobe.
+[tool.setuptools.package-data]
+"ephymeris_sidecar.rig" = ["schema/*.json", "hardware/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "load: times writes against each other, so CI runs it alone, after the parallel suite",
+]

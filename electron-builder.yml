@@ -1,0 +1,60 @@
+# The Electron shell's Windows installer (ADR 0006, `ARCHITECTURE.md#the-electron-shell`).
+# Built by `npm run package:electron`; the version is package.json's, which a CI
+# build overrides with `-c.extraMetadata.version=<version>`.
+
+appId: edu.hartlab.ephymeris
+productName: Ephymeris
+copyright: Hart Lab
+
+directories:
+  output: release
+  buildResources: build
+
+# The app itself, in app.asar. The webview's libraries are already bundled into
+# dist/ by Vite, which is why package.json's `dependencies` holds only what the
+# main process loads (electron-updater).
+files:
+  - package.json
+  - dist/**/*
+  - dist-electron/**/*
+  - "!**/*.map"
+
+# Beside app.asar under resources/, where `electron/launch.ts` finds them through
+# `process.resourcesPath`. Staged by scripts/package-resources.mjs.
+extraResources:
+  - from: build/resources/sidecar
+    to: sidecar
+  - from: build/resources/arduino
+    to: arduino
+  - from: build/resources/sketches
+    to: sketches
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: src-tauri/icons/icon.ico
+  artifactName: "${productName}-${version}-setup.${ext}"
+
+# Per user, no questions: the same install Tauri's passive NSIS did. App data
+# (`%APPDATA%\edu.hartlab.ephymeris`) is never the installer's to touch.
+nsis:
+  oneClick: true
+  perMachine: false
+  deleteAppDataOnUninstall: false
+  shortcutName: Ephymeris
+  uninstallDisplayName: Ephymeris
+  # Removes the Tauri shell's copy before installing (ADR 0006's crossover).
+  include: electron/installer.nsh
+
+# The update feed (`electron/updater.ts`), baked into every copy as
+# resources/app-update.yml. `latest.yml` is written to the `updates` branch by
+# publish-update.yml; nothing is ever published from here (`--publish never`).
+publish:
+  provider: generic
+  url: https://raw.githubusercontent.com/Chase-NJ/Ephymeris/updates
+  channel: latest
+
+# Every build is a prerelease (1.1.3-alpha.214); keep the feed `latest.yml`
+# rather than `alpha.yml`.
+detectUpdateChannel: false

@@ -1,0 +1,25 @@
+# Line-ending normalization for cross-platform development (macOS <-> Windows 11).
+#
+# Text files are stored as LF in the repo AND checked out as LF on every
+# platform, Windows included. This keeps diffs free of CRLF/LF noise and shell
+# scripts executable. `text=auto` still detects binaries and leaves them alone;
+# the explicit rules below make the app's image/icon/font assets doubly safe.
+
+* text=auto eol=lf
+
+# Scripts: always LF, never CRLF.
+*.sh text eol=lf
+
+# Binary assets — never line-ending-convert or attempt to diff.
+*.png   binary
+*.ico   binary
+*.icns  binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.webp  binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.otf   binary
+*.pdf   binary

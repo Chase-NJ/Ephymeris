@@ -1,0 +1,520 @@
+"""The hardware utility baseline — `ARCHITECTURE.md#hardware-utility-baseline`.
+
+Exercised against the real `PortManager` and a fake board tool, because the
+rules that matter here are all about the port state machine: which states a
+restore may take, what a failed flash leaves behind, and who owns a console.
+A mock port manager would let every one of those through.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from contextlib import nullcontext
+from pathlib import Path
+
+import pytest
+
+from ephymeris_sidecar.boards.tool import BoardTool, DetectedBoard, FlashFailed
+from ephymeris_sidecar.hardware.store import HardwareStore
+from ephymeris_sidecar.ports.flashing import FlashQueue
+from ephymeris_sidecar.ports.manager import FQBN, PortManager
+from ephymeris_sidecar.ports.states import PortState
+from ephymeris_sidecar.rig import registry
+from ephymeris_sidecar.rig.definition import RigDefinition, WiringNotLoaded
+from ephymeris_sidecar.settings import SidecarSettings
+from ephymeris_sidecar.strobes.store import VocabularyStore
+from ephymeris_sidecar.taskdef.store import TaskStore
+from ephymeris_sidecar.tasks.profile import (
+    Identify,
+    TaskProfile,
+    Telemetry,
+    parse_profile,
+    TaskProfileError,
+)
+from ephymeris_sidecar.utility import UtilityBaseline, UtilityUnavailable
+
+from .scripted_board import Boards, ScriptedBoard
+
+HWID = "TESTBOARD01"
+ADDRESS = "/dev/cu.faketest"
+UTILITY_PATH = "/sk/Utility/BOX_Utility"
+TASK_PATH = "/sk/Behavior/GRGL"
+
+
+# --- fakes ------------------------------------------------------------------
+
+
+class FakeTool(BoardTool):
+    def __init__(self) -> None:
+        self.uploads: list[str] = []
+        self.fail: FlashFailed | None = None
+        #: What the board list reports, by hardware id. Remove one to unplug it.
+        self.boards = {HWID: DetectedBoard(hardware_id=HWID, address=ADDRESS, fqbn=FQBN)}
+
+    async def list_boards(self) -> list[DetectedBoard]:
+        return list(self.boards.values())
+
+    async def compile(self, sketch_dir, fqbn, libraries_path, on_line) -> None:  # noqa: ANN001
+        if self.fail:
+            raise self.fail
+
+    async def upload(self, sketch_dir, fqbn, address, on_line) -> None:  # noqa: ANN001
+        self.uploads.append(sketch_dir)
+
+
+class UtilityBoard(ScriptedBoard):
+    """BOX_Utility: greets when its port opens and answers every command with a
+    STATUS line. A board that never answers (a baud mismatch) is a plain
+    `ScriptedBoard`."""
+
+    def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+        super().__init__(*args, **kwargs)
+        self.say("BOX Utility ready.\n")
+
+    def write(self, data: bytes) -> int:
+        self.say("STATUS mode=idle light=1\n")
+        return super().write(data)
+
+
+class FakeSketch:
+    def __init__(self, path: str, name: str) -> None:
+        self.path = path
+        self.name = name
+        self.decode_only = False
+
+
+class FakeDiscovery:
+    libraries_path = "/sk/libraries"
+    sketches = [
+        FakeSketch(UTILITY_PATH, "BOX_Utility"),
+        FakeSketch(TASK_PATH, "GRGL"),
+    ]
+
+
+UTILITY_PROFILE = TaskProfile(
+    task_name="Box Utility",
+    kind="utility",
+    identify=Identify(on="ON LIGHT", off="OFF LIGHT"),
+    telemetry=Telemetry(match="STATUS", fields=[]),
+)
+
+
+async def _noop_output(_box, _lines):  # noqa: ANN001
+    pass
+
+
+async def _noop_presence(_boards):  # noqa: ANN001
+    pass
+
+
+async def make_baseline(
+    profile: TaskProfile | None = UTILITY_PROFILE,
+    sketch_path: str | None = UTILITY_PATH,
+    reading=nullcontext,  # noqa: ANN001
+    wiring_problem=lambda: None,  # noqa: ANN001
+) -> tuple[UtilityBaseline, PortManager, FakeTool, list[dict]]:
+    tool = FakeTool()
+    boards = Boards(UtilityBoard)
+    manager = PortManager(
+        loop=asyncio.get_event_loop(),
+        tool=tool,
+        on_state_change=lambda *_a: None,
+        on_output=_noop_output,
+        on_presence=_noop_presence,
+        open_serial=boards,
+    )
+    settings = SidecarSettings.from_payload(
+        {
+            "defaultBaud": 9600,
+            "boxes": [{"box": 1, "hardwareId": HWID}],
+        }
+    )
+    manager.update_settings(settings)
+    await manager.poll_once()
+
+    events: list[dict] = []
+
+    async def broadcast(message: dict) -> None:
+        events.append(message)
+
+    flashes = FlashQueue(
+        loop=asyncio.get_event_loop(),
+        ports=manager,
+        discovery=FakeDiscovery,
+        broadcast=broadcast,
+        reading=reading,
+    )
+    baseline = UtilityBaseline(
+        loop=asyncio.get_event_loop(),
+        ports=manager,
+        discovery=FakeDiscovery,
+        broadcast=broadcast,
+        load_profile=lambda _path: profile,
+        # The fakes have no folders to read an `.ino` from; name the utility
+        # the way the real predicate would find it.
+        is_utility=lambda sketch: sketch_path is not None and sketch.path == sketch_path,
+        flashes=flashes,
+        wiring_problem=wiring_problem,
+    )
+    baseline.update_settings(settings)
+    #: The queue this test built for it, which `settle` waits on.
+    baseline.flash_queue = flashes
+    #: Every port its manager opened.
+    baseline.boards = boards
+    return baseline, manager, tool, events
+
+
+async def settle(baseline: UtilityBaseline) -> None:
+    """Let the flash queue the baseline restores through run dry."""
+    for _ in range(400):
+        await asyncio.sleep(0.01)
+        if baseline.flash_queue.idle:
+            return
+    raise AssertionError("the flash queue never finished")
+
+
+@pytest.fixture
+def rig_definition(tmp_path: Path):
+    """A real rig definition over empty stores: the lock a write takes."""
+    vocabulary = VocabularyStore(tmp_path)
+    vocabulary.ensure_seeded()
+    definition = RigDefinition(
+        hardware=HardwareStore(tmp_path),
+        vocabulary=vocabulary,
+        tasks=TaskStore(tmp_path),
+        repin=lambda: 0,
+        in_use=lambda: False,
+        rescan=_nothing,
+        after_rebuild=_nothing,
+        broadcast=_nothing,
+    )
+    yield definition
+    # It pointed the process-wide registry at these stores.
+    registry.set_rig_source(None)
+    registry.set_vocabulary_source(None)
+
+
+async def _nothing(*_args) -> None:  # noqa: ANN002
+    return None
+
+
+def box_state(baseline: UtilityBaseline, box: int = 1) -> dict:
+    return next(b for b in baseline.status()["boxes"] if b["box"] == box)
+
+
+# --- restores ---------------------------------------------------------------
+
+
+async def test_restores_an_idle_box_once() -> None:
+    baseline, manager, tool, _ = await make_baseline()
+
+    baseline.ensure()
+    await settle(baseline)
+
+    assert tool.uploads == [UTILITY_PATH]
+    assert manager.handler(1).state is PortState.IDLE
+    assert box_state(baseline)["state"] == "ready"
+
+    # A box already believed to be at baseline is not reflashed — this is what
+    # keeps the idle-transition hook from turning into a flash loop.
+    baseline.ensure()
+    await settle(baseline)
+    assert tool.uploads == [UTILITY_PATH]
+
+
+async def test_a_rig_definition_write_waits_for_a_restore_then_gets_its_own(rig_definition) -> None:  # noqa: ANN001
+    """A write that rebuilt the utility while it was being flashed would have
+    `rebuilt()` undone by the restore recording what it flashed: the box would
+    read ready on the old build. The queue holding the read side for the whole
+    restore makes the write wait, and its `rebuilt()` restores the box again."""
+    baseline, _manager, tool, _ = await make_baseline(reading=rig_definition.reading)
+    uploading = asyncio.Event()
+    release = asyncio.Event()
+    upload = tool.upload
+
+    async def slow_upload(*args):
+        uploading.set()
+        await release.wait()
+        await upload(*args)
+
+    tool.upload = slow_upload
+    baseline.ensure()
+    await asyncio.wait_for(uploading.wait(), 5)
+
+    async def write() -> None:
+        async with rig_definition.writing():
+            baseline.rebuilt()
+
+    rebuild = asyncio.create_task(write())
+    await asyncio.sleep(0.05)
+    assert not rebuild.done(), "the write rebuilt the folder under a restore's compile"
+
+    release.set()
+    await rebuild
+    await settle(baseline)
+    assert tool.uploads == [UTILITY_PATH, UTILITY_PATH]
+    assert box_state(baseline)["state"] == "ready"
+
+
+async def test_unloaded_wiring_holds_every_restore_and_identify() -> None:
+    """The utility built meanwhile is on the SHIPPED pins: its setup drives
+    every listed output, and identify lights whatever the shipped cue pin is
+    (`ARCHITECTURE.md#hardware-utility-baseline`)."""
+    problem: dict[str, str | None] = {"now": "wiring.json did not load: it will not parse."}
+    baseline, _manager, tool, _ = await make_baseline(wiring_problem=lambda: problem["now"])
+
+    baseline.ensure(force=True)
+    await settle(baseline)
+    assert tool.uploads == []
+    assert box_state(baseline)["state"] == "held"
+    assert "did not load" in box_state(baseline)["detail"]
+    with pytest.raises(WiringNotLoaded):
+        await baseline.identify(1, True)
+
+    problem["now"] = None
+    baseline.ensure()
+    await settle(baseline)
+    assert tool.uploads == [UTILITY_PATH]
+
+
+async def test_force_reflashes_a_ready_box() -> None:
+    baseline, _manager, tool, _ = await make_baseline()
+    baseline.ensure()
+    await settle(baseline)
+
+    baseline.ensure(force=True)
+    await settle(baseline)
+
+    assert tool.uploads == [UTILITY_PATH, UTILITY_PATH]
+
+
+async def test_never_takes_a_port_someone_else_owns() -> None:
+    """`ARCHITECTURE.md#three-rules-it-never-breaks` — a console the user opened is not a restore opportunity."""
+    baseline, manager, tool, _ = await make_baseline()
+    manager.open_passthrough(1)
+
+    baseline.ensure()
+    await settle(baseline)
+
+    assert tool.uploads == []
+    assert manager.handler(1).state is PortState.PASSTHROUGH
+    assert box_state(baseline)["state"] == "busy"
+
+
+async def test_hold_suspends_restores_until_released() -> None:
+    """The session window: restoring here would erase the task sketch."""
+    baseline, _manager, tool, _ = await make_baseline()
+    baseline.hold()
+
+    baseline.ensure()
+    await settle(baseline)
+    assert tool.uploads == []
+    assert baseline.status()["held"] is True
+
+    baseline.release()
+    baseline.ensure()
+    await settle(baseline)
+    assert tool.uploads == [UTILITY_PATH]
+
+
+async def test_a_session_flash_invalidates_the_belief() -> None:
+    baseline, manager, tool, _ = await make_baseline()
+    baseline.ensure()
+    await settle(baseline)
+
+    # As a session flash does it: the flash records what the board carries,
+    # then the baseline hears of it.
+    await manager.flash(1, TASK_PATH, "GRGL", None, lambda *a: None,
+                        suppress_passthrough_resume=True)
+    baseline.note_flashed(1, TASK_PATH)
+    assert box_state(baseline)["state"] == "unknown"
+
+    baseline.ensure()
+    await settle(baseline)
+    assert tool.uploads == [UTILITY_PATH, TASK_PATH, UTILITY_PATH]
+
+
+async def test_a_failed_restore_clears_the_error_and_stops_retrying() -> None:
+    """A background action must not leave the rig needing manual clearing."""
+    baseline, manager, tool, _ = await make_baseline()
+    tool.fail = FlashFailed("compile", "compile failed", detail="avr-g++: error")
+
+    baseline.ensure()
+    await settle(baseline)
+
+    state = box_state(baseline)
+    assert state["state"] == "failed"
+    assert "compile failed" in (state["detail"] or "")
+    # Not ERROR: the operator never asked for this flash, so they are not left
+    # with an acknowledgement to make before the box can be used.
+    assert manager.handler(1).state is PortState.IDLE
+
+    # Sticky — otherwise the ERROR→IDLE transition above would trigger another
+    # doomed attempt, forever.
+    tool.fail = None
+    baseline.ensure()
+    await settle(baseline)
+    assert tool.uploads == []
+
+
+async def test_a_vanished_board_drops_the_belief() -> None:
+    baseline, manager, tool, _ = await make_baseline()
+    baseline.ensure()
+    await settle(baseline)
+
+    # As the presence poll does it: the manager notices, then the baseline.
+    board = tool.boards.pop(HWID)  # unplugged
+    await manager.poll_once()
+    baseline.note_presence([])
+    assert box_state(baseline)["state"] == "unavailable"
+
+    tool.boards[HWID] = board  # plugged back in
+    await manager.poll_once()
+    baseline.note_presence([HWID])
+    baseline.ensure()
+    await settle(baseline)
+    # The board that came back may not be the one that left.
+    assert tool.uploads == [UTILITY_PATH, UTILITY_PATH]
+
+
+# --- resolution -------------------------------------------------------------
+
+
+async def test_a_non_utility_sketch_is_refused_with_a_reason() -> None:
+    behavior = TaskProfile(task_name="GRGL", kind="behavior")
+    baseline, _manager, tool, _ = await make_baseline(profile=behavior)
+
+    baseline.ensure()
+    await settle(baseline)
+
+    assert tool.uploads == []
+    assert "must declare" in (baseline.status()["message"] or "")
+
+
+async def test_a_library_without_a_box_utility_says_so() -> None:
+    """The utility is generated and found, never chosen — so its absence is a
+    damaged install worth a sentence, and nothing is flashed."""
+    baseline, _manager, tool, _ = await make_baseline(profile=None, sketch_path=None)
+    baseline.ensure()
+    await settle(baseline)
+    status = baseline.status()
+    assert status["configured"] is False
+    assert "no box utility" in (status["message"] or "")
+    assert status["canIdentify"] is False
+    assert tool.uploads == []
+
+
+async def test_a_rebuilt_utility_is_restored_to_every_box_that_carried_the_old_one() -> None:
+    """A rewiring rebuilds the utility; every box still carries the old build
+    (old pins, old channel names), so believing it current would be wrong."""
+    baseline, _manager, tool, _ = await make_baseline()
+    baseline.ensure()
+    await settle(baseline)
+    assert tool.uploads == [UTILITY_PATH]
+
+    baseline.rebuilt()
+    await settle(baseline)
+    assert tool.uploads == [UTILITY_PATH, UTILITY_PATH]
+
+
+# --- identify ---------------------------------------------------------------
+
+
+async def test_identify_lights_a_baseline_box_and_puts_it_out() -> None:
+    baseline, manager, _tool, _ = await make_baseline()
+    baseline.ensure()
+    await settle(baseline)
+
+    delivered, state = await baseline.identify(1, True)
+    assert delivered is True
+    assert state["identifying"] is True
+    assert manager.handler(1).state is PortState.PASSTHROUGH
+    assert baseline.boards.latest.sent() == ["ON LIGHT"]
+
+    delivered, state = await baseline.identify(1, False)
+    assert delivered is True
+    assert state["identifying"] is False
+    # We opened the console, so we close it again.
+    assert manager.handler(1).state is PortState.IDLE
+
+
+async def test_identify_leaves_a_users_console_open() -> None:
+    baseline, manager, _tool, _ = await make_baseline()
+    baseline.ensure()
+    await settle(baseline)
+    manager.open_passthrough(1)
+
+    await baseline.identify(1, True)
+    await baseline.identify(1, False)
+
+    assert manager.handler(1).state is PortState.PASSTHROUGH
+    assert baseline.boards.latest.sent() == ["ON LIGHT", "OFF LIGHT"]
+
+
+async def test_identify_reports_a_silent_board_rather_than_claiming_success() -> None:
+    """The baud-mismatch case — sent into the void must not read as delivered."""
+    baseline, _manager, _tool, _ = await make_baseline()
+    baseline.ensure()
+    await settle(baseline)
+    baseline.boards.board = ScriptedBoard
+
+    delivered, state = await baseline.identify(1, True)
+
+    assert delivered is False
+    assert "baud" in (state["detail"] or "")
+
+
+async def test_identify_declines_a_box_not_at_baseline() -> None:
+    baseline, _manager, _tool, _ = await make_baseline()
+
+    delivered, _state = await baseline.identify(1, True)
+
+    assert delivered is False
+
+
+async def test_identify_without_an_identify_pair_is_a_typed_refusal() -> None:
+    plain = TaskProfile(task_name="Box Utility", kind="utility")
+    baseline, _manager, _tool, _ = await make_baseline(profile=plain)
+
+    with pytest.raises(UtilityUnavailable):
+        await baseline.identify(1, True)
+
+
+async def test_stop_extinguishes_everything() -> None:
+    baseline, manager, _tool, _ = await make_baseline()
+    baseline.ensure()
+    await settle(baseline)
+    await baseline.identify(1, True)
+
+    await baseline.stop()
+
+    assert baseline.boards.latest.sent()[-1] == "OFF LIGHT"
+    assert manager.handler(1).state is PortState.IDLE
+
+
+# --- the profile field ------------------------------------------------------
+
+
+def test_identify_parses_from_task_json() -> None:
+    profile = parse_profile(
+        {
+            "taskName": "Box Utility",
+            "kind": "utility",
+            "identify": {"on": "ON LIGHT", "off": "OFF LIGHT"},
+        }
+    )
+    assert profile.identify == Identify(on="ON LIGHT", off="OFF LIGHT")
+    assert profile.to_json()["identify"] == {"on": "ON LIGHT", "off": "OFF LIGHT"}
+
+
+def test_a_half_declared_identify_is_malformed() -> None:
+    """A box that can be lit but not unlit would announce itself forever."""
+    with pytest.raises(TaskProfileError):
+        parse_profile(
+            {"taskName": "Box Utility", "kind": "utility", "identify": {"on": "ON LIGHT"}}
+        )
+
+
+def test_no_identify_block_is_the_normal_case() -> None:
+    assert parse_profile({"taskName": "GRGL"}).identify is None
+    assert "identify" not in parse_profile({"taskName": "GRGL"}).to_json()

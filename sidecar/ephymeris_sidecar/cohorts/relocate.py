@@ -1,0 +1,736 @@
+"""Moving a cohort's data folder, records and all — `DATA.md#data-folder`.
+
+Run records, recovered runs and session records store **absolute** paths. A
+"move existing contents" relocate that moved the files and only repointed the
+cohort left every one of those paths at the old place — and the next Rescan,
+finding the files gone and the storage reachable, pruned the records
+(`DATA.md#pruning`), losing the box, stop reason and parameters that only a
+recorded run carries.
+
+So the paths move with the files, in the order that makes it safe:
+
+* **Same volume** — one atomic `rename` of the folder, journalled first; the
+  records follow in one transaction. A crash between the two is rolled forward
+  at the next start: the folder is demonstrably at the target, so the records
+  are what's behind.
+* **Another volume** — a verified copy (`transfer`, the animal move's too),
+  commit the records, then delete the originals. A crash while copying is
+  undone, after the commit finished, each by the first start that can reach
+  both folders.
+
+Neither starts while a session of the cohort is open, and the copy checks
+again at commit: a session recorded while it ran has its files at the old
+place, so its records must not move. A rename is over before anyone could set
+one up, and `moving` lets `sessions.create` refuse meanwhile.
+
+Either way the cache and adoption rows carry their freshness keys to the
+moved files (`freshness.carry`): a copy's mtime is rounded on a coarser
+volume, and a key left at the original's would send every recovered run back
+to being matched by name.
+
+And for cohorts relocated before this existed, `rehome` re-points records left
+at an old folder to the files now under the cohort's — run by Rescan before it
+prunes, so the repair happens instead of the loss.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import uuid
+from collections import Counter
+from datetime import datetime, timezone
+from pathlib import Path
+from stat import S_ISDIR
+from typing import Callable
+
+from . import folders, freshness, transfer
+from .db import Database, Query, Tx
+from .folders import DataFolderError, relative_below, resolved
+from .models import CohortNotFound
+from .repository import CohortRepository
+
+log = logging.getLogger(__name__)
+
+#: How many trailing path parts `rehome` will try to find under the cohort
+#: folder: a run file sits at most a prefix, a session folder and a format
+#: folder below it in any layout the walk accepts, with room for a level more.
+_MAX_TAIL = 8
+
+#: Journals a `relocate_cohort` in this process is carrying out, from the
+#: journal's insert until it returns or raises. `moving` counts a `committed`
+#: journal only while it is here: a session set up from the cohort as read
+#: just before the commit would make its folder under the old place while the
+#: delete empties it. One an earlier process left `committed` committed before
+#: this process read anything, so it holds nothing up; the next start's
+#: `resume` finishes it. Read and written under the database lock, inside
+#: `db.read()` or `db.write()`.
+_carrying_out: set[str] = set()
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+# --- rewriting the records ------------------------------------------------------
+
+
+def rewrite_paths(
+    conn: Query,
+    cohort_id: str,
+    old_root: str | Path,
+    new_root: str | Path,
+    *,
+    only_existing: bool = False,
+) -> int:
+    """Point every path this cohort's records store below `old_root` at the
+    same place below `new_root`. Never commits; returns how many rows changed.
+
+    That includes where each recorded group run told RHX to save: by default
+    `<session folder>/ephys`, which moves with the folder
+    (`RECORDING.md#what-is-written`), whichever cohort's session it now is. A
+    save location elsewhere is left alone.
+
+    `only_existing` is the repair's caution: a path moves only when what it
+    names is there — the file, or for a run its write-ahead `.tsv`, which
+    recovery rebuilds the rest from (`DATA.md#crash-recovery`).
+    """
+    from ..analytics import reader  # analytics imports cohorts
+
+    new_base = Path(new_root)
+
+    def rebased(path: str | None) -> str | None:
+        if not path:
+            return None
+        rel = relative_below(path, old_root)
+        return None if rel is None else str(new_base / rel)
+
+    def present(path: str, *, run: bool) -> bool:
+        target = Path(path)
+        try:
+            return target.exists() or (run and reader.sibling_tsv(target).is_file())
+        except OSError:
+            return False
+
+    changed = 0
+    for session_id, folder in conn.execute(
+        "SELECT id, folder_path FROM sessions WHERE cohort_id = ?", (cohort_id,)
+    ).fetchall():
+        new = rebased(folder)
+        if new and (not only_existing or present(new, run=False)):
+            conn.execute("UPDATE sessions SET folder_path = ? WHERE id = ?", (new, session_id))
+            changed += 1
+    # Every cohort's: a session moved to another cohort keeps its recording
+    # where RHX wrote it, in this folder (`DATA.md#moving-animals-between-cohorts`).
+    for session_id, recording_json in conn.execute(
+        "SELECT id, recording_json FROM sessions WHERE recording_json IS NOT NULL"
+    ).fetchall():
+        recording = _rebased_recording(recording_json, rebased, present, only_existing)
+        if recording is not None:
+            conn.execute(
+                "UPDATE sessions SET recording_json = ? WHERE id = ?", (recording, session_id)
+            )
+            changed += 1
+    for run_id, path in conn.execute(
+        "SELECT r.id, r.file_path FROM session_animal_runs r"
+        " JOIN sessions s ON s.id = r.session_id WHERE s.cohort_id = ?",
+        (cohort_id,),
+    ).fetchall():
+        new = rebased(path)
+        if new and (not only_existing or present(new, run=True)):
+            conn.execute("UPDATE session_animal_runs SET file_path = ? WHERE id = ?", (new, run_id))
+            conn.execute("UPDATE run_metrics_cache SET file_path = ? WHERE run_id = ?", (new, run_id))
+            changed += 1
+    for adopted_id, path in conn.execute(
+        "SELECT id, file_path FROM adopted_runs WHERE cohort_id = ?", (cohort_id,)
+    ).fetchall():
+        new = rebased(path)
+        if new and (not only_existing or present(new, run=True)):
+            conn.execute("UPDATE adopted_runs SET file_path = ? WHERE id = ?", (new, adopted_id))
+            conn.execute(
+                "UPDATE run_metrics_cache SET file_path = ? WHERE run_id = ?", (new, adopted_id)
+            )
+            changed += 1
+    # A pure cache keyed by path, shared by every cohort: only rows below the
+    # old root can be this cohort's files.
+    for (path,) in conn.execute("SELECT file_path FROM strobe_scan_cache").fetchall():
+        new = rebased(path)
+        if new:
+            conn.execute(
+                "UPDATE OR REPLACE strobe_scan_cache SET file_path = ? WHERE file_path = ?",
+                (new, path),
+            )
+    return changed
+
+
+def _rebased_recording(
+    recording_json: str | None,
+    rebased: Callable[[str | None], str | None],
+    present: Callable[..., bool],
+    only_existing: bool,
+) -> str | None:
+    """The session's recording with each run's save location rebased, or None
+    when none of them moves."""
+    if not recording_json:
+        return None
+    try:
+        recording = json.loads(recording_json)
+        runs = recording.get("runs", [])
+    except (ValueError, AttributeError):
+        return None
+    moved = False
+    for run in runs if isinstance(runs, list) else []:
+        path = run.get("path") if isinstance(run, dict) else None
+        new = rebased(path) if isinstance(path, str) else None
+        if new and (not only_existing or present(new, run=False)):
+            run["path"] = new
+            moved = True
+    return json.dumps(recording) if moved else None
+
+
+# --- the relocate ------------------------------------------------------------------
+
+
+def relocate_cohort(db: Database, cohort_id: str, destination: str, move_existing: bool) -> Path:
+    """The "Change data folder…" action, with the records following the files.
+
+    Pointing without moving (`move_existing=False`) writes nothing on disk and
+    rewrites nothing: the cohort is attached to data that is already there,
+    and whatever the records named stays where it was.
+    """
+    target = Path(destination).expanduser()
+    with db.read() as q:
+        row = q.execute(
+            "SELECT data_folder FROM cohorts WHERE id = ?", (cohort_id,)
+        ).fetchone()
+        if row is not None:
+            _refuse_unfinished(q, cohort_id, target, move_existing)
+    if row is None:
+        raise CohortNotFound(cohort_id)
+    source = Path(row[0]).expanduser()
+
+    if not move_existing or not source.exists() or _same(source, target):
+        final = folders.relocate(source, target, move_existing)
+        _set_folder(db, cohort_id, final)
+        return final
+
+    _check_destination(source, target)
+    same_volume = _same_volume(source, target)
+    # Taken before anything moves: after a rename there is no original left
+    # to stat, and a key is carried only if it was fresh for the original.
+    before = _stats(source)
+    journal = str(uuid.uuid4())
+    with db.write() as unit:
+        _refuse_open_sessions(unit, cohort_id)
+        known = _record_ids(unit, cohort_id)
+        unit.execute(
+            "INSERT INTO folder_moves (id, cohort_id, source, target, state, created_at,"
+            " updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (journal, cohort_id, str(source), str(target),
+             "moving" if same_volume else "copying", _now(), _now()),
+        )
+        _carrying_out.add(journal)
+    try:
+        return _carry_out(db, journal, cohort_id, source, target, same_volume, before, known)
+    finally:
+        with db.read():
+            _carrying_out.discard(journal)
+
+
+def _carry_out(
+    db: Database,
+    journal: str,
+    cohort_id: str,
+    source: Path,
+    target: Path,
+    same_volume: bool,
+    before: dict[tuple[str, ...], freshness.Stat],
+    known: set[str],
+) -> Path:
+    """Everything after the journal: move or copy, commit the records with
+    the journal, delete the originals."""
+    copies: list[transfer.FileCopy] | None = None
+    try:
+        if same_volume:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.exists():
+                target.rmdir()  # checked empty; a rename needs the name free
+            os.rename(source, target)
+        else:
+            copies = _copy_tree(source, target)
+    except OSError as exc:
+        message = f"Couldn't move data to {target}: {str(exc).rstrip('.')}."
+        if same_volume:
+            _finish(db, journal, "rolled-back", str(exc))
+        elif not _undo_copy_now(db, journal, source, target, str(exc)):
+            message += LEFT_FOR_LATER
+        raise DataFolderError(message) from exc
+
+    failure: BaseException | None = None
+    try:
+        # The records and the journal's step, in one unit of work.
+        with db.write() as tx:
+            if not same_volume:
+                _refuse_records_since(tx, cohort_id, known)
+            _commit_records(db, tx, cohort_id, source, target, before)
+            tx.execute(
+                "UPDATE folder_moves SET state = ?, updated_at = ? WHERE id = ?",
+                ("done" if same_volume else "committed", _now(), journal),
+            )
+    except Exception as exc:
+        failure = exc
+    if failure is not None:
+        # The records never moved, so neither may the files.
+        if not same_volume:
+            if _undo_copy_now(db, journal, source, target, str(failure)):
+                raise failure
+            raise DataFolderError(str(failure).rstrip(".") + "." + LEFT_FOR_LATER) from failure
+        state = "rolled-back"
+        try:
+            os.rename(target, source)
+        except OSError:
+            log.exception("relocate: couldn't put %s back at %s", target, source)
+            # The folder stays at the target while every record names the
+            # source. Left `moving`, the journal holds sessions off and the
+            # next start's `resume` rolls the records forward.
+            state = "moving"
+        _finish(db, journal, state, str(failure))
+        raise failure
+
+    if not same_volume:
+        _finish_deleting(db, journal, source, target, copies)
+    log.info("relocate: moved cohort %s from %s to %s", cohort_id, source, target)
+    return target
+
+
+def resume(db: Database) -> int:
+    """Finish or undo every relocate a crash interrupted. Run once at start-up,
+    before anything may read or rescan the archive.
+
+    A journal whose old or new folder is out of reach keeps its state: what
+    is there can't be told apart from what isn't, so neither the undo nor
+    the finish can act on it. The next start that reaches both does."""
+    with db.read() as q:
+        rows = q.execute(
+            "SELECT id, cohort_id, source, target, state FROM folder_moves"
+            " WHERE state IN ('moving', 'copying', 'committed')"
+        ).fetchall()
+    for journal, cohort_id, source_s, target_s, state in rows:
+        source, target = Path(source_s), Path(target_s)
+        if state == "moving":
+            if _waiting(db, journal, source, target):
+                continue
+            if not source.exists() and target.exists():
+                # The originals' stats went with the crash, so the keys stay
+                # as they were; a rename keeps mtimes, so they still hold.
+                log.warning("relocate %s: the folder moved before a crash; finishing", journal)
+                with db.write() as tx:
+                    _commit_records(db, tx, cohort_id, source, target)
+                _finish(db, journal, "done")
+            else:
+                _finish(db, journal, "rolled-back", "interrupted before the folder moved")
+        elif state == "copying":
+            log.warning("relocate %s: interrupted while copying; removing the copy", journal)
+            _undo_copy(db, journal, source, target, "interrupted while copying")
+        else:
+            log.warning("relocate %s: interrupted after it committed; finishing", journal)
+            _finish_deleting(db, journal, source, target)
+    return len(rows)
+
+
+def _undo_copy(db: Database, journal: str, source: Path, target: Path, reason: str) -> bool:
+    """Before the commit: remove the copy and mark the journal `rolled-back`.
+    Whether a copy may go depends on its original, so while either folder is
+    out of reach nothing is removed, the journal stays `copying`, and this
+    returns False."""
+    if _waiting(db, journal, source, target):
+        return False
+    kept = _remove_copies(source, target)
+    if kept:
+        reason += f"; {len(kept)} copies kept at {target}, their originals gone or changed"
+    _finish(db, journal, "rolled-back", reason)
+    return True
+
+
+#: Said when a live copy fails and its undo waits for a folder out of reach.
+LEFT_FOR_LATER = " What was copied is removed at the next start that can reach both folders."
+
+
+def _undo_copy_now(db: Database, journal: str, source: Path, target: Path, reason: str) -> bool:
+    """`_undo_copy` on the live path, where an error removing a copy must not
+    hide the failure being undone: the journal stays `copying` for the next
+    start."""
+    try:
+        return _undo_copy(db, journal, source, target, reason)
+    except OSError:
+        log.exception("relocate: couldn't remove the copy at %s", target)
+        return False
+
+
+def _finish_deleting(
+    db: Database,
+    journal: str,
+    source: Path,
+    target: Path,
+    copies: list[transfer.FileCopy] | None = None,
+) -> None:
+    """After the commit: delete the originals and mark the journal `done`.
+    An original goes only while its copy is there, so while either folder is
+    out of reach nothing is deleted, the journal stays `committed`, and the
+    next start that can see both finishes."""
+    if _waiting(db, journal, source, target):
+        return
+    _delete_sources(source, target, copies)
+    _finish(db, journal, "done")
+
+
+def _waiting(db: Database, journal: str, source: Path, target: Path) -> bool:
+    """Whether the old or the new folder is out of reach. If so, the journal
+    keeps its state and its `error` says which folder it waits for."""
+    unreached = next((p for p in (source, target) if out_of_reach(p)), None)
+    if unreached is None:
+        return False
+    log.warning("relocate %s: %s can't be reached; left for the next start", journal, unreached)
+    with db.write() as unit:
+        unit.execute(
+            "UPDATE folder_moves SET error = ?, updated_at = ? WHERE id = ?",
+            (f"waiting for {unreached}"[:500], _now(), journal),
+        )
+    return True
+
+
+def out_of_reach(path: Path) -> bool:
+    """Whether `path` can't be seen at all — a share that stopped answering,
+    or a volume that isn't mounted — as opposed to there, or demonstrably gone.
+
+    A `stat` that fails other than not-found proves nothing, so it is out of
+    reach. A missing path counts as gone only when, walking up, a folder
+    answers before anything errors: a deleted tree leaves the drive root at
+    worst, an unmounted volume leaves nothing. The prune reads absence the
+    same way (`analytics/walk._storage_is_reachable`, `DATA.md#pruning`)."""
+    try:
+        os.stat(path)
+        return False
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return True
+    for ancestor in path.parents:
+        try:
+            if S_ISDIR(os.stat(ancestor).st_mode):
+                return False
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        except OSError:
+            return True
+    return True
+
+
+def _commit_records(
+    db: Database,
+    tx: Tx,
+    cohort_id: str,
+    source: Path,
+    target: Path,
+    before: dict[tuple[str, ...], freshness.Stat] | None = None,
+) -> None:
+    rewrite_paths(tx, cohort_id, source, target)
+    if before:
+        _carry_keys(tx, target, before)
+    CohortRepository(db).set_data_folder(cohort_id, str(target), tx=tx)
+
+
+def _carry_keys(
+    conn: Query, target: Path, before: dict[tuple[str, ...], freshness.Stat]
+) -> None:
+    """Re-key every row below `target` from its original's stat. The target
+    was empty, so whatever lies below it is this relocate's."""
+    paths = {
+        p
+        for table in freshness.KEYED_TABLES
+        for (p,) in conn.execute(f"SELECT file_path FROM {table}")
+        if p
+    }
+    moved = []
+    for path in paths:
+        rel = relative_below(path, target)
+        if rel is not None:
+            moved.append((path, before.get(_key(rel))))
+    freshness.carry(conn, moved)
+
+
+def _stats(root: Path) -> dict[tuple[str, ...], freshness.Stat]:
+    """Every file's stat below `root`, by its case-folded relative path —
+    how `relative_below` compares the records' spellings."""
+    out: dict[tuple[str, ...], freshness.Stat] = {}
+    for path in _files(root):
+        stat = freshness.stat_of(path)
+        if stat is not None:
+            out[_key(path.relative_to(root))] = stat
+    return out
+
+
+def _key(rel: Path) -> tuple[str, ...]:
+    return tuple(part.casefold() for part in rel.parts)
+
+
+def _set_folder(db: Database, cohort_id: str, folder: Path) -> None:
+    CohortRepository(db).set_data_folder(cohort_id, str(folder))
+
+
+def _finish(db: Database, journal: str, state: str, error: str | None = None) -> None:
+    with db.write() as unit:
+        unit.execute(
+            "UPDATE folder_moves SET state = ?, error = ?, updated_at = ? WHERE id = ?",
+            (state, error[:500] if error else None, _now(), journal),
+        )
+
+
+def _check_destination(source: Path, target: Path) -> None:
+    if target.exists() and not target.is_dir():
+        raise DataFolderError(f"{target} exists but isn't a folder.")
+    if target.exists() and any(target.iterdir()):
+        raise DataFolderError(
+            f"{target} isn't empty. Choose an empty folder to move this "
+            f"cohort's data into — Ephymeris won't merge into or overwrite "
+            f"existing data. To use the data already in {target.name}, "
+            f"change the folder without moving."
+        )
+    if relative_below(target, source) is not None:
+        raise DataFolderError(f"{target} is inside the folder being moved.")
+
+
+def moving(db: Database, cohort_id: str) -> bool:
+    """Whether this cohort's folder is part-way through a relocate, so a new
+    session must not be set up in it: its folder would be made at the old
+    place while the records move to the new one.
+
+    A `copying` or `committed` relocate counts only while this process is
+    still carrying it out (`_carrying_out`). One an earlier process left,
+    waiting for a folder `resume` couldn't reach, is finished or undone by a
+    later start, and the cohort must not wait for it: a copy left to undo
+    has not moved the records, and one left to finish has moved them all. A
+    `moving` one may have renamed the folder the records still name, so it
+    always counts."""
+    with db.read() as q:
+        rows = q.execute(
+            "SELECT id, state FROM folder_moves WHERE cohort_id = ?"
+            " AND state IN ('moving', 'copying', 'committed')",
+            (cohort_id,),
+        ).fetchall()
+        return any(state == "moving" or journal in _carrying_out for journal, state in rows)
+
+
+def _refuse_unfinished(conn: Query, cohort_id: str, destination: Path, moving_data: bool) -> None:
+    """A relocate left waiting for a folder it couldn't reach. A rename's
+    records may name a folder that has moved, so nothing else may change the
+    cohort's folder first. A copy's undo will remove what it copied, so no
+    relocate may move into, or point at, its target; any other destination
+    is safe, and a target that never comes back must not hold the cohort.
+
+    Likewise, for a relocate that moves data, a move of animals to or from
+    the cohort left `copying`: its undo removes a copy only while the
+    original is where it was, so moving the originals would leave its copies
+    for good, and moving its copies would carry them off unrecorded. Or one
+    left `committed`: it deletes an original only while both are where it
+    left them, so moving either would leave the originals, records gone, for
+    a rescan to adopt back."""
+    rows = conn.execute(
+        "SELECT source, target, state, error FROM folder_moves WHERE cohort_id = ?"
+        " AND state IN ('moving', 'copying')",
+        (cohort_id,),
+    ).fetchall()
+    for source, target, state, error in rows:
+        if state == "copying" and not _overlap(destination, Path(target)):
+            continue
+        raise DataFolderError(
+            f"An earlier move of this cohort's data from {source} to {target} hasn't finished"
+            f" ({error or 'interrupted'}). Connect both folders and restart Ephymeris to"
+            " finish it, then change the data folder."
+        )
+    if not moving_data:
+        return
+    move = conn.execute(
+        "SELECT error FROM animal_moves WHERE state IN ('copying', 'committed')"
+        " AND ? IN (source_cohort_id, dest_cohort_id) LIMIT 1",
+        (cohort_id,),
+    ).fetchone()
+    if move is not None:
+        raise DataFolderError(
+            f"An earlier move of animals to or from this cohort hasn't finished"
+            f" ({move[0] or 'interrupted'}). Connect both data folders and restart Ephymeris"
+            " to finish it, then change the data folder."
+        )
+
+
+def _overlap(a: Path, b: Path) -> bool:
+    return _same(a, b) or relative_below(a, b) is not None or relative_below(b, a) is not None
+
+
+def _refuse_open_sessions(conn: Query, cohort_id: str) -> None:
+    """A session still open writes into the folder, or will: its runner was
+    given a path below the old place, which the records are about to leave."""
+    row = conn.execute(
+        "SELECT prefix_name, session_number, date FROM sessions WHERE cohort_id = ?"
+        " AND status IN ('configuring', 'running') ORDER BY date LIMIT 1",
+        (cohort_id,),
+    ).fetchone()
+    if row is not None:
+        raise DataFolderError(
+            f"{row[0]}_{row[1]} ({row[2]}) is still open. Close it out, or run Tidy "
+            "records, then move the data folder."
+        )
+
+
+def _record_ids(conn: Query, cohort_id: str) -> set[str]:
+    return {
+        row[0]
+        for row in conn.execute(
+            "SELECT id FROM sessions WHERE cohort_id = ?"
+            " UNION ALL SELECT r.id FROM session_animal_runs r"
+            " JOIN sessions s ON s.id = r.session_id WHERE s.cohort_id = ?",
+            (cohort_id, cohort_id),
+        )
+    }
+
+
+def _refuse_records_since(conn: Query, cohort_id: str, known: set[str]) -> None:
+    """The copy's own check at commit: a session or run recorded while it ran
+    wrote its files at the old place, after the copy had passed them. Moving
+    its records would point them at files that are not there, and the next
+    Rescan would prune them (`DATA.md#pruning`)."""
+    _refuse_open_sessions(conn, cohort_id)
+    if _record_ids(conn, cohort_id) - known:
+        raise DataFolderError(
+            "A session was recorded in this cohort while its data was being copied. "
+            "Nothing was moved; move the data folder again."
+        )
+
+
+def _same(a: Path, b: Path) -> bool:
+    return str(resolved(a)).casefold() == str(resolved(b)).casefold()
+
+
+def _same_volume(source: Path, target: Path) -> bool:
+    """Whether a rename can move the folder — the target's nearest existing
+    ancestor on the same device as the source."""
+    probe = target
+    while not probe.exists() and probe != probe.parent:
+        probe = probe.parent
+    try:
+        return os.stat(source).st_dev == os.stat(probe).st_dev
+    except OSError:
+        return False
+
+
+def _files(root: Path) -> list[Path]:
+    return [p for p in root.rglob("*") if p.is_file()] if root.is_dir() else []
+
+
+def _copies(source: Path, target: Path) -> list[transfer.FileCopy]:
+    """Every file below `source`, paired with its place below `target`."""
+    return [transfer.FileCopy(p, target / p.relative_to(source)) for p in _files(source)]
+
+
+def _copy_tree(source: Path, target: Path) -> list[transfer.FileCopy]:
+    """Copy every file, verified (`DATA.md#verified-transfer`), and every
+    folder, empty ones included."""
+    for folder in [source, *(p for p in source.rglob("*") if p.is_dir())]:
+        (target / folder.relative_to(source)).mkdir(parents=True, exist_ok=True)
+    return transfer.copy(_copies(source, target))
+
+
+def _remove_copies(source: Path, target: Path) -> list[Path]:
+    """Undo a copy. The target was empty, so everything below it is this
+    relocate's: each copy whose original is still there, the same, and any
+    `.part` a crash left. Never anything that is the only copy, which it
+    returns."""
+    copies: dict[Path, transfer.FileCopy] = {}
+    for path in _files(target):
+        dst = path
+        if path.name.endswith(transfer.PART_SUFFIX) and not (source / path.relative_to(target)).exists():
+            dst = path.with_name(path.name[: -len(transfer.PART_SUFFIX)])
+        copies.setdefault(dst, transfer.FileCopy(source / dst.relative_to(target), dst))
+    kept = transfer.undo(copies.values())
+    _prune_empty_dirs(target, keep_root=True)
+    return kept
+
+
+def _delete_sources(
+    source: Path, target: Path, copies: list[transfer.FileCopy] | None = None
+) -> None:
+    """After the commit: an original goes only while its copy is in place,
+    the same. A restart has no hashes to hand, so it compares the two."""
+    transfer.delete_originals(copies if copies is not None else _copies(source, target))
+    _prune_empty_dirs(source, keep_root=False)
+
+
+def _prune_empty_dirs(root: Path, *, keep_root: bool) -> None:
+    """Bottom-up `rmdir`, which refuses anything non-empty — never `rmtree`."""
+    if not root.is_dir():
+        return
+    for current, _dirs, _files_here in os.walk(root, topdown=False):
+        if keep_root and Path(current) == root:
+            continue
+        try:
+            os.rmdir(current)
+        except OSError:
+            pass
+
+
+# --- repairing an earlier relocate ---------------------------------------------------
+
+
+def rehome(db: Database, cohort_id: str) -> int:
+    """Re-point records an earlier relocate left at the old folder.
+
+    A record is stale when its path is outside the cohort's folder and nothing
+    is there. The old folder is found by asking, for each stale path, which
+    tail of it exists under the cohort's folder — and taking the root most
+    stale paths agree on, so one coincidence cannot redirect a cohort. Only
+    paths whose files are actually there are rewritten. Returns how many
+    records moved.
+    """
+    with db.read() as q:
+        row = q.execute(
+            "SELECT data_folder FROM cohorts WHERE id = ?", (cohort_id,)
+        ).fetchone()
+        if row is None:
+            return 0
+        folder = Path(row[0]).expanduser()
+        paths = [
+            p
+            for (p,) in q.execute(
+                "SELECT folder_path FROM sessions WHERE cohort_id = ?"
+                " UNION ALL SELECT r.file_path FROM session_animal_runs r"
+                " JOIN sessions s ON s.id = r.session_id WHERE s.cohort_id = ?"
+                " UNION ALL SELECT file_path FROM adopted_runs WHERE cohort_id = ?",
+                (cohort_id, cohort_id, cohort_id),
+            )
+            if p
+        ]
+    if not folder.is_dir():
+        return 0
+
+    votes: Counter[str] = Counter()
+    for path in paths:
+        if relative_below(path, folder) is not None or Path(path).exists():
+            continue
+        parts = resolved(path).parts
+        for k in range(1, min(len(parts) - 1, _MAX_TAIL) + 1):
+            if (folder / Path(*parts[-k:])).exists():
+                votes[str(Path(*parts[:-k]))] += 1
+                break
+    if not votes:
+        return 0
+    old_root = votes.most_common(1)[0][0]
+    # One unit of work, which always commits or rolls back: `changed` does
+    # not count the strobe-scan cache rows `rewrite_paths` also re-points, so
+    # it can't decide whether there is anything to commit
+    # (`DATA.md#transactions`).
+    with db.write() as tx:
+        changed = rewrite_paths(tx, cohort_id, old_root, folder, only_existing=True)
+    if changed:
+        log.info("rescan: re-pointed %d record(s) of cohort %s from %s", changed, cohort_id, old_root)
+    return changed

@@ -1,0 +1,523 @@
+"""Per-animal session writer — `DATA.md#per-animal-files`, `DATA.md#crash-safety`.
+
+Includes the crash-durability kill test (`DATA.md#what-is-guaranteed`): hard-kill a live writer
+mid-session and prove the `.tsv` is intact up to the last flushed line.
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import pytest
+
+from ephymeris_sidecar.sessions.writer import (
+    PART_GRACE_S,
+    PART_SUFFIX,
+    AnimalWriter,
+    WriteError,
+    sweep_parts,
+    write_atomic,
+)
+
+CORE = {
+    "rat": "remy1",
+    "serial_port": "COM6",
+    "session_id": "2O-Bdisc_25",
+    "sketch": "GRGL_2-Odor",
+}
+CONFIG = {"correction_left": 0, "correction_right": 0, "lazy_escalation": True}
+
+#: A minimal but real Task Profile — enough of one that `parse_profile` accepts
+#: it, since the point of the snapshot is that the other end parses it.
+PROFILE = {
+    "taskName": "GRGL 2-Odor",
+    "kind": "behavior",
+    "config": [
+        {"metadataKey": "correction_left", "wireKey": "CL", "label": "Correction L",
+         "type": "int", "default": 0},
+    ],
+    "strobes": {"101": "ODOR_1_ON", "249": "WATER_POKE_R"},
+    "liveMetrics": [
+        {"id": "p_correct_1", "label": "P(right well | Go right)", "triggerCode": 101,
+         "successCode": 249, "alternateCode": 248, "windowSize": 20},
+    ],
+}
+
+
+def make_writer(tmp_path: Path, *, profile: dict | None = PROFILE) -> AnimalWriter:
+    return AnimalWriter(
+        tmp_path / "behavior.tsv" / "remy1.tsv",
+        tmp_path / "behavior.json" / "remy1.json",
+        tmp_path / "behavior.mat" / "remy1.mat",
+        core_metadata=CORE,
+        config_metadata=CONFIG,
+        profile_snapshot=profile,
+    )
+
+
+# --- the .tsv header and live lines (`DATA.md#written-live`) --------------
+
+
+def test_the_header_is_written_before_any_strobe(tmp_path: Path) -> None:
+    writer = make_writer(tmp_path)
+    writer.open_files()
+    lines = (tmp_path / "behavior.tsv" / "remy1.tsv").read_text(encoding="utf-8").splitlines()
+    # All comment lines, no data yet, and the two footer-only fields absent.
+    assert all(line.startswith("#") for line in lines)
+    assert any(line == "# rat: remy1" for line in lines)
+    assert any(line == "# lazy_escalation: true" for line in lines)
+    assert not any("stop_reason" in line for line in lines)
+    assert not any("n_events" in line for line in lines)
+
+
+def test_strobes_append_in_the_boards_exact_format(tmp_path: Path) -> None:
+    writer = make_writer(tmp_path)
+    writer.open_files()
+    writer.record(221, 0)
+    writer.record(222, 1000)
+    data_lines = [
+        line
+        for line in (tmp_path / "behavior.tsv" / "remy1.tsv").read_text(encoding="utf-8").splitlines()
+        if not line.startswith("#")
+    ]
+    assert data_lines == ["221\t0", "222\t1000"]
+
+
+# --- finalization (`DATA.md#built-once-at-the-end`) -----------------------
+
+
+def test_finalize_writes_the_footer_and_builds_json_and_mat(tmp_path: Path) -> None:
+    writer = make_writer(tmp_path)
+    writer.open_files()
+    writer.record(221, 0)
+    writer.record(246, 3523555)
+    document = writer.finalize("BF_END_SESSION received")
+
+    tsv = (tmp_path / "behavior.tsv" / "remy1.tsv").read_text(encoding="utf-8")
+    assert "# stop_reason: BF_END_SESSION received" in tsv
+    assert "# n_events: 2" in tsv
+
+    # `DATA.md#the-json-document` — core + flat config + data, in one document, matching the sample shape.
+    assert document["rat"] == "remy1"
+    assert document["correction_left"] == 0
+    assert document["lazy_escalation"] is True
+    assert document["stop_reason"] == "BF_END_SESSION received"
+    assert document["n_events"] == 2
+    assert document["ts_data"] == [[221, 0], [246, 3523555]]
+
+    assert (tmp_path / "behavior.json" / "remy1.json").is_file()
+    assert (tmp_path / "behavior.mat" / "remy1.mat").is_file()
+
+    import json
+
+    on_disk = json.loads((tmp_path / "behavior.json" / "remy1.json").read_text(encoding="utf-8"))
+    assert on_disk == document
+
+
+def test_config_fields_are_flat_at_the_top_level_not_nested(tmp_path: Path) -> None:
+    """`DATA.md#the-json-document` — matches the sample exactly: no `config` wrapper key."""
+    writer = make_writer(tmp_path)
+    writer.open_files()
+    document = writer.finalize("operator stop")
+    assert "config" not in document
+    assert document["correction_right"] == 0
+
+
+def test_the_document_carries_its_task_profile(tmp_path: Path) -> None:
+    """`DATA.md#the-embedded-task-profile` — the file is self-describing, which is what lets a copy of it
+    decode on a machine that has never seen the sketch."""
+    import json
+
+    from ephymeris_sidecar.tasks.profile import SNAPSHOT_KEY, embedded_profile
+
+    writer = make_writer(tmp_path)
+    writer.open_files()
+    writer.record(101, 5)
+    document = writer.finalize("BF_END_SESSION received")
+
+    assert document[SNAPSHOT_KEY] == PROFILE
+    on_disk = json.loads(
+        (tmp_path / "behavior.json" / "remy1.json").read_text(encoding="utf-8")
+    )
+    assert embedded_profile(on_disk) is not None
+    assert embedded_profile(on_disk).live_metrics[0].id == "p_correct_1"
+
+
+def test_the_tsv_header_carries_the_snapshot_on_one_line(tmp_path: Path) -> None:
+    """The write-ahead log is the file a crash leaves behind, and recovery
+    rebuilds a `.json` from it — so the snapshot has to be in the header, and
+    compact enough not to turn the log into a document."""
+    from ephymeris_sidecar.tasks.profile import SNAPSHOT_KEY
+
+    writer = make_writer(tmp_path)
+    writer.open_files()
+    lines = (
+        (tmp_path / "behavior.tsv" / "remy1.tsv")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    )
+    snapshot = [line for line in lines if line.startswith(f"# {SNAPSHOT_KEY}: ")]
+    assert len(snapshot) == 1
+    # Last of the header, after the fields a person actually reads.
+    assert lines[-1] == snapshot[0]
+
+
+def test_a_profile_less_sketch_writes_no_snapshot(tmp_path: Path) -> None:
+    """Running a bare `START` is supported (`TASKS.md#task-profile`), and a document that
+    carried an empty snapshot would claim a declaration that never existed."""
+    from ephymeris_sidecar.tasks.profile import SNAPSHOT_KEY
+
+    writer = make_writer(tmp_path, profile=None)
+    writer.open_files()
+    document = writer.finalize("BF_END_SESSION received")
+
+    assert SNAPSHOT_KEY not in document
+    assert SNAPSHOT_KEY not in (
+        tmp_path / "behavior.tsv" / "remy1.tsv"
+    ).read_text(encoding="utf-8")
+
+
+def test_finalize_is_idempotent(tmp_path: Path) -> None:
+    writer = make_writer(tmp_path)
+    writer.open_files()
+    writer.record(221, 0)
+    first = writer.finalize("operator stop")
+    second = writer.finalize("something else")
+    # A second finalize neither re-runs nor changes the recorded reason.
+    assert first["stop_reason"] == "operator stop"
+    assert second["stop_reason"] == "operator stop"
+
+
+def test_records_after_finalize_are_ignored(tmp_path: Path) -> None:
+    writer = make_writer(tmp_path)
+    writer.open_files()
+    writer.finalize("operator stop")
+    writer.record(999, 1)  # no-op, no crash
+    assert writer.event_count == 0
+
+
+def test_an_existing_tsv_is_refused_not_overwritten(tmp_path: Path) -> None:
+    """`DATA.md#written-live` — the durable file is opened exclusively.
+
+    The `HHMMSS` in the filename makes this practically unreachable, but this
+    is the one file carrying the durability guarantee: refusing to start beats
+    silently truncating a previous animal's data.
+    """
+    writer = make_writer(tmp_path)
+    writer.open_files()
+    writer.record(221, 0)
+    writer.finalize("operator stop")
+    existing = (tmp_path / "behavior.tsv" / "remy1.tsv").read_text(encoding="utf-8")
+
+    with pytest.raises(WriteError) as caught:
+        make_writer(tmp_path).open_files()
+
+    # The message names the file standing in the way, so the operator can act.
+    assert "already exists" in str(caught.value)
+    assert "remy1.tsv" in str(caught.value)
+    # And the first run's data is untouched.
+    assert (tmp_path / "behavior.tsv" / "remy1.tsv").read_text(encoding="utf-8") == existing
+
+
+def test_a_write_to_a_bad_path_raises_writeerror(tmp_path: Path) -> None:
+    # Point the .tsv at a path whose parent is a file, so mkdir/open fails.
+    blocker = tmp_path / "blocker"
+    blocker.write_text("", encoding="utf-8")
+    writer = AnimalWriter(
+        blocker / "nested" / "remy1.tsv",
+        tmp_path / "j.json",
+        tmp_path / "m.mat",
+        core_metadata=CORE,
+        config_metadata=CONFIG,
+    )
+    with pytest.raises((WriteError, OSError)):
+        writer.open_files()
+
+
+# --- crash durability: the kill test (`DATA.md#what-is-guaranteed`) -------
+
+
+def test_tsv_survives_a_mid_session_hard_kill(tmp_path: Path) -> None:
+    """Hard-kill a live writer; the .tsv must hold every flushed line, no footer.
+
+    This is the guarantee `DATA.md#crash-safety` exists to make real: if the lab PC
+    loses power mid-session, everything up through the last completed line is
+    already on disk.
+
+    The kill must stay uncatchable so nothing gets a chance to flush on the way
+    out — `Popen.kill()` is SIGKILL on POSIX and `TerminateProcess` on Windows.
+    Both matter here: the lab machines are Windows, so a POSIX-only signal would
+    leave this guarantee untested on the platform that actually ships.
+    """
+    tsv = tmp_path / "behavior.tsv" / "remy1.tsv"
+    json_path = tmp_path / "behavior.json" / "remy1.json"
+    mat = tmp_path / "behavior.mat" / "remy1.mat"
+    ready = tmp_path / "ready"
+    n_lines = 8
+
+    child = subprocess.Popen(
+        [
+            sys.executable,
+            str(Path(__file__).parent / "_kill_writer_child.py"),
+            str(tsv),
+            str(json_path),
+            str(mat),
+            str(n_lines),
+            str(ready),
+        ]
+    )
+    try:
+        # Wait for the child to confirm all lines are written and fsync'd.
+        deadline = time.time() + 15
+        while not ready.exists() and time.time() < deadline:
+            time.sleep(0.02)
+        assert ready.exists(), "child never signalled ready"
+
+        # Kill it hard — no cleanup, no finalize, simulating power loss.
+        child.kill()
+        child.wait(timeout=5)
+    finally:
+        if child.poll() is None:
+            child.kill()
+
+    # The .tsv is intact: header + exactly the flushed data lines.
+    contents = tsv.read_text(encoding="utf-8").splitlines()
+    header = [line for line in contents if line.startswith("#")]
+    data = [line for line in contents if not line.startswith("#")]
+
+    assert any(line == "# rat: remy1" for line in header)
+    assert len(data) == n_lines
+    assert data[0] == "100\t0"
+    assert data[-1] == f"{100 + n_lines - 1}\t{(n_lines - 1) * 1000}"
+
+    # Footer never written (no finalize), and the structured formats never built.
+    assert not any("stop_reason" in line for line in header)
+    assert not json_path.exists()
+    assert not mat.exists()
+
+
+def test_two_writes_of_one_file_at_once_each_land_whole(tmp_path: Path) -> None:
+    """A finalization and anything else writing the same `.json` at the same
+    moment: each writes a whole file of its own, and the name ends up holding
+    one of them, never a mix and never a failure."""
+    import threading
+
+    target = tmp_path / "remy1.json"
+    halfway = threading.Barrier(2, timeout=5)
+    failures: list[BaseException] = []
+
+    def writer(fill: bytes) -> threading.Thread:
+        def write(part: Path) -> None:
+            with open(part, "wb") as fh:
+                fh.write(fill * 512)
+                fh.flush()
+                halfway.wait()
+                fh.write(fill * 512)
+
+        def run() -> None:
+            try:
+                write_atomic(target, write)
+            except BaseException as exc:  # noqa: BLE001 - reported below
+                failures.append(exc)
+
+        return threading.Thread(target=run)
+
+    threads = [writer(b"a"), writer(b"b")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert failures == []
+    assert target.read_bytes() in (b"a" * 1024, b"b" * 1024)
+    assert [p.name for p in tmp_path.iterdir()] == ["remy1.json"]
+
+
+def test_two_writes_of_one_file_take_turns_at_the_rename(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows refuses a replace onto a name another replace is still landing on
+    (`DATA.md#built-once-at-the-end`), so two writers of one file rename it one at
+    a time. Their `.part`s are still written side by side: both reach the end of
+    the write before either renames. Here `os.replace` behaves as Windows does,
+    holding its window open, so the overlap is certain on any platform."""
+    import os
+    import threading
+
+    real_replace = os.replace
+    landing: set[str] = set()
+    guard = threading.Lock()
+
+    def windows_replace(src, dst) -> None:  # noqa: ANN001
+        with guard:
+            if str(dst) in landing:
+                raise PermissionError(13, "Access is denied")
+            landing.add(str(dst))
+        try:
+            time.sleep(0.2)
+            real_replace(src, dst)
+        finally:
+            with guard:
+                landing.discard(str(dst))
+
+    monkeypatch.setattr(os, "replace", windows_replace)
+    target = tmp_path / "remy1.json"
+    written = threading.Barrier(2, timeout=5)
+    failures: list[BaseException] = []
+
+    def writer(fill: bytes) -> threading.Thread:
+        def write(part: Path) -> None:
+            part.write_bytes(fill * 1024)
+            written.wait()
+
+        def run() -> None:
+            try:
+                write_atomic(target, write)
+            except BaseException as exc:  # noqa: BLE001 - reported below
+                failures.append(exc)
+
+        return threading.Thread(target=run)
+
+    threads = [writer(b"a"), writer(b"b")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert failures == []
+    assert target.read_bytes() in (b"a" * 1024, b"b" * 1024)
+    assert [p.name for p in tmp_path.iterdir()] == ["remy1.json"]
+
+
+# --- the startup sweep of writer parts (`DATA.md#built-once-at-the-end`) ---
+#
+# A part's age is read from both its mtime and its ctime, and `os.utime` can
+# only set the first, so these tests date the process start instead: a part
+# written now is stale to a process that started well after the grace.
+
+
+def _later(seconds: float) -> float:
+    """A process start `seconds` from now."""
+    return time.time() + seconds
+
+
+#: A start this far after a part was written finds it stale.
+STALE = 2 * PART_GRACE_S
+
+
+def _part(folder: Path, name: str, *, pid: int) -> Path:
+    """A writer part for `name`, as `write_atomic` names one."""
+    folder.mkdir(parents=True, exist_ok=True)
+    part = folder / f"{name}.{pid}-123456{PART_SUFFIX}"
+    part.write_bytes(b"half a document")
+    return part
+
+
+def _other_pid() -> int:
+    return os.getpid() + 1
+
+
+def test_the_sweep_removes_a_stale_part_another_process_left(tmp_path: Path) -> None:
+    """A power cut mid-finalize leaves the `.part`; the next start removes it."""
+    session = tmp_path / "Cohort" / "2O-Bdisc_25_2026-07-22"
+    stale = _part(session, "remy1_2O-Bdisc_25_2026-07-22_101500.json", pid=_other_pid())
+    mat = _part(session, "remy1_2O-Bdisc_25_2026-07-22_101500.mat", pid=_other_pid())
+    (session / "remy1_2O-Bdisc_25_2026-07-22_101500.tsv").write_text("# rat: remy1\n")
+
+    assert sweep_parts([tmp_path], started=_later(STALE)) == 2
+
+    assert not stale.exists() and not mat.exists()
+    assert [p.name for p in session.iterdir()] == ["remy1_2O-Bdisc_25_2026-07-22_101500.tsv"]
+
+
+def test_the_sweep_keeps_every_part_a_live_writer_could_own(tmp_path: Path) -> None:
+    """This process's own part, a part written within the grace before this
+    process started (another lab machine sharing the archive may still be
+    writing it), and any `.part` that isn't the writer's shape."""
+    mine = _part(tmp_path, "remy1.json", pid=os.getpid())
+    others = [
+        tmp_path / f"wiring.json{PART_SUFFIX}",
+        tmp_path / f"remy3.json.backup-1{PART_SUFFIX}",
+        tmp_path / f"scan.2026-07{PART_SUFFIX}",
+        tmp_path / f"remy1.tsv.{_other_pid()}-123456{PART_SUFFIX}",
+    ]
+    for other in others:
+        other.write_text("{}")
+
+    assert sweep_parts([tmp_path], started=_later(STALE)) == 0
+    fresh = _part(tmp_path, "remy2.json", pid=_other_pid())
+    assert sweep_parts([tmp_path], started=_later(PART_GRACE_S / 2)) == 0
+
+    assert mine.exists() and fresh.exists() and all(other.exists() for other in others)
+
+
+def test_the_sweep_keeps_a_copy_in_progress_that_kept_an_old_mtime(tmp_path: Path) -> None:
+    """A relocate copies a stale part with its mtime (`shutil.copy2`); the copy
+    is new all the same, and the relocate re-reads it to verify."""
+    copy = _part(tmp_path, "remy1.json", pid=_other_pid())
+    long_ago = time.time() - STALE
+    os.utime(copy, (long_ago, long_ago))
+
+    assert sweep_parts([tmp_path], started=_later(PART_GRACE_S / 2)) == 0
+
+    assert copy.exists()
+
+
+def test_the_sweep_leaves_the_backup_mirror_alone(tmp_path: Path) -> None:
+    """The backup mirror names its parts the same way; a backup directory
+    inside a data folder is not this sweep's to tidy, whichever spelling of it
+    the settings hold, nor when a root is the backup directory itself."""
+    backup = tmp_path / "backup"
+    mirrored = _part(backup / "Cohort", "remy1.json", pid=_other_pid())
+    (tmp_path / "linked").symlink_to(backup, target_is_directory=True)
+
+    assert sweep_parts([tmp_path], started=_later(STALE), skip=[tmp_path / "linked"]) == 0
+    assert sweep_parts([backup / "Cohort"], started=_later(STALE), skip=[backup]) == 0
+
+    assert mirrored.exists()
+
+
+def test_a_backup_directory_realpath_cannot_reach_still_skips_and_sweeps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A share whose logon expired makes `realpath` raise on Windows; the sweep
+    carries on with the path as spelt."""
+    backup = tmp_path / "backup"
+    mirrored = _part(backup, "remy1.json", pid=_other_pid())
+    stale = _part(tmp_path / "Cohort", "remy1.json", pid=_other_pid())
+
+    def unreachable(path, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        raise OSError(1326, "The user name or password is incorrect", str(path))
+
+    monkeypatch.setattr(os.path, "realpath", unreachable)
+    assert sweep_parts([tmp_path], started=_later(STALE), skip=[backup]) == 1
+
+    assert mirrored.exists() and not stale.exists()
+
+
+def test_the_sweep_walks_nested_roots_once_and_survives_a_missing_one(tmp_path: Path) -> None:
+    cohort = tmp_path / "Cohort"
+    stale = _part(cohort, "remy1.json", pid=_other_pid())
+
+    removed = sweep_parts([tmp_path, cohort, tmp_path / "unplugged"], started=_later(STALE))
+
+    assert removed == 1
+    assert not stale.exists()
+
+
+def test_a_part_the_sweep_cannot_remove_is_logged_not_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    stale = _part(tmp_path, "remy1.json", pid=_other_pid())
+
+    def refuse(self: Path, missing_ok: bool = False) -> None:
+        raise PermissionError(13, "Access is denied", str(self))
+
+    monkeypatch.setattr(Path, "unlink", refuse)
+    with caplog.at_level("WARNING"):
+        assert sweep_parts([tmp_path], started=_later(STALE)) == 0
+
+    assert stale.exists()
+    assert "Access is denied" in caplog.text

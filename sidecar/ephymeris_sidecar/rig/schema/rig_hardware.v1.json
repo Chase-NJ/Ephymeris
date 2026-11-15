@@ -1,0 +1,236 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rig_hardware.v1.json",
+  "title": "Rig wiring",
+  "_readme": [
+    "THE OPERATOR'S OWN WIRING, stored as <data_dir>/hardware/wiring.json. It REPLACES the",
+    "shipped pair (schema/channels.v1.json + hardware/<pinout>.json) rather than",
+    "merging with it -- a merge would mean a channel you deleted came back, and",
+    "there would be no way to say 'this box has no vacuum line'.",
+    "",
+    "TWO SECTIONS, ON PURPOSE. `channels` is what a channel MEANS; `pins` is where",
+    "it IS. That split is what lets a box generation be swapped without touching",
+    "meaning, and it is what RIG101 checks. Collapsing them into one map would make",
+    "that rule unwritable. Writing them together in one document is what makes the",
+    "rule easy to satisfy.",
+    "",
+    "THIS SCHEMA CHECKS SHAPE, NOT SENSE. Whether a pin is one this board has,",
+    "whether two channels share one, whether every response port has its own",
+    "strobe slot and every odor line its own onset code are RIG102, RIG103, RIG104",
+    "and RIG106 -- and they run against the COMPOSED",
+    "ChannelMap, so a problem is reported once regardless of which half caused it.",
+    "",
+    "A PIN CHANGE IS NOT A TASK CHANGE. A task profile names channels, never",
+    "numbers, so editing this file changes the firmware every task generates and",
+    "moves no profile_hash. That is the design working, and it is also why the rig",
+    "status carries a pinout hash: without it the record is blind to a remap."
+  ],
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "rig_version",
+    "channels",
+    "pins"
+  ],
+  "properties": {
+    "rig_version": {
+      "const": 1,
+      "description": "The shape of THIS file. Bumped when a section moves or changes meaning, never when a rig is rewired."
+    },
+    "derived_from": {
+      "type": "string",
+      "description": "The shipped pinout this rig started as. Recorded so 'a Mega, wired how?' has an answer the operator did not have to remember."
+    },
+    "board": {
+      "type": "string"
+    },
+    "edited_at": {
+      "type": "string",
+      "description": "Stamped by the store on write. Present in a stored document, absent in one being submitted."
+    },
+    "pin_range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "min",
+        "max"
+      ],
+      "description": "The board's own pin numbering, so RIG102 can say 'a Mega has 0-53' rather than quoting a constant at an operator. A different board declares a different range.",
+      "properties": {
+        "min": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 239
+        }
+      }
+    },
+    "channels": {
+      "type": "object",
+      "minProperties": 1,
+      "description": "What each channel means. Keys are channel names and are referenced by every task profile, so renaming one is a rename in every task that names it.",
+      "propertyNames": {
+        "$ref": "#/$defs/channel_name"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "enum": [
+              "engagement",
+              "response",
+              "emitter",
+              "reward",
+              "cue",
+              "vacuum",
+              "sync"
+            ],
+            "description": "Resolution is BY KIND for the structural channels: a task asks for 'the engagement channel', not for a name. Exactly one engagement channel, one cue and one vacuum should resolve; ambiguity returns nothing rather than picking the first."
+          },
+          "label": {
+            "type": "string",
+            "description": "What the operator calls it. Display only — never referenced by a task profile, so renaming a label is free and renaming a channel is not."
+          },
+          "well": {
+            "$ref": "#/$defs/channel_name",
+            "description": "Reward lines only: which response port this line serves. A task profile is refused if it rewards one well through the other's line — a mistake that looks correct on screen and delivers water to the wrong side of the box."
+          },
+          "port_slot": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Response ports only: which family of per-port strobes this port reports with. The slots that exist are declared in strobe_vocab `port_slots`, and there are TWO because BehaviorBox.h's checkResponse() polls exactly two ports — a third would be a promise nothing can keep. Deliberately NOT capped here: the vocabulary is the authority and RIG104 reads it, so a firmware that gained a third port would need one file changed rather than two. Slots 1 and 2 are the historical _L/_R codes. Two ports on one slot are indistinguishable in the data, which is also RIG104."
+          },
+          "onset_strobe": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]*$",
+            "description": "Emitters only: the strobe vocabulary code this odor line announces its onset with, by NAME (e.g. ODOR_3_ON) — the number lives only in the vocabulary. Declared rather than derived because the onsets are not contiguous and the emitter pins are not in line order. The task editor sets each trial type's onset code from it; RIG106 checks that it is a live onset code and that no two lines share one."
+          },
+          "type": {
+            "enum": [
+              "digital_in",
+              "digital_out",
+              "pwm_out",
+              "tone_out"
+            ],
+            "description": "Channel set (TASKS.md#the-channel-set-and-the-pin-map): what the line electrically is. It fixes which edges the channel has -- enter/exit on an input, on/off on an output, train_on/train_off on a train -- and must agree with the kind's direction (RIG107). pwm_out and tone_out are driven outputs (TASKS.md#driven-outputs), on a cue channel only. Defaults from the kind when absent."
+          },
+          "mode": {
+            "enum": [
+              "level",
+              "train"
+            ],
+            "description": "digital_out only: level (the default, as when absent) or train, a pulse train a spine task's row sets the rate, width and length of (TASKS.md#driven-outputs). A train is a cue channel only (RIG107)."
+          },
+          "role": {
+            "enum": [
+              "port",
+              "stimulus",
+              "reward",
+              "cue",
+              "routing",
+              "sync"
+            ],
+            "description": "Channel set: what the line is for in a task. Defaults from the kind when absent. BOX_Utility groups its outputs by it (TASKS.md#the-box-utility); no task generator reads it yet."
+          },
+          "active_level": {
+            "enum": [
+              "low",
+              "high"
+            ],
+            "description": "Inputs only: the level that means 'active' (a broken beam is LOW on an INPUT_PULLUP port)."
+          },
+          "debounce_ms": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000,
+            "description": "Inputs only: how long an edge must hold before it counts."
+          },
+          "serves": {
+            "$ref": "#/$defs/channel_name",
+            "description": "Reward lines only: the port this line pays at. Equal to `well` while both exist."
+          },
+          "edges": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Each edge's strobe code, by NAME. Allocated by a save (TASKS.md#edge-codes) and never typed: a channel that is renamed keeps its codes, because they travel inside its entry. RIG107 checks each is a live code on one edge only.",
+            "properties": {
+              "enter": {
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9_]*$"
+              },
+              "exit": {
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9_]*$"
+              },
+              "on": {
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9_]*$"
+              },
+              "off": {
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9_]*$"
+              },
+              "train_on": {
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9_]*$"
+              },
+              "train_off": {
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9_]*$"
+              }
+            }
+          },
+          "rationale": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "pins": {
+      "type": "object",
+      "minProperties": 1,
+      "description": "Where each channel is. Every key here must appear in `channels` and vice versa — RIG101 reports both directions.",
+      "propertyNames": {
+        "$ref": "#/$defs/channel_name"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "index"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 239,
+            "description": "The board pin. The 239 cap is a loose sanity bound so a typo'd 100000 dies here rather than downstream; whether it is a pin THIS board has is RIG102, which reads `pin_range`."
+          },
+          "watch_bit": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 7,
+            "description": "Watchable inputs only (the engagement port and the response ports): this channel's position among them. Declared rather than derived, so reordering this file cannot silently change what a position means, and required to be dense and 0-based by RIG101 — a gap addresses the wrong channel rather than none."
+          },
+          "note": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "channel_name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,31}$",
+      "description": "Lower snake case. It reaches a generated C header as part of an identifier, and it is typed by hand, so it needs a shape."
+    }
+  }
+}

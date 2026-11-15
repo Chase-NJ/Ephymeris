@@ -1,0 +1,510 @@
+"""Profile snapshots and the derived-metrics cache —
+`ANALYTICS.md#which-profile-decodes-a-run`, `DATA.md#caching`.
+
+Synchronous, like every other repository here; callers wrap in
+`asyncio.to_thread`. Shares the cohort database; each write is its own unit
+of work, or joins the caller's (`tx`, `DATA.md#transactions`).
+
+Two tables, both new at schema v3:
+
+* `task_profiles` — content-addressed snapshots, so a run stays decodable
+  years later even if its `task.json` is edited or deleted.
+* `run_metrics_cache` — derived summaries. Pure cache: every row is
+  recomputable from the file on disk, so losing it costs time and nothing else.
+  It is persisted rather than held in memory because the sidecar restarts on
+  every app launch (there is deliberately no auto-respawn), and re-replaying a
+  whole archive on each launch is the cost that buys.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import sqlite3
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any
+
+from ..cohorts.db import Database, Tx
+from ..tasks.profile import TaskProfile, TaskProfileError, parse_profile, profile_hash
+
+log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class CacheKey:
+    """What makes a cached summary still valid (`DATA.md#caching`)."""
+
+    file_path: str
+    mtime_ns: int | None
+    size: int | None
+    profile_hash: str | None
+    codec_version: int
+
+
+@dataclass(frozen=True)
+class CachedRun:
+    run_id: str
+    status: str
+    detail: str | None
+    #: The profile this run was SCORED with — not necessarily the one
+    #: resolution reached (`key.profile_hash`), which is NULL whenever the
+    #: scoring profile came out of the file itself or its strobes
+    #: (`ANALYTICS.md#which-profile-decodes-a-run`).
+    profile_hash: str | None
+    profile_source: str
+    #: The parameters the run's own FILE records
+    #: (`DATA.md#the-embedded-task-profile`), hashed.
+    #: Read only for a run with no `session_animal_runs` row of its own, whose
+    #: parameters this database therefore never recorded — which is what a
+    #: session copied from another rig arrives as. `None` when the file carries
+    #: no snapshot to say which of its fields are parameters.
+    params_hash: str | None
+    #: The values `params_hash` hashes — what the session log compares for a
+    #: recovered run (`DATA.md#what-changed`). `None` exactly when it is.
+    config: dict[str, Any] | None
+    summary: dict[str, Any]
+    key: CacheKey
+    #: A file that has gone missing keeps its last good summary rather than
+    #: being dropped — a briefly unreachable share must not erase history.
+    stale: bool = False
+
+
+class AnalyticsRepository:
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    # --- profile snapshots -------------------------------------------------
+
+    def remember_profile(self, profile: TaskProfile, *, tx: Tx | None = None) -> str:
+        """Store a profile if unseen, and return its hash.
+
+        Content-addressed, so the hundredth run of the same task adds nothing.
+        Joins `tx` when given (`DATA.md#transactions`): a finalization records
+        its run, and a scoring pass its cache rows, in the unit that snapshots
+        the profile they name.
+        """
+        digest = profile_hash(profile)
+        row = (
+            digest,
+            profile.task_name,
+            profile.kind,
+            json.dumps(profile.to_json(), sort_keys=True),
+            _now(),
+        )
+        sql = (
+            "INSERT OR IGNORE INTO task_profiles"
+            " (hash, task_name, kind, profile_json, first_seen_at)"
+            " VALUES (?, ?, ?, ?, ?)"
+        )
+        with self._db.write(tx) as unit:
+            unit.execute(sql, row)
+        return digest
+
+    # --- false-start overrides (ANALYTICS.md#false-starts) -----------------------
+
+    def false_start_overrides(self) -> dict[str, bool]:
+        """Every run a person has ruled on: run id -> set aside or not."""
+        with self._db.read() as q:
+            rows = q.execute("SELECT run_id, false_start FROM run_flags").fetchall()
+        return {row["run_id"]: bool(row["false_start"]) for row in rows}
+
+    def set_false_start(self, run_id: str, value: bool | None, *, tx: Tx | None = None) -> None:
+        """Record a person's ruling, or with None hand the run back to the rule."""
+        with self._db.write(tx) as unit:
+            if value is None:
+                unit.execute("DELETE FROM run_flags WHERE run_id = ?", (run_id,))
+            else:
+                unit.execute(
+                    "INSERT OR REPLACE INTO run_flags (run_id, false_start, set_at)"
+                    " VALUES (?, ?, ?)",
+                    (run_id, int(value), _now()),
+                )
+
+    def load_profile(self, digest: str) -> TaskProfile | None:
+        """Rebuild a snapshotted profile. `to_json` round-trips through the parser."""
+        with self._db.read() as q:
+            row = q.execute(
+                "SELECT profile_json FROM task_profiles WHERE hash = ?", (digest,)
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            return parse_profile(json.loads(row["profile_json"]))
+        except (ValueError, TaskProfileError) as exc:  # pragma: no cover
+            log.warning("stored profile %s is unparseable: %s", digest, exc)
+            return None
+
+    def profile_meta(self, hashes: list[str]) -> dict[str, dict[str, Any]]:
+        """Task name and kind per hash, for labelling profile groups."""
+        if not hashes:
+            return {}
+        marks = ",".join("?" * len(hashes))
+        with self._db.read() as q:
+            rows = q.execute(
+                f"SELECT hash, task_name, kind FROM task_profiles WHERE hash IN ({marks})",
+                tuple(hashes),
+            ).fetchall()
+        return {
+            row["hash"]: {"taskName": row["task_name"], "kind": row["kind"]}
+            for row in rows
+        }
+
+    # --- the derived cache -------------------------------------------------
+
+    def load_cached(
+        self, run_ids: list[str], *, version: int | None = None
+    ) -> dict[str, CachedRun]:
+        """Cached rows by run id. `version` keeps only rows keyed under it
+        (`scoring.current_version`): what a reader that opens no file wants,
+        since a row of any other version is one the next summary recomputes
+        (`DATA.md#caching`). The scorer itself reads every version — it needs a
+        vanished file's last good row whatever version wrote it."""
+        if not run_ids:
+            return {}
+        out: dict[str, CachedRun] = {}
+        same_version = "" if version is None else " AND codec_version = ?"
+        tail = () if version is None else (version,)
+        # Chunked so a cohort with thousands of runs can't blow SQLite's
+        # variable limit (999 by default on older builds).
+        for chunk in _chunks(run_ids, 400):
+            marks = ",".join("?" * len(chunk))
+            with self._db.read() as q:
+                rows = q.execute(
+                    f"SELECT * FROM run_metrics_cache WHERE run_id IN ({marks}){same_version}",
+                    (*chunk, *tail),
+                ).fetchall()
+            for row in rows:
+                try:
+                    summary = json.loads(row["summary_json"])
+                except ValueError:  # pragma: no cover - corrupt cache row
+                    continue
+                out[row["run_id"]] = CachedRun(
+                    run_id=row["run_id"],
+                    status=row["status"],
+                    detail=row["detail"],
+                    # Pre-v8 rows have no scored digest; for those the two
+                    # questions had the same answer whenever resolution
+                    # succeeded, and the migration dropped the rows where they
+                    # differed rather than leaving them to serve a NULL.
+                    profile_hash=row["scored_profile_hash"] or row["profile_hash"],
+                    profile_source=row["profile_source"],
+                    params_hash=row["params_hash"],
+                    config=_load_config(row["config_json"]),
+                    summary=summary,
+                    key=CacheKey(
+                        file_path=row["file_path"],
+                        mtime_ns=row["file_mtime_ns"],
+                        size=row["file_size"],
+                        profile_hash=row["profile_hash"],
+                        codec_version=row["codec_version"],
+                    ),
+                )
+        return out
+
+    # --- adopted orphans (DATA.md#orphan-adoption) ----------------------
+
+    def store_adopted(
+        self,
+        entries: list["AdoptedRun"],
+        *,
+        earlier_ids: dict[str, list[str]] | None = None,
+        tx: Tx | None = None,
+    ) -> int:
+        """Record adoptions in one transaction — same commit discipline as
+        `store` — and return how many were written.
+
+        `INSERT OR REPLACE` on the id makes a re-run refresh a row rather than
+        duplicate it. It never takes a row another cohort holds: moving a run
+        between cohorts is a move's job (`DATA.md#moving-animals-between-cohorts`),
+        and a replace would silently drop the run from that cohort's history
+        (`DATA.md#orphan-adoption`). Such an entry is left out and logged; the
+        rest of the batch is written.
+
+        `earlier_ids` maps an entry's id to ids the same run may have been
+        stored under before; a ruling on one moves to the entry when no row
+        holds it any more (`_move_rulings`). The caller names only entries it
+        adopts afresh.
+        """
+        if not entries:
+            return 0
+        with self._db.write(tx) as unit:
+            owners: dict[str, str] = {}
+            for chunk in _chunks([entry.id for entry in entries], 400):
+                marks = ",".join("?" * len(chunk))
+                owners.update(
+                    unit.execute(
+                        f"SELECT id, cohort_id FROM adopted_runs WHERE id IN ({marks})",
+                        tuple(chunk),
+                    ).fetchall()
+                )
+            ours = [e for e in entries if owners.get(e.id, e.cohort_id) == e.cohort_id]
+            for entry in (e for e in entries if owners.get(e.id, e.cohort_id) != e.cohort_id):
+                log.warning(
+                    "adoption of %s for cohort %s left out: cohort %s holds its id %s",
+                    entry.file_path,
+                    entry.cohort_id,
+                    owners[entry.id],
+                    entry.id,
+                )
+            entries = ours
+            if not entries:
+                return 0
+            unit.executemany(
+                "INSERT OR REPLACE INTO adopted_runs"
+                " (id, cohort_id, animal_id, file_path, prefix_name,"
+                "  session_number, date, started_at, sketch_name, sketch_path,"
+                "  adopted_at, file_mtime_ns, file_size)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        entry.id,
+                        entry.cohort_id,
+                        entry.animal_id,
+                        entry.file_path,
+                        entry.prefix_name,
+                        entry.session_number,
+                        entry.date,
+                        entry.started_at,
+                        entry.sketch_name,
+                        entry.sketch_path,
+                        _now(),
+                        entry.file_mtime_ns,
+                        entry.file_size,
+                    )
+                    for entry in entries
+                ],
+            )
+            self._move_rulings(unit, entries, earlier_ids or {})
+        return len(entries)
+
+    @staticmethod
+    def _move_rulings(
+        unit: Tx, entries: list["AdoptedRun"], earlier_ids: dict[str, list[str]]
+    ) -> None:
+        """Move a ruling left on an id no row holds any more onto the entry
+        that now holds its run (`ANALYTICS.md#false-starts`). Inside
+        `store_adopted`'s transaction, so the row and its ruling land together.
+
+        Each entry's candidates are tried in order and the first ruling found
+        moves. Never one a row still holds, and never over a ruling the entry
+        already has (`UPDATE OR IGNORE`).
+        """
+        conn = unit
+        for entry in entries:
+            for earlier in earlier_ids.get(entry.id, []):
+                if earlier == entry.id:
+                    continue
+                if conn.execute(
+                    "SELECT 1 FROM adopted_runs WHERE id = ?", (earlier,)
+                ).fetchone() is not None:
+                    continue
+                moved = conn.execute(
+                    "UPDATE OR IGNORE run_flags SET run_id = ? WHERE run_id = ?",
+                    (entry.id, earlier),
+                ).rowcount
+                if moved:
+                    break
+
+    def move_sources(self, cohort_id: str) -> list[str]:
+        """Every cohort a move brought animals from into this one, directly or
+        through cohorts in between, as recorded in `animal_moves`
+        (`DATA.md#moving-animals-between-cohorts`). A moved row keeps the id
+        its first cohort minted, so these are the cohorts whose ids its runs
+        may still carry. A deleted cohort stays listed: the journal outlives it.
+        """
+        with self._db.read() as q:
+            rows = q.execute(
+                "SELECT source_cohort_id, dest_cohort_id FROM animal_moves"
+                " WHERE state IN ('committed', 'done')"
+            ).fetchall()
+        into: dict[str, set[str]] = {}
+        for source, dest in rows:
+            into.setdefault(dest, set()).add(source)
+        found: set[str] = set()
+        frontier = [cohort_id]
+        while frontier:
+            for source in into.get(frontier.pop(), ()):
+                if source != cohort_id and source not in found:
+                    found.add(source)
+                    frontier.append(source)
+        return sorted(found)
+
+    def adopted_for_cohort(self, cohort_id: str) -> list["AdoptedRun"]:
+        with self._db.read() as q:
+            rows = q.execute(
+                "SELECT * FROM adopted_runs WHERE cohort_id = ?"
+                " ORDER BY date, started_at, file_path",
+                (cohort_id,),
+            ).fetchall()
+        return [_hydrate_adopted(row) for row in rows]
+
+    def delete_adopted(self, ids: list[str], *, tx: Tx | None = None) -> int:
+        """Drop adoptions whose files the disk no longer has (`DATA.md#pruning`).
+
+        Safe in a way pruning a *recorded* run is not: an adopted row holds
+        nothing that isn't re-derivable from the file it names, so a row deleted
+        in error costs one rescan. The judgement about *whether* the file is
+        really gone belongs to the caller, and is the part that matters.
+        """
+        if not ids:
+            return 0
+        removed = 0
+        with self._db.write(tx) as unit:
+            for chunk in _chunks(ids, 400):
+                marks = ",".join("?" * len(chunk))
+                cursor = unit.execute(
+                    f"DELETE FROM adopted_runs WHERE id IN ({marks})", tuple(chunk)
+                )
+                removed += cursor.rowcount
+        return removed
+
+    def forget_cached(self, run_ids: list[str], *, tx: Tx | None = None) -> None:
+        """Drop cached summaries for runs that no longer exist.
+
+        The cache is what actually *serves* a deleted session's numbers: a
+        missing file keeps its last good summary on purpose
+        (`DATA.md#caching`), so a run
+        whose record is being pruned would otherwise leave its scores behind in
+        a row nothing points at.
+        """
+        if not run_ids:
+            return
+        with self._db.write(tx) as unit:
+            for chunk in _chunks(run_ids, 400):
+                marks = ",".join("?" * len(chunk))
+                unit.execute(
+                    f"DELETE FROM run_metrics_cache WHERE run_id IN ({marks})",
+                    tuple(chunk),
+                )
+
+    def adopted_by_id(self, run_id: str) -> "AdoptedRun | None":
+        with self._db.read() as q:
+            row = q.execute(
+                "SELECT * FROM adopted_runs WHERE id = ?", (run_id,)
+            ).fetchone()
+        return _hydrate_adopted(row) if row is not None else None
+
+    def store(self, entries: list[CachedRun], *, tx: Tx | None = None) -> None:
+        """Write cache rows in **one transaction**, or in `tx`'s unit of work
+        when given one (`DATA.md#transactions`): the indexing pass writes its
+        rows with the profiles it scored them under.
+
+        Every commit marks the whole database dirty for backup
+        (`DATA.md#the-database-copy`), so committing per row would trigger repeated
+        whole-file copies to a possibly-networked target during a single
+        indexing pass.
+
+        The same unit records each read run's replay verdict on its run record
+        (`DATA.md#run-records`): `diverged` is 1 for a diverged spine run, 0 for
+        one replay scored, NULL for a run replay did not score. A missing or
+        stale file says nothing new, so its record keeps what it had. An
+        adopted run has no record; its verdict is its cached status.
+        """
+        if not entries:
+            return
+        with self._db.write(tx) as unit:
+            unit.executemany(
+                "UPDATE session_animal_runs SET diverged = ? WHERE id = ?",
+                [(replay_verdict(entry), entry.run_id) for entry in entries
+                 if entry.status != "missing" and not entry.stale],
+            )
+            unit.executemany(
+                "INSERT OR REPLACE INTO run_metrics_cache"
+                " (run_id, file_path, file_mtime_ns, file_size, profile_hash,"
+                "  scored_profile_hash, profile_source, params_hash, config_json,"
+                "  codec_version, computed_at, status, detail, summary_json)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        entry.run_id,
+                        entry.key.file_path,
+                        entry.key.mtime_ns,
+                        entry.key.size,
+                        entry.key.profile_hash,
+                        entry.profile_hash,
+                        entry.profile_source,
+                        entry.params_hash,
+                        None if entry.config is None else json.dumps(entry.config, sort_keys=True),
+                        entry.key.codec_version,
+                        _now(),
+                        entry.status,
+                        entry.detail,
+                        json.dumps(entry.summary),
+                    )
+                    for entry in entries
+                ],
+            )
+
+
+def replay_verdict(entry: CachedRun) -> int | None:
+    """`session_animal_runs.diverged` for a scored row: 1, 0, or None (not replayed)."""
+    if entry.status == "diverged":
+        return 1
+    return 0 if entry.status == "ok" and entry.summary.get("replay") else None
+
+
+@dataclass(frozen=True)
+class AdoptedRun:
+    """A file the archive walk matched to an animal (`DATA.md#orphan-adoption`).
+
+    Deliberately not a `sessions` or `session_animal_runs` row — a fabricated
+    session row would corrupt session-number suggestion and the same-day
+    warning. What a folder and document name can honestly carry is here;
+    what they can't (box number, stop reason, end time) stays unknown.
+    """
+
+    id: str
+    cohort_id: str
+    animal_id: str
+    file_path: str
+    prefix_name: str
+    session_number: str
+    date: str | None
+    started_at: str
+    sketch_name: str | None
+    sketch_path: str | None
+    #: The stat the adoption was taken from
+    #: (`DATA.md#carrying-adoptions-forward`). Its only job is to
+    #: let the next rescan recognise a file it has already read — the same
+    #: mtime+size key `CacheKey` uses, and answerable without opening anything.
+    #: `None` on a row written before v7, which is read as "unknown, so re-read".
+    file_mtime_ns: int | None = None
+    file_size: int | None = None
+
+
+def _hydrate_adopted(row: sqlite3.Row) -> AdoptedRun:
+    return AdoptedRun(
+        id=row["id"],
+        cohort_id=row["cohort_id"],
+        animal_id=row["animal_id"],
+        file_path=row["file_path"],
+        prefix_name=row["prefix_name"],
+        session_number=row["session_number"],
+        date=row["date"],
+        started_at=row["started_at"],
+        sketch_name=row["sketch_name"],
+        sketch_path=row["sketch_path"],
+        file_mtime_ns=row["file_mtime_ns"],
+        file_size=row["file_size"],
+    )
+
+
+def _chunks(items: list[str], size: int) -> list[list[str]]:
+    return [items[i : i + size] for i in range(0, len(items), size)]
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _load_config(raw: str | None) -> dict[str, Any] | None:
+    """A cached run's recorded parameters; `None` for absent or unreadable —
+    a corrupt cache cell costs one comparison, never the summary."""
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        return None
+    return value if isinstance(value, dict) else None

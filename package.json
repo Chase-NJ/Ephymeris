@@ -1,0 +1,71 @@
+{
+  "name": "ephymeris",
+  "version": "1.1.4-alpha",
+  "description": "Behavioral data collection & analysis suite",
+  "private": true,
+  "type": "module",
+  "main": "dist-electron/main.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Chase-NJ/Ephymeris.git"
+  },
+  "license": "ISC",
+  "scripts": {
+    "predev": "node scripts/gen-protocol.mjs",
+    "dev": "vite",
+    "prebuild": "node scripts/gen-protocol.mjs",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "node scripts/check.mjs",
+    "gen:protocol": "node scripts/gen-protocol.mjs",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "start": "node scripts/electron-dev.mjs",
+    "electron:dev": "node scripts/electron-dev.mjs",
+    "build:electron": "tsc -p electron/tsconfig.build.json",
+    "package:electron": "node scripts/package-resources.mjs && npm run build && npm run build:electron && electron-builder --win --publish never",
+    "package": "node scripts/package-resources.mjs && tauri build --config src-tauri/tauri.bundle.conf.json"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.12"
+  },
+  "devDependencies": {
+    "@fontsource/inter": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "@fontsource/space-grotesk": "^5.3.0",
+    "@react-pdf/renderer": "^4.9.0",
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.6.1",
+    "@tailwindcss/vite": "^4.3.3",
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/cli": "^2.11.4",
+    "@tauri-apps/plugin-dialog": "^2.7.2",
+    "@tauri-apps/plugin-fs": "^2.5.1",
+    "@tauri-apps/plugin-opener": "^2.5.4",
+    "@tauri-apps/plugin-store": "^2.4.4",
+    "@types/node": "24.19.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@types/three": "^0.185.1",
+    "@vitejs/plugin-react": "^6.0.4",
+    "electron": "45.2.1",
+    "electron-builder": "26.18.1",
+    "framer-motion": "^12.42.2",
+    "lucide-react": "^1.25.0",
+    "modern-screenshot": "4.6.8",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router": "^8.3.0",
+    "tailwindcss": "^4.3.3",
+    "three": "^0.185.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.6",
+    "vitest": "^4.1.12"
+  },
+  "allowScripts": {
+    "fsevents@2.3.3": true
+  }
+}

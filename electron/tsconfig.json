@@ -1,0 +1,21 @@
+{
+  // The Electron main process and preload: Node, not the browser. Checked with
+  // its tests by `npm run check`; `tsconfig.build.json` emits to `dist-electron/`.
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "types": ["node"],
+    "skipLibCheck": true,
+    "noEmit": true,
+
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true
+  },
+  "include": ["./**/*.ts", "./**/*.cts"]
+}

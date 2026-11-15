@@ -1,0 +1,775 @@
+import { CircleAlert, Hand, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+
+import { Button, Select } from "@/components/common/controls";
+import { Callout } from "@/components/common/Callout";
+import { Dropdown } from "@/components/common/Dropdown";
+import { FieldRow } from "@/components/common/FieldRow";
+import { Modal } from "@/components/common/Modal";
+import { RowDensityContext } from "@/components/common/rowDensity";
+import { BoardMap } from "@/components/hardware/BoardMap";
+import {
+  CHANNEL_TYPES,
+  MODES,
+  ROLES,
+  edgesOf,
+  kindDefaults,
+  patchChannel,
+  servePort,
+} from "@/lib/hardware/channelSet";
+import {
+  KINDS,
+  kindColor,
+  type RigChannel,
+  type RigDocument,
+} from "@/lib/hardware/types";
+import { lowestFreePin } from "@/lib/hardware/pins";
+import { canReset, canSave as canSaveView } from "@/lib/hardware/rigView";
+import { useStrobeVocabulary } from "@/lib/strobes/useStrobeVocabulary";
+import { onsetOptions } from "@/lib/taskdef/lines";
+import type { RigSession } from "@/lib/hardware/useRig";
+
+/**
+ * The channel→pin editor — the working half of the wiring page.
+ *
+ * The centrepiece of `/config/wiring` (`routes/RigWiring.tsx`), behind the
+ * Wiring door on the Rig landing. It binds a CHANNEL to a PIN: compiler input,
+ * baked into every table, and wrong silently — which is why the preview round
+ * trip, the problems list, and the would-break-tasks gate exist (`useRig`).
+ *
+ * THE SESSION AND THE SELECTION ARE THE PAGE'S, NOT THIS COMPONENT'S. The
+ * wiring page also renders the pin table, and the two surfaces must read one
+ * document and share one selection — a table row and a board cell that
+ * disagreed about "the selected channel" would be the two-surfaces bug this
+ * editor's own rail rule exists to prevent, one level up.
+ *
+ * THE MAP SELECTS, THE RAIL EDITS — `SpecCanvas`'s division, for the same
+ * reason: two surfaces for one field eventually disagree. The rail is a fixed
+ * right column rather than the resizable `InspectorRail` (that one exists for
+ * strobe pickers twenty characters wide; a channel's fields are short).
+ *
+ * Saving stays the editor's own gesture, not the page's: everything else on
+ * the Rig screen writes through `useSettings` per change, but a wiring edit
+ * can break saved tasks, so it keeps its explicit Save with the preflight
+ * (`RIG_WOULD_BREAK_TASKS`) in front of it.
+ */
+export function RigWiringEditor({
+  rig,
+  selected,
+  onSelect,
+}: {
+  rig: RigSession;
+  selected: string | null;
+  onSelect: (channel: string | null) => void;
+}) {
+  const [carried, setCarried] = useState<string | null>(null);
+  const [confirmingReset, setConfirmingReset] = useState(false);
+
+  const doc = rig.doc;
+
+  /** Pins a diagnostic points at, so a message has something to light up. */
+  const problemPins = useMemo(() => {
+    const out = new Set<number>();
+    if (!doc) return out;
+    for (const p of rig.problems) {
+      for (const [name, entry] of Object.entries(doc.pins ?? {})) {
+        if (p.location.includes(name) || p.message.includes(`'${name}'`)) {
+          if (typeof entry?.index === "number") out.add(entry.index);
+        }
+      }
+    }
+    return out;
+  }, [doc, rig.problems]);
+
+  function edit(next: RigDocument) {
+    rig.setDoc(next);
+  }
+
+  function movePin(channel: string, pin: number) {
+    if (!doc) return;
+    edit({
+      ...doc,
+      pins: { ...doc.pins, [channel]: { ...doc.pins[channel], index: pin } },
+    });
+  }
+
+  function editChannel(name: string, patch: Partial<RigChannel>) {
+    if (!doc) return;
+    const current = doc.channels[name];
+    if (!current) return;
+    const next = patchChannel(current, patch);
+    // Only an odor line announces an onset; a channel that stops being one
+    // drops its declaration rather than carrying a code RIG106 would refuse.
+    if (next.kind !== "emitter" || next.onset_strobe === "") delete next.onset_strobe;
+    edit({
+      ...doc,
+      channels: { ...doc.channels, [name]: next },
+    });
+  }
+
+  /**
+   * Add a channel on the lowest free pin the board does not reserve
+   * (`lowestFreePin`: never the Mega's serial pins 0 and 1).
+   *
+   * NAMED GENERICALLY AND THEN RENAMED, rather than asking for a name up front
+   * in a dialog. The rail is already the place a channel's fields are edited,
+   * so a new one arriving selected with its fields open is the same gesture as
+   * editing an existing one — and a modal would cover the board the operator is
+   * choosing a pin from.
+   */
+  function addChannel() {
+    if (!doc) return;
+    const pin = lowestFreePin(doc, rig.reservedPins);
+    if (pin === null) return;
+
+    let n = 1;
+    while (doc.channels[`channel_${n}`]) n += 1;
+    const name = `channel_${n}`;
+
+    edit({
+      ...doc,
+      channels: {
+        ...doc.channels,
+        [name]: { kind: "emitter", label: name, ...kindDefaults("emitter") },
+      },
+      pins: { ...doc.pins, [name]: { index: pin } },
+    });
+    onSelect(name);
+  }
+
+  function removeChannel(name: string) {
+    if (!doc) return;
+    const channels = { ...doc.channels };
+    const pins = { ...doc.pins };
+    delete channels[name];
+    delete pins[name];
+    edit({ ...doc, channels, pins });
+    onSelect(null);
+  }
+
+  /**
+   * Rename a channel in both halves at once.
+   *
+   * A CHANNEL NAME IS WHAT A SPEC REFERENCES, so this is the one edit here that
+   * can break a saved task by itself — and it will show up in `breaks` as
+   * TG223, which is the whole point of computing that before the write. Key
+   * order is preserved because the map's reading order is the document's, and a
+   * rename that shuffled the board would look like a move.
+   */
+  function renameChannel(from: string, to: string) {
+    if (!doc || !to || to === from || doc.channels[to]) return;
+    const rekey = <T,>(map: Record<string, T>): Record<string, T> =>
+      Object.fromEntries(
+        Object.entries(map).map(([k, v]) => [k === from ? to : k, v]),
+      );
+    const channels = rekey(doc.channels);
+    // A reward line names the port it serves, so a renamed PORT has to be
+    // followed there too or TG224 starts reporting a well that is not a channel.
+    for (const entry of Object.values(channels)) {
+      if (entry.well === from) entry.well = to;
+      if (entry.serves === from) entry.serves = to;
+    }
+    edit({ ...doc, channels, pins: rekey(doc.pins) });
+    onSelect(to);
+  }
+
+  /** `well` absent means "not plumbed", so clearing it DELETES the key rather
+   * than setting it to undefined — `exactOptionalPropertyTypes` is right that
+   * those are different, and the schema forbids `well: null`. */
+  function unplumb(name: string, well: string) {
+    if (!doc) return;
+    const current = doc.channels[name];
+    if (!current) return;
+    edit({ ...doc, channels: { ...doc.channels, [name]: servePort(current, well) } });
+  }
+
+  const errors = rig.problems.length;
+  const notices = rig.status?.notices ?? [];
+  const canSave = canSaveView(rig, { saving: rig.saving, checking: rig.checking });
+  const replaces = rig.status?.resetReplaces ?? [];
+
+  /** Reset removes files; when there are any, the operator is shown exactly
+   *  which before it does (`status.resetReplaces`). */
+  function askReset() {
+    if (replaces.length > 0) setConfirmingReset(true);
+    else void rig.reset();
+  }
+
+  return (
+    <div>
+      {/* The editor's own action strip — status on the left, the write
+          controls on the right. */}
+      <div className="flex items-center gap-3 border-b border-halo px-4 py-2.5">
+        <div className="min-w-0 flex-1 font-mono text-[10px] text-static">
+          {rig.status
+            ? `${rig.status.board || "board"} · ${
+                rig.status.custom ? "this rig's own" : "as shipped"
+              } · pins ${rig.status.pinoutHash} · channel set ${rig.status.channelSetHash}`
+            : "loading…"}
+        </div>
+        {rig.checking && (
+          <span className="font-mono text-[10px] text-static">checking…</span>
+        )}
+        {errors > 0 && (
+          <span
+            className="flex items-center gap-1 font-mono text-[10px]"
+            style={{ color: "var(--color-status-error)" }}
+          >
+            <CircleAlert size={11} strokeWidth={1.75} />
+            {errors} problem{errors === 1 ? "" : "s"}
+          </span>
+        )}
+        <Button
+          variant="ghost"
+          onClick={askReset}
+          disabled={!canReset(rig.status, rig.saving)}
+          title="Discard this rig's wiring and use the pinout the build shipped with"
+        >
+          <RotateCcw size={12} strokeWidth={1.75} />
+          Reset
+        </Button>
+        <Button variant="ghost" onClick={rig.revert} disabled={!rig.dirty}>
+          Revert
+        </Button>
+        <Button variant="primary" disabled={!canSave} onClick={() => void rig.save(false)}>
+          <Save size={12} strokeWidth={1.75} />
+          {rig.saving ? "Saving…" : "Save"}
+        </Button>
+      </div>
+
+      {rig.loadError && (
+        <p
+          className="border-b border-halo px-4 py-2 text-[12px]"
+          style={{ color: "var(--color-status-error)" }}
+        >
+          {rig.loadError}
+        </p>
+      )}
+
+      {doc === null ? (
+        <p className="px-4 py-6 text-center text-[12px] text-static">
+          {rig.loadError ? "" : "Reading this rig's wiring…"}
+        </p>
+      ) : (
+        <div className="grid grid-cols-1 items-start gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_280px]">
+          <div className="flex min-w-0 flex-col gap-4">
+            {carried !== null && (
+              <div className="flex items-center gap-2 rounded-sm border border-pulsar/60 bg-pulsar/10 px-3 py-1.5 text-[11px] text-starlight">
+                <Hand size={12} strokeWidth={1.75} />
+                Carrying <span className="font-mono">{carried}</span> — click a pin to
+                place it.
+                <Button variant="ghost" onClick={() => setCarried(null)}>
+                  Cancel
+                </Button>
+              </div>
+            )}
+
+            <BoardMap
+              doc={doc}
+              selected={selected}
+              carried={carried}
+              onSelect={onSelect}
+              onCarry={setCarried}
+              onMove={movePin}
+              problemPins={problemPins}
+              reservedPins={rig.reservedPins}
+            />
+
+            <div className="flex items-center justify-between gap-3">
+              <Legend />
+              <Button variant="outline" onClick={addChannel}>
+                <Plus size={12} strokeWidth={1.75} />
+                Add a channel
+              </Button>
+            </div>
+
+            {notices.length > 0 && (
+              <Callout
+                title="This rig's wiring"
+                tone="warning"
+                why="About the wiring in force and the files on disk, not this draft: no edit clears these. Saving a draft without problems, or Reset, does; a file beside the wiring file goes only with Reset."
+              >
+                {notices.map((n, i) => (
+                  <p key={i} className="text-[11px] leading-relaxed">
+                    {n.message}
+                  </p>
+                ))}
+                {rig.status?.needsPinConfirmation && (
+                  <div className="flex items-center gap-2 pt-1">
+                    <Button
+                      variant="secondary"
+                      disabled={rig.confirmedPins}
+                      onClick={rig.confirmPins}
+                    >
+                      {rig.confirmedPins ? "Pins confirmed" : "I've checked every pin"}
+                    </Button>
+                    <span className="text-[10.5px] leading-relaxed text-static">
+                      Compare each pin on the board map with the box before confirming.
+                      Save stays off until you do.
+                    </span>
+                  </div>
+                )}
+              </Callout>
+            )}
+
+            {rig.problems.length > 0 && (
+              <Callout title="Problems">
+                {rig.problems.map((p, i) => (
+                  <div key={i} className="flex gap-2 text-[11px] leading-relaxed">
+                    <span
+                      className="shrink-0 font-mono text-[10px]"
+                      style={{ color: "var(--color-status-error)" }}
+                    >
+                      {p.code ?? "shape"}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="font-mono text-[10px] text-static">
+                        {p.location}
+                      </span>
+                      <br />
+                      {p.message}
+                    </span>
+                  </div>
+                ))}
+              </Callout>
+            )}
+
+            {rig.breaks.length > 0 && (
+              <Callout
+                title={`${rig.breaks.length} task${rig.breaks.length === 1 ? "" : "s"} would stop compiling`}
+                tone="warning"
+                why="A spec names channels, so this wiring is what resolves them. These bind something this change removes or moves."
+              >
+                {rig.breaks.map((b) => (
+                  <div key={b.specId} className="flex items-baseline gap-2 text-[11px]">
+                    <span className="font-mono text-starlight">{b.specId}</span>
+                    <span className="text-static">{b.label}</span>
+                    <span className="ml-auto font-mono text-[10px] text-static">
+                      {b.codes.join(" ")}
+                    </span>
+                  </div>
+                ))}
+                <div className="flex items-center gap-2 pt-1">
+                  <Button variant="secondary" onClick={() => void rig.save(true)}>
+                    Save anyway
+                  </Button>
+                  <span className="text-[10.5px] leading-relaxed text-static">
+                    Rewiring a box is your call — the app only refuses to let it
+                    happen unnoticed.
+                  </span>
+                </div>
+              </Callout>
+            )}
+
+            {rig.allocations.length > 0 && (
+              <Callout
+                title={`Saving issues ${rig.allocations.length} strobe code${
+                  rig.allocations.length === 1 ? "" : "s"
+                }`}
+                why="Every edge of a channel is announced by a code of its own. A save appends one to the vocabulary for each edge that has none; renaming the channel later keeps it."
+              >
+                {rig.allocations.map((a) => (
+                  <div key={a.name} className="flex items-baseline gap-2 text-[11px]">
+                    <span className="font-mono text-starlight">{a.name}</span>
+                    <span className="font-mono text-[10px] text-static">
+                      {a.channel}.{a.edge}
+                    </span>
+                    <span className="ml-auto font-mono text-[10px] text-static">{a.code}</span>
+                  </div>
+                ))}
+              </Callout>
+            )}
+
+            {!rig.dirty && rig.issued.length > 0 && (
+              <Callout
+                title={`Issued ${rig.issued.length} strobe code${rig.issued.length === 1 ? "" : "s"}`}
+                why="Appended to the strobe vocabulary by this save. They are this channel set's from now on, and never renumbered."
+              >
+                {rig.issued.map((a) => (
+                  <div key={a.name} className="flex items-baseline gap-2 text-[11px]">
+                    <span className="font-mono text-starlight">{a.name}</span>
+                    <span className="font-mono text-[10px] text-static">
+                      {a.channel}.{a.edge}
+                    </span>
+                    <span className="ml-auto font-mono text-[10px] text-static">{a.code}</span>
+                  </div>
+                ))}
+              </Callout>
+            )}
+
+            {rig.actionError && (
+              <p className="text-[11px]" style={{ color: "var(--color-status-error)" }}>
+                {rig.actionError}
+              </p>
+            )}
+          </div>
+
+          {/* The inspector column. `lg:sticky` so a long problems list scrolls
+              under a rail that keeps the selected channel's fields in reach.
+              `surface-inset`, not `.hud`: the editor sits inside a frosted tile
+              now, and frosting inside frosting reads muddier than a flat lift.
+              */}
+          <div className="surface-inset rounded-sm px-3 py-1 lg:sticky lg:top-4">
+            <RowDensityContext.Provider value="stacked">
+              <ChannelInspector
+                doc={doc}
+                selected={selected}
+                onEdit={editChannel}
+                onUnplumb={unplumb}
+                onRename={renameChannel}
+                onRemove={removeChannel}
+                onCarry={(name) => {
+                  setCarried(name);
+                  onSelect(name);
+                }}
+              />
+            </RowDensityContext.Provider>
+          </div>
+        </div>
+      )}
+
+      <Modal
+        open={confirmingReset}
+        onClose={() => setConfirmingReset(false)}
+        title="Reset this rig's wiring?"
+      >
+        <div className="flex flex-col gap-3 text-[12px] leading-relaxed">
+          <p>
+            Reset removes this rig&apos;s own wiring and puts the wiring its build shipped
+            with in force. It removes:
+          </p>
+          <ul className="flex flex-col gap-1">
+            {replaces.map((path) => (
+              <li key={path} className="break-all font-mono text-[11px] text-starlight">
+                {path}
+              </li>
+            ))}
+          </ul>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setConfirmingReset(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                setConfirmingReset(false);
+                void rig.reset();
+              }}
+            >
+              <RotateCcw size={12} strokeWidth={1.75} />
+              Reset
+            </Button>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+function Legend() {
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+      {KINDS.map((kind) => (
+        <span key={kind} className="flex items-center gap-1.5">
+          <span
+            className="size-2 rounded-[2px]"
+            style={{ background: kindColor(kind), opacity: 0.7 }}
+          />
+          <span className="font-mono text-[10px] text-static">{kind}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The selected channel's fields.
+ *
+ * Deliberately narrow: pin lives on the map, and everything here is something
+ * the map cannot show. `kind` is the one with teeth — it decides which template
+ * slot a channel answers (D15), so changing it is how a spare line becomes a
+ * second cue.
+ */
+function ChannelInspector({
+  doc,
+  selected,
+  onEdit,
+  onUnplumb,
+  onRename,
+  onRemove,
+  onCarry,
+}: {
+  doc: RigDocument;
+  selected: string | null;
+  onEdit: (name: string, patch: Partial<RigChannel>) => void;
+  onUnplumb: (name: string, well: string) => void;
+  onRename: (from: string, to: string) => void;
+  onRemove: (name: string) => void;
+  onCarry: (name: string) => void;
+}) {
+  const { vocabulary } = useStrobeVocabulary();
+  if (selected === null || !doc.channels[selected]) {
+    return (
+      <div className="flex flex-col gap-2 px-1 py-2">
+        <div className="font-display text-[13px] text-starlight">Inspector</div>
+        <p className="text-[11px] leading-relaxed text-static">
+          Click a pin to see the channel on it. Drag one to move it, or click it and
+          then click a pin — both work, and the second needs no gesture at all.
+        </p>
+      </div>
+    );
+  }
+
+  const entry = doc.channels[selected];
+  const pin = doc.pins[selected];
+
+  return (
+    <div className="flex flex-col gap-3 px-1 py-2">
+      <div>
+        <div className="font-mono text-[13px] text-starlight">{selected}</div>
+        <div className="font-mono text-[10px] text-static">
+          pin {pin?.index ?? "—"}
+          {pin?.watch_bit !== undefined ? ` · watch bit ${pin.watch_bit}` : ""}
+        </div>
+      </div>
+
+      <Button variant="outline" onClick={() => onCarry(selected)}>
+        <Hand size={12} strokeWidth={1.75} />
+        Move to a pin
+      </Button>
+
+      <label className="flex flex-col gap-1">
+        <span className="text-[11px] text-starlight">Kind</span>
+        <Select
+          label="Kind"
+          value={entry.kind}
+          options={KINDS.map((k) => ({ value: k as string, label: k }))}
+          onChange={(v) => onEdit(selected, { kind: v })}
+        />
+        <span className="text-[10px] leading-relaxed text-static">
+          What this channel is FOR. The engagement port, the cue and the vacuum are
+          resolved by kind rather than by name, so a template asks for "the engagement
+          channel" and this is what answers. A sync channel pulses on every event, into
+          the recording controller's digital input — a rig without one cannot be
+          recorded from.
+        </span>
+      </label>
+
+      <label className="flex flex-col gap-1">
+        <span className="text-[11px] text-starlight">Type</span>
+        <Select
+          label="Type"
+          value={entry.type ?? ""}
+          options={CHANNEL_TYPES.map((t) => ({ value: t as string, label: t }))}
+          onChange={(v) => onEdit(selected, { type: v })}
+        />
+        <span className="text-[10px] leading-relaxed text-static">
+          What the line electrically is. It decides the channel&apos;s edges — an input
+          is entered and left, an output switched on and off — and each edge gets a
+          strobe code of its own. A PWM or tone line is driven at the value each trial
+          type sets; it goes on a cue channel, on a pin the board can run it on.
+        </span>
+      </label>
+
+      {entry.type === "digital_out" && (
+        <label className="flex flex-col gap-1">
+          <span className="text-[11px] text-starlight">Mode</span>
+          <Select
+            label="Mode"
+            value={entry.mode ?? "level"}
+            options={MODES.map((m) => ({ value: m as string, label: m }))}
+            onChange={(v) => onEdit(selected, { mode: v })}
+          />
+          <span className="text-[10px] leading-relaxed text-static">
+            A train pulses at the rate, width and length each trial type sets, and
+            records only its start and end. A train goes on a cue channel.
+          </span>
+        </label>
+      )}
+
+      <label className="flex flex-col gap-1">
+        <span className="text-[11px] text-starlight">Role</span>
+        <Select
+          label="Role"
+          value={entry.role ?? ""}
+          options={ROLES.map((r) => ({ value: r as string, label: r }))}
+          onChange={(v) => onEdit(selected, { role: v })}
+        />
+        <span className="text-[10px] leading-relaxed text-static">
+          What the line is for in a task. Lab-wide, like the type: both machines share
+          one channel set.
+        </span>
+      </label>
+
+      {entry.type === "digital_in" && (
+        <>
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] text-starlight">Active level</span>
+            <Select
+              label="Active level"
+              value={entry.active_level ?? "low"}
+              options={[
+                { value: "low", label: "low" },
+                { value: "high", label: "high" },
+              ]}
+              onChange={(v) => onEdit(selected, { active_level: v })}
+            />
+          </label>
+          <FieldRow
+            label="Debounce"
+            type="int"
+            value={entry.debounce_ms ?? 0}
+            fallback={0}
+            baseline={entry.debounce_ms ?? 0}
+            min={0}
+            max={1000}
+            unit="ms"
+            onChange={(v) => onEdit(selected, { debounce_ms: Number(v) })}
+            help="How long an edge must hold before it counts. A beam break is active LOW on the shipped ports."
+          />
+        </>
+      )}
+
+      <div className="flex flex-col gap-1">
+        <span className="text-[11px] text-starlight">Strobe codes</span>
+        {edgesOf(entry.type, entry.mode).map((edge) => (
+          <div key={edge} className="flex items-baseline gap-2 text-[11px]">
+            <span className="w-14 shrink-0 font-mono text-[10px] text-static">{edge}</span>
+            <span className="font-mono text-starlight">
+              {entry.edges?.[edge] ?? <span className="text-static">issued on save</span>}
+            </span>
+          </div>
+        ))}
+        <span className="text-[10px] leading-relaxed text-static">
+          Shown, never typed. A save issues each edge a fresh code, and a renamed
+          channel keeps its codes.
+        </span>
+      </div>
+
+      <FieldRow
+        label="Label"
+        type="string"
+        value={entry.label ?? ""}
+        fallback=""
+        baseline={entry.label ?? ""}
+        onChange={(v) => onEdit(selected, { label: String(v) })}
+        help="What you call it — &quot;sandalwood&quot; rather than &quot;odor line 1&quot;. The Task tab reads it back on every trial-type row, so this is where an odor gets its name. Display only: a task profile references the channel NAME, so renaming a label is free and renaming a channel is not."
+        mono={false}
+      />
+
+      {entry.kind === "response" && (
+        <FieldRow
+          label="Port slot"
+          type="int"
+          value={entry.port_slot ?? 1}
+          fallback={1}
+          baseline={entry.port_slot ?? 1}
+          min={1}
+          max={7}
+          onChange={(v) => onEdit(selected, { port_slot: Number(v) })}
+          help="Which family of per-port strobes this port reports with. Slots 1 and 2 are the historical left/right codes; two ports on one slot are indistinguishable in the data."
+        />
+      )}
+
+      {entry.kind === "emitter" && (
+        <label className="flex flex-col gap-1">
+          <span className="text-[11px] text-starlight">Onset code</span>
+          <Dropdown
+            label="Onset code"
+            size="regular"
+            value={entry.onset_strobe ?? ""}
+            placeholder="— none —"
+            options={[
+              { value: "", label: "— none —" },
+              ...onsetOptions(doc, vocabulary, selected),
+            ]}
+            onChange={(v) => onEdit(selected, { onset_strobe: v })}
+          />
+          <span className="text-[10px] leading-relaxed text-static">
+            The code this line announces its odor with. Every trial type on this line
+            records it — the Task tab fills it in from here — so it is declared once,
+            on the wiring, and never worked out from the line&apos;s name. Two lines on
+            one code are indistinguishable in the data.
+          </span>
+        </label>
+      )}
+
+      {entry.kind === "reward" && (
+        <label className="flex flex-col gap-1">
+          <span className="text-[11px] text-starlight">Serves</span>
+          <Select
+            label="Serves"
+            value={entry.serves ?? entry.well ?? ""}
+            options={[
+              { value: "", label: "— not plumbed —" },
+              ...Object.entries(doc.channels)
+                .filter(([, c]) => c.kind === "response")
+                .map(([name]) => ({ value: name, label: name })),
+            ]}
+            onChange={(v) => onUnplumb(selected, v)}
+          />
+          <span className="text-[10px] leading-relaxed text-static">
+            Which port this line delivers to. Declared so a task that rewards one well
+            through the other's line is refused — a mistake that looks entirely correct
+            in the listing and waters the wrong side of the box.
+          </span>
+        </label>
+      )}
+
+      <RenameRow name={selected} onRename={onRename} />
+
+      {entry.rationale && (
+        <p className="text-[10.5px] leading-relaxed text-static">{entry.rationale}</p>
+      )}
+
+      <Button
+        variant="outline"
+        onClick={() => onRemove(selected)}
+        title={`Remove ${selected} from this rig`}
+      >
+        <Trash2 size={12} strokeWidth={1.75} />
+        Remove this channel
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * Rename, committed on blur.
+ *
+ * NOT PER KEYSTROKE, because a rename re-keys both halves of the document and
+ * the map re-sorts around it — typing `l`, `e`, `f`… would move the cell out
+ * from under the caret on every character. The same reason `StageTrialInput`
+ * commits on blur, and the same shape.
+ */
+function RenameRow({
+  name,
+  onRename,
+}: {
+  name: string;
+  onRename: (from: string, to: string) => void;
+}) {
+  const [draft, setDraft] = useState(name);
+  useEffect(() => setDraft(name), [name]);
+
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="text-[11px] text-starlight">Name</span>
+      <input
+        aria-label="Channel name"
+        className="rounded-sm border border-halo bg-nebula px-2 py-1 font-mono text-[11px] text-starlight"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => (draft && draft !== name ? onRename(name, draft) : setDraft(name))}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+          if (e.key === "Escape") setDraft(name);
+        }}
+      />
+      <span className="text-[10px] leading-relaxed text-static">
+        What every task calls it. Renaming one is a rename in every task that names
+        it — anything that breaks is listed before the save lands.
+      </span>
+    </label>
+  );
+}

@@ -1,0 +1,481 @@
+"""Owns the six port handlers, the binding map, and the background loops.
+
+Two loops run here:
+
+* **Presence poll** (`ARCHITECTURE.md#board-discovery`) — out-of-band, never opens a
+  port, so it takes no part in the per-port state machine and can run
+  regardless of what any port is doing.
+* **Output flush** (`ARCHITECTURE.md#passthrough-read`) — batches accumulated lines and pushes them at a
+  fixed 20Hz rather than one message per line, which six chatty boxes would
+  otherwise turn into a flood.
+
+Kept free of protocol/message concerns: callers supply callbacks and format the
+wire messages themselves.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import logging
+import os
+import time
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from pathlib import Path
+from typing import AsyncContextManager, AsyncIterator, Awaitable, Callable
+
+import serial
+
+from ..boards.tool import BoardTool, DetectedBoard
+from ..settings import BOX_COUNT, SidecarSettings
+from ..tasks.start_command import StartCommand, StartRefused
+from .handler import DEFAULT_LINE_ENDING, Announced, OpenSerial, OutputLine, PortHandler, SessionClaim
+from .states import IDLE_ONLY, IDLE_OR_CONSOLE, IllegalTransition, PortState
+
+log = logging.getLogger(__name__)
+
+#: All six boxes are Mega2560 R3s (`ARCHITECTURE.md#flashing`).
+FQBN = "arduino:avr:mega"
+
+#: Progress callback for flash/reset: (phase, stream, text).
+PhaseProgress = Callable[[str, str, str], None]
+
+#: A short continuous interval of roughly 1–2s (`ARCHITECTURE.md#board-discovery`).
+POLL_INTERVAL_S = 1.5
+#: Batch and flush on a fixed tick (`ARCHITECTURE.md#passthrough-read`).
+FLUSH_INTERVAL_S = 0.05
+#: Don't re-log an unreachable arduino-cli on every single poll.
+FAILURE_LOG_EVERY = 40
+
+#: How a flash gets its build: called with the sketch folder, its fingerprint
+#: and the compile to run, it compiles (or finds the build already made) and
+#: stays entered while the upload reads the build (`ports/flashing.py`'s
+#: `SharedBuilds`).
+BuildGate = Callable[[str, str, Callable[[], Awaitable[None]]], AsyncContextManager[None]]
+
+
+@asynccontextmanager
+async def compile_first(
+    _sketch_dir: str, _fingerprint: str, compile: Callable[[], Awaitable[None]]
+) -> AsyncIterator[None]:
+    """The plain gate: this flash compiles its own build."""
+    await compile()
+    yield
+
+
+StateCallback = Callable[[int, PortState, PortState, str], None]
+OutputCallback = Callable[[int, list[OutputLine]], Awaitable[None]]
+PresenceCallback = Callable[[list[dict[str, object]]], Awaitable[None]]
+
+
+@dataclass(frozen=True)
+class CarriedSketch:
+    """What the app last flashed to the board bound to a box
+    (`ARCHITECTURE.md#what-a-board-carries`).
+
+    `fingerprint` is the folder's content as it was compiled. A folder rebuilt
+    since (a wiring save, a vocabulary edit, a task save) still has the same
+    path, but the board carries the old build of it.
+    """
+
+    path: str
+    fingerprint: str
+
+    def is_of(self, sketch_dir: str) -> bool:
+        """The same folder by path, whatever the spelling a caller sent."""
+        return _normalized(self.path) == _normalized(sketch_dir)
+
+
+def sketch_fingerprint(sketch_dir: str) -> str:
+    """Every file a compile of this folder could read, by relative path and content.
+
+    Hidden files are skipped: a `.DS_Store` is not firmware. A folder that does
+    not exist hashes as an empty one. Blocking file I/O; call it off the loop.
+    """
+    root = Path(sketch_dir)
+    digest = hashlib.sha256()
+    if root.is_dir():
+        for path in sorted(p for p in root.rglob("*") if p.is_file()):
+            relative = path.relative_to(root)
+            if any(part.startswith(".") for part in relative.parts):
+                continue
+            data = path.read_bytes()
+            digest.update(f"{relative.as_posix()}\0{len(data)}\0".encode())
+            digest.update(data)
+    return digest.hexdigest()
+
+
+def _normalized(path: str) -> str:
+    return os.path.normcase(os.path.normpath(path))
+
+
+class PortNotBound(Exception):
+    """No board is bound to that box number."""
+
+
+class BoardNotDetected(Exception):
+    """A board is bound but isn't currently plugged in."""
+
+
+class PortManager:
+    def __init__(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        tool: BoardTool,
+        on_state_change: StateCallback,
+        on_output: OutputCallback,
+        on_presence: PresenceCallback,
+        open_serial: OpenSerial | None = None,
+    ) -> None:
+        """`open_serial` opens every serial port this manager uses (`serial.Serial`
+        when not given), so a test can put a scripted board behind the real
+        state machine."""
+        self._loop = loop
+        self._tool = tool
+        self._on_output = on_output
+        self._on_presence = on_presence
+        self._open_serial = open_serial
+
+        self._handlers: dict[int, PortHandler] = {
+            box: PortHandler(box, loop, on_state_change, open_serial)
+            for box in range(1, BOX_COUNT + 1)
+        }
+        self._settings = SidecarSettings()
+        self._presence: dict[str, DetectedBoard] = {}
+        #: What each box's board carries, as far as this process flashed it.
+        #: Memory only: after a restart nothing is known until the next flash.
+        self._carried: dict[int, CarriedSketch] = {}
+        self._tasks: list[asyncio.Task[None]] = []
+        self._poll_failures = 0
+
+    # --- lifecycle --------------------------------------------------------
+
+    def start(self) -> None:
+        self._tasks = [
+            self._loop.create_task(self._poll_loop(), name="presence-poll"),
+            self._loop.create_task(self._flush_loop(), name="output-flush"),
+        ]
+
+    async def stop(self) -> None:
+        for task in self._tasks:
+            task.cancel()
+        for task in self._tasks:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        self._tasks = []
+        for handler in self._handlers.values():
+            handler.shutdown()
+
+    def update_settings(self, settings: SidecarSettings) -> None:
+        previous = self._settings
+        self._settings = settings
+        # A box bound to another board now answers with that board's firmware,
+        # which this process never flashed.
+        for box in self._handlers:
+            if settings.hardware_id_for(box) != previous.hardware_id_for(box):
+                self.forget(box)
+
+    # --- lookups ----------------------------------------------------------
+
+    def handler(self, box: int) -> PortHandler:
+        handler = self._handlers.get(box)
+        if handler is None:
+            raise PortNotBound(f"box {box} does not exist")
+        return handler
+
+    def resolve_address(self, box: int) -> str:
+        """box → hardware_id → current port address.
+
+        The indirection is the point: box number is the stable key, the address
+        is whatever the OS happens to be calling that board right now (`ARCHITECTURE.md#box-bindings`).
+        """
+        hardware_id = self._settings.hardware_id_for(box)
+        if not hardware_id:
+            raise PortNotBound(f"No board is bound to box {box}. Assign one in Config.")
+        board = self._presence.get(hardware_id)
+        if board is None:
+            raise BoardNotDetected(
+                f"The board bound to box {box} ({hardware_id}) isn't currently detected."
+            )
+        return board.address
+
+    def current_states(self) -> dict[int, PortState]:
+        return {box: handler.state for box, handler in sorted(self._handlers.items())}
+
+    def carried(self, box: int) -> CarriedSketch | None:
+        """The sketch this process last flashed to the board now bound to `box`,
+        or None when that is not known (`ARCHITECTURE.md#what-a-board-carries`)."""
+        return self._carried.get(box)
+
+    def forget(self, box: int) -> None:
+        """Stop claiming to know what `box`'s board carries."""
+        self._carried.pop(box, None)
+
+    def presence_json(self) -> list[dict[str, object]]:
+        bound: dict[str, int] = {
+            binding.hardware_id: binding.box
+            for binding in self._settings.boxes
+            if binding.hardware_id
+        }
+        return [
+            board.to_json(box_id=bound.get(hardware_id))
+            for hardware_id, board in sorted(self._presence.items())
+        ]
+
+    # --- operations -------------------------------------------------------
+
+    def open_passthrough(self, box: int, baud: int | None = None) -> PortState:
+        address = self.resolve_address(box)
+        rate = baud or self._settings.default_baud
+        return self.handler(box).open_passthrough(address, rate)
+
+    def close_passthrough(self, box: int) -> PortState:
+        return self.handler(box).close_passthrough()
+
+    def send(self, box: int, text: str, line_ending: str = DEFAULT_LINE_ENDING) -> int:
+        return self.handler(box).write(text, line_ending)
+
+    def send_start(self, box: int, command: StartCommand, start_line: str = "START") -> int:
+        """Debug Mode's start on an open console: `command`'s `SET` lines, each
+        confirmed by the board, then `start_line` (`TASKS.md#the-start-line`).
+        Blocks, so call it from a worker thread. `StartRefused` when the board
+        does not confirm the block; nothing is started."""
+        return self.handler(box).send_start(command, start_line)
+
+    def acknowledge_error(self, box: int) -> PortState:
+        return self.handler(box).acknowledge_error()
+
+    async def flash(
+        self,
+        box: int,
+        sketch_dir: str,
+        sketch_name: str,
+        libraries_path: str | None,
+        on_progress: PhaseProgress,
+        suppress_passthrough_resume: bool = False,
+        *,
+        from_: frozenset[PortState] = IDLE_ONLY,
+        build: BuildGate = compile_first,
+    ) -> tuple[PortState, bool]:
+        """Compile + upload (`ARCHITECTURE.md#flashing`). Called only by the
+        flash queue (`ports/flashing.py`), which decides what runs beside what
+        and passes `build` so that one compile serves every upload of it.
+
+        `from_` is what this flash may take (`PortHandler.release_for`): a
+        port in any other state raises `TakeRefused` before anything starts.
+        An `IllegalTransition` raised later means the port left `FLASHING`
+        during the upload and could not be landed: a failed flash. Taking `PASSTHROUGH` force-releases it first, and on success
+        the prior passthrough is auto-resumed at its old baud so the user sees
+        the new sketch's output without an extra click (`ARCHITECTURE.md#exclusivity`). Failures land in
+        ERROR with the parsed message — never a silent fall back to IDLE.
+
+        `suppress_passthrough_resume` forces the port to IDLE afterward instead,
+        so the session flash sequence can claim it for `IN_SESSION`
+        (`ARCHITECTURE.md#flash-sequence`).
+        """
+        address = self.resolve_address(box)
+        handler = self.handler(box)
+        prior_baud = handler.baud or self._settings.default_baud
+        was_passthrough = handler.release_for(
+            PortState.FLASHING, f"flashing {sketch_name}", from_=from_
+        )
+        # The session flow wants IDLE regardless of the pre-flash state.
+        resume = was_passthrough and not suppress_passthrough_resume
+        # From here the board is being overwritten; a failure anywhere below
+        # leaves it carrying something nobody can name.
+        self.forget(box)
+
+        try:
+            # Before the compile reads the folder. Every caller holds the rig
+            # definition's read side, so nothing rewrites it in between.
+            fingerprint = await asyncio.to_thread(sketch_fingerprint, sketch_dir)
+            # No command echo here. This layer knows neither which backend will
+            # run (daemon or subprocess) nor the arguments it will send, so
+            # anything written here is a guess that drifts — and did: the old
+            # hand-written line omitted `--libraries`, which is exactly the
+            # argument that was malformed when a packaged build stopped finding
+            # its bundled library. Each backend echoes its own real invocation
+            # (`boards/cli_tool.py`, `boards/grpc_tool.py`).
+            def compile() -> Awaitable[None]:
+                return self._tool.compile(
+                    sketch_dir, FQBN, libraries_path,
+                    lambda stream, text: on_progress("compile", stream, text),
+                )
+
+            # The upload reads the folder's build, so it stays inside the gate:
+            # no compile of this folder may rewrite the build under it.
+            async with build(sketch_dir, fingerprint, compile):
+                await self._tool.upload(
+                    sketch_dir, FQBN, address,
+                    lambda stream, text: on_progress("upload", stream, text),
+                )
+        except Exception as exc:
+            handler.force_error(f"flash failed: {exc}")
+            raise
+
+        # Recorded only once the port has landed: a flash whose landing is
+        # refused has failed, and carries nothing anyone can name.
+        landed = self._conclude(handler, address, prior_baud, resume,
+                                f"flashed {sketch_name}")
+        self._carried[box] = CarriedSketch(sketch_dir, fingerprint)
+        return landed
+
+    async def reset(self, box: int) -> tuple[PortState, bool]:
+        """DTR-toggle reset (`ARCHITECTURE.md#reset`).
+
+        A serial-layer operation, deliberately not routed through arduino-cli.
+        Only ever asked for by a person, so it may take a console, and resumes
+        it afterward (`ARCHITECTURE.md#exclusivity`).
+        """
+        address = self.resolve_address(box)
+        handler = self.handler(box)
+        prior_baud = handler.baud or self._settings.default_baud
+        was_passthrough = handler.release_for(
+            PortState.RESETTING, "reset (DTR toggle)", from_=IDLE_OR_CONSOLE
+        )
+
+        try:
+            # Blocking serial work stays off the event loop.
+            await asyncio.to_thread(_dtr_pulse, address, self._open_serial or serial.Serial)
+        except Exception as exc:
+            handler.force_error(f"reset failed: {exc}")
+            raise
+
+        return self._conclude(handler, address, prior_baud, was_passthrough, "reset complete")
+
+    def claim_session(
+        self,
+        box: int,
+        command: StartCommand,
+        seed: int,
+        *,
+        on_ready: Callable[[int | None, Announced], None],
+        on_strobe: Callable[[int, int], None],
+        on_lost: Callable[[str], None],
+        on_refused: Callable[[StartRefused], None],
+    ) -> SessionClaim:
+        """Enter `IN_SESSION` on one box and hand back the run's hold on it
+        (`ARCHITECTURE.md#entering-in_session`).
+
+        Raises `PortNotBound`, `BoardNotDetected` or `IllegalTransition` before
+        anything starts: the box must be bound, present and `IDLE` (a session
+        flash leaves it there via `suppress_passthrough_resume`). Baud is the
+        session default. `on_ready` and `on_strobe` run on the session thread,
+        `on_lost` on the loop; `SessionClaim` says what each promises.
+        """
+        address = self.resolve_address(box)
+        return self.handler(box).claim_session(
+            address,
+            self._settings.default_baud,
+            command,
+            seed,
+            on_ready,
+            on_strobe,
+            on_lost,
+            on_refused,
+        )
+
+    def _conclude(
+        self,
+        handler: PortHandler,
+        address: str,
+        baud: int,
+        was_passthrough: bool,
+        reason: str,
+    ) -> tuple[PortState, bool]:
+        """Land the port after a flash/reset: auto-resume or return to IDLE.
+        Raises `IllegalTransition` if the port has left `FLASHING`/`RESETTING`."""
+        if was_passthrough:
+            try:
+                handler.resume_passthrough(address, baud)
+                return handler.state, True
+            except IllegalTransition:
+                raise
+            except Exception as exc:  # noqa: BLE001 - the open failed; handler is in ERROR
+                log.warning(
+                    "box %d: auto-resume failed after %s: %s", handler.box, reason, exc
+                )
+                return handler.state, False
+        handler.finish_to_idle(reason)
+        return handler.state, False
+
+    # --- background loops -------------------------------------------------
+
+    async def poll_once(self) -> None:
+        """Ask the board tool what is plugged in, once, and act on any change:
+        a vanished board's box is forgotten, and `on_presence` hears about it.
+        `start` does this every `POLL_INTERVAL_S`."""
+        try:
+            boards = await self._tool.list_boards()
+        except Exception as exc:  # noqa: BLE001 - missing binary, timeout, …
+            self._note_poll_failure(exc)
+        else:
+            self._poll_failures = 0
+            await self.note_boards(boards)
+
+    async def note_boards(self, boards: list[DetectedBoard]) -> None:
+        """Take `boards` as everything now plugged in, as one poll would: a
+        vanished board's box is forgotten, and `on_presence` hears of a change."""
+        if self._update_presence(boards):
+            await self._on_presence(self.presence_json())
+
+    async def _poll_loop(self) -> None:
+        while True:
+            await self.poll_once()
+            await asyncio.sleep(POLL_INTERVAL_S)
+
+    def _note_poll_failure(self, exc: Exception) -> None:
+        if self._poll_failures % FAILURE_LOG_EVERY == 0:
+            log.warning("board presence poll failed: %s", exc)
+        self._poll_failures += 1
+
+    def _update_presence(self, boards: list[DetectedBoard]) -> bool:
+        latest = {board.hardware_id: board for board in boards}
+        if latest == self._presence:
+            return False
+
+        appeared = set(latest) - set(self._presence)
+        vanished = set(self._presence) - set(latest)
+        for hardware_id in appeared:
+            log.info("board appeared: %s at %s", hardware_id, latest[hardware_id].address)
+        for hardware_id in vanished:
+            log.info("board vanished: %s", hardware_id)
+            # The board that next answers to this box may not be this one.
+            for box in self._handlers:
+                if self._settings.hardware_id_for(box) == hardware_id:
+                    self.forget(box)
+
+        self._presence = latest
+        return True
+
+    async def _flush_loop(self) -> None:
+        while True:
+            await asyncio.sleep(FLUSH_INTERVAL_S)
+            for box, handler in self._handlers.items():
+                handler.flush_stale_partial()
+                batch = handler.drain()
+                if batch:
+                    await self._on_output(box, batch)
+
+
+def _dtr_pulse(address: str, open_serial: OpenSerial) -> None:
+    """The reset sequence (`ARCHITECTURE.md#reset`): dtr low → ~100ms → dtr high.
+
+    The Mega2560 R3's auto-reset circuit fires on the DTR edge. Runs in a
+    worker thread; the port is opened fresh and closed again, the state
+    machine having already released any prior owner.
+    """
+    port = open_serial()
+    port.port = address
+    port.dtr = True
+    port.open()
+    try:
+        port.dtr = False
+        time.sleep(0.1)
+        port.dtr = True
+        time.sleep(0.05)
+    finally:
+        port.close()

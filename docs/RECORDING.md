@@ -28,6 +28,7 @@ yet been made ([Not yet verified](#not-yet-verified)).
 - [What is written](#what-is-written)
 - [Live firing map](#live-firing-map)
 - [Tether alarm](#tether-alarm)
+- [Event PSTH](#event-psth)
 - [Not yet verified](#not-yet-verified)
 
 ## The rule
@@ -588,6 +589,50 @@ stretch of data to distrust.
 > **The thresholds are first guesses**, pinned only against synthetic faults
 > (`tests/test_intan_tether.py`). The first real recordings decide them: a sleeping animal or a long
 > grooming bout should not alarm, and a pulled headstage should.
+
+## Event PSTH
+
+Spikes around a **named** behavioural event, after the session, in Analytics' **Spikes around an event**
+panel (`EventPsthPanel.tsx`). RHX's own PSTH triggers on a digital edge, and every event of a box pulses
+the same one, so only Ephymeris can align to `ODOR_1_ON` rather than "something happened"
+([ADR 0007](adr/DECISIONS.md#0007-rhxs-own-windows-replace-the-recording-pop-ups)). After the session the
+data is complete: every spike and edge at full rate, every strobe, every trial's outcome.
+
+`intan/offline.py`'s `load_run`, from one run's `.json`:
+
+1. **Find the recording**: `intan_path` / `intan_recording`, RHX's per-run folder.
+2. **Read RHX's files** (`intan/rhx_files.py`, layouts from RHX's `FilePerSignalTypeSaveManager`):
+   `spike.dat` for the box's channels, and the rising edges of its `intan_digital_in` in
+   `digitalin.dat`, timed by `time.dat`. A one-hour `digitalin.dat` is about 108 million words; they
+   are never looped over in Python: each chunk's byte holding the bit is sliced out, mapped to 0/1 with
+   `bytes.translate` and searched with `bytes.find`, so only the edges are.
+3. **Align** (`intan/events.py`'s `align`): the live sync check's own `EdgeMatcher`, fed as a live
+   stream would be (a strobe, then edges to a look-ahead of `LOOK_AHEAD`), since all of a session at
+   once would overflow `MAX_PENDING`. Before the first pair it may hold up to `MAX_PENDING` edges, so
+   any number of reset twitches ahead of START are skipped.
+4. **Place each event in its trial**: the trial table's (`trial_table_of`) last trial opened at or
+   before it. A replayed spine run's trial times are the board's clock, which restarts at START like
+   the strobes'; a decoded legacy run's count from its earliest timestamp, which is added back.
+5. **Write the events file**, `events/<run>.events.json` and `.mat` beside the session: every strobe,
+   named, its sample on the recording's clock (or null) and its trial; the trials' conditions and
+   outcomes. It is for the lab's own scripts and spike sorters; **the app never reads it back**.
+
+`intan.eventPsth` then bins each site's spikes around one event, split by trial condition or outcome,
+counting only events whose whole window was recorded (`whole_windows`), with a raster for the selected
+site. **Responsive** compares each trial's rate over `RESPONSE_WINDOW_MS` (at most 500 ms) after the
+event with the same span before it: |t| ≥ 3 over at least 5 trials, ±99.9 when every trial moved alike.
+A first look, not a test: one site judged at many events finds some by chance.
+
+A loaded run stays in memory (`OfflineRuns`, `CACHED_RUNS`) until its `.json` or one of RHX's files
+changes. `intan.recordedRuns` says which of a session's runs name a recording, from headers alone; the
+panel shows nothing for a session with none.
+
+> [!CAUTION]
+> **Only the per-signal-type and per-channel formats save spikes**; a Traditional `.rhd` recording has
+> no `spike.dat` and is refused (`RECORDING_UNREADABLE`) rather than re-detected from wideband. And
+> **check the sync line first**: the panel's header gives the whole run's placed, missed and stray
+> counts. A shifted match draws a PSTH that looks as convincing as a right one; a missed or
+> unpaired count is the warning.
 
 ## Not yet verified
 

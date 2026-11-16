@@ -121,6 +121,8 @@ export const CMD = {
   INTAN_IMPEDANCE_HISTORY: "intan.impedanceHistory",
   INTAN_YIELD_HISTORY: "intan.yieldHistory",
   INTAN_ACKNOWLEDGE_TETHER: "intan.acknowledgeTether",
+  INTAN_RECORDED_RUNS: "intan.recordedRuns",
+  INTAN_EVENT_PSTH: "intan.eventPsth",
   INTAN_FORCE_STOP: "intan.forceStop",
 
   // Session log
@@ -215,6 +217,7 @@ export const ERR = {
   TASK_IMPORT_REPLACES: "TASK_IMPORT_REPLACES",
   TASK_INVALID: "TASK_INVALID",
   INTAN_UNAVAILABLE: "INTAN_UNAVAILABLE",
+  RECORDING_UNREADABLE: "RECORDING_UNREADABLE",
   INTAN_NOT_READY: "INTAN_NOT_READY",
   INTAN_COMMAND_FAILED: "INTAN_COMMAND_FAILED",
   ARCHIVE_BUSY: "ARCHIVE_BUSY",
@@ -3050,6 +3053,43 @@ export interface RunYield {
   counts: Record<string, number>;
 }
 
+export interface EventPsthSite {
+  channel: string;
+  /** Per group, spikes per bin from −preMs to +postMs, summed over trials. */
+  counts: number[][];
+  /** Mean change in rate, `responseMs` after vs before each event. */
+  deltaHz: number | null;
+  /** That change over its standard error, capped at ±99.9; null under 5 trials. */
+  t: number | null;
+  /** |t| ≥ 3 — a first look, not a significance test. */
+  responsive: "up" | "down" | "none";
+}
+
+/** One recorded run's spikes around one named event (`RECORDING.md#event-psth`). */
+export interface EventPsth {
+  runPath: string;
+  /** The run's events on the recording's clock, written beside the session. */
+  eventsFile: string | null;
+  /** The offline match of strobes to sync edges, over the whole run. */
+  sync: { matched: number; missed: number; stray: number; tickPulsed: boolean };
+  /** Every event the run has: how many, and how many found their sync edge. */
+  events: Array<{ code: number; name: string; count: number; placed: number }>;
+  /** The event this PSTH is aligned to; null when the run has none. */
+  code: number | null;
+  preMs: number;
+  postMs: number;
+  binMs: number;
+  responseMs: number;
+  split: "none" | "condition" | "outcome";
+  /** In `counts` order. */
+  groups: Array<{ label: string; trials: number }>;
+  /** Every channel the run's box recorded. */
+  sites: EventPsthSite[];
+  rasterChannel: string | null;
+  /** Per group, per trial, `rasterChannel`'s spikes in ms from the event. */
+  rasters: number[][][] | null;
+}
+
 export interface IntanSpikes {
   box: number;
   /**
@@ -3290,6 +3330,8 @@ export interface CommandArgsMap {
   "intan.impedanceHistory": { animalIds: string[] };
   "intan.yieldHistory": { animalIds: string[]; limit?: number };
   "intan.acknowledgeTether": { box: number };
+  "intan.recordedRuns": { sessionId: string };
+  "intan.eventPsth": { runId: string; code?: number | null; preMs: number; postMs: number; binMs: number; split: "none" | "condition" | "outcome"; rasterChannel?: string | null };
   "intan.forceStop": Record<string, never>;
   "logbook.cohort": { cohortId: string };
   "logbook.addNote": { sessionId: string; tag: NoteTag; body: string; scope?: NoteScope; carryForward?: boolean; at?: string };
@@ -3387,6 +3429,8 @@ export interface CommandResultMap {
   "intan.impedanceHistory": { latest: Record<string, ImpedanceComparison> };
   "intan.yieldHistory": { history: Record<string, RunYield[]> };
   "intan.acknowledgeTether": IntanStatus;
+  "intan.recordedRuns": { runIds: string[] };
+  "intan.eventPsth": EventPsth;
   "intan.forceStop": { ok: boolean };
   "logbook.cohort": LogbookCohort;
   "logbook.addNote": { note: SessionNote };

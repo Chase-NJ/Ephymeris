@@ -3251,6 +3251,48 @@ SHAPES = (
         "(`RECORDING.md#active-site-yield`).",
     ),
     Shape(
+        "EventPsthSite",
+        obj(
+            f("channel", STR),
+            f("counts", ListOf(ListOf(INT)), doc="Per group, spikes per bin from −preMs to +postMs, summed over trials."),
+            f("deltaHz", nullable(FLOAT), doc="Mean change in rate, `responseMs` after vs before each event."),
+            f("t", nullable(FLOAT), doc="That change over its standard error, capped at ±99.9; null under 5 trials."),
+            f("responsive", lit("up", "down", "none"), doc="|t| ≥ 3 — a first look, not a significance test."),
+        ),
+    ),
+    Shape(
+        "EventPsth",
+        obj(
+            f("runPath", STR),
+            f("eventsFile", nullable(STR), doc="The run's events on the recording's clock, written beside the session."),
+            f(
+                "sync",
+                obj(f("matched", INT), f("missed", INT), f("stray", INT), f("tickPulsed", BOOL)),
+                doc="The offline match of strobes to sync edges, over the whole run.",
+            ),
+            f(
+                "events",
+                ListOf(obj(f("code", INT), f("name", STR), f("count", INT), f("placed", INT))),
+                doc="Every event the run has: how many, and how many found their sync edge.",
+            ),
+            f("code", nullable(INT), doc="The event this PSTH is aligned to; null when the run has none."),
+            f("preMs", INT),
+            f("postMs", INT),
+            f("binMs", INT),
+            f("responseMs", INT),
+            f("split", lit("none", "condition", "outcome")),
+            f("groups", ListOf(obj(f("label", STR), f("trials", INT))), doc="In `counts` order."),
+            f("sites", ListOf(Ref("EventPsthSite")), doc="Every channel the run's box recorded."),
+            f("rasterChannel", nullable(STR)),
+            f(
+                "rasters",
+                nullable(ListOf(ListOf(ListOf(FLOAT)))),
+                doc="Per group, per trial, `rasterChannel`'s spikes in ms from the event.",
+            ),
+        ),
+        doc="One recorded run's spikes around one named event (`RECORDING.md#event-psth`).",
+    ),
+    Shape(
         "IntanSpikes",
         obj(
             f("box", INT),
@@ -4797,6 +4839,31 @@ COMMANDS = (
         "with no alarm is left as it is.",
     ),
     Command(
+        "intan.recordedRuns",
+        args=obj(f("sessionId", STR)),
+        result=obj(f("runIds", ListOf(STR), doc="The session's runs whose file names an Intan recording.")),
+        doc="Which of a session's runs were recorded, read from their files' headers; "
+        "nothing is loaded (`RECORDING.md#event-psth`).",
+    ),
+    Command(
+        "intan.eventPsth",
+        args=obj(
+            f("runId", STR),
+            f("code", nullable(INT), optional=True, doc="Omitted or unknown: the run's first event by name."),
+            f("preMs", INT),
+            f("postMs", INT),
+            f("binMs", INT),
+            f("split", lit("none", "condition", "outcome")),
+            f("rasterChannel", nullable(STR), optional=True),
+        ),
+        result=Ref("EventPsth"),
+        doc="A recorded run's PSTH around one named event, every site, from RHX's "
+        "saved files and the run's strobes (`RECORDING.md#event-psth`). The first "
+        "call for a run reads its whole recording and writes its events file; "
+        "later ones are served from memory until a file changes. "
+        "`RECORDING_UNREADABLE` says why a run has no PSTH.",
+    ),
+    Command(
         "intan.forceStop",
         result=obj(f("ok", BOOL)),
         doc="Stop waiting for boxes to finish their trials during a graceful "
@@ -5365,6 +5432,12 @@ ERRORS = (
         "INTAN_UNAVAILABLE",
         "RHX is not reachable: not running, its Remote TCP Control command "
         "server not opened, or the socket died. The message says what to click.",
+    ),
+    ErrorCode(
+        "RECORDING_UNREADABLE",
+        "A run has no recording Ephymeris can read: it was not recorded, RHX's "
+        "folder is not where the run says, or the format saved no spikes. The "
+        "message says which.",
     ),
     ErrorCode(
         "INTAN_NOT_READY",

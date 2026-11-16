@@ -278,3 +278,7 @@ against the busiest site, did not feel live.
 - A threshold for one channel is set in RHX's Spike Scope; `intan.configure` still sets them all.
 - The shells have one window: no `openWindow`, no `scope-*` permissions.
 - A live, event-aligned PSTH is not available during a session.
+
+**Amendment, 2026-11-15.** The event-aligned PSTH returned **after** the session, as this entry said it
+should: computed from RHX's saved spikes and digital inputs and the run's strobes, in Analytics
+([RECORDING.md](../RECORDING.md#event-psth)). Still not live, by design.

@@ -484,6 +484,11 @@ Each run gives an animal a `.tsv` (written live), a `.json` and a `.mat`, in the
    that counts licks, each row's lick rate per phase (grey under 30 trials). A spine run that does not
    replay as the box ran it reads **not scored** and names the first differing strobe; it is still
    recorded in full.
+   For a recorded session, **Spikes around an event** shows each animal's sites around a named event
+   (pick the event, split by condition or outcome, click a site for its raster). The first look reads the
+   whole recording, which can take a minute. Check its header first: missed or stray sync pulses mean the
+   events may be misplaced. Each run's events, on the recording's clock, are saved to the session's
+   `events` folder for your own analysis.
 5. **All cohorts** goes back.
 
 ![Analytics for one cohort: the Data folder, Rescan, Recover, Tidy records and Export cohort PNG buttons at the top, the Sessions rail spaced by date, the Task strip changing from Shaping to 2-Odor Discrimination, and the Accuracy chart with response and rewarded lines](images/analytics-cohort.webp)

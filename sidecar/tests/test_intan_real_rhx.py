@@ -164,6 +164,38 @@ async def probe_how_late_do_spikes_arrive(rhx):
         )
 
 
+async def probe_does_rhx_measure_and_save_impedances(rhx):
+    """`RECORDING.md#impedance-tracking`: the parameter names, that the
+    sentinel answers only once `MeasureImpedance` is done, and the CSV's
+    shape. Writes one CSV to a temporary folder; puts every value back."""
+    import tempfile
+    import time
+    from pathlib import Path
+
+    from ephymeris_sidecar.intan.client import rhx_path
+    from ephymeris_sidecar.intan.impedance import parse_csv
+
+    saved = {k: await rhx.get(k) for k in (
+        "desiredimpedancefreqhertz", "impedancefilename.path", "impedancefilename.basefilename")}
+    folder = Path(tempfile.mkdtemp(prefix="ephymeris-impedance-"))
+    try:
+        await rhx.set("desiredimpedancefreqhertz", 1000)
+        await rhx.set("impedancefilename.path", rhx_path(str(folder)), verify=True)
+        await rhx.set("impedancefilename.basefilename", "probe", verify=True)
+        began = time.monotonic()
+        await rhx.execute("measureimpedance", timeout_s=180)
+        took = time.monotonic() - began
+        await rhx.execute("saveimpedance")
+        path = folder / "probe.csv"
+        print(f"\n  MeasureImpedance answered after {took:.1f} s; CSV written: {path.is_file()}")
+        print(f"  actual frequency: {await rhx.get('actualimpedancefreqhertz')} Hz")
+        reading = parse_csv(path.read_text(encoding="utf-8"))
+        first = reading.sites[0] if reading.sites else None
+        print(f"  {len(reading.sites)} sites at {reading.frequency_hz:g} Hz; first {first}")
+    finally:
+        await rhx.send([f"set {k} {v}" for k, v in saved.items() if v])
+
+
 async def probe_how_are_digital_inputs_named(rhx):
     for name in ("digital-in-01", "digital-in-1", "digital-in-00"):
         try:
@@ -179,6 +211,7 @@ PROBES = (
     probe_does_the_save_path_keep_a_space,
     probe_how_are_digital_inputs_named,
     probe_how_late_do_spikes_arrive,
+    probe_does_rhx_measure_and_save_impedances,
 )
 
 

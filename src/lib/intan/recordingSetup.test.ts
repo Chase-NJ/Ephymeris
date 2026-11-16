@@ -341,7 +341,7 @@ describe("configurePayload", () => {
 
   it("follows an animal's probe map through Continue and a later group on another box", () => {
     const first = [row(3, "Rat-07", { port: "A", lastChannel: 31, probeMapPath: "/maps/rat07.xml", probeMap: map })];
-    const saved = rememberedDefaults(first, config, null, {});
+    const saved = { ...DEFAULT_RECORDING_DEFAULTS, ...rememberedDefaults(first, config, null, {}) };
     const next = reconcileRows([mapped(5, "Rat-07"), mapped(3, "Rat-02")], saved, []);
     expect(next.map((r) => [r.box, r.animalName, r.port, r.probeMapPath])).toEqual([
       [5, "Rat-07", "", "/maps/rat07.xml"],

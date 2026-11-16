@@ -192,16 +192,21 @@ class RhxCommandClient:
                 f"set {parameter} {text}", f"RHX stored {stored!r} instead"
             )
 
-    async def execute(self, action: str, argument: str | None = None) -> None:
-        await self.send([f"execute {action}" + (f" {argument}" if argument else "")])
+    async def execute(
+        self, action: str, argument: str | None = None, *, timeout_s: float | None = None
+    ) -> None:
+        """`timeout_s` for an action RHX takes a while over (`MeasureImpedance`):
+        RHX finishes it before reading on, so the sentinel answers when it is done."""
+        await self.send([f"execute {action}" + (f" {argument}" if argument else "")], timeout_s=timeout_s)
 
     async def livenote(self, note: str) -> None:
         """Append a timestamped line to the recording's notes file. Ignored by
         RHX when it is not recording, by its own rule."""
         await self.send([f"livenotes {note.replace(';', ',')}"])
 
-    async def send(self, commands: list[str]) -> None:
-        """Send writes, batched into as few transmissions as fit."""
+    async def send(self, commands: list[str], *, timeout_s: float | None = None) -> None:
+        """Send writes, batched into as few transmissions as fit. `timeout_s`
+        replaces the reply timeout for each of them."""
         if not commands:
             return
         async with self._lock:
@@ -210,7 +215,7 @@ class RhxCommandClient:
                     await self._write_blind(command)
                 return
             for batch in _batches(commands):
-                await self._write_confirmed(batch)
+                await self._write_confirmed(batch, timeout_s)
                 if self._sentinel_works is False:
                     # The probe just failed mid-list. What was in that batch is
                     # of unknown fate, so it is resent one at a time -- every
@@ -275,11 +280,11 @@ class RhxCommandClient:
 
     # --- transport --------------------------------------------------------
 
-    async def _write_confirmed(self, batch: list[str]) -> None:
+    async def _write_confirmed(self, batch: list[str], timeout_s: float | None = None) -> None:
         if any(command.lower().startswith("set runmode") for command in batch):
             # See `set_run_mode`: nothing may ride behind a run-mode change.
             raise ValueError("`set runmode` must go through set_run_mode(), never a batch")
-        reply = await self._exchange(";".join([*batch, _SENTINEL]), expect=_SENTINEL_REPLY)
+        reply = await self._exchange(";".join([*batch, _SENTINEL]), expect=_SENTINEL_REPLY, timeout_s=timeout_s)
         if reply is None:
             if self._sentinel_works is None:
                 log.warning(
@@ -303,7 +308,9 @@ class RhxCommandClient:
         if stray.strip():
             raise RhxCommandFailed(command, stray)
 
-    async def _exchange(self, transmission: str, expect: re.Pattern[str] | None = None) -> str | None:
+    async def _exchange(
+        self, transmission: str, expect: re.Pattern[str] | None = None, *, timeout_s: float | None = None
+    ) -> str | None:
         """Write one transmission and read its reply.
 
         With `expect`, reads until the pattern closes the reply and returns None
@@ -319,7 +326,7 @@ class RhxCommandClient:
         reader = self._reader
         assert reader is not None
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + self._reply_timeout_s
+        deadline = loop.time() + (self._reply_timeout_s if timeout_s is None else timeout_s)
         text = ""
         while True:
             remaining = deadline - loop.time()

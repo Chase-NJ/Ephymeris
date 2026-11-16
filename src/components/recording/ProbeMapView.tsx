@@ -3,6 +3,15 @@ import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { fitProbeMap } from "@/lib/intan/probeMath";
 import type { ProbeMap } from "@/lib/intan/types";
 
+/** What one site says beyond its geometry: an outline tone and a hover label. */
+export type SiteMark = { tone: "error" | "warning" | "ok"; label: string };
+
+const MARK_STROKE: Record<SiteMark["tone"], string> = {
+  error: "var(--color-status-error)",
+  warning: "var(--color-status-warning)",
+  ok: "var(--color-static)",
+};
+
 /**
  * One page of an Intan probe map, drawn from the JSON the sidecar parsed.
  *
@@ -25,6 +34,7 @@ export function ProbeMapView({
   page = 0,
   channels,
   live = false,
+  marks,
   className = "",
 }: {
   map: ProbeMap;
@@ -33,6 +43,8 @@ export function ProbeMapView({
   channels?: readonly string[] | undefined;
   /** Recorded sites start dim rather than half-lit: their fill is the caller's. */
   live?: boolean;
+  /** Per native channel: the Record step's impedance verdicts. */
+  marks?: Readonly<Record<string, SiteMark>> | undefined;
   className?: string;
 }) {
   const host = useRef<HTMLDivElement>(null);
@@ -78,6 +90,8 @@ export function ProbeMapView({
           {current.ports.flatMap((port) =>
             port.sites.map((site) => {
               const isRecorded = recorded === null || recorded.has(site.channel);
+              const mark = isRecorded ? marks?.[site.channel] : undefined;
+              const flagged = mark !== undefined && mark.tone !== "ok";
               // A floor on the drawn size: a 15 µm site on an 800 µm shank is
               // under two pixels, which can be neither seen nor clicked.
               const w = Math.max(site.width * fit.scale, 7);
@@ -88,11 +102,11 @@ export function ProbeMapView({
                 "data-channel": isRecorded ? site.channel : undefined,
                 fill: "var(--color-pulsar)",
                 fillOpacity: !isRecorded ? 0 : live ? 0.08 : 0.35,
-                stroke: "var(--color-static)",
+                stroke: mark ? MARK_STROKE[mark.tone] : "var(--color-static)",
                 strokeOpacity: isRecorded ? 1 : 0.35,
-                strokeWidth: 1,
+                strokeWidth: flagged ? 2 : 1,
               };
-              const title = `${site.channel}${isRecorded ? "" : " · not recorded"}`;
+              const title = `${site.channel}${mark ? ` · ${mark.label}` : ""}${isRecorded ? "" : " · not recorded"}`;
               return site.shape === "ellipse" ? (
                 <ellipse
                   key={site.channel}

@@ -88,6 +88,10 @@ const CALL_TIMEOUT_OVERRIDES: Readonly<Record<string, number>> = {
   [CMD.ANALYTICS_RESCAN]: 300_000,
   // Same walk as the rescan, plus a .json/.mat write per orphan found.
   [CMD.SESSIONS_RECOVER]: 300_000,
+  // RHX measures every site of every headstage before it answers: up to about
+  // a minute on a full rig, and the sidecar allows three
+  // (`RECORDING.md#impedance-tracking`).
+  [CMD.INTAN_MEASURE_IMPEDANCE]: 240_000,
   // Same walk, plus a replay of every spine run found.
   [CMD.SESSIONS_REDERIVE]: 300_000,
   // Copies, hashes and verifies an animal's every file — over a network share

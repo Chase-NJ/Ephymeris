@@ -336,7 +336,7 @@ export function rememberedDefaults(
   config: RecordingConfigDefaults,
   saveRoot: string | null,
   probeMaps: Readonly<Record<string, string>>,
-): RecordingDefaults {
+): Omit<RecordingDefaults, "impedanceFlags"> {
   const nextMaps: Record<string, string> = { ...probeMaps };
   for (const r of rows) {
     if (r.probeMapPath) nextMaps[r.animalId] = r.probeMapPath;

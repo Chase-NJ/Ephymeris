@@ -10,13 +10,18 @@ the behaviours the integration has to survive, each switchable:
   * `answers_batched_get=False` is an RHX that ignores a `get` riding a batch,
     which is the case the client's fallback discipline exists for;
   * `truncate_at_space` stores a value cut at its first space -- what a
-    whitespace-splitting parser does to "C:/Hart Lab/data".
+    whitespace-splitting parser does to "C:/Hart Lab/data";
+  * `MeasureImpedance` is refused while running, and `SaveImpedance` writes
+    the CSV RHX writes (`ImpedanceReader::saveImpedances`), to
+    `ImpedanceFilename`; `impedances` overrides a channel's 100 kΩ, -70°
+    (RHX's demo value), and `saves_impedance=False` writes nothing.
 """
 
 from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from pathlib import Path
 
 
 @dataclass
@@ -34,6 +39,11 @@ class FakeRhx:
     #: because nothing about the socket says so.
     silent: bool = False
     refuse: set[str] = field(default_factory=set)
+    #: Native channel -> (ohms, degrees) for the next measurement.
+    impedances: dict[str, tuple[float, float]] = field(default_factory=dict)
+    #: What RHX reports measuring at (`ActualImpedanceFreqHertz`).
+    impedance_freq_hz: float = 1000.0
+    saves_impedance: bool = True
 
     params: dict[str, str] = field(default_factory=dict)
     executed: list[str] = field(default_factory=list)
@@ -62,6 +72,10 @@ class FakeRhx:
             "b.numberamplifierchannels": "0",
             "c.numberamplifierchannels": "0",
             "d.numberamplifierchannels": "0",
+            "desiredimpedancefreqhertz": "1000",
+            "actualimpedancefreqhertz": "1000",
+            "impedancefilename.path": "",
+            "impedancefilename.basefilename": "",
             **self.params,
         }
         self._servers: list[asyncio.base_events.Server] = []
@@ -236,8 +250,15 @@ class FakeRhx:
         if verb == "execute":
             if rest.split(" ")[0].lower() in self.refuse:
                 return f"Error: {rest} failed"
-            self.executed.append(rest.strip().lower())
-            if rest.strip().lower() == "clearalldataoutputs":
+            action = rest.strip().lower()
+            if action == "measureimpedance" and self.params["runmode"].lower() != "stop":
+                return "Error: MeasureImpedance cannot be executed while the board is running"
+            self.executed.append(action)
+            if action == "measureimpedance":
+                self.params["actualimpedancefreqhertz"] = f"{self.impedance_freq_hz:g}"
+            if action == "saveimpedance" and self.saves_impedance:
+                self._save_impedances()
+            if action == "clearalldataoutputs":
                 for key in [k for k in self.params if ".tcpdataoutputenabled" in k]:
                     self.params[key] = "False"
             return ""
@@ -245,6 +266,23 @@ class FakeRhx:
             self.notes.append(rest)
             return ""
         return f"Error: unrecognized command {command}"
+
+    def _save_impedances(self) -> None:
+        """RHX's CSV, every amplifier channel present, as RHX formats it."""
+        freq = self.params["actualimpedancefreqhertz"]
+        lines = [
+            "Channel Number,Channel Name,Port,Enabled,"
+            f"Impedance Magnitude at {freq} Hz (ohms),Impedance Phase at {freq} Hz (degrees),"
+            "Series RC equivalent R (Ohms),Series RC equivalent C (Farads)"
+        ]
+        for letter in "abcd":
+            for n in range(int(self.params[f"{letter}.numberamplifierchannels"])):
+                name = f"{letter.upper()}-{n:03d}"
+                ohms, phase = self.impedances.get(name, (100.0e3, -70.0))
+                lines.append(f"{name},{name},Port {letter.upper()},1,{ohms:.2e},{phase:.0f},3.42e+04,1.69e-09")
+        folder = Path(self.params["impedancefilename.path"])
+        target = folder / f"{self.params['impedancefilename.basefilename']}.csv"
+        target.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     async def _flush_deferred(self) -> None:
         """Acquisition stopped: finish the batches that were cut short by it."""

@@ -17,6 +17,7 @@ import { HudTile } from "@/components/common/HudTile";
 import { Button, NumberInput, Segmented } from "@/components/common/controls";
 import { Dropdown } from "@/components/common/Dropdown";
 import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
+import { ImpedanceTile } from "@/components/recording/ImpedanceTile";
 import { ProbeMapView } from "@/components/recording/ProbeMapView";
 import { SavingRows, ThresholdRows } from "@/components/recording/RecordingConfigRows";
 import { SessionJourney } from "@/components/sessions/SessionJourney";
@@ -38,6 +39,12 @@ import {
   type BoxRow,
   type ProbeMapParse,
 } from "@/lib/intan/recordingSetup";
+import {
+  siteMarks,
+  summarizeImpedance,
+  type ImpedanceComparison,
+  type ImpedanceSummary,
+} from "@/lib/intan/impedance";
 import { channelRange } from "@/lib/intan/probeMath";
 import { FILE_FORMATS, type ProbeMap } from "@/lib/intan/types";
 import { CASCADE, RISE, springPanel } from "@/lib/motion";
@@ -103,6 +110,10 @@ export function SessionRecording() {
   const [rows, setRows] = useState<BoxRow[]>(draft?.rows ?? []);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Each recorded animal's latest impedances and the ones before
+  // (`RECORDING.md#impedance-tracking`), keyed by animal id.
+  const [impedance, setImpedance] = useState<Record<string, ImpedanceComparison>>({});
+  const [measuring, setMeasuring] = useState(false);
 
   useEffect(() => {
     if (config === null && rows.length === 0) return;
@@ -148,6 +159,21 @@ export function SessionRecording() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [link, waiting]);
+
+  // What each animal last measured, shown before anything is measured here.
+  const animalKey = rows.map((r) => r.animalId).join("\u0000");
+  useEffect(() => {
+    if (link !== "connected" || rows.length === 0) return;
+    let cancelled = false;
+    void client
+      .call(CMD.INTAN_IMPEDANCE_HISTORY, { animalIds: rows.map((r) => r.animalId) })
+      .then((reply) => !cancelled && setImpedance((current) => ({ ...reply.latest, ...current })))
+      .catch(() => undefined); // a convenience: the button still measures
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [link, animalKey]);
 
   function patchRow(box: number, changes: Partial<BoxRow>) {
     setRows((current) => current.map((r) => (r.box === box ? { ...r, ...changes } : r)));
@@ -212,6 +238,58 @@ export function SessionRecording() {
       setError(errorMessage(err));
     } finally {
       setBusy(false);
+    }
+  }
+
+  // Judged against the bounds in the recording defaults, for the channels each
+  // box records as the form stands now.
+  const summaries = useMemo(() => {
+    const out: Record<number, ImpedanceSummary | null> = {};
+    for (const row of rows) {
+      const comparison = impedance[row.animalId];
+      out[row.box] = comparison
+        ? summarizeImpedance(
+            comparison,
+            channelRange(row.port, row.firstChannel, row.lastChannel),
+            defaults.impedanceFlags,
+          )
+        : null;
+    }
+    return out;
+  }, [rows, impedance, defaults.impedanceFlags]);
+
+  const measurable = recorded.filter((r) => r.port !== "");
+  const measureBlocked = !intan.connected
+    ? "Connect to RHX first."
+    : intan.state === "recording" || intan.state === "stopping"
+      ? "RHX is recording."
+      : measurable.length === 0
+        ? "Choose a headstage port for a recording box first."
+        : !saveDir
+          ? "No save location yet."
+          : null;
+
+  async function measureImpedances() {
+    if (!sessionId || measureBlocked) return;
+    setMeasuring(true);
+    setError(null);
+    try {
+      const reply = await client.call(CMD.INTAN_MEASURE_IMPEDANCE, {
+        sessionId,
+        groupId,
+        saveDirectory: saveDir,
+        boxes: measurable.map((r) => ({
+          box: r.box,
+          port: r.port,
+          firstChannel: r.firstChannel,
+          lastChannel: r.lastChannel,
+        })),
+      });
+      setImpedance((current) => ({ ...current, ...reply.measurements }));
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setMeasuring(false);
     }
   }
 
@@ -491,6 +569,7 @@ export function SessionRecording() {
                                   <ProbeMapView
                                     map={row.probeMap}
                                     channels={channelRange(row.port, row.firstChannel, row.lastChannel)}
+                                    marks={summaries[row.box] ? siteMarks(summaries[row.box]!) : undefined}
                                     className="h-full"
                                   />
                                 ) : (
@@ -523,6 +602,21 @@ export function SessionRecording() {
                 )}
               </HudTile>
             </motion.div>
+
+            {recorded.length > 0 && (
+              <motion.div variants={RISE}>
+                <ImpedanceTile
+                  rows={recorded.map((r) => ({
+                    box: r.box,
+                    animalName: r.animalName,
+                    summary: summaries[r.box] ?? null,
+                  }))}
+                  measuring={measuring}
+                  disabledReason={measureBlocked}
+                  onMeasure={() => void measureImpedances()}
+                />
+              </motion.div>
+            )}
 
             <motion.div variants={RISE} className="mt-1 flex items-center gap-2">
               <Button

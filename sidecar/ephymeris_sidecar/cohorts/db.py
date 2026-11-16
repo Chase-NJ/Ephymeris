@@ -390,6 +390,26 @@ CREATE TABLE IF NOT EXISTS session_logs (
     summary     TEXT,
     updated_at  TEXT NOT NULL
 );
+
+-- Electrode impedances measured at a recording's setup
+-- (RECORDING.md#impedance-tracking): one row per site per measurement, the
+-- rows of one measurement sharing measured_at. Keyed by ANIMAL, since an
+-- implant's history spans sessions. No foreign keys: the roster is deleted
+-- and re-inserted on every cohort edit (as for session_notes), and the
+-- session may be tidied away while the history still stands. A cohort move
+-- remaps animal_id (`move_apply.py`).
+CREATE TABLE IF NOT EXISTS electrode_impedances (
+    animal_id     TEXT NOT NULL,
+    measured_at   TEXT NOT NULL,
+    channel       TEXT NOT NULL,   -- RHX's native name, e.g. A-016
+    session_id    TEXT,
+    box_number    INTEGER NOT NULL,
+    frequency_hz  REAL NOT NULL,   -- what RHX measured at, not what was asked
+    ohms          REAL NOT NULL,
+    phase_deg     REAL NOT NULL,
+    csv_file      TEXT,            -- RHX's own CSV, beside the recording
+    PRIMARY KEY (animal_id, measured_at, channel)
+);
 """
 
 

@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncContextManager, Awaitable, Callable, Iterable
 
 from ..cohorts.db import NestedWrite, TransactionAborted
+from ..intan.yield_store import SpikeYieldStore
 from ..ports.flashing import FlashJob, FlashQueue
 from ..ports.manager import CarriedSketch, sketch_fingerprint
 from ..protocol import Evt, event
@@ -624,7 +625,14 @@ class SessionLifecycle:
                 run.config.profile,
             )
         if self._intan is not None:
-            self._intan.box_ended(run.box, run.config.animal_name, reason)
+            spikes = self._intan.box_ended(run.box, run.config.animal_name, reason)
+            if spikes is not None and run.session_id:
+                # After its run record: the counts are read through it
+                # (`RECORDING.md#active-site-yield`). Never fails the finalization.
+                try:
+                    await asyncio.to_thread(SpikeYieldStore(self._db).add, run.run_id, spikes)
+                except Exception:  # noqa: BLE001
+                    log.exception("couldn't keep box %d's spike counts", run.box)
         await self._broadcast(
             event(
                 Evt.SESSION_ANIMAL_ENDED,

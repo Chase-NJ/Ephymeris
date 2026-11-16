@@ -49,6 +49,17 @@ describe("FiringModel", () => {
   });
 });
 
+describe("FiringModel.activeCount", () => {
+  it("counts sites whose mean rate since the first batch reaches the floor, once there is enough to say", () => {
+    const m = new FiringModel(["A-000", "A-001", "A-002"]);
+    for (let t = 0; t <= 20_000; t += 100) m.add({ "A-000": 1, ...(t % 4000 === 0 ? { "A-001": 1 } : {}) }, t);
+    expect(m.activeCount(0.5, 5_000)).toBeNull(); // under 10 s
+    // A-000 at 10 Hz is active; A-001 at 0.25 Hz and silent A-002 are not.
+    expect(m.activeCount(0.5, 20_000)).toBe(1);
+    expect(m.activeCount(0.2, 20_000)).toBe(2);
+  });
+});
+
 describe("rateStrength", () => {
   it("is a fixed log scale from the floor to the ceiling", () => {
     expect(rateStrength(0)).toBe(0);

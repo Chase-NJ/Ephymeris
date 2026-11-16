@@ -131,6 +131,7 @@ class Cmd:
     INTAN_PROBE_MAP: Final = "intan.probeMap"
     INTAN_MEASURE_IMPEDANCE: Final = "intan.measureImpedance"
     INTAN_IMPEDANCE_HISTORY: Final = "intan.impedanceHistory"
+    INTAN_YIELD_HISTORY: Final = "intan.yieldHistory"
     INTAN_FORCE_STOP: Final = "intan.forceStop"
 
     # Session log
@@ -419,6 +420,7 @@ SHAPES: Final[dict[str, Any]] = {
     "ImpedanceSite": ('obj', (('ohms', 'float', False), ('phaseDeg', 'float', False))),
     "ImpedanceMeasurement": ('obj', (('animalId', 'str', False), ('measuredAt', 'str', False), ('box', 'int', False), ('sessionId', ('union', ('str', 'null')), False), ('frequencyHz', 'float', False), ('file', ('union', ('str', 'null')), False), ('sites', ('map', ('ref', 'ImpedanceSite')), False))),
     "ImpedanceComparison": ('obj', (('current', ('ref', 'ImpedanceMeasurement'), False), ('previous', ('union', (('ref', 'ImpedanceMeasurement'), 'null')), False))),
+    "RunYield": ('obj', (('runId', 'str', False), ('sessionId', 'str', False), ('box', 'int', False), ('startedAt', ('union', ('str', 'null')), False), ('countedSeconds', 'float', False), ('runSeconds', 'float', False), ('threshold', ('union', (('map', 'any'), 'null')), False), ('counts', ('map', 'int'), False))),
     "IntanSpikes": ('obj', (('box', 'int', False), ('counts', ('map', 'int'), False), ('lagMs', ('union', ('float', 'null')), False), ('sentAt', 'float', False))),
     "NoteTag": ('lit', ('observation', 'intervention', 'hardware', 'animal-health', 'protocol-deviation')),
     "NoteScope": ('obj', (('kind', ('lit', ('session', 'animal', 'box')), False), ('animalId', ('union', ('str', 'null')), False), ('box', ('union', ('int', 'null')), False))),
@@ -515,6 +517,7 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "intan.probeMap": ('obj', (('box', 'int', False),)),
     "intan.measureImpedance": ('obj', (('sessionId', 'str', False), ('groupId', 'str', False), ('saveDirectory', 'str', False), ('boxes', ('list', ('obj', (('box', 'int', False), ('port', 'str', False), ('firstChannel', 'int', False), ('lastChannel', 'int', False)))), False))),
     "intan.impedanceHistory": ('obj', (('animalIds', ('list', 'str'), False),)),
+    "intan.yieldHistory": ('obj', (('animalIds', ('list', 'str'), False), ('limit', 'int', True))),
     "intan.forceStop": ('obj', ()),
     "logbook.cohort": ('obj', (('cohortId', 'str', False),)),
     "logbook.addNote": ('obj', (('sessionId', 'str', False), ('tag', ('ref', 'NoteTag'), False), ('body', 'str', False), ('scope', ('ref', 'NoteScope'), True), ('carryForward', 'bool', True), ('at', 'str', True))),
@@ -609,6 +612,7 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "intan.probeMap": ('obj', (('probeMap', 'any', False),)),
     "intan.measureImpedance": ('obj', (('measurements', ('map', ('ref', 'ImpedanceComparison')), False),)),
     "intan.impedanceHistory": ('obj', (('latest', ('map', ('ref', 'ImpedanceComparison')), False),)),
+    "intan.yieldHistory": ('obj', (('history', ('map', ('list', ('ref', 'RunYield'))), False),)),
     "intan.forceStop": ('obj', (('ok', 'bool', False),)),
     "logbook.cohort": ('ref', 'LogbookCohort'),
     "logbook.addNote": ('obj', (('note', ('ref', 'SessionNote'), False),)),

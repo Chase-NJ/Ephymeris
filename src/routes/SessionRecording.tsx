@@ -17,7 +17,7 @@ import { HudTile } from "@/components/common/HudTile";
 import { Button, NumberInput, Segmented } from "@/components/common/controls";
 import { Dropdown } from "@/components/common/Dropdown";
 import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
-import { ImpedanceTile } from "@/components/recording/ImpedanceTile";
+import { ElectrodeTile } from "@/components/recording/ElectrodeTile";
 import { ProbeMapView } from "@/components/recording/ProbeMapView";
 import { SavingRows, ThresholdRows } from "@/components/recording/RecordingConfigRows";
 import { SessionJourney } from "@/components/sessions/SessionJourney";
@@ -46,6 +46,7 @@ import {
   type ImpedanceSummary,
 } from "@/lib/intan/impedance";
 import { channelRange } from "@/lib/intan/probeMath";
+import { summarizeYield, type RunYield } from "@/lib/intan/yield";
 import { FILE_FORMATS, type ProbeMap } from "@/lib/intan/types";
 import { CASCADE, RISE, springPanel } from "@/lib/motion";
 import { stepUrl } from "@/lib/sessions/flow";
@@ -114,6 +115,9 @@ export function SessionRecording() {
   // (`RECORDING.md#impedance-tracking`), keyed by animal id.
   const [impedance, setImpedance] = useState<Record<string, ImpedanceComparison>>({});
   const [measuring, setMeasuring] = useState(false);
+  // Each recorded animal's recent runs with their spike counts
+  // (`RECORDING.md#active-site-yield`), keyed by animal id.
+  const [yieldRuns, setYieldRuns] = useState<Record<string, RunYield[]>>({});
 
   useEffect(() => {
     if (config === null && rows.length === 0) return;
@@ -169,6 +173,10 @@ export function SessionRecording() {
       .call(CMD.INTAN_IMPEDANCE_HISTORY, { animalIds: rows.map((r) => r.animalId) })
       .then((reply) => !cancelled && setImpedance((current) => ({ ...reply.latest, ...current })))
       .catch(() => undefined); // a convenience: the button still measures
+    void client
+      .call(CMD.INTAN_YIELD_HISTORY, { animalIds: rows.map((r) => r.animalId) })
+      .then((reply) => !cancelled && setYieldRuns(reply.history))
+      .catch(() => undefined);
     return () => {
       cancelled = true;
     };
@@ -605,11 +613,12 @@ export function SessionRecording() {
 
             {recorded.length > 0 && (
               <motion.div variants={RISE}>
-                <ImpedanceTile
+                <ElectrodeTile
                   rows={recorded.map((r) => ({
                     box: r.box,
                     animalName: r.animalName,
                     summary: summaries[r.box] ?? null,
+                    yields: summarizeYield(yieldRuns[r.animalId] ?? [], defaults.activeSiteHz),
                   }))}
                   measuring={measuring}
                   disabledReason={measureBlocked}

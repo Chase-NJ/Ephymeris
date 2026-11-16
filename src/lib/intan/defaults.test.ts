@@ -46,6 +46,7 @@ describe("normalizeRecordingDefaults", () => {
       probeMaps: {},
       // Absent from a file written before impedance tracking: the defaults.
       impedanceFlags: DEFAULT_RECORDING_DEFAULTS.impedanceFlags,
+      activeSiteHz: DEFAULT_RECORDING_DEFAULTS.activeSiteHz,
     });
   });
 

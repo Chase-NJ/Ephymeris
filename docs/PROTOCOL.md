@@ -153,6 +153,7 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="cmd-intan.probemap"></a>`intan.probeMap` | `box` | `probeMap` | The probe map configured for this box in the current recording, or null: what … |
 | <a id="cmd-intan.measureimpedance"></a>`intan.measureImpedance` | `sessionId`, `groupId`, `saveDirectory`, `boxes` | `measurements` | Measure every electrode's impedance in RHX and keep each box's sites under its animal … |
 | <a id="cmd-intan.impedancehistory"></a>`intan.impedanceHistory` | `animalIds` | `latest` | Each animal's latest impedances, for the Record step to show before anything is measured … |
+| <a id="cmd-intan.yieldhistory"></a>`intan.yieldHistory` | `animalIds`, `limit?` | `history` | Each animal's recent recorded runs with their spike counts per site, for the Record … |
 | <a id="cmd-intan.forcestop"></a>`intan.forceStop` | — | `ok` | Stop waiting for boxes to finish their trials during a graceful end; the recording … |
 
 ### Session log
@@ -372,6 +373,7 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="shape-runseries"></a>RunSeries | `runId`, `mode`, `metrics`, `trail`, `trials`, `trialTable` |  |
 | <a id="shape-runstatus"></a>RunStatus | "ok" \| "no-metrics" \| "diverged" \| "unreplayable" \| "missing" \| "unreadable" | Why a run has numbers or not (`ANALYTICS.md#why-a-run-has-no-numbers`). |
 | <a id="shape-runsummary"></a>RunSummary | `runId`, `sessionId`, `animalId`, `boxNumber`, `startedAt`, `endedAt`, `sketchPath`, `sketchName`, `profileHash`, `paramsHash`, `profileSource`, `stale`, `falseStart`, `falseStartSource`, `restartedBy`, `status`, `metrics`, `overall`, `outcomes`, `conditions`, `engagement`, `totalEvents`, `durationMs`, `stopReason`, `clean`, `seed`, `detail`, `excludedByDefault`, `replay`, `divergence` |  |
+| <a id="shape-runyield"></a>RunYield | `runId`, `sessionId`, `box`, `startedAt`, `countedSeconds`, `runSeconds`, `threshold`, `counts` | One recorded run's spike counts per site, the basis of active-site yield (`RECORDING.md#active-site-yield`). |
 | <a id="shape-seriesresult"></a>SeriesResult | `series`, `warnings` |  |
 | <a id="shape-serverhello"></a>ServerHello | `protocolVersion`, `sidecarVersion` |  |
 | <a id="shape-session"></a>Session | `id`, `cohortId`, `prefixId`, `prefixName`, `sessionNumber`, `date`, `startedAt`, `endedAt`, `clockStartedAt`, `clockEndedAt`, `status`, `folderPath`, `groupRuns`, `durationMinutes`, `recording` |  |

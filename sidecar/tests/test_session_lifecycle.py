@@ -166,8 +166,11 @@ class FakeIntan:
     def note_waiting(self, _boxes: list[int]) -> None:
         pass
 
-    def box_ended(self, *_args) -> None:  # noqa: ANN002
-        pass
+    #: What `box_ended` hands back: a recorded box's spike counts, or None.
+    spikes: Any = None
+
+    def box_ended(self, *_args) -> Any:  # noqa: ANN002
+        return self.spikes
 
 
 class FakeUtility:

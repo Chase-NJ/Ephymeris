@@ -3199,6 +3199,31 @@ SHAPES = (
         ),
     ),
     Shape(
+        "RunYield",
+        obj(
+            f("runId", STR),
+            f("sessionId", STR),
+            f("box", INT),
+            f("startedAt", nullable(STR)),
+            f(
+                "countedSeconds",
+                FLOAT,
+                doc="How much of the run RHX's spike stream covered; less than "
+                "`runSeconds` means a gap, and every site reads quieter than it was.",
+            ),
+            f("runSeconds", FLOAT, doc="START to the run's end."),
+            f(
+                "threshold",
+                nullable(MapOf(ANY)),
+                doc="The recording's `RecordingConfig.threshold`: counts under different "
+                "thresholds do not compare.",
+            ),
+            f("counts", MapOf(INT), doc="Native channel name → threshold crossings, every recorded site."),
+        ),
+        doc="One recorded run's spike counts per site, the basis of active-site yield "
+        "(`RECORDING.md#active-site-yield`).",
+    ),
+    Shape(
         "IntanSpikes",
         obj(
             f("box", INT),
@@ -4719,6 +4744,22 @@ COMMANDS = (
         ),
         doc="Each animal's latest impedances, for the Record step to show "
         "before anything is measured (`RECORDING.md#impedance-tracking`).",
+    ),
+    Command(
+        "intan.yieldHistory",
+        args=obj(
+            f("animalIds", ListOf(STR)),
+            f("limit", INT, optional=True, doc="Runs per animal, most recent; default 10."),
+        ),
+        result=obj(
+            f(
+                "history",
+                MapOf(ListOf(Ref("RunYield"))),
+                doc="Animal id → its counted runs, oldest first; an animal with none is absent.",
+            )
+        ),
+        doc="Each animal's recent recorded runs with their spike counts per site, "
+        "for the Record step's yield trend (`RECORDING.md#active-site-yield`).",
     ),
     Command(
         "intan.forceStop",

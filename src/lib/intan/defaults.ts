@@ -19,6 +19,7 @@ import type { RecordingConfig } from "@/lib/ws/protocol";
 
 import { DEFAULT_IMPEDANCE_FLAGS, normalizeImpedanceFlags, type ImpedanceFlags } from "./impedance";
 import { FILE_FORMATS, defaultRecordingConfig } from "./types";
+import { DEFAULT_ACTIVE_SITE_HZ, normalizeActiveSiteHz } from "./yield";
 
 export type RecordingConfigDefaults = Omit<RecordingConfig, "saveDirectory" | "boxes">;
 
@@ -50,6 +51,8 @@ export type RecordingDefaults = {
   probeMaps: Record<string, string>;
   /** What counts as an open, shorted or changed site (`RECORDING.md#impedance-tracking`). */
   impedanceFlags: ImpedanceFlags;
+  /** A site is active at or above this mean crossing rate (`RECORDING.md#active-site-yield`). */
+  activeSiteHz: number;
 };
 
 const DOWNSAMPLE = [1, 2, 4, 8, 16, 32, 64, 128];
@@ -67,6 +70,7 @@ export const DEFAULT_RECORDING_DEFAULTS: RecordingDefaults = {
   boxes: {},
   probeMaps: {},
   impedanceFlags: { ...DEFAULT_IMPEDANCE_FLAGS },
+  activeSiteHz: DEFAULT_ACTIVE_SITE_HZ,
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -153,7 +157,11 @@ function normalizeBoxMemory(raw: unknown): RecordingBoxMemory | null {
 
 export function normalizeRecordingDefaults(raw: unknown): RecordingDefaults {
   if (!isRecord(raw)) {
-    return { ...DEFAULT_RECORDING_DEFAULTS, config: baseConfig(), impedanceFlags: { ...DEFAULT_IMPEDANCE_FLAGS } };
+    return {
+      ...DEFAULT_RECORDING_DEFAULTS,
+      config: baseConfig(),
+      impedanceFlags: { ...DEFAULT_IMPEDANCE_FLAGS },
+    };
   }
   const boxes: Record<string, RecordingBoxMemory> = {};
   if (isRecord(raw["boxes"])) {
@@ -176,6 +184,7 @@ export function normalizeRecordingDefaults(raw: unknown): RecordingDefaults {
     boxes,
     probeMaps,
     impedanceFlags: normalizeImpedanceFlags(raw["impedanceFlags"]),
+    activeSiteHz: normalizeActiveSiteHz(raw["activeSiteHz"]),
   };
 }
 

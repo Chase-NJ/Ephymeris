@@ -410,6 +410,19 @@ CREATE TABLE IF NOT EXISTS electrode_impedances (
     csv_file      TEXT,            -- RHX's own CSV, beside the recording
     PRIMARY KEY (animal_id, measured_at, channel)
 );
+
+-- Each recorded run's threshold crossings per site (RECORDING.md#active-site-yield),
+-- counted live from RHX's spike socket. Keyed by run: the run record carries
+-- the animal and follows it through cohort moves and tidy. No foreign key, as
+-- for run_flags: `record_animal_run` writes with INSERT OR REPLACE. Pruned
+-- with its run (`SessionRepository.delete_runs`).
+CREATE TABLE IF NOT EXISTS run_spike_counts (
+    run_id           TEXT PRIMARY KEY,
+    counted_seconds  REAL NOT NULL,   -- spike-stream coverage, from the waveform socket's samples
+    run_seconds      REAL NOT NULL,
+    threshold_json   TEXT,            -- the recording's spike-threshold setup
+    counts_json      TEXT NOT NULL    -- native channel -> crossings, every recorded site
+);
 """
 
 
@@ -462,6 +475,9 @@ DATA_PATHS: tuple[tuple[str, str], ...] = (
     ("adopted_runs", "file_path"),
     ("run_metrics_cache", "file_path"),
     ("strobe_scan_cache", "file_path"),
+    # RHX's impedance CSV, saved in the recording's save location: by default
+    # under the session folder (`RECORDING.md#impedance-tracking`).
+    ("electrode_impedances", "csv_file"),
 )
 
 #: Columns that look like they could hold such a path, and why a relocate
@@ -479,6 +495,8 @@ OTHER_PATHS: dict[tuple[str, str], str] = {
     ("session_animal_runs", "config_json"): "no paths",
     ("strobe_scan_cache", "codes_json"): "no paths",
     ("task_profiles", "profile_json"): "no paths",
+    ("run_spike_counts", "threshold_json"): "no paths",
+    ("run_spike_counts", "counts_json"): "no paths",
 }
 
 

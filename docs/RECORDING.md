@@ -20,6 +20,7 @@ yet been made ([Not yet verified](#not-yet-verified)).
   - [Recording tab](#recording-tab)
   - [Record step](#record-step)
   - [Impedance tracking](#impedance-tracking)
+  - [Active-site yield](#active-site-yield)
 - [Start and end](#start-and-end)
   - [Start](#start)
   - [Graceful end](#graceful-end)
@@ -319,7 +320,7 @@ are switched off.** RHX's three notes carry the session, cohort and group, and t
 
 ### Impedance tracking
 
-The Record step's **Impedances** tile measures every electrode site and keeps each animal's values, so a
+The Record step's **Electrodes** tile measures every electrode site and keeps each animal's values, so a
 site is judged against that animal's last measurement as well as fixed bounds. RHX shows only the
 measurement in front of it; the history across sessions is what Ephymeris adds. Optional: nothing waits
 on it.
@@ -342,7 +343,7 @@ on it.
 > the second column, a renamed channel would be filed under its label.
 
 `intan.impedanceHistory` gives each animal's latest on arrival. The webview judges them
-(`lib/intan/impedance.ts`) with the **Impedance flags** recording default: **open** above 5 MΩ,
+(`lib/intan/impedance.ts`) with the impedance bounds under **Electrode checks**, a recording default: **open** above 5 MΩ,
 **short** below 20 kΩ, **changed** by more than 2× either way since the animal's previous measurement.
 Open and short win over changed. Flagged sites are outlined on the probe-map preview.
 
@@ -350,6 +351,34 @@ Open and short win over changed. Flagged sites are outlined on the probe-map pre
 |---|---|
 | A real headstage's measurement time | Over `MEASURE_TIMEOUT_S` (180 s) the step reports RHX unavailable; raise it |
 | RHX in demo mode measures 100 kΩ, −70° on every site | Nothing can be judged from a demo measurement; it proves the plumbing only |
+
+### Active-site yield
+
+How many of an animal's electrode sites carry signal, run by run, so a failing implant shows on the
+Record step before the next recording rather than in the analysis after it. RHX detects **threshold
+crossings, not sorted units**, so the honest count is *active sites*: a recorded site whose **mean
+crossing rate over the run** reaches `activeSiteHz` (0.5 Hz, under **Electrode checks**).
+
+- **Counted live** from the spike socket (`IntanService._count_spike`), per box from its START
+  (`_box_started`) to its finalization (`box_ended`, which returns the counts), for every site the box
+  records, silent ones included.
+- **Coverage is measured, not assumed**: `counted_seconds` is the samples RHX's waveform socket delivered
+  during the run, the rate's denominator. A gap in the streams lowers it rather than making every site
+  read quieter. A run under 90% coverage is marked partial; under 10 s, left out.
+- **Kept with the run record** (`run_spike_counts`, [DATA.md](DATA.md#tables)), written by
+  `SessionLifecycle.animal_ended` after the run's own row. The run carries the animal through cohort
+  moves and tidy, and a [prune](DATA.md#pruning) takes the counts with it.
+- **Raw counts only**, with the recording's threshold setup beside them: the webview judges
+  (`lib/intan/yield.ts`), so a new `activeSiteHz` re-judges history, and a run whose spike detection
+  differs from the latest one is marked, since crossings under two thresholds do not compare.
+
+`intan.yieldHistory` gives each animal's recent runs to the Record step's **Electrodes** tile, oldest to
+newest (`12/16 · 11/16 · 9/16`). Mission Control's [firing map](#live-firing-map) counts the same way
+live, since the map opened (`FiringModel.activeCount`), after its first 10 s.
+
+> [!NOTE]
+> **Artifacts count as crossings.** Chewing or a loose connector can make a dead site look active; the
+> yield says a site carries threshold crossings, not that they are neurons.
 
 ## Start and end
 

@@ -46,7 +46,7 @@ import logging
 import shutil
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
@@ -58,6 +58,8 @@ from .analysis import (
     EdgeDetector,
     EdgeMatcher,
     SampleClock,
+    TetherBoard,
+    TetherChange,
 )
 from .client import (
     RhxCommandClient,
@@ -276,6 +278,15 @@ class IntanService:
         #: the waveform socket had delivered then (`RECORDING.md#active-site-yield`).
         self._runs: dict[int, _RunCount] = {}
         self._samples_seen = 0
+        #: Every running box's tether, judged on RHX's samples
+        #: (`RECORDING.md#tether-alarm`), and each raised alarm: its state,
+        #: when its evidence began, whether the operator has seen it.
+        self._tether: TetherBoard | None = None
+        self._alarms: dict[int, dict[str, Any]] = {}
+        self._last_stamp = -1
+        #: Set by the app: `(session_id, box, state, since_iso)` on each alarm
+        #: raised, for the session log. Never awaited on the data path.
+        self.on_tether: Callable[[str, int, str, str], Awaitable[None]] | None = None
 
     # --- lifecycle --------------------------------------------------------
 
@@ -370,6 +381,17 @@ class IntanService:
             "waitingOn": list(self._waiting_on),
             # Synthetic data drives no sync line; the counters would diagnose
             # wiring that does not exist, so they are not published at all.
+            "tether": [
+                {
+                    "box": box,
+                    "state": self._tether.state(box),
+                    "since": self._alarms.get(box, {}).get("since"),
+                    "acknowledged": bool(self._alarms.get(box, {}).get("acknowledged", False)),
+                    "watchesSilence": self._tether.watches_silence(box),
+                }
+                for box in self._tether.boxes()
+            ] if self._tether is not None else [],
+            "tetherAllSilent": bool(self._tether and self._tether.all_silent and self._live),
             "sync": [] if self.synthetic else [
                 {
                     "box": box,
@@ -1108,6 +1130,9 @@ class IntanService:
         self._matchers[box] = EdgeMatcher(float(recording.sample_rate), tick_pulsed=tick_pulsed)
         self._matched[box] = 0
         self._runs[box] = _RunCount(self._loop.time(), self._samples_seen)
+        if self._tether is not None:
+            self._tether.watch(box, recording.boxes[box].channels, self._last_stamp + 1)
+            self._alarms.pop(box, None)
         self._loop.create_task(self._livenote(f"BOX{box} START {animal}"))
 
     def box_ended(self, box: int, animal: str, reason: str) -> RunSpikes | None:
@@ -1118,6 +1143,10 @@ class IntanService:
         if recording is not None and box in recording.boxes and self.is_recording:
             self._loop.create_task(self._livenote(f"BOX{box} END {animal} ({reason})"))
         run = self._runs.pop(box, None)
+        if self._tether is not None:
+            self._tether.unwatch(box)
+            self._alarms.pop(box, None)
+            self._loop.create_task(self.publish())
         if run is None or recording is None or box not in recording.boxes:
             return None
         return RunSpikes(
@@ -1157,6 +1186,9 @@ class IntanService:
         self._detectors = {b: EdgeDetector(p.digital_in) for b, p in plan.boxes.items()}
         self._matchers, self._matched = {}, {}
         self._runs = {}
+        self._tether = TetherBoard(float(plan.sample_rate))
+        self._alarms = {}
+        self._last_stamp = -1  # RHX's clock restarts at zero with acquisition
         self._box_of = {name: b for b, p in plan.boxes.items() for name in p.channels}
         self._fired, self._fired_lag = {}, {}
         self._clock = SampleClock(float(plan.sample_rate))
@@ -1216,6 +1248,18 @@ class IntanService:
     def _on_block(self, block: Any) -> None:
         stamps = block.timestamps
         self._samples_seen += len(stamps)
+        if stamps[0] < self._last_stamp and self._recording is not None and self._tether is not None:
+            # Acquisition restarted under us (Stop and Record in RHX): every
+            # window and baseline was on a clock that no longer exists.
+            self._tether = TetherBoard(float(self._recording.sample_rate))
+            self._alarms = {}
+            for box in self._runs:
+                self._tether.watch(box, self._recording.boxes[box].channels, stamps[0])
+        self._last_stamp = stamps[-1]
+        if self._tether is not None and self._live:
+            changes = self._tether.delivered(stamps[0], stamps[-1])
+            if changes:
+                self._tether_changed(changes)
         if block.digital_in is not None and not self.synthetic:
             for box, detector in self._detectors.items():
                 edges = detector.feed(stamps, block.digital_in)
@@ -1263,9 +1307,48 @@ class IntanService:
         run = self._runs.get(box)
         if run is not None:
             run.counts[channel] = run.counts.get(channel, 0) + 1
+        if self._tether is not None:
+            self._tether.add_spike(channel, sample)
         lag = self._clock.lag_ms(sample, arrived) if self._clock is not None else None
         if lag is not None and lag > self._fired_lag.get(box, float("-inf")):
             self._fired_lag[box] = lag
+
+    # --- tether alarm (RECORDING.md#tether-alarm) --------------------------
+
+    def _tether_changed(self, changes: list[TetherChange]) -> None:
+        """On the loop, from the waveform reader: never awaits. Stamps RHX's
+        notes, tells the app (the session log), and publishes."""
+        recording = self._recording
+        rate = float(recording.sample_rate) if recording else 30000.0
+        for change in changes:
+            if change.state in ("silent", "noisy"):
+                ago = max(0.0, (self._last_stamp - change.at_sample) / rate)
+                since = (datetime.now(timezone.utc) - timedelta(seconds=ago)).isoformat(timespec="seconds")
+                self._alarms[change.box] = {"since": since, "acknowledged": False}
+                self._loop.create_task(self._livenote(f"BOX{change.box} TETHER {change.state.upper()}"))
+                if self.on_tether is not None and recording is not None:
+                    self._loop.create_task(self._tell(recording.session_id, change.box, change.state, since))
+            elif change.state == "ok" and change.previous in ("silent", "noisy"):
+                self._alarms.pop(change.box, None)
+                self._loop.create_task(self._livenote(f"BOX{change.box} TETHER OK"))
+        self._loop.create_task(self.publish())
+
+    async def _tell(self, session_id: str, box: int, state: str, since: str) -> None:
+        assert self.on_tether is not None
+        try:
+            await self.on_tether(session_id, box, state, since)
+        except Exception:  # noqa: BLE001 - an alarm must not cost the recording anything
+            log.exception("couldn't log box %d's tether alarm", box)
+
+    async def acknowledge_tether(self, box: int) -> bool:
+        """The operator has seen this box's alarm. It stays until the box
+        recovers; only its prominence goes. False when there is none."""
+        alarm = self._alarms.get(box)
+        if alarm is None:
+            return False
+        alarm["acknowledged"] = True
+        await self.publish()
+        return True
 
     async def _spikes_loop(self) -> None:
         while True:

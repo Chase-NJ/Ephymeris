@@ -1,4 +1,5 @@
-"""Pure analysis behind the sync check and the live firing map. No I/O, no clocks.
+"""Pure analysis behind the sync check, the live firing map and the tether
+alarm. No I/O, no clocks.
 
 Everything here is in the recording controller's own unit -- SAMPLES since
 acquisition began -- and converts to time only at the edge, with the sample
@@ -9,8 +10,10 @@ rate RHX reports. The Arduino's milliseconds appear in exactly one place, the
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import reduce
+from math import ceil
+from statistics import median
 from operator import and_, or_
 
 
@@ -243,3 +246,222 @@ class SampleClock:
         if not self._bounds or sample < 0:
             return None
         return (at - (sample / self._rate + min(self._bounds))) * 1000.0
+
+
+# --------------------------------------------------------------------------- #
+# Tether watch
+# --------------------------------------------------------------------------- #
+
+#: Each box is judged one window of RHX samples at a time.
+TETHER_WINDOW_S = 1.0
+#: Spikes trail the waveform socket (two sockets, not in lockstep): a window is
+#: closed only once the waveform is this far past its end.
+TETHER_LAG_S = 0.25
+#: A box's own crossing rate over its first this-many seconds is its baseline.
+TETHER_BASELINE_S = 120.0
+#: A condition must hold this long to raise an alarm, and its absence this long
+#: to clear one: a twitching connector must not flicker the warning.
+TETHER_SUSTAIN_S = 20.0
+#: SILENT: the box's total rate under this share of its baseline.
+TETHER_SILENT_FRACTION = 0.1
+#: NOISY: this many times the baseline, on at least this share of its sites...
+TETHER_NOISY_FACTOR = 5.0
+TETHER_NOISY_SITES = 0.8
+#: ...or this share of its crossings landing together on half its sites or more
+#: (within `TETHER_COINCIDENT_S`): neurons do not fire in lockstep across a probe.
+TETHER_COINCIDENT_FRACTION = 0.5
+TETHER_COINCIDENT_S = 0.0005
+#: A baseline quieter than this (whole box) cannot show silence: too few
+#: crossings to tell quiet from gone.
+TETHER_MIN_BASELINE_HZ = 2.0
+#: The baseline follows slow drift while the box is healthy.
+TETHER_BASELINE_TAU_S = 600.0
+
+
+@dataclass(frozen=True)
+class TetherChange:
+    box: int
+    state: str
+    previous: str
+    #: The first sample of the evidence: where the fault began, not when it was believed.
+    at_sample: int
+
+
+@dataclass
+class _Watch:
+    channels: tuple[str, ...]
+    first_window: int
+    state: str = "learning"
+    baseline_hz: float | None = None
+    learned: list[float] = field(default_factory=list)
+    streak_kind: str | None = None
+    streak: int = 0
+    streak_from: int = 0
+    #: window -> channel -> crossings, and window -> coincidence bucket -> channels
+    counts: dict[int, dict[str, int]] = field(default_factory=dict)
+    buckets: dict[int, dict[int, set[str]]] = field(default_factory=dict)
+
+    @property
+    def watches_silence(self) -> bool:
+        return self.baseline_hz is not None and self.baseline_hz >= TETHER_MIN_BASELINE_HZ
+
+
+class TetherBoard:
+    """Every recording box's tether, judged on RHX's sample clock
+    (`RECORDING.md#tether-alarm`).
+
+    A fault hits a whole box at once: every site silent (tether cut,
+    headstage unplugged) or every site noisy (ground lost, connector half
+    seated, chewing). One quiet site is ordinary and never an alarm. Each box
+    is judged against ITS OWN baseline, learned from its first
+    `TETHER_BASELINE_S`, because implants differ tenfold in rate.
+
+    Windows are cut from RHX's samples, never from wall time, and
+    `delivered` is told which samples the waveform socket actually brought:
+    a window a gap touches is skipped. So a stream that stalls is never a
+    silent tether -- and when EVERY judged box goes silent in the same window
+    (`all_silent`), the problem is upstream of the tethers, and no box alarms.
+    """
+
+    def __init__(self, rate: float) -> None:
+        self._w = max(1, int(round(rate * TETHER_WINDOW_S)))
+        self._lag = int(rate * TETHER_LAG_S)
+        self._bucket = max(1, int(rate * TETHER_COINCIDENT_S))
+        self._baseline_windows = ceil(TETHER_BASELINE_S / TETHER_WINDOW_S)
+        self._sustain = ceil(TETHER_SUSTAIN_S / TETHER_WINDOW_S)
+        self._alpha = TETHER_WINDOW_S / TETHER_BASELINE_TAU_S
+        self._watches: dict[int, _Watch] = {}
+        self._box_of: dict[str, int] = {}
+        self._next: int | None = None
+        self._last: int | None = None
+        self._gaps: list[tuple[int, int]] = []
+        #: The last closed window found every judged box silent at once.
+        self.all_silent = False
+
+    # --- boxes -------------------------------------------------------------
+
+    def watch(self, box: int, channels: list[str], from_sample: int) -> None:
+        """From the first whole window at or after `from_sample` (the box's START)."""
+        self.unwatch(box)
+        first = -(-max(0, from_sample) // self._w)
+        self._watches[box] = _Watch(tuple(c.upper() for c in channels), first)
+        for channel in channels:
+            self._box_of[channel.upper()] = box
+
+    def unwatch(self, box: int) -> None:
+        watch = self._watches.pop(box, None)
+        if watch is not None:
+            for channel in watch.channels:
+                if self._box_of.get(channel) == box:
+                    del self._box_of[channel]
+
+    def state(self, box: int) -> str | None:
+        watch = self._watches.get(box)
+        return watch.state if watch is not None else None
+
+    def watches_silence(self, box: int) -> bool:
+        watch = self._watches.get(box)
+        return watch is not None and watch.watches_silence
+
+    def boxes(self) -> list[int]:
+        return sorted(self._watches)
+
+    # --- input -------------------------------------------------------------
+
+    def add_spike(self, channel: str, sample: int) -> None:
+        box = self._box_of.get(channel)
+        if box is None:
+            return
+        window = sample // self._w
+        if self._next is not None and window < self._next:
+            return  # its window is already judged
+        watch = self._watches[box]
+        counts = watch.counts.setdefault(window, {})
+        counts[channel] = counts.get(channel, 0) + 1
+        watch.buckets.setdefault(window, {}).setdefault(sample // self._bucket, set()).add(channel)
+
+    def delivered(self, first: int, last: int) -> list[TetherChange]:
+        """The waveform socket brought samples `first`..`last`. Closes every
+        window it can and returns the state changes, oldest first."""
+        if self._last is not None and first > self._last + 1:
+            self._gaps.append((self._last + 1, first - 1))
+        self._last = last if self._last is None else max(self._last, last)
+        if self._next is None:
+            self._next = -(-first // self._w)  # the first WHOLE window
+        changes: list[TetherChange] = []
+        while (self._next + 1) * self._w + self._lag <= last:
+            changes += self._close(self._next)
+            self._next += 1
+        horizon = self._next * self._w
+        self._gaps = [g for g in self._gaps if g[1] >= horizon]
+        return changes
+
+    # --- judging -----------------------------------------------------------
+
+    def _close(self, window: int) -> list[TetherChange]:
+        start, end = window * self._w, (window + 1) * self._w - 1
+        covered = not any(a <= end and b >= start for a, b in self._gaps)
+        verdicts: dict[int, tuple[str | None, float]] = {}
+        for box, watch in self._watches.items():
+            counts = watch.counts.pop(window, {})
+            buckets = watch.buckets.pop(window, {})
+            if window < watch.first_window or not covered:
+                continue
+            rate = sum(counts.values()) / TETHER_WINDOW_S
+            verdicts[box] = (self._verdict(watch, counts, buckets), rate)
+
+        judged = [box for box, (v, _) in verdicts.items() if v is not None]
+        self.all_silent = len(judged) >= 2 and all(verdicts[b][0] == "silent" for b in judged)
+        changes = []
+        for box, (verdict, rate) in verdicts.items():
+            if self.all_silent:
+                verdict = None  # upstream of every tether: not any box's alarm
+            change = self._step(box, self._watches[box], verdict, rate, start)
+            if change is not None:
+                changes.append(change)
+        return changes
+
+    def _verdict(self, watch: _Watch, counts: dict[str, int], buckets: dict[int, set[str]]) -> str | None:
+        if watch.baseline_hz is None:
+            return None  # still learning
+        n = len(watch.channels)
+        total = sum(counts.values())
+        rate = total / TETHER_WINDOW_S
+        crossing = sum(1 for c in counts.values() if c > 0)
+        together = max(3, ceil(n / 2))
+        coincident = sum(len(chans) for chans in buckets.values() if len(chans) >= together)
+        if (rate > TETHER_NOISY_FACTOR * watch.baseline_hz and crossing >= TETHER_NOISY_SITES * n) or (
+            total >= n and coincident >= TETHER_COINCIDENT_FRACTION * total
+        ):
+            return "noisy"
+        if watch.watches_silence and rate < TETHER_SILENT_FRACTION * watch.baseline_hz:
+            return "silent"
+        return "ok"
+
+    def _step(self, box: int, watch: _Watch, verdict: str | None, rate: float, start: int) -> TetherChange | None:
+        if watch.state == "learning":
+            if self.all_silent:
+                return None
+            watch.learned.append(rate)
+            if len(watch.learned) < self._baseline_windows:
+                return None
+            # The median, so a fault during learning cannot set the bar.
+            watch.baseline_hz = median(watch.learned)
+            watch.learned = []
+            watch.state = "ok"
+            return TetherChange(box, "ok", "learning", start)
+        if verdict is None:
+            return None  # a gap, or upstream: no evidence either way
+        if verdict == watch.state:
+            watch.streak_kind, watch.streak = None, 0
+            if verdict == "ok" and watch.baseline_hz is not None:
+                watch.baseline_hz += self._alpha * (rate - watch.baseline_hz)
+            return None
+        if verdict != watch.streak_kind:
+            watch.streak_kind, watch.streak, watch.streak_from = verdict, 0, start
+        watch.streak += 1
+        if watch.streak < self._sustain:
+            return None
+        previous, watch.state = watch.state, verdict
+        watch.streak_kind, watch.streak = None, 0
+        return TetherChange(box, verdict, previous, watch.streak_from)

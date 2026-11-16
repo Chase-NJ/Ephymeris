@@ -154,6 +154,7 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="cmd-intan.measureimpedance"></a>`intan.measureImpedance` | `sessionId`, `groupId`, `saveDirectory`, `boxes` | `measurements` | Measure every electrode's impedance in RHX and keep each box's sites under its animal … |
 | <a id="cmd-intan.impedancehistory"></a>`intan.impedanceHistory` | `animalIds` | `latest` | Each animal's latest impedances, for the Record step to show before anything is measured … |
 | <a id="cmd-intan.yieldhistory"></a>`intan.yieldHistory` | `animalIds`, `limit?` | `history` | Each animal's recent recorded runs with their spike counts per site, for the Record … |
+| <a id="cmd-intan.acknowledgetether"></a>`intan.acknowledgeTether` | `box` | [IntanStatus](#shape-intanstatus) | The operator has seen this box's tether alarm: it stays until the box recovers … |
 | <a id="cmd-intan.forcestop"></a>`intan.forceStop` | — | `ok` | Stop waiting for boxes to finish their trials during a graceful end; the recording … |
 
 ### Session log
@@ -315,8 +316,9 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="shape-intansettings"></a>IntanSettings | `commandPort`, `waveformPort`, `spikePort` | Where Intan RHX's three TCP servers listen. |
 | <a id="shape-intanspikes"></a>IntanSpikes | `box`, `counts`, `lagMs`, `sentAt` |  |
 | <a id="shape-intanstate"></a>IntanState | "disconnected" \| "idle" \| "configured" \| "recording" \| "stopping" \| "error" |  |
-| <a id="shape-intanstatus"></a>IntanStatus | `state`, `message`, `connected`, `controller`, `version`, `sampleRate`, `synthetic`, `headstagePresent`, `runMode`, `ports`, `confirmsWrites`, `rigHasSync`, `liveStreams`, `recording`, `waitingOn`, `sync` |  |
+| <a id="shape-intanstatus"></a>IntanStatus | `state`, `message`, `connected`, `controller`, `version`, `sampleRate`, `synthetic`, `headstagePresent`, `runMode`, `ports`, `confirmsWrites`, `rigHasSync`, `liveStreams`, `recording`, `waitingOn`, `sync`, `tether`, `tetherAllSilent` |  |
 | <a id="shape-intansyncstat"></a>IntanSyncStat | `box`, `matched`, `spuriousEdges`, `unmatchedStrobes` | How well a box's sync edges are pairing with its strobes. |
+| <a id="shape-intantetherstat"></a>IntanTetherStat | `box`, `state`, `since`, `acknowledged`, `watchesSilence` | One recording box's tether, judged against its own baseline. |
 | <a id="shape-librarystate"></a>LibraryState | "ok" \| "empty" \| "damaged" | The three bundled-sketch-library states (`TASKS.md#sketch-library`). |
 | <a id="shape-livemetric"></a>LiveMetric | `id`, `label`, `triggerCode`, `successCode`, `alternateCode`, `alternateCodes?`, `windowSize` |  |
 | <a id="shape-livereplay"></a>LiveReplay | `box`, `animalId`, `status`, `detail`, `state`, `phase`, `row`, `provisional`, `unavailable`, `trials`, `current`, `last`, `metrics`, `overall`, `replay`, `divergence` | A running spine run as its live replay reads it (`ANALYTICS.md#live-scoring`): where the board … |

@@ -408,7 +408,10 @@ thresholds.
 6. **Start All** starts RHX first; if it cannot, no box starts. The **Sync check** counts each box's
    pulses **matched**, **missed** and **stray**; *no pulses arriving* means the sync cable is not reaching RHX.
 7. Each recorded box's card shows its probe map, every site flashing as it fires, and how many sites
-   are active so far; open a box's panel for a larger one. For one channel's waveforms, threshold, ISI or PSTH, use RHX's own tools.
+   are active so far; open a box's panel for a larger one. If a box's sites all go silent or all turn
+   noisy for 20 seconds, its card shows a **tether alarm**: check that animal's tether, headstage and
+   ground, then click **Acknowledge**. The recording carries on, and the session log notes the time.
+   The first two minutes of each box are its baseline, so the alarm watches from then on. For one channel's waveforms, threshold, ISI or PSTH, use RHX's own tools.
 8. **End Session** and **Switch Group** let each box finish its trial (up to 45 seconds) under **ENDING**;
    **End now** stops RHX without waiting.
 

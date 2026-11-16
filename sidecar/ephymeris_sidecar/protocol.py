@@ -132,6 +132,7 @@ class Cmd:
     INTAN_MEASURE_IMPEDANCE: Final = "intan.measureImpedance"
     INTAN_IMPEDANCE_HISTORY: Final = "intan.impedanceHistory"
     INTAN_YIELD_HISTORY: Final = "intan.yieldHistory"
+    INTAN_ACKNOWLEDGE_TETHER: Final = "intan.acknowledgeTether"
     INTAN_FORCE_STOP: Final = "intan.forceStop"
 
     # Session log
@@ -416,7 +417,8 @@ SHAPES: Final[dict[str, Any]] = {
     "RecordingConfig": ('obj', (('saveDirectory', 'str', False), ('fileFormat', ('lit', ('Traditional', 'OneFilePerSignalType', 'OneFilePerChannel')), False), ('saveWideband', 'bool', False), ('saveSpikes', 'bool', False), ('saveSpikeSnapshots', 'bool', False), ('snapshotPreMs', 'int', False), ('snapshotPostMs', 'int', False), ('saveLowpass', 'bool', False), ('lowpassDownsample', 'int', False), ('saveHighpass', 'bool', False), ('newFileMinutes', 'int', True), ('threshold', ('ref', 'RecordingThreshold'), False), ('boxes', ('list', ('ref', 'RecordingBoxConfig')), False))),
     "IntanState": ('lit', ('disconnected', 'idle', 'configured', 'recording', 'stopping', 'error')),
     "IntanSyncStat": ('obj', (('box', 'int', False), ('matched', 'int', False), ('spuriousEdges', 'int', False), ('unmatchedStrobes', 'int', False))),
-    "IntanStatus": ('obj', (('state', ('ref', 'IntanState'), False), ('message', ('union', ('str', 'null')), False), ('connected', 'bool', False), ('controller', ('union', ('str', 'null')), False), ('version', ('union', ('str', 'null')), False), ('sampleRate', ('union', ('int', 'null')), False), ('synthetic', 'bool', False), ('headstagePresent', 'bool', False), ('runMode', ('union', ('str', 'null')), False), ('ports', ('map', 'int'), False), ('confirmsWrites', ('union', ('bool', 'null')), False), ('rigHasSync', 'bool', False), ('liveStreams', 'bool', False), ('recording', ('union', (('ref', 'RecordingRun'), 'null')), False), ('waitingOn', ('list', 'int'), False), ('sync', ('list', ('ref', 'IntanSyncStat')), False))),
+    "IntanTetherStat": ('obj', (('box', 'int', False), ('state', ('lit', ('learning', 'ok', 'silent', 'noisy')), False), ('since', ('union', ('str', 'null')), False), ('acknowledged', 'bool', False), ('watchesSilence', 'bool', False))),
+    "IntanStatus": ('obj', (('state', ('ref', 'IntanState'), False), ('message', ('union', ('str', 'null')), False), ('connected', 'bool', False), ('controller', ('union', ('str', 'null')), False), ('version', ('union', ('str', 'null')), False), ('sampleRate', ('union', ('int', 'null')), False), ('synthetic', 'bool', False), ('headstagePresent', 'bool', False), ('runMode', ('union', ('str', 'null')), False), ('ports', ('map', 'int'), False), ('confirmsWrites', ('union', ('bool', 'null')), False), ('rigHasSync', 'bool', False), ('liveStreams', 'bool', False), ('recording', ('union', (('ref', 'RecordingRun'), 'null')), False), ('waitingOn', ('list', 'int'), False), ('sync', ('list', ('ref', 'IntanSyncStat')), False), ('tether', ('list', ('ref', 'IntanTetherStat')), False), ('tetherAllSilent', 'bool', False))),
     "ImpedanceSite": ('obj', (('ohms', 'float', False), ('phaseDeg', 'float', False))),
     "ImpedanceMeasurement": ('obj', (('animalId', 'str', False), ('measuredAt', 'str', False), ('box', 'int', False), ('sessionId', ('union', ('str', 'null')), False), ('frequencyHz', 'float', False), ('file', ('union', ('str', 'null')), False), ('sites', ('map', ('ref', 'ImpedanceSite')), False))),
     "ImpedanceComparison": ('obj', (('current', ('ref', 'ImpedanceMeasurement'), False), ('previous', ('union', (('ref', 'ImpedanceMeasurement'), 'null')), False))),
@@ -518,6 +520,7 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "intan.measureImpedance": ('obj', (('sessionId', 'str', False), ('groupId', 'str', False), ('saveDirectory', 'str', False), ('boxes', ('list', ('obj', (('box', 'int', False), ('port', 'str', False), ('firstChannel', 'int', False), ('lastChannel', 'int', False)))), False))),
     "intan.impedanceHistory": ('obj', (('animalIds', ('list', 'str'), False),)),
     "intan.yieldHistory": ('obj', (('animalIds', ('list', 'str'), False), ('limit', 'int', True))),
+    "intan.acknowledgeTether": ('obj', (('box', 'int', False),)),
     "intan.forceStop": ('obj', ()),
     "logbook.cohort": ('obj', (('cohortId', 'str', False),)),
     "logbook.addNote": ('obj', (('sessionId', 'str', False), ('tag', ('ref', 'NoteTag'), False), ('body', 'str', False), ('scope', ('ref', 'NoteScope'), True), ('carryForward', 'bool', True), ('at', 'str', True))),
@@ -613,6 +616,7 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "intan.measureImpedance": ('obj', (('measurements', ('map', ('ref', 'ImpedanceComparison')), False),)),
     "intan.impedanceHistory": ('obj', (('latest', ('map', ('ref', 'ImpedanceComparison')), False),)),
     "intan.yieldHistory": ('obj', (('history', ('map', ('list', ('ref', 'RunYield'))), False),)),
+    "intan.acknowledgeTether": ('ref', 'IntanStatus'),
     "intan.forceStop": ('obj', (('ok', 'bool', False),)),
     "logbook.cohort": ('ref', 'LogbookCohort'),
     "logbook.addNote": ('obj', (('note', ('ref', 'SessionNote'), False),)),

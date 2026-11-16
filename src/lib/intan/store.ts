@@ -29,6 +29,8 @@ export const NO_INTAN: IntanStatus = {
   recording: null,
   waitingOn: [],
   sync: [],
+  tether: [],
+  tetherAllSilent: false,
 };
 
 type SpikesListener = (data: IntanSpikes) => void;

@@ -3130,6 +3130,26 @@ SHAPES = (
         "`unmatchedStrobes` with zero `matched` is a sync line that is not connected.",
     ),
     Shape(
+        "IntanTetherStat",
+        obj(
+            f("box", INT),
+            f(
+                "state",
+                lit("learning", "ok", "silent", "noisy"),
+                doc="`learning` its baseline; `silent`/`noisy` an alarm "
+                "(`RECORDING.md#tether-alarm`).",
+            ),
+            f("since", nullable(STR), doc="While alarmed: when the evidence began (UTC ISO)."),
+            f("acknowledged", BOOL, doc="The operator has seen this alarm; it stays until the box recovers."),
+            f(
+                "watchesSilence",
+                BOOL,
+                doc="False when the box's baseline is too quiet to tell silence from quiet.",
+            ),
+        ),
+        doc="One recording box's tether, judged against its own baseline.",
+    ),
+    Shape(
         "IntanStatus",
         obj(
             f("state", Ref("IntanState")),
@@ -3163,6 +3183,13 @@ SHAPES = (
                 doc="While `stopping`: boxes still finishing their trial.",
             ),
             f("sync", ListOf(Ref("IntanSyncStat"))),
+            f("tether", ListOf(Ref("IntanTetherStat")), doc="Every running recording box's tether."),
+            f(
+                "tetherAllSilent",
+                BOOL,
+                doc="Every judged box went silent at once: upstream of the tethers "
+                "(RHX, the controller), so no box alarms.",
+            ),
         ),
     ),
     Shape(
@@ -4760,6 +4787,14 @@ COMMANDS = (
         ),
         doc="Each animal's recent recorded runs with their spike counts per site, "
         "for the Record step's yield trend (`RECORDING.md#active-site-yield`).",
+    ),
+    Command(
+        "intan.acknowledgeTether",
+        args=obj(f("box", INT)),
+        result=Ref("IntanStatus"),
+        doc="The operator has seen this box's tether alarm: it stays until the "
+        "box recovers, only less loudly (`RECORDING.md#tether-alarm`). A box "
+        "with no alarm is left as it is.",
     ),
     Command(
         "intan.forceStop",

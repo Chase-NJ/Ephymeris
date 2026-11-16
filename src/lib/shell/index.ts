@@ -19,4 +19,4 @@ function pick(): Shell {
 
 export const shell: Shell = pick();
 
-export type { DragRegionProps, FileFilter, Shell, SidecarEndpoint, UpdateInfo, WindowSpec } from "./types";
+export type { DragRegionProps, FileFilter, Shell, SidecarEndpoint, UpdateInfo } from "./types";

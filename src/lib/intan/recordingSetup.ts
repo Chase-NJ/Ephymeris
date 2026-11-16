@@ -10,7 +10,7 @@ import type { ConnectionStatus } from "@/lib/ws/port";
 import { SidecarCommandError, type BoxBinding } from "@/lib/ws/protocol";
 
 import type { RecordingConfigDefaults, RecordingDefaults } from "./defaults";
-import { channelRange } from "./scopeMath";
+import { channelRange } from "./probeMath";
 import type { IntanStatus, ProbeMap, RecordingBoxConfig, RecordingConfig } from "./types";
 
 /** A box's row in the form. `record: false` runs the box behavior-only. */

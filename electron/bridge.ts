@@ -22,20 +22,6 @@ export interface FileFilter {
   extensions: string[];
 }
 
-/** A pop-up window of this app. Mirrors `WindowSpec` in `src/lib/shell/types.ts`. */
-export interface WindowSpec {
-  label: string;
-  url: string;
-  title: string;
-  width: number;
-  height: number;
-  minWidth: number;
-  minHeight: number;
-  x: number;
-  y: number;
-  backgroundColor: string;
-}
-
 export interface UpdateInfo {
   version: string;
   currentVersion: string;
@@ -75,7 +61,6 @@ export interface InvokeChannels {
   "frame:toggle-maximize": { args: []; result: void };
   "frame:is-maximized": { args: []; result: boolean };
   "frame:close": { args: []; result: void };
-  "window:open": { args: [WindowSpec]; result: void };
   "updates:check": { args: []; result: UpdateInfo | null };
   /** Download, verify, stop the sidecar, hand over. Progress arrives as events to the asking window. */
   "updates:install": { args: []; result: void };
@@ -124,7 +109,6 @@ export interface EphymerisBridge {
     onResized(handler: () => void): () => void;
     close(): Promise<void>;
   };
-  openWindow(spec: WindowSpec): Promise<void>;
   updates: {
     supported: boolean;
     check(): Promise<UpdateInfo | null>;

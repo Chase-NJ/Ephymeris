@@ -3,9 +3,7 @@
  * reads `window.ephymeris`, the bridge its preload exposes (`boundary.test.ts`).
  *
  * Each method is one IPC channel (`electron/bridge.ts`), and the main process
- * decides who may use it (`electron/ipc.ts`): the main window gets all of
- * this, a `scope-*` pop-up only its frame, the sidecar's endpoint and
- * `openWindow`.
+ * decides who may use it (`electron/ipc.ts`): the app's one window.
  */
 
 import type { EphymerisBridge } from "../../../electron/bridge";
@@ -64,12 +62,6 @@ export function electronShell(bridge: EphymerisBridge): Shell {
       isMaximized: () => bridge.frame.isMaximized(),
       onResized: async (handler) => bridge.frame.onResized(handler),
       close: () => bridge.frame.close(),
-    },
-
-    openWindow(spec) {
-      bridge.openWindow(spec).catch((err: unknown) => {
-        console.error(`could not open the window ${spec.label}`, err);
-      });
     },
 
     // `supported` only in an installed Windows copy (`electron/updater.ts`).

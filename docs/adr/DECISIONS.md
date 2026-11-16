@@ -6,7 +6,7 @@ only what the code does now and link here.
 
 **How to keep it.**
 
-- **Number entries in sequence and never reuse a number.** The next is **0007**. Code and docs cite an
+- **Number entries in sequence and never reuse a number.** The next is **0008**. Code and docs cite an
   entry as `DECISIONS.md#<heading-slug>`; `test_doc_links.py` checks every citation.
 - **A proposal gets its own file** in this folder (`NNNN-slug.md`, `status: proposed`) while it is
   argued and built. When it is accepted and done, fold it in here as an entry and delete the file.
@@ -26,6 +26,7 @@ only what the code does now and link here.
 | [0004](#0004-restores-share-one-compile-and-upload-in-turn) | Restores share one compile and upload in turn | accepted | 2026-11-05 |
 | [0005](#0005-a-spine-run-strobes-each-trials-outcome-class) | A spine run strobes each trial's outcome class | accepted, codes withdrawn for now | 2026-11-05 |
 | [0006](#0006-the-shell-is-electron-not-tauri) | The shell is Electron, not Tauri | accepted, rollout under way | 2026-11-13 |
+| [0007](#0007-rhxs-own-windows-replace-the-recording-pop-ups) | RHX's own windows replace the recording pop-ups | accepted | 2026-11-15 |
 
 ## 0001: A hypothetical rig definition is context-local
 
@@ -247,3 +248,33 @@ written in TypeScript, and leave the sidecar, the webview and the wire as they a
 >   shortcuts, and starts the Electron copy. Neither installer touches `%APPDATA%\edu.hartlab.ephymeris`.
 >   Rehearsed end to end: same data and confirmed wiring, a run on a real box, a scope window, update
 >   check current.
+
+## 0007: RHX's own windows replace the recording pop-ups
+
+Ephymeris drew four recording pop-ups of its own: Spike Scope, PSTH, ISI and a probe map, each an OS
+window computed from RHX's data sockets. **They are gone. RHX's own Spike Scope, ISI, PSTH and Probe Map
+windows serve one channel at a time, and Ephymeris keeps only what RHX cannot show: a live firing map of
+every recorded box's probe, inline in Mission Control** ([RECORDING.md](../RECORDING.md#live-firing-map)).
+
+**Why.** The pop-ups duplicated what RHX already does, with its own threshold handling, and cost the most
+fragile code the recording had: a frame layout that changed mid-run (switched on a sample marker, since a
+same-size change cannot be told by framing), snippet cutting, scope keep-alives, a second provider tree
+per window, and pop-up permissions in both shells. A probe map that feels live is the one view RHX has no
+equivalent of across boxes, and the old one, a one-second count sent five times a second and shaded
+against the busiest site, did not feel live.
+
+**Rejected.**
+
+- *Open RHX's windows over TCP.* The protocol has no command for it, nor to load a probe map.
+- *Keep the pop-ups and fix the probe map.* Every pop-up is another window for the shell to own, and
+  three of the four repeat RHX.
+- *Keep a PSTH aligned to a named event.* RHX's PSTH triggers on a digital-input edge, and every event
+  on a box pulses the same sync line, so only Ephymeris could align to a named event live. It is the
+  real loss. It is better done offline from RHX's spike files and the `.tsv`, on complete data.
+
+**Consequences.**
+
+- The data sockets stream only spikes and the digital-input word, a layout fixed at `intan.configure`.
+- A threshold for one channel is set in RHX's Spike Scope; `intan.configure` still sets them all.
+- The shells have one window: no `openWindow`, no `scope-*` permissions.
+- A live, event-aligned PSTH is not available during a session.

@@ -24,7 +24,7 @@ yet been made ([Not yet verified](#not-yet-verified)).
   - [Graceful end](#graceful-end)
   - [When RHX goes away](#when-rhx-goes-away)
 - [What is written](#what-is-written)
-- [Live windows](#live-windows)
+- [Live firing map](#live-firing-map)
 - [Not yet verified](#not-yet-verified)
 
 ## The rule
@@ -37,7 +37,7 @@ The [Backup mirror's](DATA.md#backup-mirroring) rule, applied to a second extern
 |---|---|
 | Nothing on the session path awaits RHX, **except starting** | `sessions.startAll` and `port.startSession` on a recording session begin the RHX recording *first* and refuse with an `INTAN_*` code, **before any box is started**, if they cannot. A session missing its electrophysiology cannot be re-run, so this failure must be loud |
 | `IntanService.stop_recording` never raises, and is bounded | The animals are done by then; a raise could only strand the session as `running`. With RHX unreachable the run is still recorded and the stop is owed ([When RHX goes away](#when-rhx-goes-away)) |
-| The data sockets are a convenience | Losing them costs the live windows, never the recording: RHX writes to disk on its own |
+| The data sockets are a convenience | Losing them costs the sync check and the live firing map, never the recording: RHX writes to disk on its own |
 | Closing our sockets never stops RHX | Neither a reconnect nor the sidecar exiting ends a recording; `IntanService.stop()` closes *our* sockets only |
 | Runner taps cannot hurt the run | `SessionRunner`'s `recording_fields`, `on_box_started` and `on_strobe_tap` (and `IntanService.box_ended`) run on the port's session thread, hop to the loop with `call_soon_threadsafe`, and are each wrapped so a throwing tap costs nothing. **The strobe tap runs after the fsync** |
 
@@ -55,9 +55,10 @@ RHX's **Network → Remote TCP Control** dialog serves commands on 5000, wavefor
 > *Pending*, so the once-a-second reconnect (`service.py`'s `POLL_S`) succeeds only after it.
 > `INTAN_UNAVAILABLE`'s message names the click.
 
-The protocol has no command to open RHX's SpikeScope, PSTH or ISI windows, to load a probe map, or to pin
-a channel. So the [live windows](#live-windows) are Ephymeris' own, `intan/probemap.py` parses the probe
-XML itself, and "a digital input per box" is a [binding](#wiring-and-binding).
+The protocol has no command to open RHX's Spike Scope, ISI, PSTH or Probe Map windows, or to load a probe
+map: the operator opens those in RHX itself, which also sets thresholds there. Ephymeris adds what RHX
+cannot show, the [live firing map](#live-firing-map) of every recorded box at once; `intan/probemap.py`
+parses the probe XML itself, and "a digital input per box" is a [binding](#wiring-and-binding).
 
 **Confirmed writes.** A `get` answers `Return: <Name> <value>`; a `set` or `execute` answers nothing on
 success and an error sentence on failure, and two unanswered writes in one TCP segment read as one
@@ -109,15 +110,8 @@ token as the value.
 - **A layout change mid-run** parses with the old layout until it stops confirming, then the pending
   one. `WaveformParser.discarded` counts bytes thrown away; a climbing count means a wrong layout.
 
-> [!CAUTION]
-> **A same-size layout change cannot be detected by framing** (a SpikeScope switching channel swaps one
-> column for another). It switches on a **sample marker**: the service reads `currenttimestamp` after RHX
-> acknowledges the change, and the parser switches at the first block at or past it. Earlier blocks are
-> **dropped, not guessed**.
-
 Streaming stays small, since TCP stops keeping up around ten channels at 30 kS/s: spikes for every
-recorded channel, the digital-input word, and the highpass band of channels with an open SpikeScope (at
-most `MAX_SCOPED_CHANNELS`).
+recorded channel and the digital-input word, a layout fixed at `intan.configure` for the whole recording.
 
 ## The sync line
 
@@ -132,7 +126,7 @@ flowchart LR
     din -->|"digital-input word on the waveform socket"| detector["Edge detector<br/>for the box's input"]
     detector -->|"edge sample numbers"| matcher["EdgeMatcher<br/>fresh at every START"]
     runner -->|"strobe tap, after the fsync"| matcher
-    matcher -->|"code at a sample"| live["PSTH and the sync check"]
+    matcher -->|"matched, missed, stray"| live["The sync check"]
 ```
 
 ### Firmware pulse
@@ -214,7 +208,7 @@ A per-strobe board (GRGL) has the burst lag above instead.
 `intan/analysis.py`'s `EdgeMatcher`. Each edge is one **strobing time**: a strobe, or a tick
 (`EdgeMatcher(tick_pulsed=True)`) whose strobes all take its edge. Pairing by count alone lets **one**
 extra edge (the line twitching as the Mega resets through DTR) shift every later event onto its
-neighbour while the PSTH still looks like a PSTH. So order proposes and **time disposes**: an edge is
+neighbour while every count still looks healthy. So order proposes and **time disposes**: an edge is
 accepted only where the strobing time's own millisecond timestamp puts it, measured from the last
 accepted pair.
 
@@ -252,18 +246,17 @@ flowchart TD
   `SessionRunner.on_box_started` passes the board's `SYNC=TICK`.
 - Past `MAX_PENDING` queued strobes, the oldest is given up on.
 - **Synthetic RHX** (`synthetic: true`, no controller) generates digital inputs no box drives, so the
-  matcher is bypassed: `sync` is published empty and strobes are placed by **arrival** (tens of ms late),
-  with the PSTH labelled `alignment: "arrival"`.
+  matcher is bypassed and `sync` is published empty.
 
 `intan.status.sync` publishes `matched`/`spuriousEdges`/`unmatchedStrobes` per box (counting strobes in
 either scheme), shown in Mission Control as the **sync check**, *matched*, *missed* and *stray*: **the
 wiring check**. `unmatchedStrobes` climbing with `matched` at zero reads "no pulses arriving — check the
 sync line" (`RecordingStatus.tsx`).
 
-![Mission Control during a recording: a REC panel with the recording's file name, OneFilePerSignalType and 30 kS/s, a SYNC CHECK table for boxes 1 to 4 (din, matched, missed, stray), and each box tile showing its port, DIN and channel range with Spike Scope, PSTH, ISI and Probe map buttons](images/mission-control-recording.webp)
+![Mission Control during a recording: a REC panel with the recording's file name, OneFilePerSignalType and 30 kS/s, a SYNC CHECK table for boxes 1 to 4 (din, matched, missed, stray), and each box tile showing its port, DIN and channel range](images/mission-control-recording.webp)
 
-The matcher serves the **live views only**: RHX saves the digital input at full rate and the `.tsv` holds
-the strobes, so offline alignment can rerun it, or better, on complete data.
+The matcher serves the **sync check only**: RHX saves the digital input at full rate and the `.tsv`
+holds the strobes, so offline alignment can rerun it, or better, on complete data.
 
 ## Recording walkthrough
 
@@ -415,7 +408,7 @@ A box refused after step 5 leaves RHX recording, so a retry starts its boxes ins
 | Command socket lost mid-recording | `state: error`, "RHX keeps recording on its own; reconnecting"; the session is untouched and the run kept. On reconnect, RHX in `Record` **on this run's file** (`Filename.ActiveFileTimestamp` from the start) is picked back up and the streams reopened. Any other file, or no stamp read at start, is a recording restarted by hand: reported, never adopted or stopped. A failed stamp read retries each poll; an End racing it wins (`IntanService._try_adopt`). A box started meanwhile gets `INTAN_UNAVAILABLE` |
 | Stop pressed in RHX | The poll sees `runmode ≠ record` → `error`; the run is kept for End, without the grace |
 | RHX unreachable at End | The boxes still get the grace. `stop_recording` tries `set runmode stop` within `STOP_TIMEOUT_S`, records the run and **owes** the stop, said in `intan.status.message`. When RHX answers again still recording **that run's file**, it is stopped (`_send_owed_stop`); stopped by hand, nothing is sent; on another file (or with no stamp), it is left alone and the message says to stop it in RHX |
-| Data sockets fail | `liveStreams: false`; the live views are unavailable, the recording unaffected |
+| Data sockets fail | `liveStreams: false`; the sync check and the firing map are unavailable, the recording unaffected |
 | The sidecar exits | Its sockets close; RHX keeps recording |
 
 ## What is written
@@ -445,48 +438,61 @@ a relocate of that folder.
 > `tasks/profile.py`'s `CORE_METADATA_KEYS`, and the string ones in `sessions/recovery.py`'s
 > `_STRING_FIELDS` (so `0423_7` does not come back as a number).
 
-The durable record is RHX's files plus the `.tsv`; nothing the live views compute is persisted.
+The durable record is RHX's files plus the `.tsv`; nothing the sync check or the firing map computes is
+persisted.
 
-## Live windows
+## Live firing map
 
-Real OS windows (`WebviewWindow`, labels `scope-*`), so they can sit on a second monitor beside RHX;
-opened from `lib/intan/windows.ts`. A pop-up is the same bundle at `#/scope/<kind>`: `main.tsx` mounts
-`ScopeApp` under `SidecarProvider` + `IntanProvider` only, with **no `SettingsProvider`**, which would
-re-push a stale settings copy (`lib/intan/scopeTree.test.ts` pins the import graph). Each window opens its
-own authenticated WebSocket, and everything it needs, including the PSTH's trigger vocabulary, rides in
-the URL. `src-tauri/capabilities/scope.json` grants only its own frame and opening one window.
-**`src-tauri/src/lib.rs` closes `scope-*` windows with the main window**, or the app would not exit.
+Each recording box's probe, lit as its sites fire, in Mission Control: on its card, and larger in its
+focused panel (`LiveProbeMap.tsx`). It has to **feel** live: a flash within about 100 ms of the spike, so
+the whole path is built for latency rather than averages.
 
-| Window | Fed by | Rules |
-|---|---|---|
-| Spike Scope | spike times + the channel's highpass | Snippets are cut sidecar-side at the widest window (`SNIPPET_PRE_MS`/`SNIPPET_POST_MS`); the window crops. **The threshold line is live**: it moves RHX's detector, changing what is saved, so it commits on release (`intan.setThreshold`). Changing channel is a same-size layout change ([Data sockets](#data-sockets)) |
-| PSTH | spike times + matched sync edges | Every event pulses the same input, so RHX's own trigger would align to "anything happened"; here the trigger is a **named event** from the profile. Only trials whose post-window has closed, and whose pre-window starts at or after `SpikeRing.complete_since`, count |
-| ISI | spike times | Intervals past the span are **counted and shown**, not dropped, so a slow unit does not read as quiet. A partial last bin keeps its true width |
-| Probe map | spike times | Sites shaded by their last second of firing; click for its Spike Scope. **The file's colours are ignored**; **Y is flipped at draw time** (Intan's y points up) |
+- **Each site shows two things** (`lib/intan/firing.ts`): a flash on every spike, fading over
+  `FLASH_TAU_MS`, and a dimmer glow for its rate over `RATE_TAU_MS`, on a **fixed log scale**. A scale
+  relative to the busiest site re-shades every other site whenever the loudest one changes.
+- **React draws the probe once** (`ProbeMapView`, SVG); one animation-frame loop then sets each site's
+  fill by its `data-channel`. Six 64-site probes at about 3,800 spikes a second cost 0.6 ms a frame (p95).
+- **The file's colours are ignored** and **Y is flipped at draw time** (`lib/intan/probeMath.ts`;
+  Intan's y points up).
 
-![Spike Scope for Box 1, channel A-000: overlaid spike waveforms with the newest in white and a dashed threshold line at −41 µV, footer "drag the line to set RHX's threshold"](images/scope-spikescope.webp)
-![PSTH for Box 1, aligned to ODOR_1_ON: a raster of 18 trials above a 10 ms histogram that rises after the onset, footer "complete trials only"](images/scope-psth.webp)
-![ISI for Box 2, channel A-016: an inter-spike interval histogram over 200 ms in 5 ms bins, footer counting 14874 intervals, mean 53.3 ms, 18.8 Hz and 373 beyond 200 ms](images/scope-isi.webp)
-![Probe Map for Box 2 from box2_A1x16-50um.xml: a 16-site shank drawn tip down, sites shaded by firing rate, a legend (firing, recorded quiet, not recorded) and "click a site for its Spike Scope"](images/scope-probemap.webp)
+| Leg | What bounds it |
+|---|---|
+| RHX → sidecar | RHX writes its data sockets every `TCPNumberDataBlocksPerWrite` blocks of 128 samples (default 10, 43 ms at 30 kS/s); `intan.configure` sets `BLOCKS_PER_WRITE` (2, 8.5 ms) |
+| Sidecar → webview | Spikes are counted per box and sent as `intan.spikes` every `SPIKES_PUBLISH_S` (one 30 fps frame), only for a box that fired |
+| Webview → screen | Drawn on the next animation frame, outside React |
 
-RHX's option sets are offered (`lib/intan/types.ts`). A scope is kept alive by `intan.scope.update` every
-`KEEPALIVE_MS` (`lib/intan/context.ts`); one untouched for `SCOPE_TTL_S` is swept, freeing its streamed
-channel. Spike Scope, PSTH and ISI draw on a 2D canvas straight from the socket handler
-(`routes/scope/useCanvas.ts`), confined to `routes/scope/` (session views stay SVG,
-[ARCHITECTURE.md](ARCHITECTURE.md#theme)); the probe map is SVG for clickable sites. Shared arithmetic is
-pure and tested in `lib/intan/scopeMath.ts`.
+**Every batch carries its own latency.** `lagMs` is the slowest spike's trip from RHX having its sample
+to the sidecar reading it, against RHX's clock read once per poll (`get currenttimestamp`,
+`analysis.py`'s `SampleClock`); `sentAt` lets the webview time its own leg on the same machine's clock.
+The USB transfer before RHX has the sample is outside both, as it is for RHX's own displays.
+
+`tests/test_intan_real_rhx.py`'s `probe_how_late_do_spikes_arrive` measures the first leg against a real
+RHX at several batch sizes. RHX 3.5.0, demo mode, 30 kS/s, 16 channels, about 420 spikes a run:
+
+| Blocks per write | p50 | p95 | max |
+|---|---|---|---|
+| 10 (RHX's default) | 12.4 ms | 38.6 ms | 46.1 ms |
+| 4 | 1.6 ms | 15.9 ms | 17.8 ms |
+| **2** (`BLOCKS_PER_WRITE`) | −6.6 ms | 6.7 ms | 23.7 ms |
+| 1 | −6.9 ms | 7.5 ms | 32.9 ms |
+
+> [!NOTE]
+> **These read about 10 ms low**, hence the negative medians: `currenttimestamp` trails the samples RHX
+> has already written to TCP, so the clock bound is loose by a near-constant amount. The differences
+> between rows are sound; the true p95 at 2 blocks is nearer 17 ms. One block per write buys nothing at
+> p95 and doubles the worst case, so 2 it is. `lagMs` carries the same bias.
 
 ## Not yet verified
 
-Configure, record, the live windows, the sync line into a real digital input and the graceful end have
-run against a real RHX and real boxes. **A full-length recording from a real animal has not.**
+Configure, record, the sync line into a real digital input and the graceful end have run against a real
+RHX and real boxes; the live firing map's latency against a real RHX in demo mode only. **A full-length recording from a real animal has not.**
 
 The suite runs against `sidecar/tests/fake_rhx.py` (the three servers on real sockets, each failure
 switchable). `sidecar/tests/test_intan_real_rhx.py` probes a real RHX: opt-in (`EPHYMERIS_REAL_RHX=1`),
 never enters `record`, restores every value it touches, and uses one connection throughout. On RHX 3.5.0
 (`ControllerRecordUSB3`, synthetic) it confirmed the sentinel batching, reported refusals, the space in
 `Filename.Path`, `digital-in-01` input names (`digital_in_name`), the [run-mode](#talking-to-rhx)
-deferral, nameless replies, threshold and stream changes while running, case handling, and every
+deferral, nameless replies, case handling, spike latency by batch size, and every
 `intan.configure` parameter name.
 
 To watch on the first full-length recording:
@@ -495,6 +501,5 @@ To watch on the first full-length recording:
 |---|---|
 | Does a spine run's sync check read nothing missed and nothing stray? The tick pulse is proven only in the host shim | Edges pair with the wrong ticks. Check width, gaps and an owed rise on the DIN trace before relying on [the bound](#the-alignment-bound) |
 | Does the RMS-relative threshold need the board to have run first? | Thresholds land wrong; fix with a short `run` before `SetSpikeDetectionThresholds` |
-| Where does a channel swap land in the stream? | If RHX's output can run ahead of the clock read, a snippet or two lands on the wrong channel once |
 | Digital-input naming on the USB Interface Board (zero-based) | Handled in `digital_in_name`; untested |
 | Does `Filename.ActiveFileTimestamp` change when RHX rolls to a new file (`NewSaveFilePeriodMinutes`), or read `RecordingNotStarted` once samples arrive? | A run that lost its link is not picked back up and its owed stop is report-only: safe, but RHX must be stopped by hand ([When RHX goes away](#when-rhx-goes-away)) |

@@ -1,8 +1,8 @@
-"""The pure layer behind the live recording views.
+"""The pure layer behind the sync check and the live firing map.
 
 The `EdgeMatcher` tests are the ones that matter. Everything it can get wrong
-yields a PSTH that looks like data -- events attributed to their neighbours --
-rather than an error.
+yields events attributed to their neighbours, which looks like data -- and
+offline alignment reruns the same matcher -- rather than an error.
 """
 
 from __future__ import annotations
@@ -10,10 +10,7 @@ from __future__ import annotations
 from ephymeris_sidecar.intan.analysis import (
     EdgeDetector,
     EdgeMatcher,
-    SpikeRing,
-    WaveformRing,
-    isi_histogram,
-    psth,
+    SampleClock,
 )
 
 FS = 30000.0
@@ -217,116 +214,32 @@ def test_an_unconnected_tick_pulsed_line_does_not_queue_strobes_forever():
     assert all(e.sample is None for e in got) and matcher.unmatched_strobes == len(got)
 
 
-# --- histograms -------------------------------------------------------------
+# --- latency ----------------------------------------------------------------
 
 
-def test_isi_bins_intervals_and_owns_up_to_the_ones_it_cannot_show():
-    spikes = [0, 300, 600, 1500, 30_000]  # 10, 10, 30, 950 ms
-    result = isi_histogram(spikes, FS, span_ms=50, bin_ms=5)
-    assert result["counts"][2] == 2 and result["counts"][6] == 1
-    assert result["beyond"] == 1 and result["intervals"] == 4
-    assert sum(result["counts"]) + result["beyond"] == result["intervals"]
+def test_a_spike_s_lag_is_measured_from_the_tightest_clock_read():
+    clock = SampleClock(FS)
+    assert clock.lag_ms(30_000, 10.0) is None  # not read yet
+    # Sample n reached RHX at t = 4 + n / FS; two of the replies came back late.
+    clock.read(30_000, 5.020)
+    clock.read(60_000, 6.000)  # the tight one: offset 4.000
+    clock.read(90_000, 7.004)
+    # A spike at 2.5 s, which RHX had at t = 6.5, reaching us at 6.512 is 12 ms late.
+    assert round(clock.lag_ms(75_000, 6.512), 3) == 12.0
 
 
-def test_psth_counts_only_trials_whose_window_has_closed():
-    """A trial still filling would add its early bins and not its late ones, and
-    the right of the histogram would sag by however recent the last trigger is."""
-    triggers = [30_000, 90_000, 150_000]
-    spikes = sorted(t + d for t in triggers for d in (-1500, 300, 3000))
-    kwargs = dict(sample_rate=FS, pre_ms=100, post_ms=200, bin_ms=50, max_trials=50)
-
-    early = psth(spikes, triggers, newest_sample=152_000, **kwargs)  # third still open
-    assert early["trials"] == 2 and len(early["rasters"]) == 2
-
-    late = psth(spikes, triggers, newest_sample=160_000, **kwargs)
-    assert late["trials"] == 3
-    assert late["rasters"][0] == [-50.0, 10.0, 100.0]
-    assert late["counts"] == [0, 3, 3, 0, 3, 0]
-    # 3 spikes in a 50 ms bin over 3 trials = 20 Hz.
-    assert late["rateHz"][1] == 20.0
+def test_a_restarted_acquisition_forgets_the_old_offset():
+    clock = SampleClock(FS)
+    clock.read(300_000, 10.0)  # offset 0.0
+    clock.read(30_000, 20.0)  # restarted at zero: offset 19.0, not min(0, 19)
+    assert round(clock.lag_ms(30_000, 20.010), 3) == 10.0
+    clock.read(-1, 30.0)  # RHX stopped: no read, no change
+    assert round(clock.lag_ms(30_000, 20.010), 3) == 10.0
 
 
-def test_psth_keeps_the_newest_trials_when_there_are_too_many():
-    triggers = [n * 30_000 for n in range(1, 8)]
-    result = psth([], triggers, FS, 100, 100, 50, max_trials=3, newest_sample=10**7)
-    assert result["trials"] == 3
-
-
-def test_psth_refuses_a_trial_older_than_the_spikes_it_still_holds():
-    """A trial whose window reaches back past the ring's coverage would be
-    drawn with whichever of its spikes survived -- a unit that "fired less
-    back then". It is left out, not drawn short."""
-    triggers = [30_000, 90_000, 150_000]
-    spikes = sorted(t + 300 for t in triggers)
-    kwargs = dict(sample_rate=FS, pre_ms=100, post_ms=200, bin_ms=50, max_trials=50, newest_sample=10**6)
-    assert psth(spikes, triggers, **kwargs)["trials"] == 3
-    # Coverage begins 1 ms into the first trial's pre-window.
-    assert psth(spikes, triggers, complete_since=30_000 - 3000 + 30, **kwargs)["trials"] == 2
-    # ...and exactly at its start is fine.
-    assert psth(spikes, triggers, complete_since=30_000 - 3000, **kwargs)["trials"] == 3
-
-
-def test_a_span_that_is_not_a_whole_number_of_bins_gets_a_partial_last_bin():
-    """50 ms at 20 ms bins is three bins, the last covering 40-50 ms. Rounding
-    to two would report every 40-50 ms interval as beyond a 50 ms span."""
-    isi = isi_histogram([0, 1350, 2700], FS, span_ms=50, bin_ms=20)  # 45 ms twice
-    assert len(isi["counts"]) == 3 and isi["counts"] == [0, 0, 2] and isi["beyond"] == 0
-    assert isi["spanMs"] == 50
-
-    # PSTH: -50..+100 at 20 ms bins is 8 bins; the last is 10 ms wide and its
-    # rate is normalised by 10 ms, not 20.
-    result = psth([30_000 + 95 * 30], [30_000], FS, 50, 100, 20, 50, newest_sample=10**6)
-    assert len(result["counts"]) == 8 and result["counts"][7] == 1
-    assert result["rateHz"][7] == 100.0  # one spike in 10 ms over one trial
-
-
-# --- rings ------------------------------------------------------------------
-
-
-def test_a_snippet_is_cut_by_sample_number_or_not_at_all():
-    ring = WaveformRing(capacity=1000)
-    ring.extend(5000, tuple(range(128)))
-    ring.extend(5128, tuple(range(128, 256)))
-    assert ring.cut(5130, before=2, after=3) == [128, 129, 130, 131, 132, 133]
-    assert ring.cut(5250, before=2, after=30) is None  # the tail has not arrived
-    assert ring.cut(5001, before=5, after=5) is None   # before the ring begins
-
-
-def test_a_gap_in_the_timestamps_empties_the_ring():
-    """A snippet cut across a gap is two unrelated pieces of signal drawn as
-    one spike."""
-    ring = WaveformRing(capacity=1000)
-    ring.extend(0, tuple(range(128)))
-    ring.extend(1024, tuple(range(128)))  # blocks were lost in between
-    assert ring.cut(100, before=5, after=5) is None
-    assert ring.cut(1030, before=5, after=5) is not None
-
-
-def test_the_spike_ring_counts_a_recent_window():
-    ring = SpikeRing(capacity=4)
-    for t in (10, 20, 30, 40, 50):
-        ring.add(t)
-    assert list(ring.snapshot()) == [20, 30, 40, 50]
-    assert ring.count_since(35) == 2
-    assert ring.count_since(0) == 4 and ring.count_since(51) == 0
-
-
-def test_the_spike_ring_knows_how_far_back_it_is_complete():
-    """Evicting the oldest spike means everything before the next one may be
-    gone; a reopened stream means everything before it was never seen."""
-    ring = SpikeRing(capacity=3)
-    assert ring.complete_since == 0
-    for t in (100, 200, 300):
-        ring.add(t)
-    assert ring.complete_since == 0
-    ring.add(400)                        # 100 evicted
-    assert ring.complete_since == 101
-    assert list(ring.snapshot()) == [200, 300, 400]
-    ring.reopened(1000)
-    assert ring.complete_since == 1000
-    ring.reopened(50)                    # never moves backwards
-    assert ring.complete_since == 1000
-    for t in range(2000, 2000 + 10):
-        ring.add(t)
-    assert list(ring.snapshot()) == [2007, 2008, 2009]
-    assert len(ring) == 3
+def test_old_clock_reads_age_out_so_drift_cannot_pile_up():
+    clock = SampleClock(FS, window=2)
+    clock.read(0, 1.000)  # offset 1.000, the tightest -- until it ages out
+    clock.read(30_000, 2.010)
+    clock.read(60_000, 3.010)
+    assert round(clock.lag_ms(60_000, 3.010), 3) == 0.0

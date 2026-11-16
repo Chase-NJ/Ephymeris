@@ -150,11 +150,7 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="cmd-intan.disconnect"></a>`intan.disconnect` | — | [IntanStatus](#shape-intanstatus) | Close the sockets. |
 | <a id="cmd-intan.configure"></a>`intan.configure` | `sessionId`, `groupId`, `config` | [IntanStatus](#shape-intanstatus) | Apply a recording setup to RHX **for one group run** — animals, and so … |
 | <a id="cmd-intan.parseprobemap"></a>`intan.parseProbeMap` | `path` | `probeMap` | Parse an Intan probe-map XML for the setup preview. |
-| <a id="cmd-intan.probemap"></a>`intan.probeMap` | `box` | `probeMap` | The probe map configured for this box in the current recording, or null. |
-| <a id="cmd-intan.setthreshold"></a>`intan.setThreshold` | `channel`, `microvolts` | `channel`, `microvolts` | Set one channel's spike threshold, −5000…5000 µV, read back from RHX. |
-| <a id="cmd-intan.scope.open"></a>`intan.scope.open` | `kind`, `box`, `channel?`, `params?` | `scopeId` | Begin publishing one live view as `intan.scope.data` (`RECORDING.md#live-windows`). |
-| <a id="cmd-intan.scope.update"></a>`intan.scope.update` | `scopeId`, `channel?`, `params?` | `ok` | Change a scope's channel or parameters in place, **and its keepalive**: a scope with … |
-| <a id="cmd-intan.scope.close"></a>`intan.scope.close` | `scopeId` | `ok` | Stop publishing a scope. |
+| <a id="cmd-intan.probemap"></a>`intan.probeMap` | `box` | `probeMap` | The probe map configured for this box in the current recording, or null: what … |
 | <a id="cmd-intan.forcestop"></a>`intan.forceStop` | — | `ok` | Stop waiting for boxes to finish their trials during a graceful end; the recording … |
 
 ### Session log
@@ -197,7 +193,7 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="evt-sidecar.error"></a>`sidecar.error` | [SidecarErrorData](#shape-sidecarerrordata) | A failure with no command to attribute it to. |
 | <a id="evt-tasks.updated"></a>`tasks.updated` | [TasksUpdatedData](#shape-tasksupdateddata) | The stored task list, after a task was saved or deleted or stored tasks … |
 | <a id="evt-intan.status"></a>`intan.status` | [IntanStatus](#shape-intanstatus) | The recording subsystem's full snapshot, on every change and on connect. |
-| <a id="evt-intan.scope.data"></a>`intan.scope.data` | [ScopeData](#shape-scopedata) | One live view's payload, only while that scope is open (`RECORDING.md#live-windows`). |
+| <a id="evt-intan.spikes"></a>`intan.spikes` | [IntanSpikes](#shape-intanspikes) | One box's spikes, batched every `SPIKES_PUBLISH_S` while RHX streams them (`RECORDING.md#live-firing-map`). |
 
 ## Error codes
 
@@ -311,6 +307,7 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="shape-identifyspec"></a>IdentifySpec | `on`, `off` | The two commands that make a box announce itself — a trial light, a … |
 | <a id="shape-inputcount"></a>InputCount | `phase`, `channel`, `count` | Watched rises of one input channel during one phase of a trial. |
 | <a id="shape-intansettings"></a>IntanSettings | `commandPort`, `waveformPort`, `spikePort` | Where Intan RHX's three TCP servers listen. |
+| <a id="shape-intanspikes"></a>IntanSpikes | `box`, `counts`, `lagMs`, `sentAt` |  |
 | <a id="shape-intanstate"></a>IntanState | "disconnected" \| "idle" \| "configured" \| "recording" \| "stopping" \| "error" |  |
 | <a id="shape-intanstatus"></a>IntanStatus | `state`, `message`, `connected`, `controller`, `version`, `sampleRate`, `synthetic`, `headstagePresent`, `runMode`, `ports`, `confirmsWrites`, `rigHasSync`, `liveStreams`, `recording`, `waitingOn`, `sync` |  |
 | <a id="shape-intansyncstat"></a>IntanSyncStat | `box`, `matched`, `spuriousEdges`, `unmatchedStrobes` | How well a box's sync edges are pairing with its strobes. |
@@ -370,8 +367,6 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="shape-runseries"></a>RunSeries | `runId`, `mode`, `metrics`, `trail`, `trials`, `trialTable` |  |
 | <a id="shape-runstatus"></a>RunStatus | "ok" \| "no-metrics" \| "diverged" \| "unreplayable" \| "missing" \| "unreadable" | Why a run has numbers or not (`ANALYTICS.md#why-a-run-has-no-numbers`). |
 | <a id="shape-runsummary"></a>RunSummary | `runId`, `sessionId`, `animalId`, `boxNumber`, `startedAt`, `endedAt`, `sketchPath`, `sketchName`, `profileHash`, `paramsHash`, `profileSource`, `stale`, `falseStart`, `falseStartSource`, `restartedBy`, `status`, `metrics`, `overall`, `outcomes`, `conditions`, `engagement`, `totalEvents`, `durationMs`, `stopReason`, `clean`, `seed`, `detail`, `excludedByDefault`, `replay`, `divergence` |  |
-| <a id="shape-scopedata"></a>ScopeData | `scopeId`, `kind`, `box`, `channel`, `data` |  |
-| <a id="shape-scopekind"></a>ScopeKind | "spikescope" \| "psth" \| "isi" \| "probemap" |  |
 | <a id="shape-seriesresult"></a>SeriesResult | `series`, `warnings` |  |
 | <a id="shape-serverhello"></a>ServerHello | `protocolVersion`, `sidecarVersion` |  |
 | <a id="shape-session"></a>Session | `id`, `cohortId`, `prefixId`, `prefixName`, `sessionNumber`, `date`, `startedAt`, `endedAt`, `clockStartedAt`, `clockEndedAt`, `status`, `folderPath`, `groupRuns`, `durationMinutes`, `recording` |  |

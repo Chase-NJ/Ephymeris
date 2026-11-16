@@ -607,10 +607,9 @@ def din_block(first: int, high_at: dict[int, int]) -> bytes:
     )
 
 
-async def test_strobes_and_sync_edges_meet_and_drive_a_psth(rig, tmp_path):
-    """The whole chain: a box's serial strobes (its own ms clock), the edges its
-    sync pin put on ITS digital input, the spikes on ITS channel -- ending in a
-    PSTH aligned to a named event."""
+async def test_strobes_and_sync_edges_meet(rig, tmp_path):
+    """The whole chain: a box's serial strobes (its own ms clock) and the edges
+    its sync pin put on ITS digital input, paired into the sync check."""
     h = await rig(params={"synthetic": "False"})  # a controller, with real DINs
     await h.service.configure("s1", "g1", config(tmp_path), "x")
     await h.service.start_recording()
@@ -634,84 +633,36 @@ async def test_strobes_and_sync_edges_meet_and_drive_a_psth(rig, tmp_path):
     for code, ms in events:
         h.service.on_strobe(3, code, ms)
 
-    # A spike 20 ms after every odor onset, on one of box 3's channels.
-    spikes = b"".join(pack_spike(Spike("A-020", sample_of(ms) + 600, 1)) for c, ms in events if c == 101)
-    await h.fake.push_spikes(spikes)
-
     await h.until(lambda: h.service.status_json()["sync"][0]["matched"] == len(events))
     stat = h.service.status_json()["sync"][0]
     assert (stat["box"], stat["spuriousEdges"], stat["unmatchedStrobes"]) == (3, 0, 0)
 
-    scope = await h.service.open_scope(
-        "psth", 3, "a-020", {"triggerCodes": [101], "preMs": 100, "postMs": 200, "binMs": 10}
-    )
-    await h.until(lambda: any(e["evt"] == Evt.INTAN_SCOPE_DATA for e in h.events))
-    data = h.last(Evt.INTAN_SCOPE_DATA)
-    assert data["scopeId"] == scope and data["channel"] == "A-020"
-    assert data["data"]["trials"] == 4
-    assert data["data"]["alignment"] == "sync"
-    assert all(row == [20.0] for row in data["data"]["rasters"])
-    assert data["data"]["counts"][12] == 4  # the bin holding +20 ms
 
-    # Nothing has changed, so the same PSTH is not sent again and again.
-    sent = sum(1 for e in h.events if e["evt"] == Evt.INTAN_SCOPE_DATA and e["data"]["scopeId"] == scope)
-    await asyncio.sleep(1.0)
-    assert sum(1 for e in h.events if e["evt"] == Evt.INTAN_SCOPE_DATA and e["data"]["scopeId"] == scope) == sent
-
-    # A channel that belongs to another box is refused, not silently empty.
-    with pytest.raises(IntanNotReady, match="not one of box 3"):
-        await h.service.open_scope("isi", 3, "A-002", {})
-
-
-async def test_a_spikescope_streams_its_channel_and_cuts_waveforms(rig, tmp_path):
+async def test_spikes_reach_the_firing_map_batched_by_box(rig, tmp_path):
+    """`intan.spikes`: each box hears only its own channels, counted since the
+    last send; a channel no box records is not reported; and once RHX's clock
+    has been read the batch says how late its slowest spike was."""
     h = await rig()
     await h.service.configure("s1", "g1", config(tmp_path), "x")
+    assert h.fake.params["tcpnumberdatablocksperwrite"] == "2"
     await h.service.start_recording()
+    await h.until(lambda: h.service._clock is not None and h.service._clock.lag_ms(0, 0.0) is not None)
 
-    await h.service.open_scope("spikescope", 1, "A-004", {})
-    assert h.fake.params["a-004.tcpdataoutputenabledhigh"] == "true"
+    spikes = [Spike("A-003", 9_000, 1), Spike("A-003", 9_100, 1), Spike("A-020", 9_000, 1)]
+    await h.fake.push_spikes(b"".join(pack_spike(s) for s in spikes))
+    sent = lambda: [e["data"] for e in h.events if e["evt"] == Evt.INTAN_SPIKES]  # noqa: E731
+    await h.until(lambda: {d["box"] for d in sent()} == {1, 3})
 
-    layout = FrameLayout(amplifier=(("A-004", "high"),), digital_in=True)
-    data = b""
-    for first in range(0, 6400, FRAMES_PER_BLOCK):
-        stamps = tuple(range(first, first + FRAMES_PER_BLOCK))
-        data += pack_waveform_block(
-            layout,
-            WaveformBlock(stamps, {("A-004", "high"): tuple(32768 + (t % 7) for t in stamps)}, tuple(0 for _ in stamps)),
-        )
-    await h.fake.push_spikes(pack_spike(Spike("A-004", 3000, 1)))
-    await asyncio.sleep(0.05)
-    await h.fake.push_waveform(data)
+    by_box = {d["box"]: d for d in sent()}
+    assert by_box[1]["counts"] == {"A-003": 2}
+    assert by_box[3]["counts"] == {"A-020": 1}
+    assert all(isinstance(d["lagMs"], float) for d in sent())
+    assert all(validate(("ref", "IntanSpikes"), d) == [] for d in sent())
 
-    await h.until(
-        lambda: any(
-            e["evt"] == Evt.INTAN_SCOPE_DATA and e["data"]["data"].get("added") for e in h.events
-        )
-    )
-    payload = next(
-        e["data"]["data"] for e in h.events
-        if e["evt"] == Evt.INTAN_SCOPE_DATA and e["data"]["data"].get("added")
-    )
-    snippet = payload["added"][0]
-    assert snippet["sample"] == 3000
-    assert len(snippet["microvolts"]) == 60 + 120 + 1  # 2 ms before, 4 ms after
-    assert payload["streaming"] is True
-
-    # Five channels would outrun TCP; the fifth is refused and nothing changes.
-    for n in (5, 6, 7):
-        await h.service.open_scope("spikescope", 1, f"A-{n:03d}", {})
-    with pytest.raises(IntanNotReady, match="At most 4"):
-        await h.service.open_scope("spikescope", 1, "A-008", {})
-    assert "a-008.tcpdataoutputenabledhigh" not in h.fake.params
-
-
-async def test_closing_the_last_scope_stops_the_stream_it_asked_for(rig, tmp_path):
-    h = await rig()
-    await h.service.configure("s1", "g1", config(tmp_path), "x")
-    scope = await h.service.open_scope("spikescope", 1, "A-001", {})
-    await h.service.close_scope(scope)
-    assert h.fake.params["a-001.tcpdataoutputenabledhigh"] == "false"
-    await h.service.close_scope(scope)  # idempotent
+    # Nothing new: nothing sent.
+    before = len(sent())
+    await asyncio.sleep(0.2)
+    assert len(sent()) == before
 
 
 async def test_a_tick_pulsed_box_matches_every_strobe_of_a_tick_to_its_one_edge(rig, tmp_path):
@@ -739,13 +690,12 @@ async def test_a_tick_pulsed_box_matches_every_strobe_of_a_tick_to_its_one_edge(
     await h.until(lambda: h.service.status_json()["sync"][0]["matched"] == strobes)
     stat = h.service.status_json()["sync"][0]
     assert (stat["spuriousEdges"], stat["unmatchedStrobes"]) == (0, 0)
-    assert h.service._triggers[3][45] == [sample_of(1350)]
 
 
-async def test_synthetic_data_has_no_sync_line_so_the_check_is_off_and_strobes_align_by_arrival(rig, tmp_path):
+async def test_synthetic_data_has_no_sync_line_so_the_check_is_off(rig, tmp_path):
     """RHX's demo mode generates its own digital inputs, which no box drives.
     The counters would diagnose wiring that does not exist, so they are not
-    published; the PSTH still draws, placing each strobe by when it arrived."""
+    published."""
     h = await rig()  # the fake is synthetic by default, as RHX's demo is
     assert h.service.status_json()["synthetic"] is False  # not yet asked
     await h.service.configure("s1", "g1", config(tmp_path), "x")
@@ -762,166 +712,6 @@ async def test_synthetic_data_has_no_sync_line_so_the_check_is_off_and_strobes_a
         for first in range(0, 64_000, FRAMES_PER_BLOCK)
     )
     await h.fake.push_waveform(blocks)
-    await h.until(lambda: h.service._newest_sample >= 63_000)
-    newest = h.service._newest_sample
     h.service.on_strobe(3, 101, 5000)
-    await asyncio.sleep(0.02)
+    await asyncio.sleep(0.05)
     assert h.service.status_json()["sync"] == []
-
-    # The strobe landed at the newest sample seen when it arrived; a spike
-    # 20 ms after that shows up at +20 ms.
-    placed = h.service._triggers[3][101][0]
-    assert placed == newest
-    await h.fake.push_spikes(pack_spike(Spike("A-020", placed + 600, 1)))
-    await h.fake.push_waveform(b"".join(din_block(f, {}) for f in range(64_000, 80_000, FRAMES_PER_BLOCK)))
-
-    scope = await h.service.open_scope(
-        "psth", 3, "A-020", {"triggerCodes": [101], "preMs": 100, "postMs": 200, "binMs": 10}
-    )
-    await h.until(
-        lambda: any(
-            e["evt"] == Evt.INTAN_SCOPE_DATA and e["data"]["scopeId"] == scope and e["data"]["data"]["trials"]
-            for e in h.events
-        )
-    )
-    data = h.last(Evt.INTAN_SCOPE_DATA)["data"]
-    assert data["alignment"] == "arrival"
-    assert data["rasters"] == [[20.0]]
-
-
-async def test_a_spikescope_can_move_to_another_channel(rig, tmp_path):
-    """Swapping one streamed channel for another keeps the frame the same
-    size; the parser is told where RHX's clock stood when the swap was
-    acknowledged and switches there. Before this, the old layout went on
-    confirming forever and the new channel never read as streaming."""
-    h = await rig()
-    await h.service.configure("s1", "g1", config(tmp_path), "x")
-    await h.service.start_recording()
-    scope = await h.service.open_scope("spikescope", 1, "A-004", {})
-
-    def push(name: str, first: int, blocks: int, level: int) -> bytes:
-        layout = FrameLayout(amplifier=((name, "high"),), digital_in=True)
-        out = b""
-        for start in range(first, first + blocks * FRAMES_PER_BLOCK, FRAMES_PER_BLOCK):
-            stamps = tuple(range(start, start + FRAMES_PER_BLOCK))
-            out += pack_waveform_block(
-                layout,
-                WaveformBlock(stamps, {(name, "high"): tuple(level for _ in stamps)}, tuple(0 for _ in stamps)),
-            )
-        return out
-
-    await h.fake.push_waveform(push("A-004", 0, 4, 33000))
-    await h.until(lambda: h.service._snippets["A-004"].ring.newest is not None)
-
-    await h.service.update_scope(scope, "A-009", None)
-    assert h.fake.params["a-004.tcpdataoutputenabledhigh"] == "false"
-    assert h.fake.params["a-009.tcpdataoutputenabledhigh"] == "true"
-    assert set(h.service._snippets) == {"A-009"}
-    marker = int(h.fake.params["currenttimestamp"])
-    assert marker > 4 * FRAMES_PER_BLOCK
-
-    # A block from before the marker is ambiguous and dropped (so is the one
-    # the parser was still holding for confirmation); blocks from the marker
-    # on are the new channel's and fill its ring.
-    await h.fake.push_waveform(push("A-004", 4 * FRAMES_PER_BLOCK, 1, 33000) + push("A-009", marker, 8, 34000))
-    await h.until(lambda: h.service._snippets["A-009"].ring.newest is not None)
-    assert h.service._waveform is not None and h.service._waveform.dropped_blocks == 2
-    assert h.service._snippets["A-009"].ring.cut(marker + 300, 2, 2) == [34000] * 5
-
-    await h.fake.push_spikes(pack_spike(Spike("A-009", marker + 400, 1)))
-    await h.until(
-        lambda: any(
-            e["evt"] == Evt.INTAN_SCOPE_DATA and e["data"]["channel"] == "A-009" and e["data"]["data"]["streaming"]
-            for e in h.events
-        )
-    )
-
-
-async def test_two_scopes_opening_at_once_plan_one_change_not_two(rig, tmp_path):
-    """`_sync_scoped_channels` reads `_snippets` and acts on it three awaits
-    later, so two overlapping calls both planned against the state from before
-    either ran: the same enable sent twice, and TWO layout switches announced
-    with different markers.
-
-    Harmless when both reach the same layout, which is how it hid. On a
-    SAME-SIZE change it is not: the second `set_layout` overwrites `_switch_at`
-    with the later marker, and blocks between the two -- already written in the
-    new shape -- are dropped as ambiguous rather than parsed.
-
-    Seen against a real RHX on 2026-09-22 (`[] -> ['A-000']` logged twice 5 ms
-    apart) and never against the fake, because the race needs the command
-    round-trips to be slow enough to interleave. Overlapping the calls is what
-    makes it reproducible here.
-    """
-    h = await rig()
-    await h.service.configure("s1", "g1", config(tmp_path), "x")
-    await h.service.start_recording()
-
-    parser = h.service._waveform
-    assert parser is not None
-    switches: list[tuple[FrameLayout, int | None]] = []
-    announce = parser.set_layout
-
-    def record(layout: FrameLayout, *, from_timestamp: int | None = None) -> None:
-        switches.append((layout, from_timestamp))
-        announce(layout, from_timestamp=from_timestamp)
-
-    parser.set_layout = record  # type: ignore[method-assign]
-
-    await asyncio.gather(
-        h.service.open_scope("spikescope", 1, "A-004", {}),
-        h.service.open_scope("spikescope", 1, "A-004", {}),
-    )
-
-    # The second call re-reads `wanted` inside the lock, finds it already
-    # satisfied, and falls out -- one announced switch, one marker.
-    assert len(switches) == 1
-    assert set(h.service._snippets) == {"A-004"}
-    assert h.fake.params["a-004.tcpdataoutputenabledhigh"] == "true"
-
-
-async def test_a_frame_shape_that_parses_nothing_still_reaches_the_window(rig, tmp_path):
-    """The discarded count exists to expose a frame shape the sidecar has
-    wrong. Such a shape parses as NOTHING, so there are no snippets -- and the
-    payload used to be sent only when there were. The window sat on a stale
-    number showing a quiet channel, which is the one thing the count was there
-    to tell apart from a real one. A change in the count now sends on its own.
-    """
-    h = await rig()
-    await h.service.configure("s1", "g1", config(tmp_path), "x")
-    await h.service.start_recording()
-    await h.service.open_scope("spikescope", 1, "A-004", {})
-
-    # Two amplifier columns where the layout says one: every block is longer
-    # than the parser believes, so no boundary ever confirms.
-    wrong = FrameLayout(amplifier=(("A-004", "high"), ("A-005", "high")), digital_in=True)
-    data = b""
-    for first in range(0, 4 * FRAMES_PER_BLOCK, FRAMES_PER_BLOCK):
-        stamps = tuple(range(first, first + FRAMES_PER_BLOCK))
-        data += pack_waveform_block(
-            wrong,
-            WaveformBlock(
-                stamps,
-                {
-                    ("A-004", "high"): tuple(33000 for _ in stamps),
-                    ("A-005", "high"): tuple(33000 for _ in stamps),
-                },
-                tuple(0 for _ in stamps),
-            ),
-        )
-    await h.fake.push_waveform(data)
-
-    await h.until(
-        lambda: any(
-            e["evt"] == Evt.INTAN_SCOPE_DATA and e["data"]["data"].get("discardedBytes")
-            for e in h.events
-        )
-    )
-    payload = next(
-        e["data"]["data"] for e in h.events
-        if e["evt"] == Evt.INTAN_SCOPE_DATA and e["data"]["data"].get("discardedBytes")
-    )
-    # Nothing parsed: the count is the only thing that moved, and it travelled.
-    assert payload["added"] == []
-    assert payload["streaming"] is False
-    assert payload["discardedBytes"] > 0

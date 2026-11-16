@@ -139,8 +139,8 @@ export class HardwareStore {
 
       client.on(EVT.FLASH_QUEUE, (status) => this.takeFlashes(status)),
     ];
-    // Replayed on connect, but a window that attaches later (a scope pop-up)
-    // has missed that replay.
+    // Replayed on connect, but a store that attaches later has missed that
+    // replay.
     void client
       .call(CMD.FLASH_STATUS, {})
       .then((status) => this.takeFlashes(status))

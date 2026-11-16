@@ -155,7 +155,8 @@ export function RecordingStatus() {
 
       {!intan.liveStreams && (intan.state === "recording" || intan.state === "configured") && (
         <p className="mt-2 text-[11px] leading-relaxed text-static">
-          Live views are unavailable — RHX's data sockets did not open. The recording itself is unaffected.
+          The sync check and the firing map are unavailable — RHX's data sockets did not open. The
+          recording itself is unaffected.
         </p>
       )}
     </div>

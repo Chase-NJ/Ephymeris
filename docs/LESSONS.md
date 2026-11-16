@@ -144,8 +144,6 @@ rather than an error, which is the worst kind of failure here.
   the database look missing ([ARCHITECTURE.md](ARCHITECTURE.md#the-electron-shell)).
 - **The webview reaches the shell only through `src/lib/shell/`**
   ([ARCHITECTURE.md](ARCHITECTURE.md#the-shell-module)).
-- **Nothing in a scope pop-up may read settings.** Pop-ups have no settings provider and open blank; an
-  import-graph test enforces it ([ARCHITECTURE.md](ARCHITECTURE.md#scope-windows)).
 - **Back up the Tauri signing key and its password off-machine and off GitHub** until every copy runs
   Electron, or Tauri copies are cut off from updates ([ARCHITECTURE.md](ARCHITECTURE.md#updates)).
 - **Don't move the GitHub repository.** Every installed copy has the update feed's URL baked in

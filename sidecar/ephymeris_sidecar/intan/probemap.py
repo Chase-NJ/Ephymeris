@@ -1,4 +1,4 @@
-"""Intan's probe-map XML -> the JSON the probe window draws.
+"""Intan's probe-map XML -> the JSON the probe map draws.
 
 RHX can load one of these itself, but not over TCP -- there is no command for
 it -- so Ephymeris reads the same file the operator would have loaded there and

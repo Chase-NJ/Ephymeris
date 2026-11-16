@@ -3150,7 +3150,12 @@ SHAPES = (
                 "The values that matter are read back either way.",
             ),
             f("rigHasSync", BOOL, doc="This rig's wiring declares a `sync` channel."),
-            f("liveStreams", BOOL, doc="The waveform and spike sockets are both open."),
+            f(
+                "liveStreams",
+                BOOL,
+                doc="RHX's waveform and spike sockets are both open: the sync check "
+                "and the live firing map are fed (`RECORDING.md#data-sockets`).",
+            ),
             f("recording", nullable(Ref("RecordingRun"))),
             f(
                 "waitingOn",
@@ -3160,15 +3165,30 @@ SHAPES = (
             f("sync", ListOf(Ref("IntanSyncStat"))),
         ),
     ),
-    Shape("ScopeKind", lit("spikescope", "psth", "isi", "probemap")),
     Shape(
-        "ScopeData",
+        "IntanSpikes",
         obj(
-            f("scopeId", STR),
-            f("kind", Ref("ScopeKind")),
             f("box", INT),
-            f("channel", nullable(STR)),
-            f("data", ANY, doc="Per kind; see `RECORDING.md#live-windows`."),
+            f(
+                "counts",
+                MapOf(INT),
+                doc="Native channel name → spikes RHX detected since the last send. "
+                "Only channels that fired; never an empty map.",
+            ),
+            f(
+                "lagMs",
+                nullable(FLOAT),
+                doc="The slowest of these spikes: from RHX's clock reaching its sample to "
+                "the sidecar reading it. Reads about 10 ms low, since `currenttimestamp` "
+                "trails RHX's TCP output (`RECORDING.md#live-firing-map`). Null until "
+                "RHX's clock has been read.",
+            ),
+            f(
+                "sentAt",
+                FLOAT,
+                doc="Epoch milliseconds when sent, so the webview can time its own leg "
+                "(same machine, same clock).",
+            ),
         ),
     ),
     # The session log (DATA.md#the-session-log)
@@ -4569,8 +4589,7 @@ COMMANDS = (
         "intan.status",
         result=Ref("IntanStatus"),
         doc="The current recording snapshot (`RECORDING.md#talking-to-rhx`). "
-        "Also replayed on connect and pushed as the `intan.status` event, so "
-        "this exists for a window that attaches mid-session — a scope pop-up.",
+        "Also replayed on connect and pushed as the `intan.status` event.",
         section="Intan recording",
     ),
     Command(
@@ -4626,54 +4645,7 @@ COMMANDS = (
         args=obj(f("box", INT)),
         result=obj(f("probeMap", ANY)),
         doc="The probe map configured for this box in the current recording, "
-        "or null.",
-    ),
-    Command(
-        "intan.setThreshold",
-        args=obj(f("channel", STR), f("microvolts", INT)),
-        result=obj(f("channel", STR), f("microvolts", INT)),
-        doc="Set one channel's spike threshold, −5000…5000 µV, read back from "
-        "RHX. Sent by the SpikeScope's draggable threshold line. The reply's "
-        "channel name is upper-cased.",
-    ),
-    Command(
-        "intan.scope.open",
-        args=obj(
-            f("kind", Ref("ScopeKind")),
-            f("box", INT),
-            f("channel", nullable(STR), optional=True, doc="Required for every kind but `probemap`."),
-            f("params", MapOf(ANY), optional=True),
-        ),
-        result=obj(f("scopeId", STR)),
-        doc="Begin publishing one live view as `intan.scope.data` "
-        "(`RECORDING.md#live-windows`). RHX cannot be asked to open its own "
-        "SpikeScope/PSTH/ISI windows over TCP, so these are computed here from "
-        "RHX's data sockets. A `spikescope` also asks RHX to stream that "
-        "channel's highpass band, and at most `MAX_SCOPED_CHANNELS` "
-        "(`intan/service.py`) channels may be scoped at once — beyond a "
-        "handful, TCP stops keeping up with acquisition. `INTAN_NOT_READY` for "
-        "a box not in the configured recording or a channel outside the box's "
-        "claimed range.",
-    ),
-    Command(
-        "intan.scope.update",
-        args=obj(
-            f("scopeId", STR),
-            f("channel", nullable(STR), optional=True),
-            f("params", MapOf(ANY), optional=True),
-        ),
-        result=obj(f("ok", BOOL, doc="False when the scope is already gone.")),
-        doc="Change a scope's channel or parameters in place, **and its "
-        "keepalive**: a scope with no update for `SCOPE_TTL_S` "
-        "(`intan/service.py`) is swept, which is how a window that was killed "
-        "rather than closed stops costing RHX a streamed channel. A scope "
-        "window sends one periodically even when nothing changed.",
-    ),
-    Command(
-        "intan.scope.close",
-        args=obj(f("scopeId", STR)),
-        result=obj(f("ok", BOOL)),
-        doc="Stop publishing a scope. Idempotent.",
+        "or null: what the live firing map draws (`RECORDING.md#live-firing-map`).",
     ),
     Command(
         "intan.forceStop",
@@ -4964,13 +4936,11 @@ EVENTS = (
         "socket drops.",
     ),
     Event(
-        "intan.scope.data",
-        Ref("ScopeData"),
-        doc="One live view's payload, only while that scope is open "
-        "(`RECORDING.md#live-windows`). A `spikescope` is **incremental** — "
-        "the snippets added since the last send; `psth`, `isi` and `probemap` "
-        "are whole and sent less often. Never persisted — like `port.output`, "
-        "it is a view of data whose durable copy is RHX's own files.",
+        "intan.spikes",
+        Ref("IntanSpikes"),
+        doc="One box's spikes, batched every `SPIKES_PUBLISH_S` while RHX streams "
+        "them (`RECORDING.md#live-firing-map`). Sent only for a box with spikes "
+        "to report. Never persisted: RHX's own files are the durable copy.",
     ),
 )
 
@@ -5252,9 +5222,8 @@ ERRORS = (
         "RHX is reachable but this cannot be done now — RHX is already "
         "recording, no recording is configured for this group as its mapping "
         "was last confirmed, a box has no "
-        "digital input, the rig's wiring has no sync channel, or a scope asked "
-        "for a channel the box does not own. The message is the operator's "
-        "next step.",
+        "digital input, or the rig's wiring has no sync channel. The message is "
+        "the operator's next step.",
     ),
     ErrorCode(
         "INTAN_COMMAND_FAILED",

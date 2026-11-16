@@ -117,10 +117,6 @@ export const CMD = {
   INTAN_CONFIGURE: "intan.configure",
   INTAN_PARSE_PROBE_MAP: "intan.parseProbeMap",
   INTAN_PROBE_MAP: "intan.probeMap",
-  INTAN_SET_THRESHOLD: "intan.setThreshold",
-  INTAN_SCOPE_OPEN: "intan.scope.open",
-  INTAN_SCOPE_UPDATE: "intan.scope.update",
-  INTAN_SCOPE_CLOSE: "intan.scope.close",
   INTAN_FORCE_STOP: "intan.forceStop",
 
   // Session log
@@ -162,7 +158,7 @@ export const EVT = {
   SIDECAR_ERROR: "sidecar.error",
   TASKS_UPDATED: "tasks.updated",
   INTAN_STATUS: "intan.status",
-  INTAN_SCOPE_DATA: "intan.scope.data",
+  INTAN_SPIKES: "intan.spikes",
 } as const;
 
 export type EventName = (typeof EVT)[keyof typeof EVT];
@@ -2970,7 +2966,10 @@ export interface IntanStatus {
   confirmsWrites: boolean | null;
   /** This rig's wiring declares a `sync` channel. */
   rigHasSync: boolean;
-  /** The waveform and spike sockets are both open. */
+  /**
+   * RHX's waveform and spike sockets are both open: the sync check and the live firing map are
+   * fed (`RECORDING.md#data-sockets`).
+   */
   liveStreams: boolean;
   recording: RecordingRun | null;
   /** While `stopping`: boxes still finishing their trial. */
@@ -2978,15 +2977,21 @@ export interface IntanStatus {
   sync: IntanSyncStat[];
 }
 
-export type ScopeKind = "spikescope" | "psth" | "isi" | "probemap";
-
-export interface ScopeData {
-  scopeId: string;
-  kind: ScopeKind;
+export interface IntanSpikes {
   box: number;
-  channel: string | null;
-  /** Per kind; see `RECORDING.md#live-windows`. */
-  data: unknown;
+  /**
+   * Native channel name → spikes RHX detected since the last send. Only channels that fired;
+   * never an empty map.
+   */
+  counts: Record<string, number>;
+  /**
+   * The slowest of these spikes: from RHX's clock reaching its sample to the sidecar reading it.
+   * Reads about 10 ms low, since `currenttimestamp` trails RHX's TCP output
+   * (`RECORDING.md#live-firing-map`). Null until RHX's clock has been read.
+   */
+  lagMs: number | null;
+  /** Epoch milliseconds when sent, so the webview can time its own leg (same machine, same clock). */
+  sentAt: number;
 }
 
 /**
@@ -3208,10 +3213,6 @@ export interface CommandArgsMap {
   "intan.configure": { sessionId: string; groupId: string; config: RecordingConfig };
   "intan.parseProbeMap": { path: string };
   "intan.probeMap": { box: number };
-  "intan.setThreshold": { channel: string; microvolts: number };
-  "intan.scope.open": { kind: ScopeKind; box: number; channel?: string | null; params?: Record<string, unknown> };
-  "intan.scope.update": { scopeId: string; channel?: string | null; params?: Record<string, unknown> };
-  "intan.scope.close": { scopeId: string };
   "intan.forceStop": Record<string, never>;
   "logbook.cohort": { cohortId: string };
   "logbook.addNote": { sessionId: string; tag: NoteTag; body: string; scope?: NoteScope; carryForward?: boolean; at?: string };
@@ -3305,10 +3306,6 @@ export interface CommandResultMap {
   "intan.configure": IntanStatus;
   "intan.parseProbeMap": { probeMap: unknown };
   "intan.probeMap": { probeMap: unknown };
-  "intan.setThreshold": { channel: string; microvolts: number };
-  "intan.scope.open": { scopeId: string };
-  "intan.scope.update": { ok: boolean };
-  "intan.scope.close": { ok: boolean };
   "intan.forceStop": { ok: boolean };
   "logbook.cohort": LogbookCohort;
   "logbook.addNote": { note: SessionNote };
@@ -3345,7 +3342,7 @@ export interface EventDataMap {
   "sidecar.error": SidecarErrorData;
   "tasks.updated": TasksUpdatedData;
   "intan.status": IntanStatus;
-  "intan.scope.data": ScopeData;
+  "intan.spikes": IntanSpikes;
 }
 
 // --- Envelopes -------------------------------------------------------------

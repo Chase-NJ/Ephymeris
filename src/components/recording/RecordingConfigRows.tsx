@@ -251,7 +251,7 @@ export function ThresholdRows({
         </SettingRow>
       )}
       <p className="px-4 py-2.5 text-[11px] leading-relaxed text-static">
-        A single channel can be adjusted live, by dragging the threshold line in its Spike Scope.
+        A single channel can be adjusted live in RHX's own Spike Scope.
       </p>
     </>
   );

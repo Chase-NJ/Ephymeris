@@ -22,6 +22,7 @@ import os
 import pytest
 
 from ephymeris_sidecar.intan.client import RhxCommandClient, RhxCommandFailed, RhxError
+from ephymeris_sidecar.intan.streams import SpikeParser
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("EPHYMERIS_REAL_RHX") != "1",
@@ -78,32 +79,88 @@ async def probe_does_the_save_path_keep_a_space(rhx):
             await rhx.send([f"set filename.path {original}"])
 
 
-async def probe_can_a_threshold_and_a_tcp_output_change_while_running(rhx):
-    """NOT handled if the answer is no: a SpikeScope opened mid-recording would
-    wait forever (fix: enable the band at configure time), and the threshold
-    drag would be refused by its read-back."""
-    channel = await first_channel(rhx)
-    threshold = await rhx.get(f"{channel}.spikethresholdmicrovolts")
+#: How long each batching setting streams spikes for, and how many channels.
+LATENCY_RUN_S = 6.0
+LATENCY_CHANNELS = 16
+
+
+async def _spike_lags(rhx, rate: float, arrivals: list[tuple[float, int]]) -> list[float]:
+    """Run for `LATENCY_RUN_S` and return each spike's lag in ms: when it
+    reached us, less when RHX itself had that sample.
+
+    `arrivals` is filled by a reader on the spike socket, which stays open
+    across runs: RHX 3.5.0 puts the socket back to *Disconnected* when its
+    client leaves, so a socket per run gets spikes on the first run only.
+
+    RHX's clock is read with `get currenttimestamp` every 50 ms. Each reply
+    bounds the offset between our monotonic clock and its sample clock from
+    above (the sample was in RHX's hands no later than the reply), so the
+    SMALLEST bound seen is the tightest. The lag is therefore measured from
+    RHX having the sample -- what RHX's own displays start from -- and leaves
+    out the USB transfer before it, which no client can see or shorten.
+    """
+    loop = asyncio.get_running_loop()
+    bounds: list[float] = []
+    arrivals.clear()
     await rhx.set_run_mode("run")
     try:
-        await asyncio.sleep(0.5)
-        print(f"\n  currenttimestamp while running: {await rhx.get('currenttimestamp')}")
-
-        await rhx.send([f"set {channel}.tcpdataoutputenabledhigh true"])
-        took = (await rhx.get(f"{channel}.tcpdataoutputenabledhigh")).lower() == "true"
-        print(f"  TCP highpass output changed while running: {took}")
-
-        probe = -123 if threshold.strip() != "-123" else -124
-        await rhx.send([f"set {channel}.spikethresholdmicrovolts {probe}"])
-        moved = (await rhx.get(f"{channel}.spikethresholdmicrovolts")).strip() == str(probe)
-        print(f"  spike threshold changed while running:     {moved}")
+        end = loop.time() + LATENCY_RUN_S
+        while loop.time() < end:
+            stamp = int(await rhx.get("currenttimestamp"))
+            bounds.append(loop.time() - stamp / rate)
+            await asyncio.sleep(0.05)
     finally:
         await rhx.set_run_mode("stop")
+    await asyncio.sleep(0.2)  # the last write's spikes
+    offset = min(bounds)
+    return sorted((t - (stamp / rate + offset)) * 1000 for t, stamp in arrivals)
+
+
+async def probe_how_late_do_spikes_arrive(rhx):
+    """Decides whether a live firing map can feel real-time. RHX writes to
+    TCP every `TCPNumberDataBlocksPerWrite` blocks of 128 samples (default 10:
+    43 ms at 30 kS/s); fewer means sooner. Measured at several settings."""
+    rate = float(await rhx.get("sampleratehertz"))
+    channel = await first_channel(rhx)
+    port = channel.split("-")[0]
+    channels = [f"{port}-{n:03d}" for n in range(LATENCY_CHANNELS)]
+    original = await rhx.get("tcpnumberdatablocksperwrite")
+    status = await rhx.get("tcpspikedatasocket.status")
+    spike_port = int(await rhx.get("tcpspikedatasocket.port"))
+    if status.lower() == "disconnected":
+        await rhx.set("tcpspikedatasocket.status", "Pending")
+    loop = asyncio.get_running_loop()
+    reader, writer = await asyncio.wait_for(asyncio.open_connection("127.0.0.1", spike_port), 2.0)
+    arrivals: list[tuple[float, int]] = []
+
+    async def read() -> None:
+        parser = SpikeParser()
+        while data := await reader.read(1 << 16):
+            now = loop.time()
+            arrivals.extend((now, spike.timestamp) for spike in parser.feed(data))
+
+    reading = asyncio.create_task(read())
+    print(f"\n  {rate:.0f} S/s, {len(channels)} channels on port {port.upper()}, default batch {original}")
+    try:
+        await rhx.send([f"set {name}.tcpdataoutputenabledspike true" for name in channels])
+        for blocks in (10, 4, 2, 1):
+            await rhx.set("tcpnumberdatablocksperwrite", blocks, verify=True)
+            lags = await _spike_lags(rhx, rate, arrivals)
+            if not lags:
+                print(f"  {blocks:>3} blocks/write: no spikes arrived (check thresholds)")
+                continue
+            pick = lambda q: lags[min(len(lags) - 1, int(q * len(lags)))]  # noqa: E731
+            print(
+                f"  {blocks:>3} blocks/write ({blocks * 128 / rate * 1000:5.1f} ms): "
+                f"{len(lags):6d} spikes, lag p50 {pick(0.5):6.1f}  p95 {pick(0.95):6.1f}  "
+                f"max {lags[-1]:6.1f} ms"
+            )
+    finally:
+        reading.cancel()
+        writer.close()
         await rhx.send(
-            [
-                f"set {channel}.tcpdataoutputenabledhigh false",
-                f"set {channel}.spikethresholdmicrovolts {threshold}",
-            ]
+            [f"set {name}.tcpdataoutputenabledspike false" for name in channels]
+            + [f"set tcpnumberdatablocksperwrite {original}"]
         )
 
 
@@ -120,8 +177,8 @@ PROBES = (
     probe_does_a_get_that_rides_a_batch_get_answered,
     probe_is_a_refused_set_reported_as_text,
     probe_does_the_save_path_keep_a_space,
-    probe_can_a_threshold_and_a_tcp_output_change_while_running,
     probe_how_are_digital_inputs_named,
+    probe_how_late_do_spikes_arrive,
 )
 
 

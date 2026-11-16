@@ -38,7 +38,7 @@ import {
   type BoxRow,
   type ProbeMapParse,
 } from "@/lib/intan/recordingSetup";
-import { channelRange } from "@/lib/intan/scopeMath";
+import { channelRange } from "@/lib/intan/probeMath";
 import { FILE_FORMATS, type ProbeMap } from "@/lib/intan/types";
 import { CASCADE, RISE, springPanel } from "@/lib/motion";
 import { stepUrl } from "@/lib/sessions/flow";
@@ -496,7 +496,7 @@ export function SessionRecording() {
                                 ) : (
                                   <div className="flex h-full items-center justify-center px-4 text-center text-[11px] leading-relaxed text-static">
                                     {!probeMapWaiting(row)
-                                      ? "Optional — a probe map lights this box's sites live as they fire."
+                                      ? "Optional — Mission Control lights this box's sites on it as they fire."
                                       : link === "connected"
                                         ? "Parsing the probe map…"
                                         : "Parses the probe map once the sidecar reconnects."}

@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath, URL } from "node:url";
 
-// The shell (Tauri, or Electron via `scripts/electron-dev.mjs`) is pointed at
+// The shell (Electron, via `scripts/electron-dev.mjs`) is pointed at
 // this dev server, so the port is fixed and failures must be loud rather than
 // silently falling back to another port the shell isn't pointed at.
 export default defineConfig({
@@ -18,9 +18,9 @@ export default defineConfig({
     port: 1420,
     strictPort: true,
     watch: {
-      // The sidecar and the shells have their own toolchains; watching them
+      // The sidecar and the shell have their own toolchains; watching them
       // from Vite only produces spurious frontend reloads.
-      ignored: ["**/src-tauri/**", "**/electron/**", "**/dist-electron/**", "**/sidecar/**", "**/docs/**"],
+      ignored: ["**/electron/**", "**/dist-electron/**", "**/sidecar/**", "**/docs/**"],
     },
   },
   build: {

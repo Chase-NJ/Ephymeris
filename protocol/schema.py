@@ -151,7 +151,7 @@ SHAPES = (
         doc="The full result of a library scan (`TASKS.md#sketch-library`): the "
         "bundled sketches plus this rig's saved task profiles.",
     ),
-    # Settings (pushed Tauri → sidecar; the shell owns them — ARCHITECTURE.md#settings)
+    # Settings (pushed shell → sidecar; the shell owns them — ARCHITECTURE.md#settings)
     Shape(
         "BoxBinding",
         obj(
@@ -229,7 +229,7 @@ SHAPES = (
                 "these.",
             ),
         ),
-        doc="The Tauri-side store's schema; the store is the source of truth "
+        doc="The shell-side store's schema; the store is the source of truth "
         "(`ARCHITECTURE.md#settings`). The sidecar reads `dataDirectory`, "
         "`backupDirectory`, `arduinoCliPath`, "
         "`defaultBaud`, `boxes` and `intan`, and ignores the rest — including "
@@ -3502,7 +3502,7 @@ COMMANDS = (
         "settings.push",
         args=obj(f("settings", Ref("EphymerisSettings"))),
         result=obj(f("library", Ref("SketchLibraryStatus"))),
-        doc="Sent on every connect and every change, Tauri → sidecar only; the "
+        doc="Sent on every connect and every change, shell → sidecar only; the "
         "sidecar is never the settings source of truth "
         "(`ARCHITECTURE.md#settings`). Each push rescans the sketch library and "
         "re-applies the backup directory, box bindings and utility baseline. "

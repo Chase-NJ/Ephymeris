@@ -1,7 +1,6 @@
-# Pushing a tag like v1.1.1-alpha builds the Windows installers on a clean machine (Tauri's
-# signed for its updater, and Electron's with its latest.yml; installer.yml), and attaches
-# them to a DRAFT release. Nothing reaches the lab until
-# the draft is published, which is when publish-update.yml points installed copies at it.
+# Pushing a tag like v1.1.1-alpha builds the Windows installer on a clean machine, with its
+# latest.yml (installer.yml), and attaches them to a DRAFT release. Nothing reaches the lab
+# until the draft is published, which is when publish-update.yml points installed copies at it.
 #
 # To ship main without a tag, use ship-main.yml instead.
 
@@ -22,13 +21,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
-      - name: Tag matches package.json and tauri.conf.json
+      - name: Tag matches package.json
         run: |
           tag="${GITHUB_REF_NAME#v}"
           pkg=$(node -p "require('./package.json').version")
-          conf=$(node -p "require('./src-tauri/tauri.conf.json').version")
-          echo "tag=$tag package.json=$pkg tauri.conf.json=$conf"
-          [ "$tag" = "$pkg" ] && [ "$tag" = "$conf" ]
+          echo "tag=$tag package.json=$pkg"
+          [ "$tag" = "$pkg" ]
 
   installer:
     needs: version
@@ -43,7 +41,7 @@ jobs:
         with:
           name: installer
           path: installer
-      - name: Draft a release with the installers and their feed files
+      - name: Draft a release with the installer and its feed file
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

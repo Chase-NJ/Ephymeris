@@ -1,9 +1,12 @@
 # Publishing a release is shipping it: this points every installed copy's updater at it.
 #
-# The feed is the `updates` branch, served from raw.githubusercontent.com: latest.json for
-# Tauri copies (the endpoint in tauri.conf.json) and latest.yml for Electron copies (the
-# `publish` URL in electron-builder.yml). It lives outside the release because GitHub's
+# The feed is the `updates` branch, served from raw.githubusercontent.com: latest.yml, the
+# `publish` URL in electron-builder.yml. It lives outside the release because GitHub's
 # "latest release" link skips pre-releases, and every Ephymeris release is one.
+#
+# The branch also holds latest.json, the Tauri shell's feed, frozen at v2.0.0-beta: it hands
+# any copy still on Tauri that release's Electron installer (ADR 0006's crossover), and that
+# copy then updates itself from latest.yml. Nothing writes latest.json any more; never delete it.
 #
 # Runs when YOU publish a draft. A release created already-published by a workflow's own
 # token would not trigger it, which is one more reason release.yml only ever drafts.
@@ -37,57 +40,20 @@ jobs:
   feed:
     runs-on: ubuntu-24.04
     steps:
-      - name: Build latest.json from the release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.release.tag_name || inputs.tag }}
-        run: |
-          release=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
-            --json tagName,name,publishedAt,isDraft,assets)
-          if [ "$(jq -r .isDraft <<<"$release")" = true ]; then
-            echo "::error::$TAG is still a draft; publish it first"; exit 1
-          fi
-          # The crossover (ADR 0006): a release whose Electron installer is signed with the
-          # Tauri key hands Tauri copies that installer, and they become Electron copies when
-          # the operator clicks Install. An older release, without it, keeps Tauri's installer.
-          electron='.assets[] | select(.name | test("^Ephymeris-.*-setup\\.exe$"))'
-          if [ -n "$(jq -r "$electron | .name" <<<"$release")" ] && \
-             [ -n "$(jq -r '.assets[] | select(.name | test("^Ephymeris-.*-setup\\.exe\\.sig$")) | .name' <<<"$release")" ]; then
-            url=$(jq -r "$electron | .url" <<<"$release")
-            sig_name=$(jq -r '.assets[] | select(.name | test("^Ephymeris-.*-setup\\.exe\\.sig$")) | .name' <<<"$release")
-            echo "latest.json -> the Electron installer (crossover)"
-          else
-            url=$(jq -r '.assets[] | select(.name | endswith("_x64-setup.exe")) | .url' <<<"$release")
-            sig_name=$(jq -r '.assets[] | select(.name | endswith("_x64-setup.exe.sig")) | .name' <<<"$release")
-            echo "latest.json -> the Tauri installer"
-          fi
-          if [ -z "$url" ] || [ -z "$sig_name" ]; then
-            echo "::error::$TAG has no signed installer (built before updates were signed?)"; exit 1
-          fi
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$sig_name" --dir "$RUNNER_TEMP"
-          # The signature is base64; a trailing newline would fail its decode on every PC.
-          jq -n \
-            --arg version "${TAG#v}" \
-            --arg notes "$(jq -r .name <<<"$release")" \
-            --arg pub_date "$(jq -r .publishedAt <<<"$release")" \
-            --arg url "$url" \
-            --arg signature "$(tr -d '\r\n' < "$RUNNER_TEMP/$sig_name")" \
-            '{version: $version, notes: $notes, pub_date: $pub_date,
-              platforms: {"windows-x86_64": {signature: $signature, url: $url}}}' \
-            > "$RUNNER_TEMP/latest.json"
-          cat "$RUNNER_TEMP/latest.json"
-
-      # The Electron feed (`electron/updater.ts`): electron-builder's latest.yml, which
-      # names the installer and its sha512, with the installer's name made the release
-      # asset's absolute URL (relative, it would resolve against the feed's own address).
-      # A release built before the Electron shell carries none, and the feed keeps its old one.
+      # The feed (`electron/updater.ts`): electron-builder's latest.yml, which names the
+      # installer and its sha512, with the installer's name made the release asset's
+      # absolute URL (relative, it would resolve against the feed's own address).
       - name: Build latest.yml from the release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
+          release=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft)
+          if [ "$(jq -r .isDraft <<<"$release")" = true ]; then
+            echo "::error::$TAG is still a draft; publish it first"; exit 1
+          fi
           if ! gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern latest.yml --dir "$RUNNER_TEMP/yml"; then
-            echo "$TAG carries no latest.yml; leaving the Electron feed as it is"; exit 0
+            echo "::error::$TAG carries no latest.yml (built before the Electron shell?)"; exit 1
           fi
           name=$(sed -n 's/^path: //p' "$RUNNER_TEMP/yml/latest.yml")
           base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
@@ -113,11 +79,7 @@ jobs:
           else
             git checkout -q --orphan updates
           fi
-          cp "$RUNNER_TEMP/latest.json" latest.json
-          git add latest.json
-          if [ -f "$RUNNER_TEMP/latest.yml" ]; then
-            cp "$RUNNER_TEMP/latest.yml" latest.yml
-            git add latest.yml
-          fi
+          cp "$RUNNER_TEMP/latest.yml" latest.yml
+          git add latest.yml
           git commit -q -m "Point the update feed at $TAG"
           git push -q origin updates

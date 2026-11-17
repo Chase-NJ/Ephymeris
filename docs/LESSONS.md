@@ -144,8 +144,8 @@ rather than an error, which is the worst kind of failure here.
   the database look missing ([ARCHITECTURE.md](ARCHITECTURE.md#the-electron-shell)).
 - **The webview reaches the shell only through `src/lib/shell/`**
   ([ARCHITECTURE.md](ARCHITECTURE.md#the-shell-module)).
-- **Back up the Tauri signing key and its password off-machine and off GitHub** until every copy runs
-  Electron, or Tauri copies are cut off from updates ([ARCHITECTURE.md](ARCHITECTURE.md#updates)).
+- **Never delete `latest.json` from the `updates` branch, or the `v2.0.0-beta` release.** They are how
+  a copy still on Tauri crosses over to Electron ([ARCHITECTURE.md](ARCHITECTURE.md#updates)).
 - **Don't move the GitHub repository.** Every installed copy has the update feed's URL baked in
   ([decision 0006](adr/DECISIONS.md#0006-the-shell-is-electron-not-tauri)).
 
@@ -156,8 +156,9 @@ tests could not see them.
 
 ### Windows
 
-- **Strip the `\\?\` verbatim prefix from Tauri's `resource_dir()` paths** (`simplified()`).
-  `arduino-cli` silently resolves no libraries from such a path, and a release could not flash
+- **Strip the `\\?\` verbatim prefix from any path handed to `arduino-cli`** (`discovery._plain()`).
+  Tauri's `resource_dir()` returned one; `arduino-cli` silently resolves no libraries from such a path,
+  and a release could not flash
   ([ARCHITECTURE.md](ARCHITECTURE.md#which-sidecar-runs)).
 - **Use UTF-8 explicitly.** Set `PYTHONUTF8=1` for the sidecar, pass `encoding="utf-8"` at every open,
   and force UTF-8 stdout in CLIs. Lab PCs default to cp1252, and one character in a file turned a suite

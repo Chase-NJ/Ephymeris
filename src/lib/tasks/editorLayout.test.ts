@@ -11,7 +11,7 @@ import { editorLayout, machineWidth } from "./editorLayout";
 
 /** `main` reserves its scrollbar track (`AppShell`) whether or not it shows. */
 const GUTTER = 10;
-/** The window's `minWidth` (tauri.conf.json) less the 200px sidebar. */
+/** The window's `MIN_WIDTH` (`electron/geometry.ts`) less the 200px sidebar. */
 const NARROWEST_PAGE = 1024 - 200 - GUTTER;
 
 describe("editorLayout", () => {

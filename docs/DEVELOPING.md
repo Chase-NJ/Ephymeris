@@ -4,9 +4,7 @@ Building, testing, releasing and contributing. How the system works is in
 [ARCHITECTURE.md](ARCHITECTURE.md); installing and using the app is in the [README](../README.md).
 
 Ephymeris is three processes: a desktop shell (`electron/`), a React webview (`src/`) and a Python sidecar
-(`sidecar/`) that owns all hardware and data state ([ARCHITECTURE.md](ARCHITECTURE.md#overview)). Until
-both lab PCs have moved to the Electron shell, the Tauri shell (`src-tauri/`) is still in the repository
-([ADR 0006](adr/DECISIONS.md#0006-the-shell-is-electron-not-tauri)).
+(`sidecar/`) that owns all hardware and data state ([ARCHITECTURE.md](ARCHITECTURE.md#overview)).
 
 ## Setup
 
@@ -15,7 +13,6 @@ both lab PCs have moved to the Electron shell, the Tauri shell (`src-tauri/`) is
 | Node.js | 20.19+ or 22.12+ | Vite's `engines` field |
 | Python | 3.12+ (3.13 for packaging) | `requires-python` in `sidecar/pyproject.toml` |
 | `arduino-cli` | recent | on `PATH`, or set on the Rig tab |
-| Rust | stable | only for the Tauri shell (`npm run tauri:dev`, `cargo test`), until it is removed |
 
 **Windows 11:** install Node.js and Python (tick **Add python.exe to PATH**), then
 `winget install ArduinoSA.CLI`. **macOS:** `brew install node python arduino-cli`. On both:
@@ -54,16 +51,13 @@ run reads the sketch library from `firmware/` in place ([its README](../firmware
 | Command | What it does |
 |---|---|
 | `npm start` / `npm run electron:dev` | The full app: regenerates the protocol, compiles `electron/`, starts Vite on 1420, opens the window. Arguments after `--` go to Electron |
-| `npm run tauri:dev` | The same under the Tauri shell, while it exists |
 | `npm run dev` | Vite alone on port 1420, for a plain-browser preview |
 | `npm run build` / `npm run build:electron` | `tsc` and a production Vite build into `dist/`; compile `electron/` into `dist-electron/` |
 | `npm run check` | Protocol mirrors current, both typechecks, unit tests; all run even after a failure |
 | `npm run test` / `test:watch` | Vitest over `src/lib/**` and `electron/**` |
 | `npm run gen:protocol` | Regenerate `protocol.py`, `protocol.ts` and `PROTOCOL.md` from `protocol/schema.py` |
 | `npm run package:electron` | Stage resources and build the Electron installer into `release/` ([below](#building-the-installer)) |
-| `npm run package` | Stage resources and build the Tauri installer, while it exists |
 | `pytest` in `sidecar/` | The sidecar suite; CI adds `-n auto --dist worksteal`, then runs `-m load` alone |
-| `cargo test` in `src-tauri/` | The Tauri shell's tests, while it exists |
 | `firmware/libraries/BehaviorBox/extras/host_test/run.sh` | Firmware host tests; `run_box.sh`, `run_interp.sh`, `run_spine.sh`, `run_diff.sh` for the utility, the interpreter, the spine runner and core-vs-replay |
 
 ## Tests
@@ -72,7 +66,7 @@ run reads the sketch library from `firmware/` in place ([its README](../firmware
 decoding that produce a drawing or readout that looks deliberate when wrong (the derived state machine,
 its layout, the strategy plane, the cohort sky, the probe geometry and firing map), and the Electron shell's pure parts.
 Stores are tested through `FakeSidecar` (`lib/ws/fakeSidecar.ts`); `ws/port.contract.test.ts` holds it to
-the real client's rules. `lib/shell/boundary.test.ts` keeps each shell inside `lib/shell`. There is no
+the real client's rules. `lib/shell/boundary.test.ts` keeps the shell inside `lib/shell`. There is no
 linter; `tsc` is the type check.
 
 **Sidecar: pytest in `sidecar/tests/`.** `conftest.py` sets `EPHYMERIS_WIRE_VALIDATE=1`, so every reply
@@ -108,14 +102,14 @@ sketches get ([TASKS.md](TASKS.md#compiling-and-the-host-tests)).
 | Workflow | Runs on | Does |
 |---|---|---|
 | `check.yml` | every push to `main` and every PR | `npm run check`, the sidecar suite on Windows and Linux, firmware host tests and compiles |
-| `release.yml` | a pushed `v*` tag | builds the installers and attaches them to a **draft** pre-release |
+| `release.yml` | a pushed `v*` tag | builds the installer and attaches it to a **draft** pre-release |
 | `ship-main.yml` | by hand | builds `main` as `<package.json version>.<commit count>` and publishes it |
 | `installer.yml` | called by the two above | the one copy of the build steps, on a clean Windows runner |
 | `publish-update.yml` | publishing a release | points the update feed (`updates` branch) at it ([ARCHITECTURE.md](ARCHITECTURE.md#updates)) |
 
 Tests that need hardware, `arduino-cli`, RHX or the lab's probe maps skip themselves in CI.
 
-**A tagged release:** set the version in `package.json` (and `src-tauri/tauri.conf.json` while it exists),
+**A tagged release:** set the version in `package.json`,
 commit, then `git tag v1.2.0-alpha && git push origin main --tags`. The workflow refuses a tag that
 disagrees. Write the draft's notes and publish it: **publishing is shipping**; every installed copy finds
 it at its next check.

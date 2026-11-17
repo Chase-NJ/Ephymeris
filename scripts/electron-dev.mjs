@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 /**
- * `npm run electron:dev`: the app under the Electron shell (ADR 0006), the way
- * `tauri dev` runs it under Tauri.
+ * `npm run electron:dev` (and `npm start`): the full app in development.
  *
  *   1. regenerate the wire mirrors (what `predev` does for `npm run dev`)
  *   2. compile `electron/` to `dist-electron/`

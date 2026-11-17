@@ -2,7 +2,7 @@
  * The main process's half of the bridge (`bridge.ts`): one handler per channel,
  * each checking who is asking before doing anything.
  *
- * The same split as `src-tauri/capabilities/`: the main window may use every
+ * The main window may use every
  * channel, updates included, and is today the app's only window; a channel
  * marked "any" would also serve another window of this app. A frame that is
  * not the top frame of one of this app's windows, showing one of its pages,

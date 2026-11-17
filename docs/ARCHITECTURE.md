@@ -23,7 +23,7 @@ tasks and firmware: [TASKS.md](TASKS.md); files, database and analytics: [DATA.m
 
 ```mermaid
 flowchart LR
-    shell["Shell<br/>(Tauri src-tauri/ or Electron electron/)"]
+    shell["Electron shell<br/>(electron/)"]
     webview["Webview<br/>(React/TS, src/)"]
     sidecar["Python sidecar<br/>(sidecar/)"]
     boards["Up to 6 × Mega2560"]
@@ -56,10 +56,10 @@ port or predicts a transition. The **live scorer** scores spine runs and touches
 
 ### Startup handshake
 
-The shell (`src-tauri/src/sidecar.rs`, `electron/sidecar.ts`) spawns the sidecar with piped stdio and
+The shell (`electron/sidecar.ts`) spawns the sidecar with piped stdio and
 `--data-dir`. The sidecar binds an ephemeral port on `127.0.0.1`, makes a per-launch token, and prints exactly
 one stdout line, `EPHYMERIS_WS_PORT=<port> EPHYMERIS_WS_TOKEN=<token>`; everything else goes to stderr and the
-app log. The shell parses it (`parse_handshake`, `parseHandshake`) and emits ready, or down when stdout closes.
+app log. The shell parses it (`parseHandshake`) and emits ready, or down when stdout closes.
 
 ```mermaid
 sequenceDiagram
@@ -111,32 +111,31 @@ their own threads, so the session path never waits on the child.
 ### Which sidecar runs
 
 `EPHYMERIS_SIDECAR_PYTHON` wins; otherwise a dev build prefers `sidecar/.venv` and an installed one the frozen
-`ephymeris-sidecar`, each falling back to the other (`resolve_launch`, `resolveLaunch`). Bundled copies get
+`ephymeris-sidecar`, each falling back to the other (`resolveLaunch`). Bundled copies get
 `EPHYMERIS_BUNDLED_ARDUINO_CLI`, `EPHYMERIS_BUNDLED_ARDUINO_DATA_SEED` and `EPHYMERIS_BUNDLED_SKETCHES`.
 Packaging: [DEVELOPING.md](DEVELOPING.md#building-the-installer).
 
 > [!CAUTION]
-> **Under Tauri, every path built from `resource_dir()` goes through `simplified()`.** Windows returns
-> `\\?\C:\…`, `arduino-cli` given such a `--libraries` silently finds nothing, and the compile fails on
-> `#include <BehaviorBox.h>`. `discovery._plain()` strips the prefix in Python.
+> **A bundled path must never reach `arduino-cli` in verbatim form (`\\?\C:\…`).** Given such a
+> `--libraries` it silently finds nothing, and the compile fails on `#include <BehaviorBox.h>`. Electron's
+> `process.resourcesPath` is an ordinary path; `discovery._plain()` strips the prefix in Python regardless.
 
 ### The Electron shell
 
-[ADR 0006](adr/DECISIONS.md#0006-the-shell-is-electron-not-tauri) replaces Tauri with Electron (`npm run electron:dev`,
-`npm run package:electron`); lab copies move over through [the crossover](#updates), then `src-tauri/` goes.
-`electron/` owns what `src-tauri/` owns:
+The shell is Electron, written in TypeScript ([ADR 0006](adr/DECISIONS.md#0006-the-shell-is-electron-not-tauri);
+`npm run electron:dev`, `npm run package:electron`). `electron/` owns:
 
 | File | Does |
 |---|---|
 | `main.ts` | Starts everything; kills the sidecar on `will-quit` |
-| `sidecar.ts`, `launch.ts`, `handshake.ts` | Port of `sidecar.rs` |
+| `sidecar.ts`, `launch.ts`, `handshake.ts` | Start, supervise and stop the sidecar; read its handshake |
 | `window.ts`, `geometry.ts` | The frameless main window, the app's only one |
 | `ipc.ts`, `bridge.ts`, `preload.cts` | One IPC channel per `Shell` method, exposed as `window.ephymeris` |
 | `settingsFile.ts` | `settings.json`, written to a temporary file and renamed |
-| `updater.ts`, `installer.nsh` | [Updates](#updates) and removing the Tauri copy |
+| `updater.ts`, `installer.nsh` | [Updates](#updates), and removing a Tauri copy left on the PC |
 
 > [!CAUTION]
-> **The sidecar's `--data-dir` is `<appData>/edu.hartlab.ephymeris`, Tauri's `app_data_dir`, never
+> **The sidecar's `--data-dir` is `<appData>/edu.hartlab.ephymeris`, the folder the Tauri shell used, never
 > Electron's `userData`.** Anywhere else, every setting and the whole cohort database look missing, with no
 > error.
 
@@ -148,23 +147,21 @@ set (never installed), else `dist/` from `app://ephymeris/`, because `fetch` ref
 
 | Part | Does |
 |---|---|
-| `release.yml`, `ship-main.yml` | Build both installers and put up a release: Tauri's `*_x64-setup.exe` and `.sig`, Electron's `*-setup.exe`, `.blockmap` and `latest.yml`. `release.yml` drafts from a tag; `ship-main.yml`, run by hand only, publishes `main` as `<version>.<commit count>` |
-| `publish-update.yml` | On publish, writes the feed to the `updates` branch: `latest.json` (Tauri), `latest.yml` (Electron) |
-| `updater.rs`, `electron/updater.ts` | Check the feed; download, verify (Tauri signature, Electron sha512), stop the sidecar, run the installer |
+| `release.yml`, `ship-main.yml` | Build the installer and put up a release: `*-setup.exe`, `.blockmap` and `latest.yml`. `release.yml` drafts from a tag; `ship-main.yml`, run by hand only, publishes `main` as `<version>.<commit count>` |
+| `publish-update.yml` | On publish, writes `latest.yml` to the `updates` branch |
+| `electron/updater.ts` | Check the feed; download, verify the sha512, stop the sidecar, run the installer |
 
-A draft is invisible to the feed: publishing is shipping. **The crossover**: the Electron installer is also
-signed with the Tauri key and named in `latest.json`, so Tauri copies take it as an ordinary update
-([README](../README.md#moving-a-lab-pc-to-the-electron-shell)); `installer.nsh` silently uninstalls the Tauri
-copy, keeping app data.
+A draft is invisible to the feed: publishing is shipping. **The crossover**: the `updates` branch also holds
+`latest.json`, the Tauri shell's feed, frozen at `v2.0.0-beta`, whose Electron installer was signed with the
+Tauri key. A copy still on Tauri takes that as an ordinary update
+([README](../README.md#moving-a-lab-pc-to-the-electron-shell)), `installer.nsh` silently uninstalls the Tauri
+copy, keeping app data, and the Electron copy then updates itself from `latest.yml`. Never delete
+`latest.json` or the `v2.0.0-beta` release.
 
 Before installing, the shell closes the sidecar's stdin and waits up to 12 s so it stops the `arduino-cli`
 daemon, which would otherwise lock `arduino-cli.exe`. Install is offered only with no session, no recording
 and every box `IDLE` or `ERROR` (`lib/updates/blocker.ts`; a down sidecar blocks nothing), always on the
 operator's click. Checks run at launch and every 6 hours, never in dev. No downgrades: fix forward.
-
-> [!CAUTION]
-> **Losing `TAURI_SIGNING_PRIVATE_KEY` or its password cuts every installed Tauri copy off from updates.**
-> Keep both backed up outside this machine and outside GitHub.
 
 ## Wire protocol
 
@@ -648,15 +645,15 @@ Each domain in `src/lib/` has one Provider and store over `SidecarPort` (`lib/ws
 needs box health everywhere. **Unit tests cover `src/lib/**` only**, so logic lives in pure modules there.
 
 > [!CAUTION]
-> **Every drag-and-drop depends on `dragDropEnabled: false` in `src-tauri/tauri.conf.json`**; otherwise
-> Windows swallows the HTML5 `drop`, which looks like a React bug.
+> **Every drag-and-drop is HTML5 drag-and-drop, and depends on the shell leaving drops to the page.** A shell
+> that hands them to an OS file-drop handler swallows the `drop`, which looks like a React bug.
 
 ### The shell module
 
 The webview reaches the shell only through `shell` from `src/lib/shell/`: the sidecar endpoint, dialogs and
 `saveFile`, `openPath`, `settings`, the window `frame` and `updates`. `index.ts` picks
-`tauri.ts`, `electron.ts` or `none.ts` once; `boundary.test.ts` fails on any other file naming
-`@tauri-apps/*`, `window.ephymeris` or `electron`. The interface stays as narrow as the shell's permissions.
+`electron.ts` or `none.ts` once; `boundary.test.ts` fails on any other file naming
+`window.ephymeris` or `electron`. The interface stays as narrow as the shell's permissions.
 Under Electron a drag region swallows clicks, so `styles/index.css` makes everything interactive inside one
 `no-drag`.
 
@@ -782,5 +779,5 @@ The dependency policy lives in [DEVELOPING.md](DEVELOPING.md#dependency-policy).
 | `…/tasks/`, `…/taskdef/`, `…/rig/`, `…/strobes/`, `…/hardware/` | [TASKS.md](TASKS.md#the-rig-definition) |
 | `…/intan/` | [RECORDING.md](RECORDING.md) |
 | `src/lib/`, `src/components/`, `src/routes/` | Pure logic and stores; UI by domain; routes |
-| `src-tauri/`, `electron/` | The two shells |
+| `electron/` | The desktop shell |
 | `protocol/`, `scripts/` | Wire schema and generator; npm helpers |

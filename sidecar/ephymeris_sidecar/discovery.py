@@ -77,8 +77,8 @@ LibrarySource = Literal["bundled", "override"]
 #: door, and so `not_configured` cannot come back as a state.
 LIBRARY_ENV = "EPHYMERIS_SKETCH_LIBRARY"
 
-#: Set by the Tauri shell from its resource dir, exactly as
-#: EPHYMERIS_BUNDLED_ARDUINO_CLI already is (`src-tauri/src/sidecar.rs`).
+#: Set by the shell from its resource dir, exactly as
+#: EPHYMERIS_BUNDLED_ARDUINO_CLI already is (`electron/launch.ts`).
 BUNDLED_ENV = "EPHYMERIS_BUNDLED_SKETCHES"
 
 
@@ -166,15 +166,15 @@ def _plain(value: str) -> Path:
 def library_root() -> tuple[Path | None, LibrarySource]:
     """Where the sketch library lives, and whether it is the shipped one.
 
-    Three candidates, in order, mirroring how `sidecar.rs::resolve_launch`
-    already picks an interpreter:
+    Three candidates, in order, mirroring how the shell's `resolveLaunch`
+    (`electron/launch.ts`) already picks an interpreter:
 
         $EPHYMERIS_SKETCH_LIBRARY   a developer pointing somewhere else
-        $EPHYMERIS_BUNDLED_SKETCHES the installed app, set by the Tauri shell
+        $EPHYMERIS_BUNDLED_SKETCHES the installed app, set by the shell
         <repo>/firmware             a checkout, read in place
 
     The last one is not a fallback for a broken install — it is the only way
-    `npm run tauri:dev` works at all, since a dev run has no installer
+    `npm run electron:dev` works at all, since a dev run has no installer
     resources. It is the firmware source itself, not a copy: nothing in a
     checkout can drift from what is being edited.
     """

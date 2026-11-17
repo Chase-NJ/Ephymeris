@@ -176,7 +176,7 @@ def test_no_reference_to_a_retired_doc() -> None:
     assert not stale, "references to retired docs:\n  " + "\n  ".join(stale)
 
 
-@pytest.mark.parametrize("root", ["src", "sidecar", "protocol", "scripts", "src-tauri", "docs"])
+@pytest.mark.parametrize("root", ["src", "sidecar", "protocol", "scripts", "electron", "docs"])
 def test_no_section_number_citations(root: str) -> None:
     """Cite `FILE.md#anchor`, not `§N` — numbers go stale silently."""
     hits = []

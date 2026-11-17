@@ -13,12 +13,12 @@
  * megabytes of work for six faces of latin text.
  *
  * The second reason is the dangerous one. Dev serves over `http://localhost`,
- * but a packaged build serves over `tauri://localhost` on macOS and
- * `http://tauri.localhost` on Windows, and a custom-scheme `fetch` is exactly
- * the kind of thing that returns an opaque failure. The library's fallback for
- * a font it couldn't load is to carry on without it — so the symptom is a PNG
- * silently set in Times New Roman, and since this is developed on macOS and
- * runs on Windows, neither routine loop exercises the risky path.
+ * but a packaged build serves over the shell's own `app://` scheme
+ * (`electron/window.ts`), and a custom-scheme `fetch` is exactly the kind of
+ * thing that returns an opaque failure. The library's fallback for a font it
+ * couldn't load is to carry on without it — so the symptom is a PNG silently
+ * set in Times New Roman, and the routine dev loop never exercises the risky
+ * path.
  *
  * Importing the files with Vite's `?inline` sidesteps all of it: the bytes are
  * data URLs at build time, there is no request to fail, and dev and production

@@ -21,7 +21,7 @@ from .tool import BoardTool, DetectedBoard, FlashFailed, ProgressLine, failure_l
 log = logging.getLogger(__name__)
 
 DEFAULT_BINARY = "arduino-cli"
-#: Set by the packaged Tauri shell: the bundled arduino-cli binary, and the
+#: Set by the packaged shell: the bundled arduino-cli binary, and the
 #: read-only `arduino:avr` data seed shipped in the app's resources. Absent in
 #: development, where PATH resolution keeps working exactly as before.
 BUNDLED_CLI_ENV = "EPHYMERIS_BUNDLED_ARDUINO_CLI"

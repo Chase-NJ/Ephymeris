@@ -1,7 +1,7 @@
 """The rig wiring: the operator's, validated on the way in.
 
 Layout, under the sidecar's own data dir (beside `ephymeris.db` — these are
-sidecar-side writes, no Tauri fs capability involved):
+sidecar-side writes, no shell file access involved):
 
     <data_dir>/hardware/wiring.json
     <data_dir>/wiring-confirmed.json      the digests of wiring saved here

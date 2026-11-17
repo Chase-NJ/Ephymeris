@@ -628,7 +628,7 @@ function MemberChip({
     // A plain <button> carries the HTML5 drag: on a motion component,
     // `onDragStart` is framer's pan-gesture prop and the native event would
     // never be heard. The motion wrapper owns only the layout hop.
-    // (Drag also requires `dragDropEnabled: false` in tauri.conf.json — see
+    // (Drag also requires the shell to leave drops to the page — see
     // `CageAssignment` for why.)
     <motion.span layout layoutId={`member-${animal.id}`} transition={springSnappy}>
       <button

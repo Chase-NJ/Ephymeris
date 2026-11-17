@@ -1,8 +1,8 @@
 /**
  * Stage everything the installer bundles beyond the app itself.
  *
- * Produces `build/resources/` (gitignored, regenerated on every run), which both
- * shells package from (`src-tauri/tauri.bundle.conf.json`, `electron-builder.yml`):
+ * Produces `build/resources/` (gitignored, regenerated on every run), which the
+ * installer packages from (`extraResources` in `electron-builder.yml`):
  *
  *   resources/
  *     sidecar/                PyInstaller-frozen sidecar (onedir)
@@ -22,15 +22,8 @@
  * locations to the sidecar via EPHYMERIS_BUNDLED_* env vars; the sidecar
  * copies `data/` to a writable location on first use (`boards/cli_tool.py`).
  *
- * Run via `npm run package` (which chains `tauri build` after this),
- * `npm run package:electron` (which chains `electron-builder`), or standalone
- * with `node scripts/package-resources.mjs`.
- *
- * Tauri's `bundle.resources` mapping for these lives in
- * `src-tauri/tauri.bundle.conf.json`, merged in only by `npm run package`'s
- * `tauri build --config` — keeping it out of `tauri.conf.json` means
- * `tauri dev` works on machines that have never staged resources. Electron's
- * is `extraResources` in `electron-builder.yml`.
+ * Run via `npm run package:electron` (which chains `electron-builder`), or
+ * standalone with `node scripts/package-resources.mjs`.
  */
 
 import { execFileSync, spawnSync } from "node:child_process";

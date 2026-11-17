@@ -1,6 +1,6 @@
 /**
  * The Electron shell's main process (ADR 0006, `ARCHITECTURE.md#the-electron-shell`).
- * Owns exactly what the Tauri shell owns: it starts the sidecar and says where
+ * Owns only what a shell must: it starts the sidecar and says where
  * it listens, draws the windows, shows dialogs, writes the file the operator
  * picked, keeps `settings.json`, and installs updates. Every bit of state
  * lives in the sidecar.
@@ -23,7 +23,7 @@ import { Sidecar } from "./sidecar.js";
 import { Updater, updatesSupported } from "./updater.js";
 import { registerAppScheme, serveApp, Windows } from "./window.js";
 
-/** Tauri's bundle identifier, and the name of the app data folder both shells share. */
+/** The bundle identifier, and the name of the app data folder (kept from the Tauri shell). */
 const APP_ID = "edu.hartlab.ephymeris";
 
 app.setName("Ephymeris");
@@ -32,9 +32,9 @@ if (process.platform === "win32") app.setAppUserModelId(APP_ID);
 registerAppScheme();
 
 /**
- * The folder Tauri's `app_data_dir` named: `ephymeris.db`, `settings.json` and
- * the rest already live here. NOT Electron's `userData`, which is a different
- * folder (and fills with Chromium's caches): pointing the sidecar there would
+ * The folder the Tauri shell's `app_data_dir` named, kept so the lab's copies
+ * find their data where it already is: `ephymeris.db`, `settings.json` and the
+ * rest. NOT Electron's `userData`, which is a different folder (and fills with Chromium's caches): pointing the sidecar there would
  * make every setting and the database look missing after the switch.
  */
 const dataDir = join(app.getPath("appData"), APP_ID);
@@ -64,7 +64,7 @@ process.on("exit", () => sidecar.shutdown());
 
 void app.whenReady().then(() => {
   console.info(`Ephymeris ${app.getVersion()}; app data directory: ${dataDir}`);
-  // An ordinary path, not Tauri's verbatim `\\?\C:\…`, which arduino-cli
+  // An ordinary path, not a verbatim `\\?\C:\…`, which arduino-cli
   // silently mishandles (`ARCHITECTURE.md#which-sidecar-runs`).
   console.info(`resources: ${process.resourcesPath}`);
 

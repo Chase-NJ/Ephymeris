@@ -1,4 +1,4 @@
-"""Settings received from the Tauri shell.
+"""Settings received from the shell.
 
 The shell owns settings (`ARCHITECTURE.md#who-owns-settings`) and pushes the full payload
 here on every connect and every change. This module is the receiving end: it

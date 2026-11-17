@@ -33,10 +33,10 @@ win:
   target:
     - target: nsis
       arch: [x64]
-  icon: src-tauri/icons/icon.ico
+  icon: electron/icons/icon.ico
   artifactName: "${productName}-${version}-setup.${ext}"
 
-# Per user, no questions: the same install Tauri's passive NSIS did. App data
+# Per user, no questions. App data
 # (`%APPDATA%\edu.hartlab.ephymeris`) is never the installer's to touch.
 nsis:
   oneClick: true
@@ -44,7 +44,7 @@ nsis:
   deleteAppDataOnUninstall: false
   shortcutName: Ephymeris
   uninstallDisplayName: Ephymeris
-  # Removes the Tauri shell's copy before installing (ADR 0006's crossover).
+  # Removes a Tauri shell's copy left on the PC before installing (ADR 0006's crossover).
   include: electron/installer.nsh
 
 # The update feed (`electron/updater.ts`), baked into every copy as

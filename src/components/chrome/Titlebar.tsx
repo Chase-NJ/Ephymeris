@@ -73,7 +73,7 @@ export function Titlebar() {
 /**
  * The app mark — the one place the squircle is spent. A six-point star
  * on a Pulsar field: the constellation motif at icon scale. Deliberately NOT
- * the bundle icon (`src-tauri/icons/icon.svg`, the rat-on-a-rocket): at 17px
+ * the bundle icon (`electron/icons/icon.svg`, the rat-on-a-rocket): at 17px
  * that artwork is an unreadable smudge, and this star was built for this size.
  */
 function AppMark() {

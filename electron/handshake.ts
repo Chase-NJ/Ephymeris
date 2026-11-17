@@ -3,8 +3,8 @@
  *
  *     EPHYMERIS_WS_PORT=<port> EPHYMERIS_WS_TOKEN=<token>
  *
- * Pure, so the parse is tested without a process. A port of `parse_handshake`
- * in `src-tauri/src/sidecar.rs`; any other line is an ordinary log line.
+ * Pure, so the parse is tested without a process. Any other line is an
+ * ordinary log line.
  */
 
 import type { SidecarEndpoint } from "./bridge.js";

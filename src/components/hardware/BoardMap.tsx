@@ -25,10 +25,9 @@ import { useReduceMotion } from "@/lib/useReduceMotion";
  * viewBox-space hit-testing anyway, and pointer capture on the SVG keeps the
  * gesture alive outside the element.
  *
- * CLICK-TO-CARRY IS NOT A COURTESY. `CageAssignment.tsx` documents that HTML5
- * drag only works here because `dragDropEnabled: false` is set in
- * tauri.conf.json; pointer-event drag has its own hazards on a webview, and the
- * lab runs Windows where none of this has been exercised. A rig that cannot be
+ * CLICK-TO-CARRY IS NOT A COURTESY. `CageAssignment.tsx` documents how HTML5
+ * drag fails quietly when the shell swallows drops; pointer-event drag has its
+ * own hazards on a webview. A rig that cannot be
  * wired because a gesture does not land is a dead app, so every drag has a
  * click-click equivalent that uses no gesture at all.
  *

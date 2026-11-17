@@ -2,7 +2,7 @@
 # Run it by hand (Actions -> Ship main -> Run workflow, or `gh workflow run ship-main.yml`).
 #
 # The build calls itself package.json's version plus main's commit count (1.1.3-alpha ->
-# 1.1.3-alpha.214, scripts/ship-version.mjs), is signed like a tagged release, goes up as an
+# 1.1.3-alpha.214, scripts/ship-version.mjs), is built like a tagged release, goes up as an
 # already-published pre-release, and the feed is pointed at it in the same run. Installed
 # copies then find it on their next check and install it when the operator clicks, exactly
 # as for a tagged release (docs/ARCHITECTURE.md#updates).
@@ -42,7 +42,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          feed=$(curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/updates/latest.json | jq -r .version)
+          feed=$(curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/updates/latest.yml | sed -n 's/^version: //p')
           version=$(node scripts/ship-version.mjs "$(git rev-list --count HEAD)" "$feed")
           echo "feed=$feed ship=$version"
           if gh release view "v$version" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
@@ -68,7 +68,7 @@ jobs:
         with:
           name: installer
           path: installer
-      - name: Publish a pre-release with the installers and their feed files
+      - name: Publish a pre-release with the installer and its feed file
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: v${{ needs.version.outputs.version }}

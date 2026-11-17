@@ -1,7 +1,7 @@
 """WebSocket server and command dispatch.
 
 The server binds loopback-only on an ephemeral port and prints its handshake
-line on stdout for the Tauri shell to capture:
+line on stdout for the shell to capture:
 
     EPHYMERIS_WS_PORT=<port> EPHYMERIS_WS_TOKEN=<token>
 
@@ -177,7 +177,7 @@ class SidecarServer:
     def watch_parent_via_stdin(self) -> None:
         """Exit when the shell that spawned us goes away.
 
-        Tauri holds our stdin open for the life of the app. If the shell dies or
+        The shell holds our stdin open for the life of the app. If the shell dies or
         is force-quit, stdin hits EOF and we shut down instead of lingering — a
         stale sidecar would keep serial ports open and lock out the next launch.
         """

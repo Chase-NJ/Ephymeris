@@ -1,8 +1,7 @@
 /**
  * How the sidecar is launched (`ARCHITECTURE.md#which-sidecar-runs`): either the
  * repo's venv interpreter running the package, or the PyInstaller-frozen
- * executable bundled with an installed app. A port of `resolve_launch` and the
- * `bundled_*_env` helpers in `src-tauri/src/sidecar.rs`.
+ * executable bundled with an installed app.
  *
  * Pure: every fact about the machine comes in through `LaunchContext`, so the
  * ordering is tested without a filesystem or an Electron app.

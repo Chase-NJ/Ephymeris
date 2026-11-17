@@ -1,6 +1,6 @@
 /**
  * The main window's opening size: 4/5 of the display it opens on, never below
- * the minimum. A port of `opening_size` in `src-tauri/src/lib.rs`.
+ * the minimum.
  *
  * A fixed pixel size cannot serve both the dev Mac and the lab PCs: the same
  * 1280x820 is most of one screen and a small square on another. Pure, so the

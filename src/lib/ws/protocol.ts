@@ -341,7 +341,7 @@ export interface IntanSettings {
 }
 
 /**
- * The Tauri-side store's schema; the store is the source of truth (`ARCHITECTURE.md#settings`).
+ * The shell-side store's schema; the store is the source of truth (`ARCHITECTURE.md#settings`).
  * The sidecar reads `dataDirectory`, `backupDirectory`, `arduinoCliPath`, `defaultBaud`, `boxes`
  * and `intan`, and ignores the rest — including keys a stale store still carries — so adding a
  * setting the sidecar doesn't consume is deliberately a non-event.

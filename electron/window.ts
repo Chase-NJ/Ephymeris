@@ -1,6 +1,5 @@
 /**
  * The app's window, plus the `app://` scheme an installed build loads it from.
- * The window half of `src-tauri/src/lib.rs`.
  *
  * The window is frameless (the webview draws its own title bars), sandboxed,
  * and reaches the main process only through the preload's bridge.

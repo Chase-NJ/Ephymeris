@@ -4,7 +4,7 @@ Run directly during development:
 
     sidecar/.venv/bin/python -m ephymeris_sidecar
 
-In the packaged app the Tauri shell spawns this and reads the handshake line
+In the packaged app the Electron shell spawns this and reads the handshake line
 from stdout.
 """
 
@@ -33,8 +33,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "--data-dir",
         default=None,
         help=(
-            "app data directory holding ephymeris.db (DATA.md#sqlite-database). The Tauri "
-            "shell passes its own app_data_dir; a platform default is used when "
+            "app data directory holding ephymeris.db (DATA.md#sqlite-database). The "
+            "shell passes its own; a platform default is used when "
             "running standalone."
         ),
     )
@@ -47,7 +47,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _default_data_dir() -> Path:
-    """Where the Tauri shell would put app data, for standalone dev runs."""
+    """Where the shell would put app data, for standalone dev runs."""
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Application Support" / "edu.hartlab.ephymeris"
     if sys.platform.startswith("win"):

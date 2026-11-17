@@ -1,6 +1,5 @@
 /**
  * Spawns and supervises the Python sidecar (`ARCHITECTURE.md#process-lifecycle`).
- * A port of `src-tauri/src/sidecar.rs`.
  *
  * The sidecar binds an ephemeral loopback port and prints one handshake line
  * on stdout (`handshake.ts`). The endpoint is held here for a window that asks

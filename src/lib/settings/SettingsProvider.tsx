@@ -12,7 +12,7 @@ import {
 } from "./schema";
 
 /**
- * Owns settings state and the one-directional Tauri → sidecar sync.
+ * Owns settings state and the one-directional shell → sidecar sync.
  *
  * Per `ARCHITECTURE.md#persistence-and-push` the shell is the source of truth and pushes the
  * full payload **on every connect/reconnect and on every change**. The failure

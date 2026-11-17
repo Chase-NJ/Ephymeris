@@ -79,8 +79,8 @@ the Data directory points.
 ### Moving a lab PC to the Electron shell
 
 Copies installed before the Electron shell ([ADR 0006](docs/adr/DECISIONS.md#0006-the-shell-is-electron-not-tauri)) live in
-`%LOCALAPPDATA%\Ephymeris`. Their next update installs the Electron build, which removes the old copy,
-takes over its shortcuts and keeps all app data. Do it once per PC, with someone there, then check:
+`%LOCALAPPDATA%\Ephymeris`. Their next update installs the Electron build (2.0.0-beta), which removes the
+old copy, takes over its shortcuts and keeps all app data; it then updates itself to the newest. Do it once per PC, with someone there, then check:
 settings and cohorts are as they were; the wiring is in force with no RIG108 hold; a session runs on a
 real box; **Settings → Updates** reports the version current; and **Apps →
 Installed apps** lists one Ephymeris.

@@ -25,7 +25,7 @@ only what the code does now and link here.
 | [0003](0003-phase-spine-task-model.md) | A task is a phase spine, lowered and replayed | **proposed**, being built | — |
 | [0004](#0004-restores-share-one-compile-and-upload-in-turn) | Restores share one compile and upload in turn | accepted | 2026-11-05 |
 | [0005](#0005-a-spine-run-strobes-each-trials-outcome-class) | A spine run strobes each trial's outcome class | accepted, codes withdrawn for now | 2026-11-05 |
-| [0006](#0006-the-shell-is-electron-not-tauri) | The shell is Electron, not Tauri | accepted, rollout under way | 2026-11-13 |
+| [0006](#0006-the-shell-is-electron-not-tauri) | The shell is Electron, not Tauri | accepted, Tauri removed | 2026-11-13 |
 | [0007](#0007-rhxs-own-windows-replace-the-recording-pop-ups) | RHX's own windows replace the recording pop-ups | accepted | 2026-11-15 |
 
 ## 0001: A hypothetical rig definition is context-local
@@ -248,6 +248,15 @@ written in TypeScript, and leave the sidecar, the webview and the wire as they a
 >   shortcuts, and starts the Electron copy. Neither installer touches `%APPDATA%\edu.hartlab.ephymeris`.
 >   Rehearsed end to end: same data and confirmed wiring, a run on a real box, a scope window, update
 >   check current.
+
+> **Amendment, 2026-11-17: `src-tauri/` is gone.** A lab session ran on the Electron build, so the Rust
+> shell, its npm packages, its CI job and the Tauri signing step left the repository; `simplified()` went
+> with it, and `discovery._plain()` still strips a verbatim prefix in Python.
+>
+> - **The crossover stays open without Tauri in the build.** Nothing writes `latest.json` any more; it
+>   stays on the `updates` branch pointing at `v2.0.0-beta`, whose Electron installer carries the Tauri
+>   signature. A copy still on Tauri crosses over to that release and then follows `latest.yml`. The
+>   Tauri signing key is no longer needed to ship.
 
 ## 0007: RHX's own windows replace the recording pop-ups
 

@@ -1,6 +1,6 @@
 /**
- * Checking for and installing app updates (`ARCHITECTURE.md#updates`). The
- * Electron half of `src-tauri/src/updater.rs`, on `electron-updater`.
+ * Checking for and installing app updates (`ARCHITECTURE.md#updates`), on
+ * `electron-updater`.
  *
  * The feed is the `generic` provider `electron-builder.yml` names, baked into
  * the installed copy as `resources/app-update.yml`: a `latest.yml` naming the
@@ -85,8 +85,8 @@ export class Updater {
       await this.updater.downloadUpdate();
       events.installing();
       await this.sidecar.stop(SIDECAR_STOP_GRACE_MS);
-      // Not silent: the installer shows its progress window, as Tauri's
-      // passive mode did. Then the new copy starts.
+      // Not silent: the installer shows its progress window. Then the new
+      // copy starts.
       this.updater.quitAndInstall(false, true);
     } finally {
       this.updater.off("download-progress", onProgress);

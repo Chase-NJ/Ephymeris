@@ -2,7 +2,7 @@
 
 PyInstaller traces imports from a script, not from a `-m` module invocation,
 so this shim is the frozen equivalent of `python -m ephymeris_sidecar`. It
-must stay behavior-identical to `__main__` — the Tauri shell treats the frozen
+must stay behavior-identical to `__main__` — the shell treats the frozen
 binary and the dev interpreter as interchangeable.
 """
 

@@ -151,25 +151,3 @@ jobs:
             echo "::endgroup::"
           done
 
-  shell:
-    name: Tauri shell
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 24
-          cache: npm
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.13"
-      # Stable Rust ships with the runner image; installing it again is one more
-      # download that can fail. Cargo.toml's rust-version is far behind it.
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-      # The shell embeds ../dist at compile time, so the frontend must exist first.
-      - run: npm ci
-      - run: npm run build
-      - run: cargo test
-        working-directory: src-tauri

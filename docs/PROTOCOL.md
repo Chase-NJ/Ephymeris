@@ -21,7 +21,7 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | Command | Args | Result | What it does |
 |---|---|---|---|
 | <a id="cmd-auth"></a>`auth` | `token` | `authenticated` | Must be the connection's first frame. |
-| <a id="cmd-settings.push"></a>`settings.push` | `settings` | `library` | Sent on every connect and every change, Tauri → sidecar only; the sidecar is … |
+| <a id="cmd-settings.push"></a>`settings.push` | `settings` | `library` | Sent on every connect and every change, shell → sidecar only; the sidecar is … |
 | <a id="cmd-sketches.refresh"></a>`sketches.refresh` | — | [SketchDiscovery](#shape-sketchdiscovery) | Re-run discovery now (Debug Mode's Refresh, and on its mount) (`TASKS.md#sketch-library`). |
 
 ### Ports
@@ -299,7 +299,7 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="shape-controlsetting"></a>ControlSetting | `label`, `state`, `options` | A driven output's one setting in Debug Mode: a PWM line's duty, a tone's … |
 | <a id="shape-detectedboard"></a>DetectedBoard | `hardwareId`, `address`, `fqbn`, `boxId` | A board the out-of-band `arduino-cli board list` poll has seen. |
 | <a id="shape-disksession"></a>DiskSession | `cohortId`, `cohortName`, `prefixName`, `sessionNumber`, `date`, `folderPath`, `recorded` | One session folder found on disk, identified by name alone (`sessions/paths.py`). |
-| <a id="shape-ephymerissettings"></a>EphymerisSettings | `dataDirectory`, `backupDirectory`, `arduinoCliPath`, `defaultBaud`, `boxes`, `intan?`, `recordingDefaults?`, `reducedMotion`, `constellation`, `constellationSlots`, `taskDefaults` | The Tauri-side store's schema; the store is the source of truth (`ARCHITECTURE.md#settings`). |
+| <a id="shape-ephymerissettings"></a>EphymerisSettings | `dataDirectory`, `backupDirectory`, `arduinoCliPath`, `defaultBaud`, `boxes`, `intan?`, `recordingDefaults?`, `reducedMotion`, `constellation`, `constellationSlots`, `taskDefaults` | The shell-side store's schema; the store is the source of truth (`ARCHITECTURE.md#settings`). |
 | <a id="shape-eventpsth"></a>EventPsth | `runPath`, `eventsFile`, `sync`, `events`, `code`, `preMs`, `postMs`, `binMs`, `responseMs`, `split`, `groups`, `sites`, `rasterChannel`, `rasters` | One recorded run's spikes around one named event (`RECORDING.md#event-psth`). |
 | <a id="shape-eventpsthsite"></a>EventPsthSite | `channel`, `counts`, `deltaHz`, `t`, `responsive` |  |
 | <a id="shape-flashboxstatus"></a>FlashBoxStatus | `box`, `job`, `carries` |  |

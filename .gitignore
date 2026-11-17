@@ -13,12 +13,6 @@ dist/
 dist-electron/
 *.local
 
-# Rust / Tauri
-src-tauri/target/
-src-tauri/gen/schemas/
-# Left by older runs of scripts/package-resources.mjs, which now stages into build/
-src-tauri/resources/
-
 # Packaging: resources staged by scripts/package-resources.mjs, and electron-builder's output
 /build/
 /release/

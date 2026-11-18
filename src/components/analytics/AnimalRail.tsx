@@ -9,7 +9,7 @@ import type { AnalyticsSummary } from "@/lib/analytics/types";
 import { chronological, responseAccuracyOf } from "@/lib/analytics/view";
 
 /**
- * The roster, grouped, with each animal's trend (`DATA.md#analytics-views`).
+ * The roster, then its former members, with each animal's trend (`DATA.md#analytics-views`).
  *
  * Doubles as the highlight selector — hover previews, click pins — and every
  * row carries that animal's identity colour, which is the same colour its
@@ -48,23 +48,14 @@ export function AnimalRail({
   const trends = useMemo(() => buildTrends(summary), [summary]);
 
   const grouped = useMemo(() => {
-    const order = new Map(summary.groups.map((g) => [g.id, g.order]));
     const byName = (a: { name: string }, b: { name: string }) =>
       // Numeric-aware, the session summary's rule: remy2 before remy10.
       collator.compare(a.name, b.name);
-    const groups = [...summary.groups]
-      .sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0))
-      .map((group) => ({
-        key: group.id,
-        label: group.name,
-        animals: summary.animals
-          .filter((animal) => !animal.former && animal.groupId === group.id)
-          .sort(byName),
-      }))
-      .filter((entry) => entry.animals.length > 0);
+    const roster = summary.animals.filter((animal) => !animal.former).sort(byName);
+    const groups = roster.length > 0 ? [{ key: "roster", label: "Roster", animals: roster }] : [];
     // Animals taken off the roster whose runs are still here
     // (`DATA.md#former-members`), in a bucket of their own and always labelled:
-    // they belong to no group any more, and the label is what says why.
+    // they are off the roster, and the label is what says why.
     const former = summary.animals.filter((animal) => animal.former).sort(byName);
     return former.length > 0
       ? [...groups, { key: "former", label: "Former members", animals: former }]

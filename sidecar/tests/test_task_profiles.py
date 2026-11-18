@@ -559,6 +559,22 @@ def test_an_odor3_onset_ends_an_unresolved_odor1_trial() -> None:
     assert compute_series(m, [101, 103, 248], boundaries) == []
 
 
+def test_a_metric_reports_its_whole_run_totals() -> None:
+    """Offered, answered and correct, for a live view's progress
+    (`ARCHITECTURE.md#live-session-views`): the window forgets, these do not."""
+    metric_set = MetricSet(parse_profile(GRGL))
+    # Odor 1: a hit, a miss, one the next odor ends unanswered, and one still open.
+    for code in [101, 249, 101, 248, 101, 103, 248, 101]:
+        values = metric_set.offer(code)
+    odor1 = next(v for v in values if v.id == "p_r_odor1")
+    assert (odor1.triggered, odor1.counted, odor1.hits) == (4, 2, 1)
+    assert odor1.to_json() == {
+        "id": "p_r_odor1", "value": 0.5, "n": 2, "triggered": 4, "counted": 2, "hits": 1,
+    }
+    odor3 = next(v for v in values if v.id == "p_l_odor3")
+    assert (odor3.triggered, odor3.counted, odor3.hits) == (1, 1, 1)
+
+
 def test_a_profile_less_metric_set_is_empty() -> None:
     metric_set = MetricSet(None)
     assert metric_set.empty

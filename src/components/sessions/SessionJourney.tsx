@@ -21,15 +21,6 @@ import { springPanel, springSnappy } from "@/lib/motion";
 
 export type JourneyStep = "configure" | "boxes" | "record" | "run" | "finish";
 
-export interface JourneyGroup {
-  name: string;
-  /** Populated groups that have run in this session, the current one
-   *  included — a count, not a position: groups run in whatever order the
-   *  operator picks. */
-  ran: number;
-  count: number;
-}
-
 const STEPS: { id: JourneyStep; label: string }[] = [
   { id: "configure", label: "Configure" },
   { id: "boxes", label: "Boxes" },
@@ -65,13 +56,14 @@ const COMPACT_SCALE = 0.84;
 export function SessionJourney({
   step,
   hint,
-  group,
+  round,
   compact = false,
   recording = false,
 }: {
   step: JourneyStep;
   hint: string;
-  group?: JourneyGroup | null;
+  /** The session's round this step is about, 1-based; named from the second on. */
+  round?: number | null;
   /** Mission Control's rail. See `COMPACT_SCALE`. */
   compact?: boolean;
   /** The session is also an Intan recording, so the rail has a Record star. */
@@ -146,17 +138,15 @@ export function SessionJourney({
 
         {/* Both lines below reserve their space rather than taking it when they
           have something to say. Mission Control mounts this bar before either of
-          its two round trips has landed, so `group` goes absent → present and
+          its two round trips has landed, so the round goes absent → present and
           `hint` changes length within the first second of arriving — and the
           rail is a flex column, so a line appearing or wrapping pushes every
           control under it down. Reserved, the bar simply fills in. */}
         <div className="mt-8 text-center">
           <div
-            className={`font-mono text-[10px] text-static/80 ${group ? "" : "invisible"}`}
+            className={`font-mono text-[10px] text-static/80 ${round && round > 1 ? "" : "invisible"}`}
           >
-            {group
-              ? `${group.name} · ${group.ran}/${group.count} groups run`
-              : " "}
+            {round && round > 1 ? `Round ${round} of this session` : " "}
           </div>
           {/* Two lines' worth at 11px (2 × 16.5px). Every hint currently written
             fits on one line even in the 344px rail, so this is deliberately

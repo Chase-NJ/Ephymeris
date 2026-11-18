@@ -56,8 +56,7 @@ class Archive:
         self.cohort = self.cohorts.create(
             "Batch A",
             str(self.old),
-            groups=[{"id": "g", "name": "G", "order": 0}],
-            animals=[{"id": "a1", "name": "remy1", "groupId": "g", "boxNumber": 2}],
+            animals=[{"id": "a1", "name": "remy1", "boxNumber": 2}],
         )
         folder = self.old / "2O-Bdisc" / SESSION
         prefix = self.sessions.create_prefix("2O-Bdisc")
@@ -126,7 +125,7 @@ class Archive:
         elsewhere = str(self.root / "rhx" / SESSION)
         self.sessions.set_recording(
             self.session_id,
-            {"runs": [{"groupId": "g", "path": str(ephys)}, {"groupId": "h", "path": elsewhere}]},
+            {"runs": [{"path": str(ephys)}, {"path": elsewhere}]},
         )
         # Its impedance CSV, which RHX saved beside the recording.
         csv = ephys / "impedance_20260901T085900Z.csv"
@@ -351,8 +350,8 @@ def test_a_recovered_run_keeps_its_animal_on_a_coarser_volume(
     fine_mtime(*archive.old.rglob("*_110000.*"))
     rescan(archive)  # adopted from the file, with its stat
     archive.cohorts.update(archive.cohort.id, {"animals": [
-        {"id": "a1", "name": "remy-A", "groupId": "g", "boxNumber": 2},
-        {"id": "a2", "name": "remy1", "groupId": "g", "boxNumber": 3},
+        {"id": "a1", "name": "remy-A", "boxNumber": 2},
+        {"id": "a2", "name": "remy1", "boxNumber": 3},
     ]})
 
     relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
@@ -477,8 +476,7 @@ async def test_a_session_cannot_be_set_up_while_the_folder_moves(
     old, new = tmp_path / "data" / "Batch A", tmp_path / "elsewhere" / "Batch A"
     created = await sidecar.call(
         "cohorts.create", name="Batch A", dataFolder=str(old),
-        groups=[{"id": "g1", "name": "Morning", "order": 0}],
-        animals=[animal("remy1", "g1", box=1)],
+        animals=[animal("remy1", box=1)],
     )
     cohort_id = created["cohort"]["id"]
     prefix_id = (await sidecar.call("prefixes.create", name="2O-Bdisc"))["prefix"]["id"]

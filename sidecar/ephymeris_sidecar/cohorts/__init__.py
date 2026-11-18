@@ -1,4 +1,4 @@
-"""Cohort, animal, and group storage — `DATA.md#cohorts-animals-and-groups`.
+"""Cohort and animal storage — `DATA.md#cohorts-and-animals`.
 
 Owned by the sidecar because the storage layer is sidecar-owned throughout this
 project (`DATA.md#sqlite-database`). The database file lives in the app's own

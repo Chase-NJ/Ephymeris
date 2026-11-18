@@ -18,8 +18,7 @@ from pathlib import Path
 import pytest
 
 from ephymeris_sidecar.boards.tool import DetectedBoard
-from ephymeris_sidecar.cohorts.grouping import suggest_groups
-from ephymeris_sidecar.cohorts.models import Animal, Cohort, Group
+from ephymeris_sidecar.cohorts.models import Animal, Cohort
 from ephymeris_sidecar.discovery import (
     LIBRARY_ENV,
     SketchDiscovery,
@@ -36,7 +35,7 @@ from ephymeris_sidecar.protocol import (
     validate_command_result,
     validate_event_data,
 )
-from ephymeris_sidecar.sessions.models import GroupRun, Prefix, Session
+from ephymeris_sidecar.sessions.models import Round, Prefix, Session
 from ephymeris_sidecar.tasks import profile as task_profile
 
 
@@ -92,7 +91,7 @@ def _session() -> Session:
         started_at="2026-07-27T09:00:00+00:00",
         status="running",
         folder_path="/data/Batch A/2O-Bdisc/2O-Bdisc_25_2026-07-27",
-        group_runs=[GroupRun("g1", 0, "2026-07-27T09:00:00+00:00")],
+        rounds=[Round(0, "2026-07-27T09:00:00+00:00")],
     )
 
 
@@ -119,10 +118,9 @@ def _cohort() -> Cohort:
         created_at="2026-07-01T00:00:00+00:00",
         updated_at="2026-07-01T00:00:00+00:00",
         animals=[
-            Animal("a1", "R-14", "g1", box_number=3, cage=2, sex="M"),
-            Animal("a2", "R-15", "g1"),  # every nullable field null
+            Animal("a1", "R-14", box_number=3, cage=2, sex="M"),
+            Animal("a2", "R-15"),  # every nullable field null
         ],
-        groups=[Group("g1", "Group 1", 0)],
     )
 
 
@@ -130,16 +128,6 @@ def test_cohort_payloads_match_schema() -> None:
     cohort = _cohort()
     assert validate(("ref", "Cohort"), cohort.to_json()) == []
     assert validate(("ref", "CohortSummary"), cohort.to_summary()) == []
-
-
-def test_group_proposal_matches_schema() -> None:
-    animals = [Animal(f"a{i}", f"R-{i}", "g1") for i in range(8)]
-    accepted = suggest_groups(animals, group_count=2)
-    assert validate(("ref", "GroupProposal"), accepted.to_json()) == []
-    # One group can't hold eight animals — the rejection arm is a payload too.
-    rejected = suggest_groups(animals, group_count=1)
-    assert rejected.to_json()["rejected"] is not None
-    assert validate(("ref", "GroupProposal"), rejected.to_json()) == []
 
 
 def test_a_metric_with_several_alternates_matches_schema() -> None:
@@ -491,7 +479,7 @@ def test_tidy_plan_json_matches_schema() -> None:
 
     keep = _session()
     other = replace(_session(), id="s2", status="completed")
-    empty = replace(_session(), id="s3", status="aborted", group_runs=[])
+    empty = replace(_session(), id="s3", status="aborted", rounds=[])
     plan = tidy.TidyPlan(
         merges=[tidy.Merge(keep, [other])],
         empty=[tidy.Empty(empty, removes_folder=True)],

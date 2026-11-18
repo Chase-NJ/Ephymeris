@@ -10,7 +10,7 @@ import pytest
 from ephymeris_sidecar.cohorts.db import Database
 from ephymeris_sidecar.cohorts.repository import CohortRepository
 from ephymeris_sidecar.sessions.models import (
-    GroupRun,
+    Round,
     PrefixNameTaken,
     SessionAnimalRun,
     SessionNotFound,
@@ -147,16 +147,13 @@ def test_status_transitions_stamp_ended_at_on_completion(db, repo) -> None:
     assert done.ended_at is not None
 
 
-def test_group_runs_round_trip_as_json(db, repo) -> None:
+def test_rounds_round_trip_as_json(db, repo) -> None:
     cohort = CohortRepository(db).create("C", "/tmp/c")
     p = repo.create_prefix("2O-Bdisc")
     session = repo.create_session(cohort.id, p, "25", "2026-07-22", "/tmp/f")
 
-    saved = repo.set_group_runs(
-        session.id, [GroupRun(group_id="g1", order=0, started_at="t0")]
-    )
-    assert saved.group_runs[0].group_id == "g1"
-    assert saved.group_runs[0].order == 0
+    saved = repo.set_rounds(session.id, [Round(order=0, started_at="t0", label="Morning")])
+    assert (saved.rounds[0].order, saved.rounds[0].label) == (0, "Morning")
 
 
 def test_a_prefix_can_be_deleted_without_touching_its_sessions(db, repo) -> None:

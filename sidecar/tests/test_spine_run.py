@@ -187,7 +187,7 @@ async def run_session(tmp_path: Path, folder: Path, transcript: list[str], monke
         runner = SessionRunner(loop=asyncio.get_running_loop(), ports=bench.ports,
                                broadcast=nothing, on_animal_ended=nothing)
         runner.configure(
-            tmp_path / "session", "SPN-tracer_1", "g1",
+            tmp_path / "session", "SPN-tracer_1",
             [BoxConfig(box=1, animal_id="a1", animal_name="remy1", sketch_path=str(folder),
                        sketch_name=folder.name, start_command=command, config_metadata=config,
                        profile=profile)],

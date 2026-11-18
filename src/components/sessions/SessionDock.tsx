@@ -6,14 +6,14 @@ import { Button } from "@/components/common/controls";
 import { Modal } from "@/components/common/Modal";
 import { errorMessage } from "@/lib/cohorts/commands";
 import { useAllPortStatuses } from "@/lib/hardware/context";
-import { abandonSession, endSession } from "@/lib/sessions/commands";
+import { abandonSession, endSession, resumeSession } from "@/lib/sessions/commands";
 import { useActiveLoaded, useActiveSessions } from "@/lib/sessions/context";
 import { sessionDoor, stepUrl } from "@/lib/sessions/flow";
 import {
   isContinuable,
   localToday,
+  type RunnerSession,
   type Session,
-  type SessionSnapshot,
 } from "@/lib/sessions/types";
 import { useSessionFlow } from "@/lib/sessions/useSessionFlow";
 import { useSetupResume } from "@/lib/sessions/setupResume";
@@ -34,10 +34,10 @@ import { useSidecar } from "@/lib/ws/context";
  * the Dashboard's no-spinner rule.
  *
  * Crash-orphaned sessions (`stale`) keep their data on disk via the write-ahead
- * `.tsv`. Resuming a group mid-run after a restart is out of scope by decision,
- * but a same-day one can be continued WITH ANOTHER GROUP — the usual story is
- * the app closed between groups — through the group step
- * (`ARCHITECTURE.md#group-step`). Close Out marks one completed as it stands.
+ * `.tsv`. Resuming a round mid-run after a restart is out of scope by decision,
+ * but a same-day one can be continued WITH ANOTHER ROUND — the usual story is
+ * the app closed between rounds — which re-holds it and opens the Boxes step
+ * (`ARCHITECTURE.md#between-rounds`). Close Out marks one completed as it stands.
  */
 export function SessionDock() {
   const navigate = useNavigate();
@@ -77,15 +77,10 @@ export function SessionDock() {
     }
   }
 
-  /** Step 2 needs `?group=` and the record doesn't carry one, so the way back
-   *  in is the group step — the same choice Step 1 offered — unless this app
-   *  remembers the step the set-up was left on (`setupResume.ts`). */
+  /** Back into a set-up at the Boxes step, or at the step this app remembers
+   *  it was left on (`setupResume.ts`). */
   function resumeSetup(session: Session) {
-    navigate(
-      resume?.sessionId === session.id
-        ? resume.url
-        : stepUrl.group(session.id),
-    );
+    navigate(resume?.sessionId === session.id ? resume.url : stepUrl.boxes(session.id));
   }
 
   const today = localToday();
@@ -146,7 +141,7 @@ export function SessionDock() {
           >
             Ended unexpectedly
             <span className="ml-2 font-sans text-[11px] font-normal text-static">
-              recorded data is safe on disk; today&apos;s can continue with another group
+              recorded data is safe on disk; today&apos;s can continue with another round
             </span>
           </h2>
           <div className="mt-2 flex flex-col gap-2">
@@ -157,10 +152,13 @@ export function SessionDock() {
                     variant="primary"
                     disabled={busy || !connected}
                     onClick={() =>
-                      navigate(stepUrl.group(session.id))
+                      void run(async () => {
+                        await resumeSession(client, session.id);
+                        navigate(stepUrl.boxes(session.id));
+                      })
                     }
                   >
-                    Continue with another group
+                    Run more animals
                   </Button>
                 )}
                 <Button
@@ -266,21 +264,19 @@ function RunningCard({
   onOpen,
   onEnd,
 }: {
-  snapshot: SessionSnapshot;
+  snapshot: RunnerSession;
   busy: boolean;
   onOpen: () => void;
   onEnd: () => void;
 }) {
   const portStates = useAllPortStatuses();
 
-  const { session, groupId, boxes } = snapshot;
+  const { session, boxes } = snapshot;
   // The lifecycle snapshot above is not re-sent when a box finishes, so its
   // per-box `ended` goes stale; the flow re-asks on each finished run, and a
-  // reload over finished boxes still counts them. The group's display name lives on the cohort; it degrades to nothing
-  // if that fetch fails — the raw id would only be noise to a lab user.
-  const { cohort, flow } = useSessionFlow(session.id);
+  // reload over finished boxes still counts them.
+  const { flow } = useSessionFlow(session.id);
   const endedCount = flow.progress.ended;
-  const groupName = (groupId && cohort?.groups.find((g) => g.id === groupId)?.name) || null;
 
   const runningCount = boxes.filter(
     (b) => portStates[b.box]?.state === "IN_SESSION",
@@ -297,20 +293,20 @@ function RunningCard({
           <h2 className="font-mono text-[14px] text-starlight">{sessionName(session)}</h2>
         </div>
         <p className="font-mono text-[11px] text-static">
-          {groupId ? (
+          {boxes.length > 0 ? (
             <>
               {runningCount} of {boxes.length} boxes recording
               {endedCount > 0 && ` · ${endedCount} finished`}
             </>
           ) : (
-            "between groups"
+            "between rounds"
           )}
         </p>
       </div>
       <p className="mt-1 font-mono text-[11px] text-static">
         {session.date}
         {` · started ${clock24(new Date(session.startedAt))}`}
-        {groupName && ` · ${groupName}`}
+        {` · round ${flow.round}`}
       </p>
 
       {boxes.length > 0 && (
@@ -340,7 +336,7 @@ function RunningCard({
 
       <div className="mt-4 flex items-center gap-2">
         <Button variant="primary" disabled={busy} onClick={onOpen}>
-          {groupId ? "Open Mission Control" : "Choose next group"}
+          {boxes.length > 0 ? "Open Mission Control" : "Set up next round"}
           <ArrowRight size={13} strokeWidth={2} />
         </Button>
         <Button variant="ghost" disabled={busy} onClick={onEnd}>

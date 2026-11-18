@@ -20,7 +20,7 @@ function session(id: string): Session {
     clockEndedAt: null,
     status: "configuring",
     folderPath: `/data/c1/${id}`,
-    groupRuns: [],
+    rounds: [],
     durationMinutes: null,
     recording: null,
   };
@@ -65,16 +65,15 @@ function mapped(
 }
 
 /**
- * Session `s` holds the rig with `group` mapped onto these boxes, after the
- * sidecar has confirmed `confirmations` mappings.
+ * Session `s` holds the rig with a round mapped onto these boxes (none between
+ * rounds), after the sidecar has confirmed `confirmations` mappings.
  */
 function holding(
   confirmations: number,
-  group: string | null,
   ...boxes: SessionBox[]
 ): ActiveSessions {
   return {
-    running: { session: session("s"), groupId: group, boxes },
+    running: { session: session("s"), boxes },
     configuring: [],
     stale: [],
     confirmations,
@@ -87,7 +86,7 @@ function finishedRun(sidecar: FakeSidecar, box: number) {
   sidecar.emit(EVT.SESSION_TELEMETRY, {
     box,
     animalId: `a${box}`,
-    metrics: [{ id: "accuracy", value: 0.5, n: 1 }],
+    metrics: [{ id: "accuracy", value: 0.5, n: 1, triggered: 1, counted: 1, hits: 1 }],
   });
   sidecar.emit(EVT.SIDECAR_ERROR, { code: "WRITE_FAILED", message: "disk full", detail: { box } });
   sidecar.emit(EVT.SESSION_ANIMAL_ENDED, {
@@ -206,10 +205,42 @@ describe("live strobes", () => {
   });
 });
 
+describe("a box's progress", () => {
+  const totals = (triggered: number, counted: number, hits: number) => [
+    { id: "accuracy", value: counted ? hits / counted : null, n: counted, triggered, counted, hits },
+  ];
+
+  it("keeps the run's totals each time they move, and forgets them when the box starts again", () => {
+    const { sidecar, store } = attached();
+    sidecar.emit(EVT.SESSION_TELEMETRY, { box: 4, animalId: "a1", metrics: totals(1, 0, 0) });
+    sidecar.emit(EVT.SESSION_TELEMETRY, { box: 4, animalId: "a1", metrics: totals(1, 1, 1) });
+    // A strobe that ended no trial repeats the totals, and adds nothing.
+    sidecar.emit(EVT.SESSION_TELEMETRY, { box: 4, animalId: "a1", metrics: totals(1, 1, 1) });
+
+    expect(store.getProgress(4)).toEqual([
+      { offered: 1, completed: 0, correct: 0 },
+      { offered: 1, completed: 1, correct: 1 },
+    ]);
+    expect(store.getProgress(5)).toEqual([]);
+
+    sidecar.emit(EVT.PORT_STATE, { box: 4, state: "IN_SESSION", prev: "IDLE", reason: "start" });
+    expect(store.getProgress(4)).toEqual([]);
+  });
+
+  it("tells a subscriber only when the totals moved", () => {
+    const { sidecar, store } = attached();
+    let told = 0;
+    store.subscribe("progress:4", () => (told += 1));
+    sidecar.emit(EVT.SESSION_TELEMETRY, { box: 4, animalId: "a1", metrics: totals(1, 1, 1) });
+    sidecar.emit(EVT.SESSION_TELEMETRY, { box: 4, animalId: "a1", metrics: totals(1, 1, 1) });
+    expect(told).toBe(1);
+  });
+});
+
 describe("telemetry", () => {
   it("keeps the latest metrics and a history that skips missing values", () => {
     const { sidecar, store } = attached();
-    const metric = (value: number | null) => [{ id: "accuracy", value, n: 1 }];
+    const metric = (value: number | null) => [{ id: "accuracy", value, n: 1, triggered: 1, counted: 1, hits: 1 }];
     sidecar.emit(EVT.SESSION_TELEMETRY, { box: 4, animalId: "a1", metrics: metric(0.5) });
     sidecar.emit(EVT.SESSION_TELEMETRY, { box: 4, animalId: "a1", metrics: metric(null) });
     sidecar.emit(EVT.SESSION_TELEMETRY, { box: 4, animalId: "a1", metrics: metric(0.75) });
@@ -231,7 +262,7 @@ describe("telemetry", () => {
 // (`ARCHITECTURE.md#replay-on-connect`). That replay is what the store already
 // holds, so it must not draw a second point.
 describe("a Debug run across a reconnect", () => {
-  const metric = (value: number, n = 1) => [{ id: "accuracy", value, n }];
+  const metric = (value: number, n = 1) => [{ id: "accuracy", value, n, triggered: n, counted: n, hits: n }];
   const debug = (box: number, value: number, n = 1, running = true) => ({
     box,
     running,
@@ -342,7 +373,7 @@ describe("a Debug run across a reconnect", () => {
 // The replay sends a payload only for runs still armed, so a run that ended
 // while the webview was away is known over once the replay is (#189).
 describe("a Debug run that ended while disconnected", () => {
-  const metric = (value: number) => [{ id: "accuracy", value, n: 1 }];
+  const metric = (value: number) => [{ id: "accuracy", value, n: 1, triggered: 1, counted: 1, hits: 1 }];
   const debug = (box: number, value: number) => ({ box, running: true, metrics: metric(value) });
   function reconnect(sidecar: FakeSidecar) {
     sidecar.setStatus("reconnecting");
@@ -454,7 +485,7 @@ describe("a new run clears the last one", () => {
     sidecar.emit(EVT.PORT_TELEMETRY, {
       box: 3,
       running: false,
-      metrics: [{ id: "accuracy", value: 0.5, n: 1 }],
+      metrics: [{ id: "accuracy", value: 0.5, n: 1, triggered: 1, counted: 1, hits: 1 }],
     });
 
     // The Debug console's Send START, refused: the board never heard it.
@@ -481,7 +512,7 @@ describe("a new run clears the last one", () => {
     sidecar.emit(EVT.PORT_TELEMETRY, {
       box: 3,
       running: true,
-      metrics: [{ id: "accuracy", value: 1, n: 1 }],
+      metrics: [{ id: "accuracy", value: 1, n: 1, triggered: 1, counted: 1, hits: 1 }],
     });
     expect(store.getStrobes(3)).toEqual([{ code: "12", at: 9 }]);
     expect(store.getHistory(3, "accuracy")).toEqual([1]);
@@ -489,11 +520,11 @@ describe("a new run clears the last one", () => {
 
   it("clears every box when a newly confirmed mapping is broadcast", () => {
     const { sidecar, store } = attached();
-    sidecar.emit(EVT.SESSION_LIFECYCLE, holding(1, null));
+    sidecar.emit(EVT.SESSION_LIFECYCLE, holding(1));
     finishedRun(sidecar, 1);
     finishedRun(sidecar, 5);
 
-    sidecar.emit(EVT.SESSION_LIFECYCLE, holding(2, "g2", mapped(1), mapped(2)));
+    sidecar.emit(EVT.SESSION_LIFECYCLE, holding(2, mapped(1), mapped(2)));
 
     // Box 5 is not in the new mapping and must not linger either.
     expect(shows(store, 1)).toEqual(NOTHING);
@@ -502,65 +533,65 @@ describe("a new run clears the last one", () => {
 
   it("keeps the run through broadcasts that only move it on", () => {
     const { sidecar, store } = attached();
-    sidecar.emit(EVT.SESSION_LIFECYCLE, holding(1, "g", mapped(1), mapped(2)));
+    sidecar.emit(EVT.SESSION_LIFECYCLE, holding(1, mapped(1), mapped(2)));
     sidecar.emit(EVT.PORT_STATE, portState(1, "IN_SESSION", "IDLE"));
     finishedRun(sidecar, 1);
 
-    // Start All, then box 1 finishing, then the group ending.
+    // Start All, then box 1 finishing, then the round ending.
     sidecar.emit(
       EVT.SESSION_LIFECYCLE,
-      holding(1, "g", mapped(1, { running: true, startedAt: "t" }), mapped(2, { running: true, startedAt: "t" })),
+      holding(1, mapped(1, { running: true, startedAt: "t" }), mapped(2, { running: true, startedAt: "t" })),
     );
     sidecar.emit(EVT.PORT_STATE, portState(1, "IDLE", "IN_SESSION"));
     sidecar.emit(
       EVT.SESSION_LIFECYCLE,
-      holding(1, "g", mapped(1, { ended: true }), mapped(2, { running: true, startedAt: "t" })),
+      holding(1, mapped(1, { ended: true }), mapped(2, { running: true, startedAt: "t" })),
     );
-    sidecar.emit(EVT.SESSION_LIFECYCLE, holding(1, null));
+    sidecar.emit(EVT.SESSION_LIFECYCLE, holding(1));
 
     expect(shows(store, 1)).toEqual(ALL_OF_IT);
   });
 
   it("keeps a Debug run through an announce that confirmed nothing", () => {
     const { sidecar, store } = attached();
-    sidecar.emit(EVT.SESSION_LIFECYCLE, holding(1, "g", mapped(1)));
+    sidecar.emit(EVT.SESSION_LIFECYCLE, holding(1, mapped(1)));
     sidecar.emit(EVT.PORT_TELEMETRY, { box: 6, running: true, metrics: [] });
     sidecar.emit(EVT.PORT_OUTPUT, output(6, ["rx", "11\t5"]));
 
     // An unrelated announce (a session created, a tidy) while the mapping waits.
-    sidecar.emit(EVT.SESSION_LIFECYCLE, holding(1, "g", mapped(1)));
+    sidecar.emit(EVT.SESSION_LIFECYCLE, holding(1, mapped(1)));
 
     expect(store.getStrobes(6)).toHaveLength(1);
   });
 
   it("clears a re-confirm of the same mapping after a box ran, though the broadcast repeats", () => {
-    // Confirming the same group again with nothing announced in between (a
-    // per-box start of a later group does not announce, nor does a run
+    // Confirming the same round again with nothing announced in between (a
+    // per-box start of a later round does not announce, nor does a run
     // ending) repeats the last broadcast exactly, all but its count.
     const { sidecar, store } = attached();
-    sidecar.emit(EVT.SESSION_LIFECYCLE, holding(1, "g2", mapped(1), mapped(2)));
+    sidecar.emit(EVT.SESSION_LIFECYCLE, holding(1, mapped(1), mapped(2)));
     sidecar.emit(EVT.PORT_STATE, portState(1, "IN_SESSION", "IDLE"));
     finishedRun(sidecar, 1);
     sidecar.emit(EVT.PORT_STATE, portState(1, "IDLE", "IN_SESSION"));
 
     // Back to Boxes after box 2's start was refused, and confirm again.
-    sidecar.emit(EVT.SESSION_LIFECYCLE, holding(2, "g2", mapped(1), mapped(2)));
+    sidecar.emit(EVT.SESSION_LIFECYCLE, holding(2, mapped(1), mapped(2)));
 
     expect(shows(store, 1)).toEqual(NOTHING);
   });
 
   it("clears a mapped box's Debug run when the same mapping is confirmed again", () => {
     const { sidecar, store } = attached();
-    sidecar.emit(EVT.SESSION_LIFECYCLE, holding(1, "g", mapped(1)));
+    sidecar.emit(EVT.SESSION_LIFECYCLE, holding(1, mapped(1)));
     // Bench-tested from Debug Mode between the two confirmations.
     sidecar.emit(EVT.PORT_TELEMETRY, {
       box: 1,
       running: true,
-      metrics: [{ id: "accuracy", value: 0.5, n: 1 }],
+      metrics: [{ id: "accuracy", value: 0.5, n: 1, triggered: 1, counted: 1, hits: 1 }],
     });
     sidecar.emit(EVT.PORT_OUTPUT, output(1, ["rx", "11\t5"]));
 
-    sidecar.emit(EVT.SESSION_LIFECYCLE, holding(2, "g", mapped(1)));
+    sidecar.emit(EVT.SESSION_LIFECYCLE, holding(2, mapped(1)));
 
     expect(store.getStrobes(1)).toEqual([]);
     expect(store.getTelemetry(1)).toEqual([]);
@@ -572,31 +603,31 @@ describe("a new run clears the last one", () => {
     sidecar.emit(EVT.PORT_TELEMETRY, { box: 6, running: true, metrics: [] });
     sidecar.emit(EVT.PORT_OUTPUT, output(6, ["rx", "11\t5"]));
 
-    await sidecar.reply(CMD.SESSIONS_ACTIVE, holding(3, "g", mapped(1)));
+    await sidecar.reply(CMD.SESSIONS_ACTIVE, holding(3, mapped(1)));
 
     expect(store.getStrobes(6)).toHaveLength(1);
   });
 
   it("keeps the run when a reconnect's answer shows no new confirmation", async () => {
     const { sidecar, store } = attached("connected");
-    await sidecar.reply(CMD.SESSIONS_ACTIVE, holding(1, "g", mapped(1)));
+    await sidecar.reply(CMD.SESSIONS_ACTIVE, holding(1, mapped(1)));
     finishedRun(sidecar, 1);
 
     sidecar.setStatus("reconnecting");
     sidecar.setStatus("connected");
-    await sidecar.reply(CMD.SESSIONS_ACTIVE, holding(1, "g", mapped(1)));
+    await sidecar.reply(CMD.SESSIONS_ACTIVE, holding(1, mapped(1)));
 
     expect(shows(store, 1)).toEqual(ALL_OF_IT);
   });
 
   it("clears the run when a reconnect's answer shows a confirmation made while away", async () => {
     const { sidecar, store } = attached("connected");
-    await sidecar.reply(CMD.SESSIONS_ACTIVE, holding(1, "g", mapped(1)));
+    await sidecar.reply(CMD.SESSIONS_ACTIVE, holding(1, mapped(1)));
     finishedRun(sidecar, 1);
 
     sidecar.setStatus("reconnecting");
     sidecar.setStatus("connected");
-    await sidecar.reply(CMD.SESSIONS_ACTIVE, holding(2, "g", mapped(1)));
+    await sidecar.reply(CMD.SESSIONS_ACTIVE, holding(2, mapped(1)));
 
     expect(shows(store, 1)).toEqual(NOTHING);
   });

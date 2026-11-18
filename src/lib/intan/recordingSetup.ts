@@ -326,7 +326,7 @@ export function configurePayload(
 /**
  * What a confirmed Record step leaves as the next one's starting point — not
  * the save directory (it is per session) and not the boxes list (it is per
- * group), but each box's port and range under the box, behavior-only boxes
+ * round), but each box's port and range under the box, behavior-only boxes
  * included, and each row's probe map under its animal. `probeMaps` is what was
  * remembered before: an animal not on the form keeps its entry, and one whose
  * row has no probe map forgets it.

@@ -124,7 +124,7 @@ async def test_each_box_s_sites_are_kept_under_its_animal_and_compared(app, rhx:
     await _confirm_box_1(app, session_id, cohort)
     rat1 = next(a["id"] for a in cohort["animals"] if a["name"] == "rat1")
     box_1 = [{"box": 1, "port": "A", "firstChannel": 0, "lastChannel": 3}]
-    args = dict(sessionId=session_id, groupId="g1", saveDirectory=str(tmp_path / "ephys"), boxes=box_1)
+    args = dict(sessionId=session_id, saveDirectory=str(tmp_path / "ephys"), boxes=box_1)
 
     first = (await dispatch(app, "intan.measureImpedance", **args))["measurements"]
     assert list(first) == [rat1]
@@ -149,7 +149,7 @@ async def test_a_box_the_mapping_lacks_is_refused_before_rhx_measures(app, rhx: 
     await _confirm_box_1(app, session_id, cohort)
     with pytest.raises(Refused) as refused:
         await dispatch(
-            app, "intan.measureImpedance", sessionId=session_id, groupId="g1",
+            app, "intan.measureImpedance", sessionId=session_id,
             saveDirectory=str(tmp_path / "ephys"),
             boxes=[{"box": 3, "port": "A", "firstChannel": 16, "lastChannel": 31}],
         )

@@ -403,28 +403,20 @@ SHAPES = (
         ),
         doc="What `backup.syncNow` did.",
     ),
-    # Cohorts (DATA.md#cohorts-animals-and-groups)
+    # Cohorts (DATA.md#cohorts-and-animals)
     Shape("Sex", lit("M", "F", "unknown")),
-    Shape(
-        "Group",
-        obj(
-            f("id", STR),
-            f("name", STR),
-            f(
-                "order",
-                INT,
-                doc="Display order of the cohort's groups. Not a run order: "
-                "any group may run at any time, and more than once.",
-            ),
-        ),
-    ),
     Shape(
         "Animal",
         obj(
             f("id", STR),
             f("name", STR),
-            f("groupId", STR, doc="Exactly one group."),
-            f("boxNumber", nullable(INT), doc="Abstract slot 1–6, never a live port."),
+            f(
+                "boxNumber",
+                nullable(INT),
+                doc="The usual box, 1–6: what session set-up offers first for "
+                "this animal, and nothing more. Animals may share one; the box "
+                "a run used is `RunSummary.boxNumber`.",
+            ),
             f(
                 "cage",
                 nullable(INT),
@@ -469,10 +461,9 @@ SHAPES = (
                 "dataFolder",
                 STR,
                 doc="Resolved once at creation and persisted verbatim; renaming the "
-                "cohort never moves it (`DATA.md#cohorts-animals-and-groups`).",
+                "cohort never moves it (`DATA.md#cohorts-and-animals`).",
             ),
             f("animals", ListOf(Ref("Animal")), doc="The roster: active members only."),
-            f("groups", ListOf(Ref("Group")), doc="Always ≥ 1 — a default group always exists."),
             f("archivedAt", nullable(STR)),
             f("createdAt", STR),
             f("updatedAt", STR),
@@ -516,12 +507,6 @@ SHAPES = (
             f("idNumber", nullable(STR)),
             f("cage", nullable(INT)),
             f("notes", nullable(STR)),
-            f(
-                "groupName",
-                nullable(STR),
-                doc="The group it was in, by name — groups are rewritten on "
-                "every roster edit, so an id would not survive.",
-            ),
         ),
         doc="An animal with history in a cohort but no place on its roster "
         "(`DATA.md#former-members`).",
@@ -532,7 +517,6 @@ SHAPES = (
             f("id", STR),
             f("name", STR),
             f("animalCount", INT),
-            f("groupCount", INT),
             f(
                 "assignedBoxes",
                 ListOf(INT),
@@ -564,7 +548,6 @@ SHAPES = (
         obj(
             f("name", STR, optional=True),
             f("animals", ListOf(Ref("Animal")), optional=True, doc="Replaced wholesale."),
-            f("groups", ListOf(Ref("Group")), optional=True, doc="Replaced wholesale."),
             f(
                 "appearance",
                 nullable(Ref("CohortAppearance")),
@@ -574,52 +557,24 @@ SHAPES = (
             ),
         ),
     ),
-    Shape(
-        "ProposedAnimal",
-        obj(f("animalId", STR), f("boxNumber", INT)),
-    ),
-    Shape(
-        "ProposedGroup",
-        obj(f("name", STR), f("order", INT), f("animals", ListOf(Ref("ProposedAnimal")))),
-    ),
-    Shape(
-        "GroupRejection",
-        obj(
-            f("reason", STR),
-            f("minimumGroups", INT, doc="The minimum viable count, so the user can accept it."),
-        ),
-    ),
-    Shape(
-        "GroupProposal",
-        obj(
-            f("groups", ListOf(Ref("ProposedGroup"))),
-            f(
-                "rejected",
-                nullable(Ref("GroupRejection")),
-                doc="Set when the request would break the six-animals-per-group "
-                "hard constraint (one box each). Guidance rather than a failure, "
-                "so not an error reply: `minimumGroups` is the smallest viable "
-                "count, which the user can accept.",
-            ),
-        ),
-        doc="An Auto-Balance preview. Nothing is written; apply via cohorts.update.",
-    ),
     # Prefixes, sessions, Task Profiles (DATA.md#sessions-and-runs)
     Shape("Prefix", obj(f("id", STR), f("name", STR)), doc="Global — shared across cohorts."),
     Shape("SessionStatus", lit("configuring", "running", "completed", "aborted")),
     Shape(
-        "GroupRun",
+        "Round",
         obj(
-            f("groupId", STR),
+            f("order", INT, doc="0-based position in the session's sequence of rounds."),
+            f("startedAt", STR, doc="When its first box started."),
+            f("endedAt", nullable(STR), doc="Null while the round is open."),
             f(
-                "order",
-                INT,
-                doc="0-based position in the session's run sequence. A group "
-                "may appear more than once.",
+                "label",
+                nullable(STR),
+                doc="Set only on a round recorded before rounds existed: the "
+                "name of the group that ran. Null on every round recorded since.",
             ),
-            f("startedAt", STR),
-            f("endedAt", nullable(STR)),
         ),
+        doc="One set of animals run together in a session (`GLOSSARY.md#round`). "
+        "Which animals, in which boxes, is on the session's run records.",
     ),
     Shape(
         "Session",
@@ -635,15 +590,15 @@ SHAPES = (
             f(
                 "clockStartedAt",
                 STR,
-                doc="When the session actually began running: the first group "
-                "run's start, or `startedAt` before any group ran "
+                doc="When the session actually began running: the first "
+                "round's start, or `startedAt` before any round ran "
                 "(`DATA.md#the-session-clock`). `startedAt` is when Step 1 "
                 "created the record. Elapsed time and note offsets count from this.",
             ),
             f(
                 "clockEndedAt",
                 nullable(STR),
-                doc="The last group run's end once every run is closed, else "
+                doc="The last round's end once every round is closed, else "
                 "`endedAt`; null while the session is open. For a session "
                 "recovered from files, the latest run's start plus its stream's "
                 "span, once the index has read the files "
@@ -651,7 +606,7 @@ SHAPES = (
             ),
             f("status", Ref("SessionStatus")),
             f("folderPath", STR),
-            f("groupRuns", ListOf(Ref("GroupRun"))),
+            f("rounds", ListOf(Ref("Round"))),
             f(
                 "durationMinutes",
                 nullable(INT),
@@ -662,7 +617,7 @@ SHAPES = (
                 "recording",
                 nullable(Ref("SessionRecording")),
                 doc="Set when the session is also an Intan recording "
-                "(`RECORDING.md#what-is-written`): one entry per group run "
+                "(`RECORDING.md#what-is-written`): one entry per round "
                 "recorded. Null = behavior only.",
             ),
         ),
@@ -914,10 +869,10 @@ SHAPES = (
             f(
                 "ended",
                 BOOL,
-                doc="This box's run in the group on the rig has finished and been "
+                doc="This box's run in the round on the rig has finished and been "
                 "recorded, and the box has not been started again. Cleared by a "
                 "new mapping and by the box's next start. What lets a reloaded "
-                "Mission Control tell a finished group from one never started "
+                "Mission Control tell a finished round from one never started "
                 "(`ARCHITECTURE.md#running-boxes`).",
             ),
         ),
@@ -929,7 +884,22 @@ SHAPES = (
             f("id", STR),
             f("value", nullable(FLOAT), doc="P(hit) over the rolling window; null until a trial counts."),
             f("n", INT, doc="Counted (hit-or-miss) trials in the window — a window length, not a trial count."),
+            f(
+                "triggered",
+                INT,
+                doc="Trials of this condition offered so far in the run: every "
+                "arrival of its trigger, the open trial included.",
+            ),
+            f(
+                "counted",
+                INT,
+                doc="Those that ended as a hit or a miss. `triggered` minus "
+                "this is the trials with no scored response, and the one open.",
+            ),
+            f("hits", INT, doc="Hits among `counted`: `hits / counted` is whole-run P(hit)."),
         ),
+        doc="One live metric: its rolling value, and its whole-run totals "
+        "(`ARCHITECTURE.md#live-session-views`). The totals only grow within a run.",
     ),
     Shape(
         "BoxTelemetry",
@@ -1038,14 +1008,13 @@ SHAPES = (
         obj(
             f("session", Ref("Session")),
             f(
-                "groupId",
-                nullable(STR),
-                doc="Null when the runner holds no group — before a mapping is "
-                "confirmed, and between groups.",
+                "boxes",
+                ListOf(Ref("SessionBox")),
+                doc="The round on the rig. Empty when the runner holds no "
+                "mapping: before one is confirmed, and between rounds.",
             ),
-            f("boxes", ListOf(Ref("SessionBox"))),
         ),
-        doc="The runner-held session — the same shape a sessions.status reply carries.",
+        doc="The runner-held session: the session and boxes of a `sessions.status` reply.",
     ),
     Shape(
         "ActiveSessions",
@@ -1055,7 +1024,7 @@ SHAPES = (
                 nullable(Ref("RunnerSession")),
                 doc="Keyed off the live runner, never a bare DB status query — a "
                 "'running' row with no live runner is a crash orphan. A held session "
-                "with `groupId: null` and no boxes is BETWEEN GROUPS, awaiting a choice.",
+                "with no boxes is BETWEEN ROUNDS, awaiting the next mapping or an end.",
             ),
             f(
                 "configuring",
@@ -1067,7 +1036,7 @@ SHAPES = (
                 ListOf(Ref("Session")),
                 doc="DB says 'running' but no runner holds them — a crash or a closed "
                 "app. The .tsv on disk is the record; a same-day one can be continued "
-                "with another group (`sessions.resume`), never mid-group.",
+                "with another round (`sessions.resume`), never mid-round.",
             ),
             f(
                 "confirmations",
@@ -1075,7 +1044,7 @@ SHAPES = (
                 doc="How many mappings `sessions.confirmMapping` has confirmed since "
                 "the sidecar started. Nothing else in this payload is guaranteed to "
                 "change when the same mapping is confirmed again, so this is how a "
-                "client learns a new group run is set up: a value it has not seen "
+                "client learns a new round is set up: a value it has not seen "
                 "means clear every box's live run "
                 "(`ARCHITECTURE.md#live-session-views`). Per process, not persisted.",
             ),
@@ -1097,15 +1066,15 @@ SHAPES = (
             f(
                 "clockStartedAt",
                 STR,
-                doc="When the session actually began running: the first group "
-                "run's start, or `startedAt` before any group ran "
+                doc="When the session actually began running: the first "
+                "round's start, or `startedAt` before any round ran "
                 "(`DATA.md#the-session-clock`). `startedAt` is when Step 1 "
                 "created the record. Elapsed time and note offsets count from this.",
             ),
             f(
                 "clockEndedAt",
                 nullable(STR),
-                doc="The last group run's end once every run is closed, else "
+                doc="The last round's end once every round is closed, else "
                 "`endedAt`; null while the session is open. For a session "
                 "recovered from files, the latest run's start plus its stream's "
                 "span, once the index has read the files "
@@ -1121,10 +1090,10 @@ SHAPES = (
             ),
             f("runCount", INT, optional=True),
             f(
-                "groupRuns",
-                ListOf(Ref("GroupRun")),
-                doc="Which groups ran, so Step 1 can offer to continue one of "
-                "today's sessions with another group (`sessions.resume`).",
+                "rounds",
+                ListOf(Ref("Round")),
+                doc="The rounds it ran, so Step 1 can offer to continue one of "
+                "today's sessions with another (`sessions.resume`).",
             ),
         ),
         doc="One session, from sessions.list or inside a summary.",
@@ -1553,15 +1522,14 @@ SHAPES = (
         obj(
             f("id", STR),
             f("name", STR),
-            f("groupId", STR),
-            f("boxNumber", nullable(INT)),
+            f("boxNumber", nullable(INT), doc="The usual box, same field as Animal.boxNumber."),
             f("cage", nullable(INT), doc="Home-cage number, same field as Animal.cage."),
             f(
                 "former",
                 BOOL,
                 doc="A former member (`DATA.md#former-members`), listed after "
                 "the roster and only when it has runs in this summary. Its "
-                "`groupId` is empty and `boxNumber` null.",
+                "`boxNumber` is null.",
             ),
         ),
     ),
@@ -1625,7 +1593,6 @@ SHAPES = (
             ),
             f("sessions", ListOf(Ref("SessionListItem"))),
             f("animals", ListOf(Ref("AnalyticsAnimal"))),
-            f("groups", ListOf(Ref("Group"))),
             f(
                 "runs",
                 ListOf(Ref("RunSummary")),
@@ -2030,7 +1997,12 @@ SHAPES = (
                 doc="Recorded runs plus recovered files attributed to it. On an "
                 "applied merge's `keep`, the merged day's total.",
             ),
-            f("groupIds", ListOf(STR), doc="Its group runs, in order; a group may repeat."),
+            f(
+                "roundLabels",
+                ListOf(nullable(STR)),
+                doc="One entry per round, in order: `Round.label`, null on "
+                "every round recorded since groups were removed.",
+            ),
         ),
         doc="One session record as the tidy preview names it "
         "(`DATA.md#reading-the-archive`).",
@@ -3052,7 +3024,13 @@ SHAPES = (
     Shape(
         "RecordingRun",
         obj(
-            f("groupId", STR),
+            f(
+                "label",
+                nullable(STR),
+                optional=True,
+                doc="Present only on a recording made before rounds existed: "
+                "the name of the group recorded, as `Round.label`.",
+            ),
             f("path", STR, doc="The directory handed to RHX as `Filename.Path`."),
             f("baseFilename", STR),
             f(
@@ -3067,8 +3045,8 @@ SHAPES = (
             f("endedAt", nullable(STR)),
             f("boxes", ListOf(Ref("RecordingBox"))),
         ),
-        doc="One group run's recording. A session records once per group, "
-        "because the animals — and so the ports and probes — change between groups.",
+        doc="One round's recording. A session records once per round, "
+        "because the animals — and so the ports and probes — change between rounds.",
     ),
     Shape("SessionRecording", obj(f("runs", ListOf(Ref("RecordingRun"))))),
     Shape(
@@ -3661,8 +3639,8 @@ COMMANDS = (
         "`FIRMWARE_OUTDATED`) arrives as a `sidecar.error` event for the box, "
         "with `START` never sent and the port in `ERROR`. On a "
         "recording session RHX recording begins first and an `INTAN_*` "
-        "refusal comes before the box starts. Opens the group's run and marks "
-        "the session `running` if this is the group's first box. "
+        "refusal comes before the box starts. Opens the round and marks "
+        "the session `running` if this is the round's first box. "
         "`SESSION_INVALID` for a box with no confirmed mapping, and, with "
         "`detail.boxes`, for a box whose board does not carry its mapped "
         "sketch's current build (`ARCHITECTURE.md#what-a-board-carries`); "
@@ -4013,7 +3991,7 @@ COMMANDS = (
                 optional=True,
                 doc="An explicit folder wins. Omitted, it is derived from the "
                 "configured `dataDirectory` and the name, suffixed until unused "
-                "(`DATA.md#cohorts-animals-and-groups`).",
+                "(`DATA.md#cohorts-and-animals`).",
             ),
             f(
                 "animals",
@@ -4021,15 +3999,9 @@ COMMANDS = (
                 optional=True,
                 doc="The roster to create the cohort with, so the editor's "
                 "Create is one call rather than a create plus a patch that "
-                "could fail on its own and leave a named, empty cohort.",
-            ),
-            f(
-                "groups",
-                ListOf(Ref("Group")),
-                optional=True,
-                doc="Replaces the default group the create would otherwise "
-                "mint. Validated together with `animals`, before the data "
-                "folder is made — a rejected roster leaves nothing behind.",
+                "could fail on its own and leave a named, empty cohort. Validated "
+                "before the data folder is made — a rejected roster leaves "
+                "nothing behind.",
             ),
         ),
         result=_COHORT,
@@ -4042,9 +4014,7 @@ COMMANDS = (
         "cohorts.update",
         args=obj(f("id", STR), f("patch", Ref("CohortPatch"))),
         result=_COHORT,
-        doc="Patch name, roster, groups or appearance. Also the commit path "
-        "for an Auto-Balance preview from `cohorts.suggestGroups` — there is no "
-        "separate apply. Renaming never moves the data folder; that is "
+        doc="Patch name, roster or appearance. Renaming never moves the data folder; that is "
         "`cohorts.setDataFolder`.",
     ),
     Command(
@@ -4106,13 +4076,6 @@ COMMANDS = (
                 "files (`Cohort.formerAnimals`).",
             ),
             f("destinationCohortId", STR),
-            f(
-                "destinationGroupId",
-                STR,
-                optional=True,
-                doc="Where an animal carried onto the destination's roster "
-                "lands. Default: its first group.",
-            ),
             f("apply", BOOL, optional=True, doc="Default false: a preview that changes nothing."),
         ),
         result=Ref("AnimalMovePlan"),
@@ -4128,19 +4091,6 @@ COMMANDS = (
         "Broadcasts `cohorts.updated`, `session.lifecycle` and "
         "`logbook.updated` after an apply. "
         "Long-running; the client raises its reply timeout.",
-    ),
-    Command(
-        "cohorts.suggestGroups",
-        args=obj(
-            f("id", STR),
-            f("groupCount", INT, optional=True),
-            f("maxGroupSize", INT, optional=True),
-            f("balanceBySex", BOOL, optional=True),
-        ),
-        result=Ref("GroupProposal"),
-        doc="**Non-mutating** Auto-Balance preview — a balanced round-robin "
-        "over the roster (`DATA.md#cohorts-animals-and-groups`). The user "
-        "applies it via `cohorts.update`.",
     ),
     # --------------------------------------------------- prefixes and sessions
     #
@@ -4210,14 +4160,13 @@ COMMANDS = (
                 optional=True,
                 doc="True makes the session an Intan recording as well "
                 "(`RECORDING.md#start-and-end`): `Session.recording` is then "
-                "`{runs: []}` rather than null, and starting a group refuses "
+                "`{runs: []}` rather than null, and starting a round refuses "
                 "unless `intan.configure` has run for it.",
             ),
         ),
         result=_SESSION,
         doc="Create a session in status `configuring` and make its folder. "
-        "`SESSION_NOT_READY` if no group in the cohort has a box-assigned "
-        "animal; `SESSION_INVALID` for an unknown cohort or prefix, a blank "
+        "`SESSION_NOT_READY` if the cohort has no animals; `SESSION_INVALID` for an unknown cohort or prefix, a blank "
         "number, a bad duration, or a folder that can't be created. Broadcasts "
         "`session.lifecycle`.",
     ),
@@ -4232,20 +4181,21 @@ COMMANDS = (
         "recording Start All began before any box started is stopped, and its "
         "run is kept on the aborted session, since RHX's files exist "
         "(`RECORDING.md`): the reply can then take RHX's stop, about 16 s at "
-        "worst. `SESSION_INVALID` once a group has run.",
+        "worst. `SESSION_INVALID` once a round has run.",
     ),
     Command(
         "sessions.confirmMapping",
-        args=obj(f("sessionId", STR), f("groupId", STR), f("boxes", ListOf(Ref("SessionBoxMapping")))),
+        args=obj(f("sessionId", STR), f("boxes", ListOf(Ref("SessionBoxMapping")))),
         result=obj(f("ok", BOOL)),
-        doc="Load one group's box → animal → sketch mapping into the runner and "
+        doc="Load one round's box → animal → sketch mapping into the runner and "
         "build each box's `SET` lines from its sketch's Task Profile and "
         "`config`. `TASK_PROFILE_INVALID` when a parameter cannot be sent, "
         "naming the box and the reason: a value of the wrong type for its "
         "field (the board would read `4.9` as 4), or one too long for a "
         "`SET` line (`SET_LINE_MAX`), which the board could not report "
         "(`TASKS.md#the-length-cap`). `SESSION_INVALID` for a mapping missing "
-        "its box, sketch, or an animal of this cohort. From here until the "
+        "its box, sketch, or an animal of this cohort, or naming a box or an "
+        "animal twice; any animal of the cohort may take any box. From here until the "
         "session lets go the rig is **held**: no baseline restore runs. "
         "Broadcasts `session.lifecycle`. "
         "Waits for a rig definition write in progress (`TASKS.md#the-rig-definition`).",
@@ -4265,7 +4215,7 @@ COMMANDS = (
         "own sketch, and a box it no longer maps is skipped. Lands in `IDLE` "
         "for the runner; never pinned. `SESSION_INVALID` unless this session "
         "holds the rig and every box is in its mapping and not running. A new "
-        "`sessions.confirmMapping`, `sessions.endGroup`, `sessions.end` or "
+        "`sessions.confirmMapping`, `sessions.endRound`, `sessions.end` or "
         "`sessions.abandon` drops what is still queued.",
     ),
     Command(
@@ -4274,16 +4224,18 @@ COMMANDS = (
         result=obj(
             f("session", Ref("Session")),
             f(
-                "groupId",
-                nullable(STR),
-                doc="The group on the rig. Null unless this is the held session "
-                "with a group mapped: before a mapping is confirmed, between groups, "
-                "and for any session that does not hold the rig.",
-            ),
-            f(
                 "boxes",
                 ListOf(Ref("SessionBox")),
-                doc="The rig's boxes; empty unless this is the held session.",
+                doc="The round on the rig. Empty before a mapping is confirmed, "
+                "between rounds, and for any session that does not hold the rig.",
+            ),
+            f(
+                "ranAnimalIds",
+                ListOf(STR),
+                doc="Animals with a recorded run in this session, so the Boxes "
+                "step can offer the ones still to run "
+                "(`ARCHITECTURE.md#mapping-and-the-placement-walk`). A run is "
+                "recorded when it ends.",
             ),
         ),
         doc="What Mission Control renders. The runner is the authority on the "
@@ -4295,10 +4247,10 @@ COMMANDS = (
         args=obj(f("sessionId", STR)),
         result=_SESSION,
         doc="Enter `IN_SESSION` on every box of the confirmed mapping not "
-        "already running, open the group's run, and mark the session "
+        "already running, open the round, and mark the session "
         "`running`. On a recording session RHX recording begins **before any "
         "box starts**, and an `INTAN_*` refusal (no recording configured for "
-        "this group, RHX unreachable) leaves every box untouched — a session "
+        "this round, RHX unreachable) leaves every box untouched — a session "
         "quietly missing its electrophysiology cannot be re-run. Every box not "
         "running must carry its mapped sketch's current build first "
         "(`ARCHITECTURE.md#what-a-board-carries`): otherwise `SESSION_INVALID` "
@@ -4309,28 +4261,28 @@ COMMANDS = (
         "raises its reply timeout.",
     ),
     Command(
-        "sessions.endGroup",
+        "sessions.endRound",
         args=obj(f("sessionId", STR)),
         result=_SESSION,
-        doc="End the current group's runs, close its `groupRuns` entry, clear "
+        doc="End the current round's runs, close its `rounds` entry, clear "
         "the runner's mapping and hand the rig back to the utility baseline — "
-        "leaving the session **between groups**: still `running` and held, "
-        "`groupId` null, no boxes. The sidecar never picks the next group and "
-        "never finalizes here; the operator picks any group (one that already "
-        "ran may run again) or ends the session with `sessions.end`. Stops "
+        "leaving the session **between rounds**: still `running` and held, "
+        "with no boxes. The sidecar never finalizes here; the operator maps "
+        "the next round (any animals, one that already ran included, in any "
+        "boxes) or ends the session with `sessions.end`. Stops "
         "boxes as `sessions.end` does, gracefully on a recording.",
     ),
     Command(
         "sessions.resume",
         args=obj(f("sessionId", STR)),
         result=_SESSION,
-        doc="Continue one of **today's** sessions with another group — a "
-        "crash-orphaned `running` one (the app closed between groups) or a "
-        "`completed` one ended too early. Closes any group run a crash left "
-        "open, sets `running`, and re-holds the session in the between-groups "
-        "state `sessions.endGroup` leaves. Nothing resumes mid-group. "
+        doc="Continue one of **today's** sessions with another round — a "
+        "crash-orphaned `running` one (the app closed between rounds) or a "
+        "`completed` one ended too early. Closes any round a crash left "
+        "open, sets `running`, and re-holds the session in the between-rounds "
+        "state `sessions.endRound` leaves. Nothing resumes mid-round. "
         "`SESSION_INVALID` for another day's session (its folder is named for "
-        "that date), one that never ran a group, or while a different session "
+        "that date), one that never ran a round, or while a different session "
         "is held.",
     ),
     Command(
@@ -4338,7 +4290,7 @@ COMMANDS = (
         args=obj(f("sessionId", STR)),
         result=_SESSION,
         doc="Finish the session: stop every box, finalize files, close the "
-        "open group run, mark it `completed`, and release the rig to the "
+        "open round, mark it `completed`, and release the rig to the "
         "utility baseline. A behavior-only session sends `STOP` and waits only "
         "briefly, cutting the trial in flight; a **recording** waits for each "
         "box's own end strobe (`intan.status.waitingOn`, cut short by "
@@ -4735,10 +4687,10 @@ COMMANDS = (
     ),
     Command(
         "intan.configure",
-        args=obj(f("sessionId", STR), f("groupId", STR), f("config", Ref("RecordingConfig"))),
+        args=obj(f("sessionId", STR), f("config", Ref("RecordingConfig"))),
         result=Ref("IntanStatus"),
-        doc="Apply a recording setup to RHX **for one group run** — animals, "
-        "and so ports and probes, change between groups "
+        doc="Apply a recording setup to RHX **for one round** — animals, "
+        "and so ports and probes, change between rounds "
         "(`RECORDING.md#recording-walkthrough`). Connects first if needed. The "
         "three values a recording cannot be wrong about — file format, save "
         "path, base filename — are read back and refused on a mismatch "
@@ -4750,8 +4702,8 @@ COMMANDS = (
         "with no digital input, a port with no headstage, two boxes claiming "
         "one channel, or nothing selected to save. `SESSION_INVALID` for a "
         "session that is not a recording, and, with `detail.boxes`, for boxes "
-        "this group's confirmed mapping doesn't have (all of them unless the "
-        "held session is this one with this group's mapping), before RHX is "
+        "the confirmed mapping doesn't have (all of them unless the "
+        "held session is this one), before RHX is "
         "touched. The setup is for the mapping as confirmed now: confirming it "
         "again makes Start refuse until this runs again. Long-running; the "
         "client raises its reply timeout.",
@@ -4778,7 +4730,6 @@ COMMANDS = (
         "intan.measureImpedance",
         args=obj(
             f("sessionId", STR),
-            f("groupId", STR),
             f("saveDirectory", STR, doc="Where RHX saves its CSV: the recording's save location."),
             f(
                 "boxes",
@@ -4794,7 +4745,7 @@ COMMANDS = (
         ),
         doc="Measure every electrode's impedance in RHX and keep each box's "
         "sites under its animal (`RECORDING.md#impedance-tracking`). Animals "
-        "come from this group's confirmed mapping, as for `intan.configure` "
+        "come from the held session's confirmed mapping, as for `intan.configure` "
         "(`SESSION_INVALID` with `detail.boxes` for boxes it lacks). RHX must "
         "not be recording; one left in Run is stopped. `INTAN_NOT_READY` for "
         "no headstage, a running recording, or a CSV RHX did not write. "
@@ -5066,8 +5017,8 @@ EVENTS = (
         "session.lifecycle",
         Ref("ActiveSessions"),
         doc="Broadcast whenever session identity or status changes — create, "
-        "abandon, confirmMapping, startAll (or a group's first "
-        "`port.startSession`), endGroup, resume, end, and an applied tidy. A "
+        "abandon, confirmMapping, startAll (or a round's first "
+        "`port.startSession`), endRound, resume, end, and an applied tidy. A "
         "full snapshot, not a delta: a second window learns 'ended' by seeing "
         "`running: null`, with no merge logic to get wrong. Per-box liveness "
         "is deliberately not re-broadcast here — `port.state` is that channel, "
@@ -5215,7 +5166,7 @@ ERRORS = (
     ),
     ErrorCode(
         "COHORT_INVALID",
-        "A cohort validation failure (`DATA.md#cohorts-animals-and-groups`). "
+        "A cohort validation failure (`DATA.md#cohorts-and-animals`). "
         "`detail` carries per-field errors so the editor can show them inline.",
     ),
     ErrorCode(
@@ -5239,16 +5190,15 @@ ERRORS = (
     ErrorCode("PREFIX_NAME_TAKEN", "A prefix with that name already exists."),
     ErrorCode(
         "SESSION_INVALID",
-        "A session command that can't apply: unknown session, cohort, prefix "
-        "or group; a mapping naming a box or animal outside the session; a box "
+        "A session command that can't apply: unknown session, cohort or "
+        "prefix; a mapping naming a box or animal outside the session; a box "
         "with no confirmed mapping; or a lifecycle step from the wrong state "
         "(abandoning a session that ran, resuming another day's, recovering "
         "while a box runs).",
     ),
     ErrorCode(
         "SESSION_NOT_READY",
-        "`sessions.create` against a cohort with no group holding a "
-        "box-assigned animal.",
+        "`sessions.create` against a cohort with no animals.",
     ),
     ErrorCode(
         "TASK_PROFILE_INVALID",
@@ -5442,7 +5392,7 @@ ERRORS = (
     ErrorCode(
         "INTAN_NOT_READY",
         "RHX is reachable but this cannot be done now — RHX is already "
-        "recording, no recording is configured for this group as its mapping "
+        "recording, no recording is configured for this round as its mapping "
         "was last confirmed, a box has no "
         "digital input, or the rig's wiring has no sync channel. The message is "
         "the operator's next step.",

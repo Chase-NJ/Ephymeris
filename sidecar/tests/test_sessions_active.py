@@ -16,7 +16,7 @@ import pytest
 from ephymeris_sidecar.tasks.start_command import build_start_command
 from ephymeris_sidecar.sessions.lifecycle import build_active_payload
 from ephymeris_sidecar.protocol import Evt, event, validate_command_result
-from ephymeris_sidecar.sessions.models import GroupRun, Session
+from ephymeris_sidecar.sessions.models import Round, Session
 from ephymeris_sidecar.sessions.runner import BoxConfig, SessionRunner
 
 
@@ -31,7 +31,7 @@ def _session(sid: str = "s1", status: str = "running") -> Session:
         started_at="2026-07-27T09:00:00+00:00",
         status=status,
         folder_path="/data/Batch A/2O-Bdisc/2O-Bdisc_25_2026-07-27",
-        group_runs=[GroupRun("g1", 0, "2026-07-27T09:00:00+00:00")],
+        rounds=[Round(0, "2026-07-27T09:00:00+00:00")],
     )
 
 
@@ -51,7 +51,6 @@ def runner(tmp_path: Path):
     r.configure(
         tmp_path,
         "2O-Bdisc_25",
-        "g1",
         [
             BoxConfig(
                 box=1,
@@ -75,7 +74,6 @@ def runner(tmp_path: Path):
 def test_runner_held_running_session_fills_the_running_slot(runner) -> None:
     payload = build_active_payload("s1", runner, [_session("s1", "running")], confirmations=0)
     assert payload["running"]["session"]["id"] == "s1"
-    assert payload["running"]["groupId"] == "g1"
     assert [b["box"] for b in payload["running"]["boxes"]] == [1]
     assert payload["configuring"] == []
     assert payload["stale"] == []
@@ -127,8 +125,8 @@ def test_no_runner_yields_null_running_slot() -> None:
     assert [s["id"] for s in payload["stale"]] == ["s1"]
 
 
-def test_unconfigured_group_id_is_emitted_as_null(tmp_path: Path) -> None:
-    """`runner.group_id` is `""` before configure — the wire field is null."""
+def test_a_held_session_with_no_mapping_reports_no_boxes(tmp_path: Path) -> None:
+    """Before a mapping is confirmed, and between rounds, the runner holds none."""
     loop = asyncio.new_event_loop()
     try:
 
@@ -137,7 +135,7 @@ def test_unconfigured_group_id_is_emitted_as_null(tmp_path: Path) -> None:
 
         bare = SessionRunner(loop=loop, ports=None, broadcast=noop, on_animal_ended=noop)
         payload = build_active_payload("s1", bare, [_session("s1", "configuring")], confirmations=0)
-        assert payload["running"]["groupId"] is None
+        assert payload["running"]["boxes"] == []
     finally:
         loop.close()
 

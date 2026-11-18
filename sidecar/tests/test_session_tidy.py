@@ -17,7 +17,7 @@ import pytest
 
 from ephymeris_sidecar.cohorts.db import Database
 from ephymeris_sidecar.sessions import tidy
-from ephymeris_sidecar.sessions.models import GroupRun
+from ephymeris_sidecar.sessions.models import Round
 from ephymeris_sidecar.sessions.repository import SessionRepository
 from tests.test_analytics_service import HIT_1, HIT_3, Rig
 
@@ -60,8 +60,8 @@ def started(rig: Rig, at: str) -> str:
     return rig.add_session("12", DAY)
 
 
-def group_run(group_id: str, at: str) -> GroupRun:
-    return GroupRun(group_id=group_id, order=0, started_at=at, ended_at=at)
+def a_round(label: str, at: str) -> Round:
+    return Round(order=0, started_at=at, ended_at=at, label=label)
 
 
 async def preview(rig: Rig, **kw) -> dict:
@@ -78,12 +78,13 @@ async def apply(rig: Rig, **kw) -> dict:
 async def test_two_records_of_one_session_merge_into_the_earliest(rig: Rig) -> None:
     first = started(rig, "2026-07-22T08:55:00")
     second = started(rig, "2026-07-22T12:55:00")
-    rig.sessions.set_group_runs(first, [group_run("gA", "2026-07-22T09:00:00")])
-    rig.sessions.set_group_runs(second, [group_run("gB", "2026-07-22T13:00:00")])
+    rig.sessions.set_rounds(first, [a_round("Morning", "2026-07-22T09:00:00")])
+    rig.sessions.set_rounds(second, [a_round("Evening", "2026-07-22T13:00:00")])
     rig.add_run(first, "a1", HIT_1 * 5)
     rig.add_run(second, "a2", HIT_3 * 5)
 
     plan = await preview(rig)
+    assert plan["merges"][0]["keep"]["roundLabels"] == ["Morning"]
     assert [m["keep"]["sessionId"] for m in plan["merges"]] == [first]
     assert [s["sessionId"] for s in plan["merges"][0]["absorb"]] == [second]
 
@@ -92,8 +93,8 @@ async def test_two_records_of_one_session_merge_into_the_earliest(rig: Rig) -> N
     assert done["merges"][0]["keep"]["runCount"] == 2
 
     kept = rig.sessions.get_session(first)
-    assert [r.group_id for r in kept.group_runs] == ["gA", "gB"]
-    assert [r.order for r in kept.group_runs] == [0, 1]
+    assert [r.label for r in kept.rounds] == ["Morning", "Evening"]
+    assert [r.order for r in kept.rounds] == [0, 1]
     assert {r.session_id for r in rig.sessions.runs_for_cohort(rig.cohort.id)} == {first}
     assert [s.id for s in rig.sessions.list_sessions(rig.cohort.id)] == [first]
 
@@ -171,11 +172,11 @@ async def test_recording_runs_from_every_record_are_kept(rig: Rig) -> None:
     first = started(rig, "2026-07-22T08:55:00")
     second = started(rig, "2026-07-22T12:55:00")
     rig.add_run(first, "a1", HIT_1)
-    rig.sessions.set_recording(second, {"runs": [{"groupId": "gB", "startedAt": "t2"}]})
-    rig.sessions.set_recording(first, {"runs": [{"groupId": "gA", "startedAt": "t1"}]})
+    rig.sessions.set_recording(second, {"runs": [{"startedAt": "t2"}]})
+    rig.sessions.set_recording(first, {"runs": [{"startedAt": "t1"}]})
     await apply(rig)
     kept = rig.sessions.get_session(first)
-    assert [r["groupId"] for r in kept.recording["runs"]] == ["gA", "gB"]
+    assert [r["startedAt"] for r in kept.recording["runs"]] == ["t1", "t2"]
 
 
 # --- empty records ---------------------------------------------------------

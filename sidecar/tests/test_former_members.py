@@ -65,9 +65,8 @@ def add_run(db: Database, cohort_id: str, animal_id: str, file_path: str | None)
 
 
 def cohort_with(repo: CohortRepository, *names: str):
-    groups = [{"id": "g1", "name": "Morning", "order": 0}]
-    animals = [{"id": n, "name": n, "groupId": "g1"} for n in names]
-    return repo.create("Batch A", "/data/Batch A", animals=animals, groups=groups)
+    animals = [{"id": n, "name": n} for n in names]
+    return repo.create("Batch A", "/data/Batch A", animals=animals)
 
 
 def roster(cohort) -> list[dict]:
@@ -87,8 +86,6 @@ def test_removing_an_animal_with_history_keeps_it_as_a_former_member(db, repo) -
     [former] = updated.former_animals
     assert (former.id, former.name, former.source) == ("remy2", "remy2", "removed")
     assert former.run_count == 1
-    # By name: the group's id is gone by the next roster edit.
-    assert former.group_name == "Morning"
     assert former.removed_at
 
 
@@ -121,29 +118,23 @@ def test_posting_a_former_members_id_restores_it(db, repo) -> None:
     removed = repo.update(cohort.id, {"animals": [a for a in roster(cohort) if a["id"] != "remy2"]})
 
     restored = repo.update(
-        cohort.id, {"animals": [*roster(removed), {"id": "remy2", "name": "remy2", "groupId": "g1"}]}
+        cohort.id, {"animals": [*roster(removed), {"id": "remy2", "name": "remy2"}]}
     )
 
     assert sorted(a.name for a in restored.animals) == ["remy1", "remy2"]
     assert restored.former_animals == []
 
 
-def test_a_former_member_survives_its_group_being_deleted(db, repo) -> None:
-    """Why former members are a table of their own: `animals.group_id`
-    cascades from `groups`, which every roster edit rewrites."""
+def test_a_former_member_survives_the_next_roster_edit(db, repo) -> None:
+    """Why former members are a table of their own: every roster edit deletes
+    and re-inserts the `animals` rows."""
     cohort = cohort_with(repo, "remy1", "remy2")
     add_run(db, cohort.id, "remy2", run_file("remy2"))
     repo.update(cohort.id, {"animals": [a for a in roster(cohort) if a["id"] != "remy2"]})
 
-    regrouped = repo.update(
-        cohort.id,
-        {
-            "groups": [{"id": "g2", "name": "Evening", "order": 0}],
-            "animals": [{"id": "remy1", "name": "remy1", "groupId": "g2"}],
-        },
-    )
+    edited = repo.update(cohort.id, {"animals": [{"id": "remy1", "name": "remy1", "cage": 2}]})
 
-    assert [f.id for f in regrouped.former_animals] == ["remy2"]
+    assert [f.id for f in edited.former_animals] == ["remy2"]
 
 
 def test_a_name_held_by_a_former_member_can_be_reused(db, repo) -> None:
@@ -153,7 +144,7 @@ def test_a_name_held_by_a_former_member_can_be_reused(db, repo) -> None:
     removed = repo.update(cohort.id, {"animals": [a for a in roster(cohort) if a["id"] != "remy2"]})
 
     again = repo.update(
-        cohort.id, {"animals": [*roster(removed), {"id": "new-2", "name": "remy2", "groupId": "g1"}]}
+        cohort.id, {"animals": [*roster(removed), {"id": "new-2", "name": "remy2"}]}
     )
 
     assert sorted(a.id for a in again.animals) == ["new-2", "remy1"]
@@ -163,12 +154,12 @@ def test_a_name_held_by_a_former_member_can_be_reused(db, repo) -> None:
 def test_another_cohorts_animal_id_is_refused_by_name(repo) -> None:
     """It used to surface as an integrity error with no reason given."""
     other = repo.create(
-        "Batch B", "/data/Batch B", animals=[{"id": "x1", "name": "x1", "groupId": "g"}],
-        groups=[{"id": "g", "name": "G", "order": 0}],
+        "Batch B", "/data/Batch B", animals=[{"id": "x1", "name": "x1"}],
+        
     )
     cohort = cohort_with(repo, "remy1")
     with pytest.raises(ValidationError) as caught:
-        repo.update(cohort.id, {"animals": [*roster(cohort), {"id": "x1", "name": "x1", "groupId": "g1"}]})
+        repo.update(cohort.id, {"animals": [*roster(cohort), {"id": "x1", "name": "x1"}]})
     assert "Batch B" in caught.value.errors["animal:x1"]
     assert [a.id for a in repo.get(other.id).animals] == ["x1"]
 
@@ -195,7 +186,7 @@ def test_restoring_a_file_named_id_reconnects_its_history(db, repo) -> None:
     add_run(db, cohort.id, "gone-id", run_file("remy9"))
 
     restored = repo.update(
-        cohort.id, {"animals": [*roster(cohort), {"id": "gone-id", "name": "remy9", "groupId": "g1"}]}
+        cohort.id, {"animals": [*roster(cohort), {"id": "gone-id", "name": "remy9"}]}
     )
 
     assert "gone-id" in {a.id for a in restored.animals}

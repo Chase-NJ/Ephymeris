@@ -105,7 +105,6 @@ def former_members(
             id_number=row["id_number"],
             cage=row["cage"],
             notes=row["notes"],
-            group_name=row["group_name"],
         )
         for row in conn.execute(
             "SELECT * FROM former_animals WHERE cohort_id = ? ORDER BY name", (cohort_id,)

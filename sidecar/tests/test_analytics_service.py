@@ -90,13 +90,12 @@ class Rig:
         # about it or every test here carries that warning.
         self.root.mkdir(parents=True, exist_ok=True)
         self.cohort = self.cohorts.create("Batch A", str(self.root))
-        group = self.cohort.groups[0].id
         self.cohorts.update(
             self.cohort.id,
             {
                 "animals": [
-                    {"id": "a1", "name": "remy1", "groupId": group, "boxNumber": 1},
-                    {"id": "a2", "name": "remy2", "groupId": group, "boxNumber": 2},
+                    {"id": "a1", "name": "remy1", "boxNumber": 1},
+                    {"id": "a2", "name": "remy2", "boxNumber": 2},
                 ]
             },
         )
@@ -220,11 +219,10 @@ async def test_summary_scores_every_run(rig: Rig) -> None:
     assert by_animal["a2"]["metrics"][0]["pSession"] == 0.5
 
 
-async def test_summary_carries_the_roster_and_groups(rig: Rig) -> None:
+async def test_summary_carries_the_roster(rig: Rig) -> None:
     rig.add_session("1", "2026-07-22")
     payload = await rig.service.summary(rig.cohort.id)
     assert [a["name"] for a in payload["animals"]] == ["remy1", "remy2"]
-    assert len(payload["groups"]) == 1
 
 
 async def test_a_removed_animal_with_runs_is_listed_as_a_former_member(rig: Rig) -> None:
@@ -233,9 +231,8 @@ async def test_a_removed_animal_with_runs_is_listed_as_a_former_member(rig: Rig)
     session = rig.add_session("1", "2026-07-22")
     rig.add_run(session, "a1", HIT_1 * 10)
     rig.add_run(session, "a2", HIT_1 * 10)
-    group = rig.cohort.groups[0].id
     rig.cohorts.update(
-        rig.cohort.id, {"animals": [{"id": "a2", "name": "remy2", "groupId": group}]}
+        rig.cohort.id, {"animals": [{"id": "a2", "name": "remy2"}]}
     )
 
     payload = await rig.service.summary(rig.cohort.id)
@@ -261,13 +258,12 @@ async def test_a_run_whose_animal_has_no_row_is_named_from_its_file(rig: Rig) ->
 
 async def test_a_former_member_with_no_runs_here_is_left_off(rig: Rig) -> None:
     rig.add_session("1", "2026-07-22")
-    group = rig.cohort.groups[0].id
     # A note-free, run-free removal is deleted outright, so give it a run in
     # a session the summary is then filtered away from.
     other = rig.add_session("2", "2026-07-23")
     rig.add_run(other, "a1", HIT_1 * 10)
     rig.cohorts.update(
-        rig.cohort.id, {"animals": [{"id": "a2", "name": "remy2", "groupId": group}]}
+        rig.cohort.id, {"animals": [{"id": "a2", "name": "remy2"}]}
     )
     first = (await rig.service.summary(rig.cohort.id))["sessions"][0]["id"]
 
@@ -280,9 +276,8 @@ async def test_a_stray_file_is_adopted_for_a_former_member(rig: Rig) -> None:
     """A file written while the animal was on the roster is still its file."""
     session = rig.add_session("1", "2026-07-22")
     rig.add_run(session, "a1", HIT_1 * 10)
-    group = rig.cohort.groups[0].id
     rig.cohorts.update(
-        rig.cohort.id, {"animals": [{"id": "a2", "name": "remy2", "groupId": group}]}
+        rig.cohort.id, {"animals": [{"id": "a2", "name": "remy2"}]}
     )
     stray = rig.root / "2O-Bdisc" / "2O-Bdisc_2_2026-07-23" / "behavior.json"
     stray.mkdir(parents=True)
@@ -301,13 +296,12 @@ async def test_a_former_members_name_on_the_roster_wins_adoption(rig: Rig) -> No
     that name means the animal on the roster."""
     session = rig.add_session("1", "2026-07-22")
     rig.add_run(session, "a1", HIT_1 * 10)
-    group = rig.cohort.groups[0].id
     rig.cohorts.update(
         rig.cohort.id,
         {
             "animals": [
-                {"id": "a2", "name": "remy2", "groupId": group},
-                {"id": "a1-new", "name": "remy1", "groupId": group},
+                {"id": "a2", "name": "remy2"},
+                {"id": "a1-new", "name": "remy1"},
             ]
         },
     )

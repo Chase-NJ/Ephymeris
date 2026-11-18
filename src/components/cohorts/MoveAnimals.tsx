@@ -3,9 +3,8 @@ import { useEffect, useMemo, useState } from "react";
 
 import { Button, Select } from "@/components/common/controls";
 import { Modal } from "@/components/common/Modal";
-import { errorMessage, getCohort, moveAnimals, refusedPlan } from "@/lib/cohorts/commands";
+import { errorMessage, moveAnimals, refusedPlan } from "@/lib/cohorts/commands";
 import { useCohorts } from "@/lib/cohorts/context";
-import type { Group } from "@/lib/cohorts/types";
 import type { AnimalMovePlan } from "@/lib/ws/protocol";
 import { useSidecar } from "@/lib/ws/context";
 
@@ -14,7 +13,7 @@ import { useSidecar } from "@/lib/ws/context";
  * (`DATA.md#moving-animals-between-cohorts`).
  *
  * Opens on a preview the sidecar computed and changed nothing to produce, and
- * re-previews whenever the destination or group changes. It says what will
+ * re-previews whenever the destination changes. It says what will
  * happen in the operator's terms — who this animal becomes there, which
  * sessions move whole and which are shared, how many files move — and, when
  * it can't be done, why, in the sidecar's own words.
@@ -44,8 +43,6 @@ export function MoveAnimals({
     [cohorts, sourceId],
   );
   const [destId, setDestId] = useState("");
-  const [groups, setGroups] = useState<Group[]>([]);
-  const [groupId, setGroupId] = useState("");
   const [plan, setPlan] = useState<AnimalMovePlan | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -56,24 +53,7 @@ export function MoveAnimals({
   }, [open, destinations]);
 
   useEffect(() => {
-    if (!open || !destId) return;
-    let alive = true;
-    setGroups([]);
-    void getCohort(client, destId)
-      .then((cohort) => {
-        if (!alive) return;
-        const sorted = [...cohort.groups].sort((a, b) => a.order - b.order);
-        setGroups(sorted);
-        setGroupId(sorted[0]?.id ?? "");
-      })
-      .catch((err) => alive && setError(errorMessage(err)));
-    return () => {
-      alive = false;
-    };
-  }, [open, client, destId]);
-
-  useEffect(() => {
-    if (!open || !animal || !destId || !groupId) return;
+    if (!open || !animal || !destId) return;
     let alive = true;
     setPlan(null);
     setError(null);
@@ -81,7 +61,6 @@ export function MoveAnimals({
       cohortId: sourceId,
       animalIds: [animal.id],
       destinationCohortId: destId,
-      destinationGroupId: groupId,
       apply: false,
     })
       .then((result) => alive && setPlan(result))
@@ -89,7 +68,7 @@ export function MoveAnimals({
     return () => {
       alive = false;
     };
-  }, [open, client, sourceId, animal, destId, groupId]);
+  }, [open, client, sourceId, animal, destId]);
 
   async function apply() {
     if (!animal) return;
@@ -100,7 +79,6 @@ export function MoveAnimals({
         cohortId: sourceId,
         animalIds: [animal.id],
         destinationCohortId: destId,
-        destinationGroupId: groupId,
         apply: true,
       });
       onDone(result, destinations.find((d) => d.id === destId)?.name ?? "the other cohort");
@@ -145,17 +123,6 @@ export function MoveAnimals({
               onChange={(value) => setDestId(value)}
             />
           </span>
-          {groups.length > 1 && (
-            <span className="flex items-center gap-2">
-              Group
-              <Select
-                label="Group there"
-                value={groupId}
-                options={groups.map((g) => ({ value: g.id, label: g.name }))}
-                onChange={(value) => setGroupId(value)}
-              />
-            </span>
-          )}
         </div>
       )}
 

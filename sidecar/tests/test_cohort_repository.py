@@ -26,35 +26,30 @@ def repo(tmp_path: Path) -> CohortRepository:
         db.close()
 
 
-def animal(name: str, group_id: str, **kwargs) -> dict:
-    return {"name": name, "groupId": group_id, **kwargs}
+def animal(name: str, **kwargs) -> dict:
+    return {"name": name, **kwargs}
 
 
 # --- creation -------------------------------------------------------------
 
 
-def test_a_new_cohort_gets_an_implicit_default_group(repo) -> None:
-    """`DATA.md#data-model` — groups always exist, keeping grouped/ungrouped one code path."""
+def test_a_new_cohort_starts_with_no_animals(repo) -> None:
     cohort = repo.create("Batch A", "/tmp/batch-a")
-    assert len(cohort.groups) == 1
     assert cohort.animals == []
     assert cohort.archived is False
 
 
 def test_a_cohort_can_be_created_with_its_whole_roster(repo) -> None:
     """One call, not a create plus a patch that could fail on its own."""
-    groups = [{"id": "g1", "name": "Morning", "order": 0}]
     cohort = repo.create(
         "Batch A",
         "/tmp/batch-a",
-        animals=[animal("R-1", "g1", boxNumber=1), animal("R-2", "g1", boxNumber=2)],
-        groups=groups,
+        animals=[animal("R-1", id="a1", boxNumber=1), animal("R-2", id="a2", boxNumber=2)],
     )
-    assert [g.name for g in cohort.groups] == ["Morning"]
     assert sorted(a.name for a in cohort.animals) == ["R-1", "R-2"]
-    # The client's own group id survives, which is what lets the editor build
+    # The client's own animal ids survive, which is what lets the editor build
     # the roster before the cohort exists.
-    assert cohort.animals[0].group_id == "g1"
+    assert sorted(a.id for a in cohort.animals) == ["a1", "a2"]
 
 
 def test_a_rejected_roster_creates_nothing(repo) -> None:
@@ -64,29 +59,21 @@ def test_a_rejected_roster_creates_nothing(repo) -> None:
         repo.create(
             "Batch A",
             "/tmp/batch-a",
-            animals=[animal("R-1", "g1", boxNumber=9)],  # out of range
-            groups=[{"id": "g1", "name": "Morning", "order": 0}],
+            animals=[animal("R-1", boxNumber=9)],  # out of range
         )
     assert repo.list_cohorts() == []
-
-
-def test_creating_without_a_roster_still_gets_the_default_group(repo) -> None:
-    cohort = repo.create("Batch B", "/tmp/batch-b", animals=None, groups=None)
-    assert len(cohort.groups) == 1
-    assert cohort.animals == []
 
 
 def test_summary_reports_the_boxes_in_use(repo) -> None:
     """The grid flags an unreachable box without fetching every cohort in full."""
     cohort = repo.create("Batch A", "/tmp/batch-a")
-    group = cohort.groups[0].id
     saved = repo.update(
         cohort.id,
         {
             "animals": [
-                animal("R-1", group, boxNumber=3),
-                animal("R-2", group, boxNumber=1),
-                animal("R-3", group),  # unassigned contributes nothing
+                animal("R-1", boxNumber=3),
+                animal("R-2", boxNumber=1),
+                animal("R-3"),  # unassigned contributes nothing
             ]
         },
     )
@@ -94,20 +81,12 @@ def test_summary_reports_the_boxes_in_use(repo) -> None:
     assert saved.to_summary()["assignedBoxes"] == [1, 3]
 
 
-def test_summary_boxes_are_deduplicated_across_groups(repo) -> None:
-    """Box numbers legitimately repeat between groups (`DATA.md#validation`) — the grid cares
+def test_summary_boxes_are_deduplicated(repo) -> None:
+    """Animals may share a usual box (`DATA.md#validation`) — the grid cares
     which boxes are needed, not how many animals want each one."""
     cohort = repo.create("Batch A", "/tmp/batch-a")
-    first = cohort.groups[0].id
     saved = repo.update(
-        cohort.id,
-        {
-            "groups": [
-                {"id": first, "name": "Group 1", "order": 0},
-                {"id": "g2", "name": "Group 2", "order": 1},
-            ],
-            "animals": [animal("R-1", first, boxNumber=2), animal("R-2", "g2", boxNumber=2)],
-        },
+        cohort.id, {"animals": [animal("R-1", boxNumber=2), animal("R-2", boxNumber=2)]}
     )
     assert saved.to_summary()["assignedBoxes"] == [2]
 
@@ -171,9 +150,8 @@ def test_a_cohort_can_keep_its_own_name_on_update(repo) -> None:
 
 def test_animal_names_are_unique_within_a_cohort(repo) -> None:
     cohort = repo.create("Batch A", "/tmp/a")
-    gid = cohort.groups[0].id
     with pytest.raises(ValidationError) as exc:
-        repo.update(cohort.id, {"animals": [animal("R1", gid), animal("R1", gid)]})
+        repo.update(cohort.id, {"animals": [animal("R1"), animal("R1")]})
     assert exc.value.errors
 
 
@@ -181,43 +159,25 @@ def test_the_same_animal_name_may_exist_in_another_cohort(repo) -> None:
     """`DATA.md#validation` — uniqueness is per cohort, not global."""
     a = repo.create("A", "/tmp/a")
     b = repo.create("B", "/tmp/b")
-    repo.update(a.id, {"animals": [animal("R1", a.groups[0].id)]})
-    repo.update(b.id, {"animals": [animal("R1", b.groups[0].id)]})
+    repo.update(a.id, {"animals": [animal("R1")]})
+    repo.update(b.id, {"animals": [animal("R1")]})
     assert len(repo.get(b.id).animals) == 1
 
 
-def test_box_numbers_are_unique_within_a_group(repo) -> None:
-    cohort = repo.create("Batch A", "/tmp/a")
-    gid = cohort.groups[0].id
-    with pytest.raises(ValidationError):
-        repo.update(
-            cohort.id,
-            {"animals": [animal("R1", gid, boxNumber=3), animal("R2", gid, boxNumber=3)]},
-        )
-
-
-def test_box_numbers_may_repeat_across_groups(repo) -> None:
-    """`DATA.md#validation` — groups run consecutively, so the slot is legitimately reused."""
-    cohort = repo.create("Batch A", "/tmp/a")
-    groups = [
-        {"id": "g1", "name": "Group 1", "order": 0},
-        {"id": "g2", "name": "Group 2", "order": 1},
-    ]
+def test_animals_may_share_a_usual_box(repo) -> None:
+    """`DATA.md#validation` — the usual box is where set-up starts, and a
+    clash only matters among the animals picked for one round."""
+    cohort = repo.create("C", "/tmp/c")
     saved = repo.update(
-        cohort.id,
-        {
-            "groups": groups,
-            "animals": [animal("R1", "g1", boxNumber=3), animal("R2", "g2", boxNumber=3)],
-        },
+        cohort.id, {"animals": [animal("R1", boxNumber=3), animal("R2", boxNumber=3)]}
     )
-    assert sorted(a.box_number for a in saved.animals) == [3, 3]
+    assert [a.box_number for a in saved.animals] == [3, 3]
 
 
 def test_unassigned_boxes_never_collide(repo) -> None:
     cohort = repo.create("Batch A", "/tmp/a")
-    gid = cohort.groups[0].id
     saved = repo.update(
-        cohort.id, {"animals": [animal("R1", gid), animal("R2", gid), animal("R3", gid)]}
+        cohort.id, {"animals": [animal("R1"), animal("R2"), animal("R3")]}
     )
     assert all(a.box_number is None for a in saved.animals)
 
@@ -227,25 +187,18 @@ def test_box_numbers_outside_one_to_six_are_rejected(repo, box: int) -> None:
     cohort = repo.create("Batch A", "/tmp/a")
     with pytest.raises(ValidationError):
         repo.update(
-            cohort.id, {"animals": [animal("R1", cohort.groups[0].id, boxNumber=box)]}
+            cohort.id, {"animals": [animal("R1", boxNumber=box)]}
         )
-
-
-def test_an_animal_must_belong_to_one_of_the_cohorts_groups(repo) -> None:
-    cohort = repo.create("Batch A", "/tmp/a")
-    with pytest.raises(ValidationError):
-        repo.update(cohort.id, {"animals": [animal("R1", "not-a-group")]})
 
 
 def test_extended_animal_metadata_round_trips(repo) -> None:
     """`DATA.md#data-model` — sex, idNumber and notes."""
     cohort = repo.create("Batch A", "/tmp/a")
-    gid = cohort.groups[0].id
     saved = repo.update(
         cohort.id,
         {
             "animals": [
-                animal("R1", gid, sex="F", idNumber="0421", notes="left ear notch")
+                animal("R1", sex="F", idNumber="0421", notes="left ear notch")
             ]
         },
     )
@@ -256,7 +209,7 @@ def test_extended_animal_metadata_round_trips(repo) -> None:
 def test_an_unrecognised_sex_value_is_discarded_rather_than_stored(repo) -> None:
     cohort = repo.create("Batch A", "/tmp/a")
     saved = repo.update(
-        cohort.id, {"animals": [animal("R1", cohort.groups[0].id, sex="banana")]}
+        cohort.id, {"animals": [animal("R1", sex="banana")]}
     )
     assert saved.animals[0].sex is None
 
@@ -282,9 +235,9 @@ def test_permanent_delete_requires_archiving_first(repo) -> None:
         repo.get(cohort.id)
 
 
-def test_deleting_a_cohort_removes_its_animals_and_groups(repo) -> None:
+def test_deleting_a_cohort_removes_its_animals(repo) -> None:
     cohort = repo.create("Batch A", "/tmp/a")
-    repo.update(cohort.id, {"animals": [animal("R1", cohort.groups[0].id)]})
+    repo.update(cohort.id, {"animals": [animal("R1")]})
     repo.archive(cohort.id)
     repo.delete(cohort.id)
     assert repo.list_cohorts() == []
@@ -328,32 +281,13 @@ def test_the_data_folder_changes_only_through_its_own_action(repo) -> None:
 
 def test_summary_carries_counts_without_animal_detail(repo) -> None:
     cohort = repo.create("Batch A", "/tmp/a")
-    gid = cohort.groups[0].id
-    repo.update(cohort.id, {"animals": [animal("R1", gid), animal("R2", gid)]})
+    repo.update(cohort.id, {"animals": [animal("R1"), animal("R2")]})
 
     summary = repo.get(cohort.id).to_summary()
 
     assert summary["animalCount"] == 2
-    assert summary["groupCount"] == 1
     assert summary["archived"] is False
     assert "animals" not in summary
-
-
-def test_groups_are_returned_in_display_order(repo) -> None:
-    cohort = repo.create("Batch A", "/tmp/a")
-    repo.update(
-        cohort.id,
-        {
-            "groups": [
-                {"id": "g2", "name": "Second", "order": 1},
-                {"id": "g1", "name": "First", "order": 0},
-            ]
-        },
-    )
-    assert [g.name for g in repo.get(cohort.id).groups] == ["First", "Second"]
-
-
-# --- the cohort's world (`ARCHITECTURE.md#cohort-browser`) ----------------
 
 
 def test_a_new_cohort_stores_no_appearance(repo) -> None:
@@ -425,15 +359,14 @@ def test_the_summary_counts_distinct_home_cages(repo) -> None:
     cage rides alone in the RIG views, but that is a fact about who is running,
     not about housing."""
     cohort = repo.create("Batch A", "/tmp/batch-a")
-    gid = cohort.groups[0].id
     saved = repo.update(
         cohort.id,
         {
             "animals": [
-                animal("R1", gid, cage=1),
-                animal("R2", gid, cage=1),
-                animal("R3", gid, cage=2),
-                animal("R4", gid),
+                animal("R1", cage=1),
+                animal("R2", cage=1),
+                animal("R3", cage=2),
+                animal("R4"),
             ]
         },
     )

@@ -1,7 +1,7 @@
 import { ArrowRightLeft, Undo2 } from "lucide-react";
 
 import { Button } from "@/components/common/controls";
-import type { Animal, FormerAnimal, Group } from "@/lib/cohorts/types";
+import type { Animal, FormerAnimal } from "@/lib/cohorts/types";
 
 /**
  * Animals with history in this cohort that are no longer on its roster
@@ -19,16 +19,12 @@ import type { Animal, FormerAnimal, Group } from "@/lib/cohorts/types";
 export function FormerMembers({
   former,
   animals,
-  groups,
-  defaultGroupId,
   onRestore,
   onMove,
 }: {
   former: FormerAnimal[];
   /** The editor's roster as it stands, unsaved changes included. */
   animals: Animal[];
-  groups: Group[];
-  defaultGroupId: string;
   onRestore: (animal: Animal) => void;
   /** Absent hides the action — a new cohort, or one with unsaved changes. */
   onMove?: ((animal: FormerAnimal) => void) | undefined;
@@ -41,12 +37,10 @@ export function FormerMembers({
   if (rows.length === 0) return null;
 
   function restore(f: FormerAnimal) {
-    const group = groups.find((g) => g.name === f.groupName);
     onRestore({
       id: f.id,
       name: f.name ?? "",
-      groupId: group?.id ?? defaultGroupId,
-      // Its old box may be someone else's now; the operator places it again.
+      // A former member keeps no usual box; the operator sets one again.
       boxNumber: null,
       cage: f.cage,
       sex: f.sex,

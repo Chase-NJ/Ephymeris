@@ -173,7 +173,6 @@ class AnalyticsService:
             "dataFolder": cohort.data_folder,
             "sessions": [s.to_list_item(index + 1) for index, s in enumerate(sessions)],
             "animals": _summary_animals(cohort, payload_runs),
-            "groups": [{"id": g.id, "name": g.name, "order": g.order} for g in cohort.groups],
             "runs": payload_runs,
             "falseStarts": set_aside,
             "profileGroups": groups,
@@ -494,7 +493,6 @@ def _summary_animals(cohort: Any, payload_runs: list[dict[str, Any]]) -> list[di
         {
             "id": a.id,
             "name": a.name,
-            "groupId": a.group_id,
             "boxNumber": a.box_number,
             "cage": a.cage,
             "former": False,
@@ -511,7 +509,6 @@ def _summary_animals(cohort: Any, payload_runs: list[dict[str, Any]]) -> list[di
                 # A note-only id has no files to name it; the short id at least
                 # tells two such animals apart.
                 "name": former.name or f"Unknown animal {former.id[:6]}",
-                "groupId": "",
                 "boxNumber": None,
                 "cage": former.cage,
                 "former": True,

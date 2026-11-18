@@ -479,7 +479,7 @@ function DeleteConfirm({
         <div className="flex flex-col gap-4">
           <p className="text-[13px] leading-relaxed text-static">
             <span className="text-starlight">{cohort.name}</span> will be removed
-            from Ephymeris for good, along with its animals and groups.
+            from Ephymeris for good, along with its animals.
           </p>
           {/* `DATA.md#archive-and-delete` — the app removes its own bookkeeping, never the user's data. */}
           <p className="rounded-sm border border-halo bg-void/40 px-3 py-2 text-[12px] leading-relaxed text-static">

@@ -13,7 +13,6 @@ import { MissionControl } from "./routes/MissionControl";
 import { Recording } from "./routes/Recording";
 import { RigWiring } from "./routes/RigWiring";
 import { SessionConfig } from "./routes/SessionConfig";
-import { SessionGroup } from "./routes/SessionGroup";
 import { SessionMapping } from "./routes/SessionMapping";
 import { SessionRecording } from "./routes/SessionRecording";
 import { Settings } from "./routes/Settings";
@@ -73,7 +72,6 @@ export default function App() {
         {/* Two-step session setup (`ARCHITECTURE.md#the-flow`); the runner
             takes over at /session/:id/control. */}
         <Route path="/session/new" element={<SessionConfig />} />
-        <Route path="/session/:id/group" element={<SessionGroup />} />
         <Route path="/session/:id/mapping" element={<SessionMapping />} />
         <Route path="/session/:id/recording" element={<SessionRecording />} />
         <Route path="/session/:id/control" element={<MissionControl />} />

@@ -24,7 +24,7 @@ const STATUS: Record<SessionListItem["status"], { label: string; tone: string }>
 /**
  * The session's clock, as the instrument the page is built around
  * (`DATA.md#the-session-clock`): date, start, end and elapsed in mono, elapsed
- * the largest. Start and elapsed count from the first group run, never from
+ * the largest. Start and elapsed count from the first round, never from
  * when Step 1 created the record — that time is named separately, small, for
  * whoever needs to know how long set-up took. A session recovered from files
  * has no recorded end: its clock closes at the last file's stream end, which
@@ -33,7 +33,7 @@ const STATUS: Record<SessionListItem["status"], { label: string; tone: string }>
  * The session's folder opens from here — the page the operator is reading is
  * the one whose files they want to look at.
  *
- * Under the readouts, the session as a strip: each group run a segment, each
+ * Under the readouts, the session as a strip: each round a segment, each
  * note a tick at its moment, so "the spout was cleaned an hour in" is visible
  * before it is read.
  */
@@ -60,7 +60,7 @@ export function SessionClockHeader({
   const elapsed = elapsedSeconds(session.clockStartedAt, session.clockEndedAt, now);
   const status = STATUS[session.status];
   const recovered = session.id.startsWith("adopted:");
-  const ran = session.groupRuns.length > 0;
+  const ran = session.rounds.length > 0;
   const derived = recovered && !open;
   const [, , day] = session.date.split("-");
 
@@ -93,7 +93,7 @@ export function SessionClockHeader({
           <Readout
             label="Start"
             value={wallClock(session.clockStartedAt)}
-            sub={ran ? "first group" : recovered ? "first file" : "record created"}
+            sub={ran ? "first round" : recovered ? "first file" : "record created"}
           />
           <Readout
             label="End"
@@ -108,7 +108,7 @@ export function SessionClockHeader({
                 : derived
                   ? "last stream ended"
                   : ran
-                    ? "last group"
+                    ? "last round"
                     : "record closed"
             }
             approx={derived}
@@ -128,7 +128,7 @@ export function SessionClockHeader({
         {session.startedAt !== session.clockStartedAt && (
           <p className="px-5 pb-3 font-mono text-[10px] text-static/80">
             Set-up began {wallClock(session.startedAt)} ·{" "}
-            {session.groupRuns.length} group run{session.groupRuns.length === 1 ? "" : "s"}
+            {session.rounds.length} round{session.rounds.length === 1 ? "" : "s"}
           </p>
         )}
       </ReadoutFade>
@@ -184,7 +184,7 @@ function monthOf(isoDate: string): string {
 }
 
 /**
- * The session from first group start to last group end: group runs as
+ * The session from first round start to last round end: rounds as
  * segments, notes with an offset as ticks. A note outside the running window
  * has no place on it, by definition — it is listed below, not drawn.
  */
@@ -203,23 +203,23 @@ function FlightStrip({
   const end = session.clockEndedAt ? Date.parse(session.clockEndedAt) : now.getTime();
   const span = end - start;
   const placed = notes.filter((n) => n.offsetMs !== null);
-  if (Number.isNaN(start) || !(span > 0) || session.groupRuns.length === 0) return null;
+  if (Number.isNaN(start) || !(span > 0) || session.rounds.length === 0) return null;
   const at = (ms: number) => `${Math.min(100, Math.max(0, ((ms - start) / span) * 100))}%`;
 
   return (
     <div className="px-5 py-3">
       <div className="relative h-5" role="group" aria-label="Session timeline">
         <div className="absolute inset-x-0 top-1/2 h-px bg-halo" aria-hidden />
-        {session.groupRuns.map((run) => {
+        {session.rounds.map((run) => {
           const from = Date.parse(run.startedAt);
           const to = run.endedAt ? Date.parse(run.endedAt) : now.getTime();
           if (Number.isNaN(from) || Number.isNaN(to)) return null;
           return (
             <div
-              key={`${run.groupId}-${run.order}`}
+              key={run.order}
               className="absolute top-1/2 h-2 -translate-y-1/2 rounded-[2px] bg-halo"
               style={{ left: at(from), width: `calc(${at(to)} - ${at(from)})` }}
-              title={`Group run ${run.order + 1}: ${wallClock(run.startedAt)} – ${wallClock(run.endedAt)}`}
+              title={`${run.label ?? `Round ${run.order + 1}`}: ${wallClock(run.startedAt)} – ${wallClock(run.endedAt)}`}
               aria-hidden
             />
           );

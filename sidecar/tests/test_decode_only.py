@@ -106,7 +106,7 @@ async def test_a_mapping_refuses_a_decode_only_sketch(tmp_path, library):
         fixture.install()
         path = next(s.path for s in app.sketches.current.sketches if s.decode_only)
         with pytest.raises(Refused) as refused:
-            await dispatch(app, "sessions.confirmMapping", sessionId="s1", groupId="g1",
+            await dispatch(app, "sessions.confirmMapping", sessionId="s1",
                            boxes=[{"box": 2, "animalId": "a1", "sketchPath": path, "config": {}}])
     assert refused.value.code == "SKETCH_DECODE_ONLY"
     assert refused.value.detail["box"] == 2

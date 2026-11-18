@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from ..sessions.models import GroupRun, Session
+from ..sessions.models import Round, Session
 from ..sessions.tidy import session_key
 from . import transfer
 from .folders import relative_below, resolved
@@ -48,9 +48,7 @@ class AnimalMove:
     status: AnimalStatus
     outcome: Outcome
     dest_id: str
-    #: Where a carried animal lands: on the destination's roster in this group,
-    #: or (a former member, or one known only from files) as a former member.
-    dest_group_id: str | None
+    #: The usual box a carried roster animal keeps.
     dest_box: int | None
     runs: int = 0
     files: int = 0
@@ -79,10 +77,10 @@ class SessionMove:
     run_ids: list[str] = field(default_factory=list)
     notes_moved: list[str] = field(default_factory=list)
     notes_copied: list[str] = field(default_factory=list)
-    #: The destination record's group runs, already in its groups.
-    dest_group_runs: list[GroupRun] = field(default_factory=list)
-    #: The source record's group runs after the move, for a split.
-    source_group_runs: list[GroupRun] = field(default_factory=list)
+    #: The destination record's rounds.
+    dest_rounds: list[Round] = field(default_factory=list)
+    #: The source record's rounds after the move, for a split.
+    source_rounds: list[Round] = field(default_factory=list)
 
 
 @dataclass
@@ -103,9 +101,6 @@ class MovePlan:
     #: Synthetic (recovered-files-only) sessions touched, for the preview.
     recovered_sessions: int = 0
     refused: list[dict[str, str]] = field(default_factory=list)
-    #: The destination group carried animals land in, and the group a session
-    #: record is filed under when none of its moved animals has one.
-    dest_group_id: str | None = None
 
     def refuse(self, code: str, message: str) -> None:
         # A file is met once as a run's and again by the walk for stray ones;
@@ -172,14 +167,12 @@ class MoveRequest:
     source_id: str
     animal_ids: list[str]
     dest_id: str
-    dest_group_id: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
             "sourceId": self.source_id,
             "animalIds": list(self.animal_ids),
             "destId": self.dest_id,
-            "destGroupId": self.dest_group_id,
         }
 
     @staticmethod
@@ -188,7 +181,6 @@ class MoveRequest:
             source_id=str(raw["sourceId"]),
             animal_ids=[str(a) for a in raw["animalIds"]],
             dest_id=str(raw["destId"]),
-            dest_group_id=raw.get("destGroupId"),
         )
 
 
@@ -226,7 +218,7 @@ def plan_move(
         return plan
 
     _plan_animals(plan, request)
-    if plan.refused and any(r["code"] in ("unknown-animal", "bad-group") for r in plan.refused):
+    if plan.refused and any(r["code"] == "unknown-animal" for r in plan.refused):
         return plan
 
     src_root = Path(source.data_folder).expanduser()
@@ -270,13 +262,6 @@ def _plan_animals(plan: MovePlan, request: MoveRequest) -> None:
     source, dest = plan.source, plan.dest
     active = {a.id: a for a in source.animals}
     former = {f.id: f for f in source.former_animals}
-    groups = sorted(dest.groups, key=lambda g: g.order)
-    group_id = request.dest_group_id or (groups[0].id if groups else None)
-    if group_id not in {g.id for g in dest.groups}:
-        plan.refuse("bad-group", "That group isn't one of the destination cohort's.")
-        return
-    plan.dest_group_id = group_id
-
     dest_active = {a.name.casefold(): a for a in dest.animals}
     dest_former = {f.name.casefold(): f for f in dest.former_animals if f.name}
     seen: dict[str, str] = {}
@@ -310,24 +295,18 @@ def _plan_animals(plan: MovePlan, request: MoveRequest) -> None:
         if folded in dest_active:
             target = dest_active[folded]
             plan.animals.append(
-                AnimalMove(animal_id, name, status, "joins", target.id, target.group_id, None)
+                AnimalMove(animal_id, name, status, "joins", target.id, None)
             )
         elif folded in dest_former:
             target_former = dest_former[folded]
             plan.animals.append(
-                AnimalMove(animal_id, name, status, "joins", target_former.id, None, None)
+                AnimalMove(animal_id, name, status, "joins", target_former.id, None)
             )
         elif status == "active":
-            mover = active[animal_id]
-            taken = {
-                a.box_number for a in dest.animals if a.group_id == group_id and a.box_number
-            }
-            box = mover.box_number if mover.box_number not in taken else None
-            plan.animals.append(
-                AnimalMove(animal_id, name, status, "carried", animal_id, group_id, box)
-            )
+            box = active[animal_id].box_number
+            plan.animals.append(AnimalMove(animal_id, name, status, "carried", animal_id, box))
         else:
-            plan.animals.append(AnimalMove(animal_id, name, status, "carried", animal_id, None, None))
+            plan.animals.append(AnimalMove(animal_id, name, status, "carried", animal_id, None))
 
 
 def _plan_sessions_and_runs(
@@ -401,7 +380,7 @@ def _plan_sessions_and_runs(
             run_ids=[r["id"] for r in moved],
         )
         _plan_notes(conn, entry, moving, moved, staying, whole)
-        _plan_group_runs(entry, moving, moved, staying, plan.dest_group_id)
+        _plan_rounds(entry, moved, staying)
         plan.sessions.append(entry)
 
     # Recovered-files-only sessions need no record: their runs group by folder.
@@ -444,7 +423,7 @@ def _plan_notes(
     A note about a moved animal moves with it. A note about the whole session
     belongs to both halves of it, so it is copied. A note about a box follows
     the animals that used that box: only moved ones, it moves; only staying
-    ones, it stays; both (a box reused across groups) or neither (a recovered
+    ones, it stays; both (a box reused across rounds) or neither (a recovered
     run's box is unknown), it is copied.
     """
     rows = conn.execute(
@@ -477,63 +456,48 @@ def _plan_notes(
         entry.notes_copied.append(note["id"])
 
 
-def _plan_group_runs(
-    entry: SessionMove,
-    moving: dict[str, AnimalMove],
-    moved: list[sqlite3.Row],
-    staying: list[sqlite3.Row],
-    plan_group: str | None,
-) -> None:
-    """The destination record's group runs, and what the source keeps.
+def _plan_rounds(entry: SessionMove, moved: list[sqlite3.Row], staying: list[sqlite3.Row]) -> None:
+    """The destination record's rounds, and what the source keeps.
 
-    A group run the moved animals ran in becomes one in each destination group
-    they now belong to. Which ran in which is read from recorded start times
-    only — a recovered run's start comes from its filename, local time, and is
-    not comparable — and when none places them, one group run spans the
-    source's whole day.
+    A round the moved animals ran in goes with them. Which ran in which is read
+    from recorded start times only — a recovered run's start comes from its
+    filename, local time, and is not comparable — and when none places them,
+    one round spans the source's whole day.
     """
     source = entry.source
-    dest_groups = {
-        moving[r["animal_id"]].dest_group_id for r in moved if moving[r["animal_id"]].dest_group_id
-    }
-    if not dest_groups:
-        dest_groups = {plan_group} if plan_group else set()
 
-    def inside(run: sqlite3.Row, group_run: GroupRun) -> bool:
+    def inside(run: sqlite3.Row, round_: Round) -> bool:
         started = run["started_at"] or ""
-        return group_run.started_at <= started and (
-            group_run.ended_at is None or started <= group_run.ended_at
+        return round_.started_at <= started and (
+            round_.ended_at is None or started <= round_.ended_at
         )
 
-    out: list[GroupRun] = []
-    for group_run in source.group_runs:
-        if any(inside(r, group_run) for r in moved):
-            for group in sorted(dest_groups):
-                out.append(GroupRun(group, 0, group_run.started_at, group_run.ended_at))
-    if not out and source.group_runs:
-        first = min(g.started_at for g in source.group_runs)
-        ends = [g.ended_at for g in source.group_runs]
+    out = [r for r in source.rounds if any(inside(run, r) for run in moved)]
+    if not out and source.rounds:
+        first = min(r.started_at for r in source.rounds)
+        ends = [r.ended_at for r in source.rounds]
         last = None if any(e is None for e in ends) else max(e for e in ends if e)
-        out = [GroupRun(group, 0, first, last) for group in sorted(dest_groups)]
-    out.sort(key=lambda g: (g.started_at, g.group_id))
-    entry.dest_group_runs = [
-        GroupRun(g.group_id, index, g.started_at, g.ended_at) for index, g in enumerate(out)
-    ]
+        out = [Round(0, first, last)]
+    out.sort(key=lambda r: r.started_at)
+    entry.dest_rounds = _renumbered(out)
 
-    # The source keeps every group run some staying animal ran in. One only the
+    # The source keeps every round some staying animal ran in. One only the
     # moved animals ran is theirs and goes — unless the session is a recording,
-    # whose entries are per group run and must keep matching it.
+    # whose entries are per round and must keep matching it.
     if source.recording is not None or entry.kind == "whole":
-        entry.source_group_runs = list(source.group_runs)
+        entry.source_rounds = list(source.rounds)
         return
-    kept = [
-        g
-        for g in source.group_runs
-        if any(inside(r, g) for r in staying) or not any(inside(r, g) for r in moved)
-    ]
-    entry.source_group_runs = [
-        GroupRun(g.group_id, index, g.started_at, g.ended_at) for index, g in enumerate(kept)
-    ]
+    entry.source_rounds = _renumbered(
+        [
+            r
+            for r in source.rounds
+            if any(inside(run, r) for run in staying) or not any(inside(run, r) for run in moved)
+        ]
+    )
+
+
+def _renumbered(rounds: list[Round]) -> list[Round]:
+    return [Round(index, r.started_at, r.ended_at, r.label) for index, r in enumerate(rounds)]
 
 
 def _plan_run_files(plan: MovePlan, file_path: str, src_root: Path, dst_root: Path) -> str | None:

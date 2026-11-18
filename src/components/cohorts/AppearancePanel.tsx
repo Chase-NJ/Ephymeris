@@ -60,7 +60,7 @@ export function AppearancePanel({
   onReset: () => void;
   onSave: () => void;
   onDiscard: () => void;
-  /** Into the cohort proper: the roster, groups, data folder. */
+  /** Into the cohort proper: the roster, cages, data folder. */
   onOpen: () => void;
   onClose: () => void;
 }) {
@@ -78,8 +78,7 @@ export function AppearancePanel({
             {cohort.name}
           </h2>
           <p className="mt-0.5 font-mono text-[10px] text-static">
-            {plural(cohort.animalCount, "animal")} · {plural(cohort.cageCount, "cage")} ·{" "}
-            {plural(cohort.groupCount, "group")}
+            {plural(cohort.animalCount, "animal")} · {plural(cohort.cageCount, "cage")}
           </p>
         </div>
         <button

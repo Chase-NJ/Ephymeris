@@ -78,14 +78,13 @@ One row per name: its type (a shape's field names) and the first sentence of its
 |---|---|---|---|
 | <a id="cmd-cohorts.list"></a>`cohorts.list` | — | `cohorts` | Every cohort, archived included; the client filters. |
 | <a id="cmd-cohorts.get"></a>`cohorts.get` | `id` | `cohort` | One cohort's full record, roster included — fetched when a cohort is opened, since … |
-| <a id="cmd-cohorts.create"></a>`cohorts.create` | `name`, `dataFolder?`, `animals?`, `groups?` | `cohort` | Create a cohort and its data folder. |
-| <a id="cmd-cohorts.update"></a>`cohorts.update` | `id`, `patch` | `cohort` | Patch name, roster, groups or appearance. |
+| <a id="cmd-cohorts.create"></a>`cohorts.create` | `name`, `dataFolder?`, `animals?` | `cohort` | Create a cohort and its data folder. |
+| <a id="cmd-cohorts.update"></a>`cohorts.update` | `id`, `patch` | `cohort` | Patch name, roster or appearance. |
 | <a id="cmd-cohorts.archive"></a>`cohorts.archive` | `id` | `cohort` | Soft delete: the record and its data folder stay intact, and an archived cohort … |
 | <a id="cmd-cohorts.restore"></a>`cohorts.restore` | `id` | `cohort` | Un-archive. |
 | <a id="cmd-cohorts.delete"></a>`cohorts.delete` | `id`, `confirm` | `deleted` | Permanent delete of the bookkeeping only. |
 | <a id="cmd-cohorts.setdatafolder"></a>`cohorts.setDataFolder` | `id`, `path`, `moveExisting` | `cohort` | The explicit relocate, distinct from renaming (`DATA.md#data-folder`). |
-| <a id="cmd-cohorts.moveanimals"></a>`cohorts.moveAnimals` | `cohortId`, `animalIds`, `destinationCohortId`, `destinationGroupId?`, `apply?` | [AnimalMovePlan](#shape-animalmoveplan) | Move animals, their files and their history to another cohort (`DATA.md#moving-animals-between-cohorts`). |
-| <a id="cmd-cohorts.suggestgroups"></a>`cohorts.suggestGroups` | `id`, `groupCount?`, `maxGroupSize?`, `balanceBySex?` | [GroupProposal](#shape-groupproposal) | **Non-mutating** Auto-Balance preview — a balanced round-robin over the roster (`DATA.md#cohorts-animals-and-groups`). |
+| <a id="cmd-cohorts.moveanimals"></a>`cohorts.moveAnimals` | `cohortId`, `animalIds`, `destinationCohortId`, `apply?` | [AnimalMovePlan](#shape-animalmoveplan) | Move animals, their files and their history to another cohort (`DATA.md#moving-animals-between-cohorts`). |
 
 ### Prefixes and sessions
 
@@ -97,13 +96,13 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="cmd-sessions.suggestnumber"></a>`sessions.suggestNumber` | `prefixId` | `suggestion`, `sameDayNumbers` | The session-number pre-fill for the setup step. |
 | <a id="cmd-sessions.create"></a>`sessions.create` | `cohortId`, `prefixId`, `sessionNumber`, `durationMinutes?`, `recording?` | `session` | Create a session in status `configuring` and make its folder. |
 | <a id="cmd-sessions.abandon"></a>`sessions.abandon` | `sessionId` | `session` | Discard a session still in `configuring` (the mapping step's Back): marks it `aborted`, clears … |
-| <a id="cmd-sessions.confirmmapping"></a>`sessions.confirmMapping` | `sessionId`, `groupId`, `boxes` | `ok` | Load one group's box → animal → sketch mapping into the runner and build … |
+| <a id="cmd-sessions.confirmmapping"></a>`sessions.confirmMapping` | `sessionId`, `boxes` | `ok` | Load one round's box → animal → sketch mapping into the runner and build … |
 | <a id="cmd-sessions.flash"></a>`sessions.flash` | `sessionId`, `boxes` | [FlashQueueStatus](#shape-flashqueuestatus) | Queue the held mapping's sketches onto these boxes (`ARCHITECTURE.md#flash-sequence`). |
-| <a id="cmd-sessions.status"></a>`sessions.status` | `sessionId` | `session`, `groupId`, `boxes` | What Mission Control renders. |
+| <a id="cmd-sessions.status"></a>`sessions.status` | `sessionId` | `session`, `boxes`, `ranAnimalIds` | What Mission Control renders. |
 | <a id="cmd-sessions.startall"></a>`sessions.startAll` | `sessionId` | `session` | Enter `IN_SESSION` on every box of the confirmed mapping not already running, open the … |
-| <a id="cmd-sessions.endgroup"></a>`sessions.endGroup` | `sessionId` | `session` | End the current group's runs, close its `groupRuns` entry, clear the runner's mapping and … |
-| <a id="cmd-sessions.resume"></a>`sessions.resume` | `sessionId` | `session` | Continue one of **today's** sessions with another group — a crash-orphaned `running` one (the … |
-| <a id="cmd-sessions.end"></a>`sessions.end` | `sessionId` | `session` | Finish the session: stop every box, finalize files, close the open group run, mark … |
+| <a id="cmd-sessions.endround"></a>`sessions.endRound` | `sessionId` | `session` | End the current round's runs, close its `rounds` entry, clear the runner's mapping and … |
+| <a id="cmd-sessions.resume"></a>`sessions.resume` | `sessionId` | `session` | Continue one of **today's** sessions with another round — a crash-orphaned `running` one (the … |
+| <a id="cmd-sessions.end"></a>`sessions.end` | `sessionId` | `session` | Finish the session: stop every box, finalize files, close the open round, mark it … |
 | <a id="cmd-sessions.active"></a>`sessions.active` | — | [ActiveSessions](#shape-activesessions) | The global 'what is running?' query — argument-free, so a client with no prior … |
 
 ### Task profiles
@@ -148,10 +147,10 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="cmd-intan.status"></a>`intan.status` | — | [IntanStatus](#shape-intanstatus) | The current recording snapshot (`RECORDING.md#talking-to-rhx`). |
 | <a id="cmd-intan.connect"></a>`intan.connect` | — | [IntanStatus](#shape-intanstatus) | Open RHX's command socket now rather than at the next background attempt. |
 | <a id="cmd-intan.disconnect"></a>`intan.disconnect` | — | [IntanStatus](#shape-intanstatus) | Close the sockets. |
-| <a id="cmd-intan.configure"></a>`intan.configure` | `sessionId`, `groupId`, `config` | [IntanStatus](#shape-intanstatus) | Apply a recording setup to RHX **for one group run** — animals, and so … |
+| <a id="cmd-intan.configure"></a>`intan.configure` | `sessionId`, `config` | [IntanStatus](#shape-intanstatus) | Apply a recording setup to RHX **for one round** — animals, and so ports … |
 | <a id="cmd-intan.parseprobemap"></a>`intan.parseProbeMap` | `path` | `probeMap` | Parse an Intan probe-map XML for the setup preview. |
 | <a id="cmd-intan.probemap"></a>`intan.probeMap` | `box` | `probeMap` | The probe map configured for this box in the current recording, or null: what … |
-| <a id="cmd-intan.measureimpedance"></a>`intan.measureImpedance` | `sessionId`, `groupId`, `saveDirectory`, `boxes` | `measurements` | Measure every electrode's impedance in RHX and keep each box's sites under its animal … |
+| <a id="cmd-intan.measureimpedance"></a>`intan.measureImpedance` | `sessionId`, `saveDirectory`, `boxes` | `measurements` | Measure every electrode's impedance in RHX and keep each box's sites under its animal … |
 | <a id="cmd-intan.impedancehistory"></a>`intan.impedanceHistory` | `animalIds` | `latest` | Each animal's latest impedances, for the Record step to show before anything is measured … |
 | <a id="cmd-intan.yieldhistory"></a>`intan.yieldHistory` | `animalIds`, `limit?` | `history` | Each animal's recent recorded runs with their spike counts per site, for the Record … |
 | <a id="cmd-intan.acknowledgetether"></a>`intan.acknowledgeTether` | `box` | [IntanStatus](#shape-intanstatus) | The operator has seen this box's tether alarm: it stays until the box recovers … |
@@ -217,13 +216,13 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | `SKETCH_DECODE_ONLY` | `flash.enqueue`, `port.sendStart` or `sessions.confirmMapping` named a decode-only sketch (`TASKS.md#decode-only-sketches`): it is bundled so its … |
 | `COHORT_NOT_FOUND` | No cohort with that id. |
 | `COHORT_NAME_TAKEN` | Name already used by an **active** cohort. |
-| `COHORT_INVALID` | A cohort validation failure (`DATA.md#cohorts-animals-and-groups`). |
+| `COHORT_INVALID` | A cohort validation failure (`DATA.md#cohorts-and-animals`). |
 | `COHORT_NOT_ARCHIVED` | `cohorts.delete` on a cohort that wasn't archived first — the deliberate two-step guard. |
 | `ANIMAL_MOVE_REFUSED` | `cohorts.moveAnimals` with `apply` whose fresh plan can't go ahead, or whose records changed while … |
 | `DATA_FOLDER_INVALID` | A data folder couldn't be created, or a `cohorts.setDataFolder` destination isn't empty **while `moveExisting` … |
 | `PREFIX_NAME_TAKEN` | A prefix with that name already exists. |
-| `SESSION_INVALID` | A session command that can't apply: unknown session, cohort, prefix or group; a mapping … |
-| `SESSION_NOT_READY` | `sessions.create` against a cohort with no group holding a box-assigned animal. |
+| `SESSION_INVALID` | A session command that can't apply: unknown session, cohort or prefix; a mapping naming … |
+| `SESSION_NOT_READY` | `sessions.create` against a cohort with no animals. |
 | `TASK_PROFILE_INVALID` | A sketch's `task.json` exists but is malformed (`detail` carries the parse error), or one … |
 | `PARAMS_MISMATCH` | A start refused because the board's `PARAMS <n> <crc32>` reply does not match the … |
 | `PARAMS_CLAMPED` | A start refused because the board could not hold a value as sent (`CLAMPED` … |
@@ -262,12 +261,12 @@ One row per name: its type (a shape's field names) and the first sentence of its
 |---|---|---|
 | <a id="shape-absentrow"></a>AbsentRow | `rowId`, `name`, `blocks` | A row of the definition that no simulated trial drew. |
 | <a id="shape-activesessions"></a>ActiveSessions | `running`, `configuring`, `stale`, `confirmations` | Everything unfinished, discoverable with no prior knowledge of ids. |
-| <a id="shape-analyticsanimal"></a>AnalyticsAnimal | `id`, `name`, `groupId`, `boxNumber`, `cage`, `former` |  |
+| <a id="shape-analyticsanimal"></a>AnalyticsAnimal | `id`, `name`, `boxNumber`, `cage`, `former` |  |
 | <a id="shape-analyticscounts"></a>AnalyticsCounts | `runs`, `decoded`, `noProfile`, `missing`, `unreadable`, `falseStarts` |  |
 | <a id="shape-analyticsprogress"></a>AnalyticsProgress | `cohortId`, `phase`, `done`, `total` |  |
-| <a id="shape-analyticssummary"></a>AnalyticsSummary | `cohortId`, `dataFolder`, `sessions`, `animals`, `groups`, `runs`, `falseStarts`, `profileGroups`, `counts`, `warnings`, `minCountedTrials` | The whole cohort table in one call; selections filter it client-side. |
+| <a id="shape-analyticssummary"></a>AnalyticsSummary | `cohortId`, `dataFolder`, `sessions`, `animals`, `runs`, `falseStarts`, `profileGroups`, `counts`, `warnings`, `minCountedTrials` | The whole cohort table in one call; selections filter it client-side. |
 | <a id="shape-analyticswarning"></a>AnalyticsWarning | `code`, `runId`, `message` |  |
-| <a id="shape-animal"></a>Animal | `id`, `name`, `groupId`, `boxNumber`, `cage`, `sex`, `idNumber`, `notes` |  |
+| <a id="shape-animal"></a>Animal | `id`, `name`, `boxNumber`, `cage`, `sex`, `idNumber`, `notes` |  |
 | <a id="shape-animalended"></a>AnimalEnded | `box`, `animalId`, `stopReason`, `filePath` |  |
 | <a id="shape-animalmoveanimal"></a>AnimalMoveAnimal | `animalId`, `name`, `status`, `outcome`, `destinationAnimalId`, `runs`, `files` |  |
 | <a id="shape-animalmovefiles"></a>AnimalMoveFiles | `count`, `bytes`, `alreadyThere`, `missing` |  |
@@ -284,10 +283,10 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="shape-channelsetconflict"></a>ChannelSetConflict | `kind`, `channel`, `message` | One way another machine's channel set disagrees with this one (`TASKS.md#moving-the-channel-set-between-machines`). |
 | <a id="shape-channelsetimportplan"></a>ChannelSetImportPlan | `conflicts`, `vocabulary`, `changed`, `newChannels`, `breaks`, `hereHash`, `importedHash`, `fileHash`, `fileHashVersion`, `identical` | What importing another machine's channel set and vocabulary would do here. |
 | <a id="shape-channelsetnewchannel"></a>ChannelSetNewChannel | `channel`, `kind`, `type`, `pin`, `freePins` | A channel the imported channel set adds here, with what a pin picker needs … |
-| <a id="shape-cohort"></a>Cohort | `id`, `name`, `dataFolder`, `animals`, `groups`, `archivedAt`, `createdAt`, `updatedAt`, `appearance`, `formerAnimals` | The full record, fetched only when a cohort is opened. |
+| <a id="shape-cohort"></a>Cohort | `id`, `name`, `dataFolder`, `animals`, `archivedAt`, `createdAt`, `updatedAt`, `appearance`, `formerAnimals` | The full record, fetched only when a cohort is opened. |
 | <a id="shape-cohortappearance"></a>CohortAppearance | `type`, `hue`, `ring`, `seed` | How a cohort's world looks (`ARCHITECTURE.md#frontend`). |
-| <a id="shape-cohortpatch"></a>CohortPatch | `name?`, `animals?`, `groups?`, `appearance?` |  |
-| <a id="shape-cohortsummary"></a>CohortSummary | `id`, `name`, `animalCount`, `groupCount`, `assignedBoxes`, `cageCount`, `archived`, `createdAt`, `updatedAt`, `appearance` | Enough for the cohort browser and the dashboard tile, no per-animal detail. |
+| <a id="shape-cohortpatch"></a>CohortPatch | `name?`, `animals?`, `appearance?` |  |
+| <a id="shape-cohortsummary"></a>CohortSummary | `id`, `name`, `animalCount`, `assignedBoxes`, `cageCount`, `archived`, `createdAt`, `updatedAt`, `appearance` | Enough for the cohort browser and the dashboard tile, no per-animal detail. |
 | <a id="shape-cohortsupdateddata"></a>CohortsUpdatedData | `cohorts` |  |
 | <a id="shape-conditionoutcomes"></a>ConditionOutcomes | `metricId`, `label`, `triggerCode`, `outcomes`, `answerSide` | TrialOutcomes restricted to one declared condition (`ANALYTICS.md#how-a-strobe-stream-is-scored`), in authored liveMetrics order; the entries partition … |
 | <a id="shape-conditionscore"></a>ConditionScore | `condition`, `correct` | A legacy trial's verdict under one condition its onset opens. |
@@ -308,11 +307,7 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="shape-flashorigin"></a>FlashOrigin | "baseline" \| "session" \| "debug" | Who asked for a flash, which fixes how it runs: `baseline` is a utility … |
 | <a id="shape-flashprogressdata"></a>FlashProgressData | `box`, `phase`, `stream`, `text` |  |
 | <a id="shape-flashqueuestatus"></a>FlashQueueStatus | `boxes` | The whole flash queue, every box — one snapshot, shared by the commands and … |
-| <a id="shape-formeranimal"></a>FormerAnimal | `id`, `name`, `source`, `removedAt`, `runCount`, `sex`, `idNumber`, `cage`, `notes`, `groupName` | An animal with history in a cohort but no place on its roster (`DATA.md#former-members`). |
-| <a id="shape-group"></a>Group | `id`, `name`, `order` |  |
-| <a id="shape-groupproposal"></a>GroupProposal | `groups`, `rejected` | An Auto-Balance preview. |
-| <a id="shape-grouprejection"></a>GroupRejection | `reason`, `minimumGroups` |  |
-| <a id="shape-grouprun"></a>GroupRun | `groupId`, `order`, `startedAt`, `endedAt` |  |
+| <a id="shape-formeranimal"></a>FormerAnimal | `id`, `name`, `source`, `removedAt`, `runCount`, `sex`, `idNumber`, `cage`, `notes` | An animal with history in a cohort but no place on its roster (`DATA.md#former-members`). |
 | <a id="shape-identifyspec"></a>IdentifySpec | `on`, `off` | The two commands that make a box announce itself — a trial light, a … |
 | <a id="shape-impedancecomparison"></a>ImpedanceComparison | `current`, `previous` |  |
 | <a id="shape-impedancemeasurement"></a>ImpedanceMeasurement | `animalId`, `measuredAt`, `box`, `sessionId`, `frequencyHz`, `file`, `sites` | One animal's sites, measured once (`RECORDING.md#impedance-tracking`). |
@@ -348,13 +343,11 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="shape-profilemetricinfo"></a>ProfileMetricInfo | `id`, `label`, `windowSize`, `answerSide` |  |
 | <a id="shape-profilesource"></a>ProfileSource | "snapshot" \| "sketch-current" \| "inferred" \| "unavailable" | How much the decoding can be trusted (`DATA.md#reading-the-archive`). |
 | <a id="shape-proportion"></a>Proportion | `n`, `of`, `p`, `low`, `high` | A count out of a total, with its interval. |
-| <a id="shape-proposedanimal"></a>ProposedAnimal | `animalId`, `boxNumber` |  |
-| <a id="shape-proposedgroup"></a>ProposedGroup | `name`, `order`, `animals` |  |
 | <a id="shape-rateestimate"></a>RateEstimate | `n`, `mean`, `low`, `high` | A mean over trials with its interval. |
 | <a id="shape-recordingbox"></a>RecordingBox | `box`, `digitalIn`, `port`, `channels`, `probeMap` |  |
 | <a id="shape-recordingboxconfig"></a>RecordingBoxConfig | `box`, `port`, `firstChannel`, `lastChannel`, `probeMapPath?` |  |
 | <a id="shape-recordingconfig"></a>RecordingConfig | `saveDirectory`, `fileFormat`, `saveWideband`, `saveSpikes`, `saveSpikeSnapshots`, `snapshotPreMs`, `snapshotPostMs`, `saveLowpass`, `lowpassDownsample`, `saveHighpass`, `newFileMinutes?`, `threshold`, `boxes` | Everything the recording walkthrough collects (`RECORDING.md#recording-walkthrough`). |
-| <a id="shape-recordingrun"></a>RecordingRun | `groupId`, `path`, `baseFilename`, `fileTimestamp`, `fileFormat`, `sampleRate`, `startedAt`, `endedAt`, `boxes` | One group run's recording. |
+| <a id="shape-recordingrun"></a>RecordingRun | `label?`, `path`, `baseFilename`, `fileTimestamp`, `fileFormat`, `sampleRate`, `startedAt`, `endedAt`, `boxes` | One round's recording. |
 | <a id="shape-recordingthreshold"></a>RecordingThreshold | `mode`, `microvolts`, `rmsMultiple`, `negative` |  |
 | <a id="shape-recoveredtsv"></a>RecoveredTsv | `tsvPath`, `jsonPath`, `status`, `nEvents`, `stopReason`, `reason` | One orphaned write-ahead log the crash-recovery backfill processed. |
 | <a id="shape-recoverresult"></a>RecoverResult | `scanned`, `recovered`, `failed`, `entries`, `cohortId`, `dataFolder`, `folderMissing` |  |
@@ -374,19 +367,20 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="shape-rigreservedpin"></a>RigReservedPin | `pin`, `name` | A pin the board has that no channel may take: one of the Mega's … |
 | <a id="shape-rigsaved"></a>RigSaved | `status`, `problems`, `breaks`, `allocations` |  |
 | <a id="shape-rigstatus"></a>RigStatus | `custom`, `derivedFrom`, `board`, `editedAt`, `pinoutHash`, `channelSetHash`, `notices`, `canReset`, `resetReplaces`, `canSave`, `needsPinConfirmation` |  |
+| <a id="shape-round"></a>Round | `order`, `startedAt`, `endedAt`, `label` | One set of animals run together in a session (`GLOSSARY.md#round`). |
 | <a id="shape-rowoutcomes"></a>RowOutcomes | `rowId`, `name`, `trials`, `unclassified`, `classes` | P(outcome \| row): one row's trials by outcome class. |
 | <a id="shape-runchange"></a>RunChange | `runId`, `sessionId`, `animalId`, `box`, `task`, `recovered`, `previousRunId`, `previousSessionId`, `first`, `taskChange`, `boxChange`, `params`, `paramsKnown`, `falseStart`, `falseStartSource` | What differs between a run and the same animal's previous run, recorded and recovered … |
-| <a id="shape-runnersession"></a>RunnerSession | `session`, `groupId`, `boxes` | The runner-held session — the same shape a sessions.status reply carries. |
+| <a id="shape-runnersession"></a>RunnerSession | `session`, `boxes` | The runner-held session: the session and boxes of a `sessions.status` reply. |
 | <a id="shape-runseries"></a>RunSeries | `runId`, `mode`, `metrics`, `trail`, `trials`, `trialTable` |  |
 | <a id="shape-runstatus"></a>RunStatus | "ok" \| "no-metrics" \| "diverged" \| "unreplayable" \| "missing" \| "unreadable" | Why a run has numbers or not (`ANALYTICS.md#why-a-run-has-no-numbers`). |
 | <a id="shape-runsummary"></a>RunSummary | `runId`, `sessionId`, `animalId`, `boxNumber`, `startedAt`, `endedAt`, `sketchPath`, `sketchName`, `profileHash`, `paramsHash`, `profileSource`, `stale`, `falseStart`, `falseStartSource`, `restartedBy`, `status`, `metrics`, `overall`, `outcomes`, `conditions`, `engagement`, `totalEvents`, `durationMs`, `stopReason`, `clean`, `seed`, `detail`, `excludedByDefault`, `replay`, `divergence` |  |
 | <a id="shape-runyield"></a>RunYield | `runId`, `sessionId`, `box`, `startedAt`, `countedSeconds`, `runSeconds`, `threshold`, `counts` | One recorded run's spike counts per site, the basis of active-site yield (`RECORDING.md#active-site-yield`). |
 | <a id="shape-seriesresult"></a>SeriesResult | `series`, `warnings` |  |
 | <a id="shape-serverhello"></a>ServerHello | `protocolVersion`, `sidecarVersion` |  |
-| <a id="shape-session"></a>Session | `id`, `cohortId`, `prefixId`, `prefixName`, `sessionNumber`, `date`, `startedAt`, `endedAt`, `clockStartedAt`, `clockEndedAt`, `status`, `folderPath`, `groupRuns`, `durationMinutes`, `recording` |  |
+| <a id="shape-session"></a>Session | `id`, `cohortId`, `prefixId`, `prefixName`, `sessionNumber`, `date`, `startedAt`, `endedAt`, `clockStartedAt`, `clockEndedAt`, `status`, `folderPath`, `rounds`, `durationMinutes`, `recording` |  |
 | <a id="shape-sessionbox"></a>SessionBox | `box`, `animalId`, `animalName`, `sketchName`, `sketchPath`, `running`, `startedAt`, `ended` | One box as the runner sees it — the source Mission Control renders. |
 | <a id="shape-sessionboxmapping"></a>SessionBoxMapping | `box`, `animalId`, `sketchPath`, `config` | One box's session-local mapping + task config (`ARCHITECTURE.md#session-lifecycle`). |
-| <a id="shape-sessionlistitem"></a>SessionListItem | `id`, `cohortId`, `prefixName`, `sessionNumber`, `date`, `startedAt`, `endedAt`, `clockStartedAt`, `clockEndedAt`, `status`, `folderPath`, `ordinal`, `runCount?`, `groupRuns` | One session, from sessions.list or inside a summary. |
+| <a id="shape-sessionlistitem"></a>SessionListItem | `id`, `cohortId`, `prefixName`, `sessionNumber`, `date`, `startedAt`, `endedAt`, `clockStartedAt`, `clockEndedAt`, `status`, `folderPath`, `ordinal`, `runCount?`, `rounds` | One session, from sessions.list or inside a summary. |
 | <a id="shape-sessionlog"></a>SessionLog | `sessionId`, `operator`, `summary`, `updatedAt` | A session's free fields. |
 | <a id="shape-sessionnote"></a>SessionNote | `id`, `sessionId`, `cohortId`, `at`, `createdAt`, `editedAt`, `tag`, `scope`, `body`, `offsetMs`, `carryForward`, `resolvedAt`, `resolvedInSessionId` | One timestamped log entry (`DATA.md#the-session-log`). |
 | <a id="shape-sessionrecording"></a>SessionRecording | `runs` |  |
@@ -427,12 +421,12 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="shape-tasksupdateddata"></a>TasksUpdatedData | `tasks` |  |
 | <a id="shape-tasktarget"></a>TaskTarget | `kind`, `index` | Where a task diagnostic belongs on the editor (`TASKS.md#the-spine-editor`). |
 | <a id="shape-telemetryfield"></a>TelemetryField | `key`, `label` |  |
-| <a id="shape-telemetrymetric"></a>TelemetryMetric | `id`, `value`, `n` |  |
+| <a id="shape-telemetrymetric"></a>TelemetryMetric | `id`, `value`, `n`, `triggered`, `counted`, `hits` | One live metric: its rolling value, and its whole-run totals (`ARCHITECTURE.md#live-session-views`). |
 | <a id="shape-telemetryspec"></a>TelemetrySpec | `match`, `fields` | How to parse a utility sketch's non-persisted STATUS lines out of `port.output` (`TASKS.md#task-profile`). |
 | <a id="shape-tidyempty"></a>TidyEmpty | `session`, `removesFolder` |  |
 | <a id="shape-tidymerge"></a>TidyMerge | `keep`, `absorb` |  |
 | <a id="shape-tidyplan"></a>TidyPlan | `cohortId`, `applied`, `merges`, `empty`, `skipped` |  |
-| <a id="shape-tidysession"></a>TidySession | `sessionId`, `label`, `date`, `status`, `startedAt`, `runCount`, `groupIds` | One session record as the tidy preview names it (`DATA.md#reading-the-archive`). |
+| <a id="shape-tidysession"></a>TidySession | `sessionId`, `label`, `date`, `status`, `startedAt`, `runCount`, `roundLabels` | One session record as the tidy preview names it (`DATA.md#reading-the-archive`). |
 | <a id="shape-tidyskipped"></a>TidySkipped | `session`, `reason` |  |
 | <a id="shape-trialengagement"></a>TrialEngagement | `presented`, `poked`, `odorDelivered`, `noPoke`, `pokeAborted`, `pEngaged`, `pDelivered`, `engagedLow`, `engagedHigh` | How far each offered trial got before the animal dropped out (`ANALYTICS.md#how-a-strobe-stream-is-scored`). |
 | <a id="shape-trialoutcomes"></a>TrialOutcomes | `trials`, `administered`, `rewarded`, `holdFailed`, `wrongWell`, `noResponse`, `aborted`, `pRewarded`, `pSide`, `rewardedLow`, `rewardedHigh`, `sideLow`, `sideHigh`, `unpaid`, `withheld`, `falseAlarm`, `responded`, `pResponse`, `responseLow`, `responseHigh` | What actually happened per trial (`ANALYTICS.md#how-a-strobe-stream-is-scored`). |

@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   WALK_START,
+  assignBox,
   confirmPayload,
+  copyOverrides,
   isPlaced,
   mappingReadiness,
   placementOrder,
-  seedMappings,
+  seedRound,
   walkReducer,
   walkStop,
   type WalkAction,
@@ -42,27 +44,94 @@ function run(state: WalkState, ...actions: WalkAction[]): WalkState {
   return actions.reduce(walkReducer, state);
 }
 
-describe("seedMappings", () => {
+describe("seedRound", () => {
   const animals = [
-    { id: "a1", boxNumber: 1 },
-    { id: "a2", boxNumber: 4 },
+    { id: "a1", name: "remy1", boxNumber: 1 },
+    { id: "a2", name: "remy2", boxNumber: 4 },
+    { id: "a3", name: "remy3", boxNumber: null },
   ];
+  const nobody = new Set<string>();
 
-  it("puts each animal on its standing box, with no sketch chosen", () => {
-    expect(seedMappings(animals, undefined)).toEqual([mapping(1, "a1"), mapping(4, "a2")]);
+  it("puts each animal on its usual box, with no sketch chosen, and leaves the rest on the bench", () => {
+    expect(seedRound(animals, nobody, undefined)).toEqual([mapping(1, "a1"), mapping(4, "a2")]);
   });
 
-  it("restores the operator's draft while it still describes this group's animals", () => {
-    const draft = [mapping(4, "a1", "/s/Go", { hold_ms: 800 }), mapping(1, "a2", "/s/Go")];
-    expect(seedMappings(animals, draft)).toBe(draft);
+  it("gives a shared usual box to the first by name and benches the other", () => {
+    const sharing = [
+      { id: "b", name: "remy10", boxNumber: 2 },
+      { id: "a", name: "remy9", boxNumber: 2 },
+    ];
+    expect(seedRound(sharing, nobody, undefined)).toEqual([mapping(2, "a")]);
   });
 
-  it("starts over when an animal was moved or removed in Cohorts meanwhile", () => {
-    expect(seedMappings(animals, [mapping(1, "a1", "/s/Go")])).toEqual([mapping(1, "a1"), mapping(4, "a2")]);
-    expect(seedMappings(animals, [mapping(1, "a1", "/s/Go"), mapping(4, "a9", "/s/Go")])).toEqual([
+  it("offers only the animals that have not run in this session yet", () => {
+    expect(seedRound(animals, new Set(["a1"]), undefined)).toEqual([mapping(4, "a2")]);
+    expect(seedRound(animals, new Set(["a1", "a2"]), undefined)).toEqual([]);
+  });
+
+  it("restores the operator's draft, a subset of the roster included", () => {
+    const draft = [mapping(4, "a1", "/s/Go", { hold_ms: 800 })];
+    expect(seedRound(animals, new Set(["a1"]), draft)).toBe(draft);
+  });
+
+  it("starts over when a drafted animal was removed in Cohorts meanwhile", () => {
+    expect(seedRound(animals, nobody, [mapping(1, "a1", "/s/Go"), mapping(4, "a9", "/s/Go")])).toEqual([
       mapping(1, "a1"),
       mapping(4, "a2"),
     ]);
+  });
+});
+
+describe("assignBox", () => {
+  const round = [mapping(1, "a1", "/s/Go", { hold_ms: 800 }), mapping(2, "a2", "/s/Go")];
+
+  it("puts a benched animal in an empty box", () => {
+    expect(assignBox(round, 5, "a3")).toEqual([...round, mapping(5, "a3")]);
+  });
+
+  it("moves an animal with its sketch and edits, emptying the box it left", () => {
+    expect(assignBox(round, 6, "a1")).toEqual([mapping(2, "a2", "/s/Go"), mapping(6, "a1", "/s/Go", { hold_ms: 800 })]);
+  });
+
+  it("swaps two animals when the one picked is in another box", () => {
+    expect(assignBox(round, 2, "a1")).toEqual([
+      mapping(1, "a2", "/s/Go"),
+      mapping(2, "a1", "/s/Go", { hold_ms: 800 }),
+    ]);
+  });
+
+  it("benches whoever held the box when the one picked comes off the bench", () => {
+    expect(assignBox(round, 2, "a3")).toEqual([mapping(1, "a1", "/s/Go", { hold_ms: 800 }), mapping(2, "a3")]);
+  });
+
+  it("changes nothing when the animal is already there", () => {
+    expect(assignBox(round, 1, "a1")).toEqual(round);
+  });
+
+  it("empties a box", () => {
+    expect(assignBox(round, 1, null)).toEqual([mapping(2, "a2", "/s/Go")]);
+  });
+});
+
+describe("copyOverrides", () => {
+  it("gives every other box on the same sketch the same edits, and no other box", () => {
+    const round = [
+      mapping(1, "a1", "/s/Go", { hold_ms: 800 }),
+      mapping(2, "a2", "/s/Go", { iti_ms: 5 }),
+      mapping(3, "a3", "/s/Other", { hold_ms: 1 }),
+      mapping(4, "a4"),
+    ];
+    expect(copyOverrides(round, 1)).toEqual([
+      round[0],
+      mapping(2, "a2", "/s/Go", { hold_ms: 800 }),
+      round[2],
+      round[3],
+    ]);
+  });
+
+  it("changes nothing from a box with no sketch", () => {
+    const round = [mapping(1, "a1"), mapping(2, "a2")];
+    expect(copyOverrides(round, 1)).toEqual(round);
   });
 });
 
@@ -98,7 +167,12 @@ describe("mappingReadiness", () => {
 
   it("asks for a sketch on every box", () => {
     const r = mappingReadiness([mapping(1, "a", "/s/Go"), mapping(2, "b")], { "/s/Go": go }, {}, bound);
-    expect(r).toMatchObject({ allChosen: false, ready: false, problem: "Pick a sketch for every box, then confirm." });
+    expect(r).toMatchObject({ allChosen: false, ready: false, problem: "Pick a task for every animal, then place them." });
+  });
+
+  it("asks for an animal when the round is empty", () => {
+    const r = mappingReadiness([], {}, {}, new Set([1, 2]));
+    expect(r).toMatchObject({ ready: false, problem: "Put an animal in a box to set up this round." });
   });
 
   it("refuses two animals on one box", () => {

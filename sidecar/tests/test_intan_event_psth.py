@@ -259,8 +259,7 @@ async def test_the_wire_finds_a_session_s_recorded_runs_and_serves_their_psth(tm
     async with running_app(tmp_path / "app", tool=FakeTool()) as app:
         cohort = (await dispatch(
             app, "cohorts.create", name="Batch", dataFolder=str(tmp_path / "data"),
-            groups=[{"id": "g1", "name": "A", "order": 0}],
-            animals=[animal("R7", "g1", box=1), animal("R8", "g1", box=2)],
+            animals=[animal("R7", box=1), animal("R8", box=2)],
         ))["cohort"]
         prefix = (await dispatch(app, "prefixes.create", name="2O-Bdisc"))["prefix"]["id"]
         session = (await dispatch(

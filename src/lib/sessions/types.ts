@@ -6,13 +6,13 @@
  * site; this file adds the client-side staging types and helpers.
  */
 
-import type { Animal, Cohort, Group } from "@/lib/cohorts/types";
-import type { CommandResultMap, GroupRun, Session, TaskProfile } from "@/lib/ws/protocol";
+import type { Cohort } from "@/lib/cohorts/types";
+import type { CommandResultMap, Session, TaskProfile } from "@/lib/ws/protocol";
 
 export type {
   Prefix,
   SessionStatus,
-  GroupRun,
+  Round,
   Session,
   ConfigFieldType,
   ConfigField,
@@ -27,6 +27,7 @@ export type {
   BoxTelemetry,
   AnimalEnded,
   SessionBox,
+  RunnerSession,
 } from "@/lib/ws/protocol";
 
 /** `sessions.status` — named for the snapshot it is, since `SessionStatus`
@@ -35,9 +36,8 @@ export type SessionSnapshot = CommandResultMap["sessions.status"];
 
 /**
  * `sessions.active` result and `session.lifecycle` payload — the global
- * "what is running?" answer. `running` is the wire's `RunnerSession`, which is
- * structurally the `sessions.status` result, so the existing snapshot type
- * serves both; split only if the shapes ever diverge.
+ * "what is running?" answer. Its `running` is a `RunnerSession`: the session
+ * and boxes of a `sessions.status` reply.
  */
 export type ActiveSessions = CommandResultMap["sessions.active"];
 
@@ -57,60 +57,23 @@ export interface BoxMapping {
   overrides: Record<string, unknown>;
 }
 
-/**
- * A cohort is ready to run (`ARCHITECTURE.md#configuration`) if it has at least one group with at least one
- * animal that has a `boxNumber` assigned. A group with none is skipped rather
- * than blocking the cohort.
- */
-export function isReadyToRun(cohort: Cohort): boolean {
-  return cohort.animals.some((a) => a.boxNumber !== null);
+/** A cohort is ready to run (`ARCHITECTURE.md#configuration`) once it has an animal. */
+export function isReadyToRun(cohort: Pick<Cohort, "animals">): boolean {
+  return cohort.animals.length > 0;
 }
 
 /**
- * Groups that hold at least one box-assigned animal, in the cohort's display
- * order. Not a run order — there is none: the operator picks which group runs,
- * at setup and at every switch (`ARCHITECTURE.md#configuration`).
- */
-export function populatedGroups(cohort: Cohort): Group[] {
-  const populated = new Set(
-    cohort.animals.filter((a) => a.boxNumber !== null).map((a) => a.groupId),
-  );
-  return [...cohort.groups]
-    .filter((g) => populated.has(g.id))
-    .sort((a, b) => a.order - b.order);
-}
-
-/** Every run of one group in this session, oldest first (a group may run twice). */
-export function groupRunsFor(session: Session | null, groupId: string): GroupRun[] {
-  return (session?.groupRuns ?? []).filter((run) => run.groupId === groupId);
-}
-
-/**
- * How many of the cohort's populated groups have run in this session, the one
- * on the rig included — each group once, however many times it ran.
- */
-export function groupsRunCount(cohort: Cohort, session: Session | null): number {
-  const done = new Set((session?.groupRuns ?? []).map((r) => r.groupId));
-  return populatedGroups(cohort).filter((g) => done.has(g.id)).length;
-}
-
-/** Whether every populated group has run in this session. */
-export function allGroupsRun(cohort: Cohort, session: Session | null): boolean {
-  return groupsRunCount(cohort, session) === populatedGroups(cohort).length;
-}
-
-/**
- * A session the operator can pick back up with another group (`sessions.resume`):
- * today's, one that ran at least one group, and either ended (`completed`) or
+ * A session the operator can pick back up with another round (`sessions.resume`):
+ * today's, one that ran at least one round, and either ended (`completed`) or
  * left `running` by a closed app. Same day only — the folder carries its date.
  */
 export function isContinuable(
-  session: Pick<Session, "date" | "status" | "groupRuns">,
+  session: Pick<Session, "date" | "status" | "rounds">,
   today: string,
 ): boolean {
   return (
     session.date === today &&
-    session.groupRuns.length > 0 &&
+    session.rounds.length > 0 &&
     (session.status === "completed" || session.status === "running")
   );
 }
@@ -119,13 +82,6 @@ export function isContinuable(
 export function localToday(now: Date = new Date()): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-}
-
-/** Box-assigned animals of one group, ordered by box number. */
-export function animalsInGroup(cohort: Cohort, groupId: string): Animal[] {
-  return cohort.animals
-    .filter((a) => a.groupId === groupId && a.boxNumber !== null)
-    .sort((a, b) => (a.boxNumber ?? 0) - (b.boxNumber ?? 0));
 }
 
 /**
@@ -199,6 +155,24 @@ export function editedOverrides(
     if (!Object.is(value, shown[key])) out[key] = value;
   }
   return out;
+}
+
+/**
+ * How many of a box's values differ from what the layers underneath give it:
+ * the number a row shows so tuned boxes stand out without opening them. An
+ * override set back to the value underneath counts as none.
+ */
+export function overriddenCount(
+  profile: TaskProfile | null,
+  rigDefaults: Record<string, unknown>,
+  overrides: Record<string, unknown>,
+): number {
+  if (!profile) return 0;
+  const baseline = defaultConfig(profile, rigDefaults);
+  const config = defaultConfig(profile, rigDefaults, overrides);
+  return profile.config.filter(
+    (f) => f.metadataKey in config && !Object.is(config[f.metadataKey], baseline[f.metadataKey]),
+  ).length;
 }
 
 /** The overrides with these keys dropped, so those fields follow the layers underneath again. */

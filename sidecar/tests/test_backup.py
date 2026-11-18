@@ -787,7 +787,7 @@ async def test_a_hung_backup_target_never_holds_up_a_run(
         loop=asyncio.get_running_loop(), ports=bench.ports, broadcast=broadcast,
         on_animal_ended=on_animal_ended, backup=backup,
     )
-    runner.configure(data, "2O-Bdisc_25", "g1", [BoxConfig(
+    runner.configure(data, "2O-Bdisc_25", [BoxConfig(
         box=1, animal_id="a1", animal_name="remy1", sketch_path="/sk/GRGL",
         sketch_name="GRGL", start_command=build_start_command(None, {}), config_metadata={},
         profile=parse_profile(GRGL),

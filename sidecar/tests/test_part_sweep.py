@@ -46,8 +46,7 @@ async def test_the_first_settings_push_sweeps_earlier_runs_parts(tmp_path: Path)
         app._started = time.time() + 2 * PART_GRACE_S
         await dispatch(
             app, "cohorts.create", name="Cohort", dataFolder=str(elsewhere),
-            groups=[{"id": "g1", "name": "Morning", "order": 0}],
-            animals=[animal("rat1", "g1")],
+            animals=[animal("rat1")],
         )
         await dispatch(app, "settings.push", settings=settings(
             dataDirectory=str(data), backupDirectory=str(backup),

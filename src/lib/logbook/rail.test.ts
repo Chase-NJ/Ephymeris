@@ -28,7 +28,7 @@ function session(id: string, date: string, number = id): SessionListItem {
     status: "completed",
     folderPath: "/x",
     ordinal,
-    groupRuns: [],
+    rounds: [],
   };
 }
 

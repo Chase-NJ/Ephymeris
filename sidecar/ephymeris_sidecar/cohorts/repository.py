@@ -24,7 +24,6 @@ from .models import (
     Appearance,
     Cohort,
     CohortNotFound,
-    Group,
     NameTaken,
     NotArchived,
     ValidationError,
@@ -32,7 +31,6 @@ from .models import (
 
 log = logging.getLogger(__name__)
 
-DEFAULT_GROUP_NAME = "Group 1"
 VALID_SEX = {"M", "F", "unknown"}
 
 
@@ -68,13 +66,12 @@ class CohortRepository:
         name: str,
         data_folder: str,
         animals: Any = None,
-        groups: Any = None,
         *,
         tx: Tx | None = None,
     ) -> Cohort:
         """Create a cohort, optionally with its whole roster in one go.
 
-        The editor builds animals and groups client-side, with their own ids,
+        The editor builds animals client-side, with their own ids,
         before the cohort exists — so it used to create and then immediately
         patch. Two round trips meant two ways to fail, and the second one
         failing left a named, empty cohort nobody asked for. Accepting the
@@ -86,12 +83,11 @@ class CohortRepository:
             raise ValidationError({"name": "Give the cohort a name."})
 
         # Parse and validate before touching the database, so a bad roster and
-        # a taken name fail the same way regardless of write order. Both
-        # parsers already turn `None` into the empty/default case, which is
-        # exactly the no-roster create.
-        parsed_groups = _parse_groups(groups)
+        # a taken name fail the same way regardless of write order. The parser
+        # already turns `None` into the empty case, which is exactly the
+        # no-roster create.
         parsed_animals = _parse_animals(animals)
-        _validate(parsed_animals, parsed_groups)
+        _validate(parsed_animals)
 
         now = _now()
         cohort_id = _new_id()
@@ -104,31 +100,8 @@ class CohortRepository:
                     " VALUES (?, ?, ?, ?, ?)",
                     (cohort_id, clean, data_folder, now, now),
                 )
-                # Groups always exist (`DATA.md#data-model`), even implicitly, so "grouped" and
-                # "ungrouped" cohorts stay one code path.
-                for group in parsed_groups:
-                    conn.execute(
-                        'INSERT INTO groups (id, cohort_id, name, "order")'
-                        " VALUES (?, ?, ?, ?)",
-                        (group.id, cohort_id, group.name, group.order),
-                    )
                 for animal in parsed_animals:
-                    conn.execute(
-                        "INSERT INTO animals"
-                        " (id, cohort_id, group_id, name, box_number, cage, sex, id_number, notes)"
-                        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        (
-                            animal.id,
-                            cohort_id,
-                            animal.group_id,
-                            animal.name,
-                            animal.box_number,
-                            animal.cage,
-                            animal.sex,
-                            animal.id_number,
-                            animal.notes,
-                        ),
-                    )
+                    _insert_animal(conn, cohort_id, animal)
                 cohort = self._load_one(conn, cohort_id)
         except sqlite3.IntegrityError as exc:  # pragma: no cover - raced insert
             raise NameTaken(clean) from exc
@@ -136,10 +109,10 @@ class CohortRepository:
         return cohort
 
     def update(self, cohort_id: str, patch: dict[str, Any], *, tx: Tx | None = None) -> Cohort:
-        """Apply a name/animals/groups patch.
+        """Apply a name/animals patch.
 
-        Animals and groups are replaced wholesale when present, which is what
-        the editor sends and what Auto-Balance's apply step needs (`DATA.md#auto-balance`).
+        Animals are replaced wholesale when present, which is what the editor
+        sends.
 
         **An animal left out of the posted roster is not simply deleted**
         (`DATA.md#former-members`). One with history here — a run, an adoption,
@@ -161,13 +134,10 @@ class CohortRepository:
                         raise ValidationError({"name": "Give the cohort a name."})
                     self._assert_name_free(conn, name, exclude_id=cohort_id)
 
-                groups = (
-                    _parse_groups(patch["groups"]) if "groups" in patch else existing.groups
-                )
                 animals = (
                     _parse_animals(patch["animals"]) if "animals" in patch else existing.animals
                 )
-                _validate(animals, groups)
+                _validate(animals)
                 if "animals" in patch:
                     _assert_ids_free(conn, animals, cohort_id)
 
@@ -191,34 +161,10 @@ class CohortRepository:
                 )
                 if "animals" in patch:
                     _keep_former(conn, cohort_id, existing, animals)
-                if "groups" in patch or "animals" in patch:
-                    # Animals reference groups, so clear animals first to avoid
-                    # tripping the foreign key while groups are being rewritten.
+                if "animals" in patch:
                     conn.execute("DELETE FROM animals WHERE cohort_id = ?", (cohort_id,))
-                    conn.execute("DELETE FROM groups WHERE cohort_id = ?", (cohort_id,))
-                    for group in groups:
-                        conn.execute(
-                            'INSERT INTO groups (id, cohort_id, name, "order")'
-                            " VALUES (?, ?, ?, ?)",
-                            (group.id, cohort_id, group.name, group.order),
-                        )
                     for animal in animals:
-                        conn.execute(
-                            "INSERT INTO animals"
-                            " (id, cohort_id, group_id, name, box_number, cage, sex, id_number, notes)"
-                            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                            (
-                                animal.id,
-                                cohort_id,
-                                animal.group_id,
-                                animal.name,
-                                animal.box_number,
-                                animal.cage,
-                                animal.sex,
-                                animal.id_number,
-                                animal.notes,
-                            ),
-                        )
+                        _insert_animal(conn, cohort_id, animal)
                 cohort = self._load_one(conn, cohort_id)
         except sqlite3.IntegrityError as exc:
             raise ValidationError({"_": f"Couldn't save the cohort: {exc}"}) from exc
@@ -321,17 +267,10 @@ class CohortRepository:
 
     @staticmethod
     def _hydrate(conn: Query, row: sqlite3.Row) -> Cohort:
-        groups = [
-            Group(id=g["id"], name=g["name"], order=g["order"])
-            for g in conn.execute(
-                'SELECT * FROM groups WHERE cohort_id = ? ORDER BY "order"', (row["id"],)
-            )
-        ]
         animals = [
             Animal(
                 id=a["id"],
                 name=a["name"],
-                group_id=a["group_id"],
                 box_number=a["box_number"],
                 cage=a["cage"],
                 sex=a["sex"],
@@ -350,7 +289,6 @@ class CohortRepository:
             updated_at=row["updated_at"],
             archived_at=row["archived_at"],
             animals=animals,
-            groups=groups,
             appearance=_parse_appearance_column(row["appearance_json"]),
         )
 
@@ -391,15 +329,14 @@ def _keep_former(
     """
     posted_ids = {a.id for a in posted}
     history = referenced_animal_ids(conn, cohort_id)
-    groups = {g.id: g.name for g in existing.groups}
     now = _now()
     for animal in existing.animals:
         if animal.id in posted_ids or animal.id not in history:
             continue
         conn.execute(
             "INSERT OR REPLACE INTO former_animals"
-            " (id, cohort_id, name, cage, sex, id_number, notes, group_name, removed_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " (id, cohort_id, name, cage, sex, id_number, notes, removed_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 animal.id,
                 cohort_id,
@@ -408,7 +345,6 @@ def _keep_former(
                 animal.sex,
                 animal.id_number,
                 animal.notes,
-                groups.get(animal.group_id),
                 now,
             ),
         )
@@ -435,24 +371,22 @@ def _parse_appearance_column(raw: Any) -> Appearance | None:
         return None
 
 
-def _parse_groups(raw: Any) -> list[Group]:
-    if not isinstance(raw, list) or not raw:
-        # A cohort always has at least one group (`DATA.md#data-model`).
-        return [Group(id=_new_id(), name=DEFAULT_GROUP_NAME, order=0)]
-    groups: list[Group] = []
-    for index, item in enumerate(raw):
-        if not isinstance(item, dict):
-            continue
-        name = str(item.get("name") or "").strip() or f"Group {index + 1}"
-        order = item.get("order")
-        groups.append(
-            Group(
-                id=str(item.get("id") or _new_id()),
-                name=name,
-                order=order if isinstance(order, int) else index,
-            )
-        )
-    return groups or [Group(id=_new_id(), name=DEFAULT_GROUP_NAME, order=0)]
+def _insert_animal(conn: Query, cohort_id: str, animal: Animal) -> None:
+    conn.execute(
+        "INSERT INTO animals"
+        " (id, cohort_id, name, box_number, cage, sex, id_number, notes)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            animal.id,
+            cohort_id,
+            animal.name,
+            animal.box_number,
+            animal.cage,
+            animal.sex,
+            animal.id_number,
+            animal.notes,
+        ),
+    )
 
 
 def _parse_animals(raw: Any) -> list[Animal]:
@@ -469,7 +403,6 @@ def _parse_animals(raw: Any) -> list[Animal]:
             Animal(
                 id=str(item.get("id") or _new_id()),
                 name=str(item.get("name") or "").strip(),
-                group_id=str(item.get("groupId") or ""),
                 box_number=box if isinstance(box, int) and not isinstance(box, bool) else None,
                 cage=cage if isinstance(cage, int) and not isinstance(cage, bool) else None,
                 sex=sex if sex in VALID_SEX else None,
@@ -486,15 +419,10 @@ def _opt_text(value: Any) -> str | None:
     return None
 
 
-def _validate(animals: list[Animal], groups: list[Group]) -> None:
+def _validate(animals: list[Animal]) -> None:
     """The validation rules (`DATA.md#validation`), reported per-field so the editor can show them inline."""
     errors: dict[str, str] = {}
-    group_ids = {g.id for g in groups}
-
     seen_names: dict[str, str] = {}
-    # box uniqueness is scoped to the *group*, not the cohort: groups run
-    # consecutively, so the same physical slot is legitimately reused (`DATA.md#validation`).
-    seen_boxes: dict[tuple[str, int], str] = {}
 
     for animal in animals:
         field = f"animal:{animal.id}"
@@ -508,24 +436,15 @@ def _validate(animals: list[Animal], groups: list[Group]) -> None:
             errors[field] = f"Another animal is already called “{animal.name}”."
         seen_names[key] = animal.id
 
-        if animal.group_id not in group_ids:
-            errors[field] = "This animal isn't in one of the cohort's groups."
-            continue
-
         if animal.cage is not None and animal.cage < 1:
             errors[field] = "Cage numbers start at 1."
             continue
 
-        if animal.box_number is not None:
-            if not MIN_BOX <= animal.box_number <= MAX_BOX:
-                errors[field] = f"Box must be between {MIN_BOX} and {MAX_BOX}."
-                continue
-            box_key = (animal.group_id, animal.box_number)
-            if box_key in seen_boxes:
-                errors[field] = (
-                    f"Box {animal.box_number} is already taken in this group."
-                )
-            seen_boxes[box_key] = animal.id
+        # The usual box is a default for set-up, so two animals may share one;
+        # a clash only matters among the animals picked for the same round
+        # (`DATA.md#validation`).
+        if animal.box_number is not None and not MIN_BOX <= animal.box_number <= MAX_BOX:
+            errors[field] = f"Box must be between {MIN_BOX} and {MAX_BOX}."
 
     if errors:
         raise ValidationError(errors)

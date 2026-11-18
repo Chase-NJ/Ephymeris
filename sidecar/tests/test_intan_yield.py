@@ -18,7 +18,7 @@ from tests.test_session_lifecycle import db, recording_rig  # noqa: F401
 
 async def test_a_run_s_counts_cover_every_site_the_box_records_and_how_long_the_stream_ran(rig, tmp_path):  # noqa: F811
     h = await rig()
-    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.configure("s1", config(tmp_path), "x")
     await h.service.start_recording()
     h.service.box_started(1, "R7")
     await asyncio.sleep(0)
@@ -95,8 +95,7 @@ def test_history_is_the_most_recent_runs_oldest_first(db) -> None:  # noqa: F811
     from ephymeris_sidecar.sessions.repository import SessionRepository
 
     cohorts, sessions = CohortRepository(db), SessionRepository(db)
-    cohort = cohorts.create("C", "/tmp/c", groups=[{"id": "g", "name": "A", "order": 0}],
-                            animals=[{"id": "rat", "name": "rat", "groupId": "g", "boxNumber": 1}])
+    cohort = cohorts.create("C", "/tmp/c", animals=[{"id": "rat", "name": "rat", "boxNumber": 1}])
     prefix = sessions.create_prefix("P")
     store = SpikeYieldStore(db)
     for day in (1, 2, 3):

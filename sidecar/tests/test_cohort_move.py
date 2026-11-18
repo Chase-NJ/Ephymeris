@@ -22,7 +22,7 @@ from ephymeris_sidecar.cohorts.move import MoveRequest
 from ephymeris_sidecar.cohorts.repository import CohortRepository
 from ephymeris_sidecar.logbook.models import SessionNote
 from ephymeris_sidecar.logbook.repository import LogbookRepository
-from ephymeris_sidecar.sessions.models import GroupRun, SessionAnimalRun
+from ephymeris_sidecar.sessions.models import Round, SessionAnimalRun
 from ephymeris_sidecar.sessions.repository import SessionRepository
 from tests.conftest import fine_mtime, statements
 from tests.test_analytics_service import Changes, Lifecycle
@@ -47,16 +47,13 @@ class Lab:
         self.a = self.cohorts.create(
             "A",
             str(self.a_root),
-            groups=[{"id": "ga", "name": "Morning", "order": 0}],
             animals=[
-                {"id": "remy1", "name": "remy1", "groupId": "ga", "boxNumber": 1},
-                {"id": "remy2", "name": "remy2", "groupId": "ga", "boxNumber": 2},
-                {"id": "slow1", "name": "slow1", "groupId": "ga", "boxNumber": 3, "sex": "F"},
+                {"id": "remy1", "name": "remy1", "boxNumber": 1},
+                {"id": "remy2", "name": "remy2", "boxNumber": 2},
+                {"id": "slow1", "name": "slow1", "boxNumber": 3, "sex": "F"},
             ],
         )
-        self.b = self.cohorts.create(
-            "B", str(self.b_root), groups=[{"id": "gb", "name": "Slow", "order": 0}]
-        )
+        self.b = self.cohorts.create("B", str(self.b_root))
         self.prefix = self.sessions.create_prefix("2O-Bdisc")
         self.s1 = self.add_session("1", "2026-07-22", ["remy1", "remy2", "slow1"])
         self.s2 = self.add_session("2", "2026-07-23", ["slow1"])
@@ -67,8 +64,8 @@ class Lab:
     def add_session(self, number: str, date: str, animals: list[str]) -> str:
         folder = self.folder(number, date)
         session = self.sessions.create_session(self.a.id, self.prefix, number, date, str(folder))
-        self.sessions.set_group_runs(
-            session.id, [GroupRun("ga", 0, f"{date}T10:00:00+00:00", f"{date}T11:00:00+00:00")]
+        self.sessions.set_rounds(
+            session.id, [Round(0, f"{date}T10:00:00+00:00", f"{date}T11:00:00+00:00")]
         )
         self.sessions.set_status(session.id, "completed")
         json_dir, tsv_dir = ("behavior_json", "recovery_tsv") if self.legacy else (
@@ -110,8 +107,8 @@ class Lab:
         )
         return note_id
 
-    def request(self, *ids: str, dest_group: str | None = None) -> MoveRequest:
-        return MoveRequest(self.a.id, list(ids), self.b.id, dest_group)
+    def request(self, *ids: str) -> MoveRequest:
+        return MoveRequest(self.a.id, list(ids), self.b.id)
 
     def preview(self, *ids: str, busy: str | None = None):
         return move_apply.preview(self.db, self.request(*ids), busy=busy)
@@ -161,7 +158,7 @@ def lab(db: Database, tmp_path: Path) -> Lab:
 
 def give_b(lab: Lab, name: str, animal_id: str) -> None:
     """The split as it was done by hand: B got its own animal of that name."""
-    lab.cohorts.update(lab.b.id, {"animals": [{"id": animal_id, "name": name, "groupId": "gb"}]})
+    lab.cohorts.update(lab.b.id, {"animals": [{"id": animal_id, "name": name}]})
 
 
 # --- the preview ---------------------------------------------------------------
@@ -190,12 +187,7 @@ def test_a_same_named_animal_in_the_destination_is_joined(lab: Lab) -> None:
 
 def test_an_animal_the_destination_lacks_is_carried_with_its_id(lab: Lab) -> None:
     [animal] = lab.preview("slow1").animals
-    assert (animal.outcome, animal.dest_id, animal.dest_group_id, animal.dest_box) == (
-        "carried",
-        "slow1",
-        "gb",
-        3,
-    )
+    assert (animal.outcome, animal.dest_id, animal.dest_box) == ("carried", "slow1", 3)
 
 
 # --- the move ------------------------------------------------------------------
@@ -249,7 +241,7 @@ def test_the_files_records_and_notes_move(lab: Lab) -> None:
     # Sessions: the whole one moved as itself; the split one got a B record.
     assert lab.sessions.get_session(lab.s2).cohort_id == lab.b.id
     assert b_s1.folder_path == str(lab.folder("1", "2026-07-22", lab.b_root))
-    assert [g.group_id for g in b_s1.group_runs] == ["gb"]
+    assert [r.order for r in b_s1.rounds] == [0]
     assert plan.files and all(f.action == "present" for f in plan.files)
 
 
@@ -277,13 +269,7 @@ def test_an_animal_s_impedance_history_follows_it_into_the_animal_it_joins(lab: 
 def test_a_carried_animal_lands_on_the_destination_roster(lab: Lab) -> None:
     lab.apply("slow1")
     [animal] = lab.cohorts.get(lab.b.id).animals
-    assert (animal.id, animal.name, animal.group_id, animal.box_number, animal.sex) == (
-        "slow1",
-        "slow1",
-        "gb",
-        3,
-        "F",
-    )
+    assert (animal.id, animal.name, animal.box_number, animal.sex) == ("slow1", "slow1", 3, "F")
 
 
 def test_the_labs_split_is_repaired_from_its_files(lab: Lab) -> None:
@@ -416,7 +402,7 @@ def test_a_moved_recording_follows_a_relocate_of_the_folder_it_stayed_in(
     ephys = lab.folder("2", "2026-07-23") / "ephys" / "rec_260723_100000"
     ephys.mkdir(parents=True)
     (ephys / "info.rhd").write_bytes(b"rhd")
-    lab.sessions.set_recording(lab.s2, {"runs": [{"groupId": "ga", "path": str(ephys)}]})
+    lab.sessions.set_recording(lab.s2, {"runs": [{"path": str(ephys)}]})
     lab.apply("slow1")  # session 2 is slow1's alone: it moves whole
     assert lab.sessions.get_session(lab.s2).recording["runs"][0]["path"] == str(ephys)
 

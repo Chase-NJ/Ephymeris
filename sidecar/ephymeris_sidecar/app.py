@@ -25,7 +25,7 @@ from .analytics.repository import AnalyticsRepository
 from .backup import BackupManager
 from .boards import create_board_tool
 from .boards.tool import BoardTool
-from .cohorts import folders, grouping, move_apply, relocate
+from .cohorts import folders, move_apply, relocate
 from .cohorts.move import MoveRequest
 from .cohorts.db import DB_FILENAME, Database, has_mark
 from .cohorts.repository import CohortRepository
@@ -259,7 +259,6 @@ class Application:
         self.server.register(Cmd.STROBES_REMOVE, self._strobes_remove)
         self.server.register(Cmd.STROBES_EXPORT, self._strobes_export)
         self.server.register(Cmd.STROBES_IMPORT, self._strobes_import)
-        self.server.register(Cmd.COHORTS_SUGGEST_GROUPS, self._cohorts_suggest_groups)
 
         self.server.register(Cmd.SESSIONS_SUGGEST_NUMBER, self._sessions_suggest_number)
         self.server.register(Cmd.SESSIONS_CREATE, self._sessions_create)
@@ -268,7 +267,7 @@ class Application:
         self.server.register(Cmd.SESSIONS_STATUS, self._sessions_status)
         self.server.register(Cmd.SESSIONS_FLASH, self._sessions_flash)
         self.server.register(Cmd.SESSIONS_START_ALL, self._sessions_start_all)
-        self.server.register(Cmd.SESSIONS_END_GROUP, self._sessions_end_group)
+        self.server.register(Cmd.SESSIONS_END_ROUND, self._sessions_end_round)
         self.server.register(Cmd.SESSIONS_RESUME, self._sessions_resume)
         self.server.register(Cmd.SESSIONS_END, self._sessions_end)
         self.server.register(Cmd.SESSIONS_ACTIVE, self._sessions_active)
@@ -861,7 +860,7 @@ class Application:
         delivered, state = await self._require_utility().identify(_box_arg(args), args["on"])
         return {"delivered": delivered, "state": state}
 
-    # --- cohorts (DATA.md#cohorts-animals-and-groups) --------------------
+    # --- cohorts (DATA.md#cohorts-and-animals) ---------------------------
 
     async def _cohorts_list(self, _args: Args) -> dict[str, Any]:
         return await self._cohorts_payload()
@@ -896,7 +895,6 @@ class Application:
             name,
             str(target),
             args.get("animals"),
-            args.get("groups"),
         )
         try:
             await asyncio.to_thread(folders.ensure_folder, target)
@@ -964,25 +962,10 @@ class Application:
             source_id=_str_arg(args, "cohortId"),
             animal_ids=args["animalIds"],
             dest_id=_str_arg(args, "destinationCohortId"),
-            dest_group_id=args.get("destinationGroupId"),
         )
         return await self._require_archive().move_animals(
             request, apply=args.get("apply") is True
         )
-
-    async def _cohorts_suggest_groups(self, args: Args) -> dict[str, Any]:
-        """Auto-Balance preview (`DATA.md#auto-balance`). Computes only — the
-        client applies via `cohorts.update`."""
-        cohort_id = _str_arg(args, "id")
-        cohort = await asyncio.to_thread(self.cohorts.get, cohort_id)
-
-        proposal = grouping.suggest_groups(
-            cohort.animals,
-            group_count=args.get("groupCount"),
-            max_group_size=args.get("maxGroupSize"),
-            balance_by_sex=args.get("balanceBySex") is True,
-        )
-        return proposal.to_json()
 
     async def _broadcast_cohorts(self) -> None:
         await self.server.publish(Evt.COHORTS_UPDATED)
@@ -1556,12 +1539,11 @@ class Application:
 
         cohort = await asyncio.to_thread(self.cohorts.get, cohort_id)
 
-        # Readiness (`ARCHITECTURE.md#configuration`): at least one group with
-        # a box-assigned animal.
-        if not _is_ready_to_run(cohort):
+        # Readiness (`ARCHITECTURE.md#configuration`): an animal to run.
+        if not cohort.animals:
             raise CommandError(
                 ErrCode.SESSION_NOT_READY,
-                "This cohort has no group with a box-assigned animal yet.",
+                "This cohort has no animals yet.",
             )
 
         prefix = await asyncio.to_thread(self.sessions.get_prefix, prefix_id)
@@ -1607,7 +1589,6 @@ class Application:
 
     async def _sessions_confirm_mapping(self, args: Args) -> dict[str, Any]:
         session_id = _str_arg(args, "sessionId")
-        group_id = _str_arg(args, "groupId")
         entries = [
             MappingEntry(
                 box=entry["box"],
@@ -1619,7 +1600,7 @@ class Application:
         ]
         for entry in entries:
             _refuse_decode_only(self.sketches, entry.sketch_path, entry.box)
-        await self._require_lifecycle().confirm_mapping(session_id, group_id, entries)
+        await self._require_lifecycle().confirm_mapping(session_id, entries)
         return {"ok": True}
 
     async def _sessions_status(self, args: Args) -> dict[str, Any]:
@@ -1644,15 +1625,15 @@ class Application:
         session = await self._require_lifecycle().start_all(session_id)
         return {"session": session.to_json()}
 
-    async def _sessions_end_group(self, args: Args) -> dict[str, Any]:
-        """End the group and wait between groups (`ARCHITECTURE.md#group-step`)."""
+    async def _sessions_end_round(self, args: Args) -> dict[str, Any]:
+        """End the round and wait between rounds (`ARCHITECTURE.md#between-rounds`)."""
         session_id = _str_arg(args, "sessionId")
-        session = await self._require_lifecycle().end_group(session_id)
+        session = await self._require_lifecycle().end_round(session_id)
         return {"session": session.to_json()}
 
     async def _sessions_resume(self, args: Args) -> dict[str, Any]:
-        """Continue one of today's sessions with another group
-        (`DATA.md#continuing-between-groups`)."""
+        """Continue one of today's sessions with another round
+        (`DATA.md#continuing-between-rounds`)."""
         session_id = _str_arg(args, "sessionId")
         session = await self._require_lifecycle().resume(session_id)
         return {"session": session.to_json()}
@@ -1734,26 +1715,30 @@ class Application:
     async def _intan_configure(self, args: Args) -> dict[str, Any]:
         intan = self._require_intan()
         session_id = _str_arg(args, "sessionId")
-        group_id = _str_arg(args, "groupId")
         config = args["config"]
         session = await asyncio.to_thread(self.sessions.get_session, session_id)
         cohort = await asyncio.to_thread(self.cohorts.get, session.cohort_id)
         if session.recording is None:
             raise CommandError(ErrCode.SESSION_INVALID, "That session is not a recording.")
 
-        group = next((g for g in cohort.groups if g.id == group_id), None)
-        group_name = group.name if group is not None else group_id
-        # `<prefix>_<number>_<date>_<group>`, RHX appends its own timestamp. No
-        # spaces: the name is one token of a `set` command.
-        base = "_".join(
-            _filename_token(part)
-            for part in (session.prefix_name, session.session_number, session.date, group_name)
-        )
         rows = config.get("boxes") or []
         # A box the held mapping lacks would reach RHX with no animal
         # (`RECORDING.md#record-step`).
         lifecycle = self._require_lifecycle()
-        mapped = lifecycle.mapped_boxes(session_id, group_id, (b["box"] for b in rows))
+        mapped = lifecycle.mapped_boxes(session_id, (b["box"] for b in rows))
+        # `<prefix>_<number>_<date>_<animal>-<animal>…`, the recorded animals
+        # in box order; RHX appends its own timestamp. No spaces: the name is
+        # one token of a `set` command.
+        animals = "-".join(_filename_token(mapped[box].animal_name) for box in sorted(mapped))
+        base = "_".join(
+            [
+                *(
+                    _filename_token(part)
+                    for part in (session.prefix_name, session.session_number, session.date)
+                ),
+                animals,
+            ]
+        )
         # Read with the mapping, before RHX is awaited: a confirmation landing
         # during the setup leaves it for the earlier one, which Start refuses.
         confirmation = lifecycle.confirmations
@@ -1762,10 +1747,10 @@ class Application:
         )
         notes = (
             f"Ephymeris {session.prefix_name} {session.session_number} {session.date}",
-            f"cohort {cohort.name} group {group_name}",
+            f"cohort {cohort.name}",
             mapping,
         )
-        await intan.configure(session_id, group_id, config, base, notes, confirmation=confirmation)
+        await intan.configure(session_id, config, base, notes, confirmation=confirmation)
         return intan.status_json()
 
     async def _intan_parse_probe_map(self, args: Args) -> dict[str, Any]:
@@ -1784,12 +1769,11 @@ class Application:
         under the animal the confirmed mapping puts there, compare with its last."""
         intan = self._require_intan()
         session_id = _str_arg(args, "sessionId")
-        group_id = _str_arg(args, "groupId")
         directory = _str_arg(args, "saveDirectory")
         rows = args.get("boxes") or []
         if not rows:
             raise CommandError(ErrCode.BAD_MESSAGE, "Choose at least one box to measure.")
-        mapped = self._require_lifecycle().mapped_boxes(session_id, group_id, (r["box"] for r in rows))
+        mapped = self._require_lifecycle().mapped_boxes(session_id, (r["box"] for r in rows))
         now = datetime.now(UTC)
         measured_at = now.isoformat(timespec="milliseconds")
         stamp = now.strftime("%Y%m%dT%H%M%SZ")
@@ -1904,12 +1888,6 @@ class Application:
             "current": current.to_json(),
             "previous": previous.to_json() if previous is not None else None,
         }
-
-
-def _is_ready_to_run(cohort: Any) -> bool:
-    """`ARCHITECTURE.md#configuration` — ready if any group holds a
-    box-assigned animal."""
-    return any(a.box_number is not None for a in cohort.animals)
 
 
 def _filename_token(text: str) -> str:

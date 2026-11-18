@@ -71,7 +71,7 @@ export async function createSession(
 
 /**
  * Discard a session still in `configuring` (Step 2's Back) — marks it
- * `aborted` instead of stranding the record. Rejected once a group has run.
+ * `aborted` instead of stranding the record. Rejected once a round has run.
  */
 export async function abandonSession(
   client: SidecarPort,
@@ -81,7 +81,7 @@ export async function abandonSession(
 }
 
 /**
- * Confirm a group's boxes. Each `config` is the full merged config, built by the
+ * Confirm a round's boxes. Each `config` is the full merged config, built by the
  * caller from the CURRENT profile at the click — a row's `overrides` alone would
  * drop the rig layer, and a stored snapshot would carry stale defaults
  * (`TASKS.md#three-layer-merge`).
@@ -89,12 +89,10 @@ export async function abandonSession(
 export async function confirmMapping(
   client: SidecarPort,
   sessionId: string,
-  groupId: string,
   boxes: Array<Omit<BoxMapping, "overrides"> & { config: Record<string, unknown> }>,
 ): Promise<void> {
   await client.call(CMD.SESSIONS_CONFIRM_MAPPING, {
     sessionId,
-    groupId,
     boxes: boxes.map((b) => ({
       box: b.box,
       animalId: b.animalId,
@@ -124,18 +122,18 @@ export async function startAll(client: SidecarPort, sessionId: string): Promise<
 }
 
 /**
- * End the group on the rig and leave the session BETWEEN GROUPS
- * (`ARCHITECTURE.md#group-step`): still running, held, no boxes. The operator then picks
- * the next group — any group — on the group step, or ends the session.
+ * End the round on the rig and leave the session BETWEEN ROUNDS
+ * (`ARCHITECTURE.md#between-rounds`): still running, held, no boxes. The
+ * operator then maps the next round on the Boxes step, or ends the session.
  */
-export async function endGroup(client: SidecarPort, sessionId: string): Promise<Session> {
-  const r = await client.call(CMD.SESSIONS_END_GROUP, { sessionId });
+export async function endRound(client: SidecarPort, sessionId: string): Promise<Session> {
+  const r = await client.call(CMD.SESSIONS_END_ROUND, { sessionId });
   return r.session;
 }
 
 /**
- * Continue one of today's sessions with another group — one the app closed on
- * between groups, or one ended too early. Never resumes a group mid-run.
+ * Continue one of today's sessions with another round — one the app closed on
+ * between rounds, or one ended too early. Never resumes a round mid-run.
  */
 export async function resumeSession(
   client: SidecarPort,

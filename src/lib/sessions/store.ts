@@ -17,6 +17,7 @@
 
 import type { SidecarPort } from "../ws/port";
 import { CMD, EVT, SidecarCommandError, type LiveReplay } from "../ws/protocol";
+import { appendProgress, replayTally, telemetryTally, type Tally } from "./boxProgress";
 import { replayStrip } from "./liveReplay";
 import type {
   ActiveSessions,
@@ -29,6 +30,7 @@ const NO_PREFIXES: Prefix[] = [];
 const NO_METRICS: TelemetryMetric[] = [];
 const NO_HISTORY: number[] = [];
 const NO_STROBES: StrobeEvent[] = [];
+const NO_PROGRESS: readonly Tally[] = [];
 
 /** Enough points for a legible trace over a long session, not unbounded. */
 const HISTORY_LIMIT = 240;
@@ -61,6 +63,12 @@ export class SessionStore {
    * session over time exists nowhere else — this is what the live charts draw.
    */
   private history = new Map<number, Map<string, number[]>>();
+  /**
+   * Each box's run in counts, oldest first: trials offered, completed and
+   * correct, each time they moved (`boxProgress.ts`). The sidecar sends only
+   * the totals so far, so the run's shape exists nowhere else.
+   */
+  private progress = new Map<number, readonly Tally[]>();
   /**
    * Each box's latest spine-run replay, as the sidecar reports it
    * (`session.replay`): the phase its token sits on and the numbers so far. The
@@ -190,6 +198,7 @@ export class SessionStore {
         if (typeof d?.box !== "number") return;
         this.telemetry.set(d.box, d.metrics ?? NO_METRICS);
         this.appendHistory(d.box, d.metrics ?? NO_METRICS);
+        this.takeTally(d.box, telemetryTally(d.metrics ?? NO_METRICS));
         this.notify(`telemetry:${d.box}`);
       }),
 
@@ -201,6 +210,7 @@ export class SessionStore {
         const before = this.replays.get(d.box);
         this.replays.set(d.box, d);
         if (d.trials !== (before?.trials ?? 0)) this.appendHistory(d.box, replayStrip(d).metrics);
+        this.takeTally(d.box, replayTally(d));
         this.replayVersion += 1;
         this.notify(`replay:${d.box}`);
         this.notify("replay");
@@ -230,6 +240,7 @@ export class SessionStore {
         }
         this.telemetry.set(d.box, metrics);
         this.appendHistory(d.box, metrics);
+        this.takeTally(d.box, telemetryTally(metrics));
         if (d.running) this.debugRunning.add(d.box);
         else {
           this.debugRunning.delete(d.box);
@@ -330,6 +341,11 @@ export class SessionStore {
     return this.history.get(box)?.get(metricId) ?? NO_HISTORY;
   }
 
+  /** A box's run in counts, oldest first; the same array until it grows. */
+  getProgress(box: number): readonly Tally[] {
+    return this.progress.get(box) ?? NO_PROGRESS;
+  }
+
   /**
    * A box's strobes so far. The array is **mutated in place** as more arrive —
    * subscribe to `strobes:<box>` (or `strobes`) and read `getStrobeVersion()`
@@ -344,6 +360,16 @@ export class SessionStore {
   /** Bumped whenever any box's strobe log grows — the render trigger. */
   getStrobeVersion(): number {
     return this.strobeVersion;
+  }
+
+  /** Add a box's totals to its progress, if they moved (`appendProgress`). */
+  private takeTally(box: number, tally: Tally | null): void {
+    if (tally === null) return;
+    const before = this.progress.get(box) ?? NO_PROGRESS;
+    const after = appendProgress(before, tally);
+    if (after === before) return;
+    this.progress.set(box, after);
+    this.notify(`progress:${box}`);
   }
 
   private appendHistory(box: number, metrics: TelemetryMetric[]): void {
@@ -378,10 +404,11 @@ export class SessionStore {
     this.notify("active");
   }
 
-  /** Forget every box's run: a new group's boxes were confirmed. */
+  /** Forget every box's run: a new round's boxes were confirmed. */
   private forgetRun(): void {
     this.telemetry.clear();
     this.history.clear();
+    this.progress.clear();
     this.replays.clear();
     this.replayVersion += 1;
     this.ended.clear();
@@ -392,6 +419,7 @@ export class SessionStore {
     for (const key of this.subs.keys()) {
       if (
         key.startsWith("telemetry:") ||
+        key.startsWith("progress:") ||
         key.startsWith("replay") ||
         key.startsWith("ended") ||
         key.startsWith("writeError:")
@@ -419,6 +447,7 @@ export class SessionStore {
     this.telemetry.delete(box);
     this.debugReplayOwed.delete(box);
     this.history.delete(box);
+    this.progress.delete(box);
     this.replays.delete(box);
     this.replayVersion += 1;
     this.ended.delete(box);
@@ -428,6 +457,7 @@ export class SessionStore {
     this.notify(`strobes:${box}`);
     this.notify("strobes");
     this.notify(`telemetry:${box}`);
+    this.notify(`progress:${box}`);
     this.notify(`replay:${box}`);
     this.notify("replay");
     this.notify(`ended:${box}`);
@@ -461,6 +491,16 @@ function sameMetrics(a: TelemetryMetric[], b: TelemetryMetric[] | undefined): bo
   return (
     b !== undefined &&
     a.length === b.length &&
-    a.every((m, i) => m.id === b[i]!.id && m.value === b[i]!.value && m.n === b[i]!.n)
+    a.every((m, i) => {
+      const other = b[i]!;
+      return (
+        m.id === other.id &&
+        m.value === other.value &&
+        m.n === other.n &&
+        m.triggered === other.triggered &&
+        m.counted === other.counted &&
+        m.hits === other.hits
+      );
+    })
   );
 }

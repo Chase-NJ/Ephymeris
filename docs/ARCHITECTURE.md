@@ -14,7 +14,7 @@ tasks and firmware: [TASKS.md](TASKS.md); files, database and analytics: [DATA.m
 - [Port state machine](#port-state-machine): [States](#states), [Transitions](#transitions), [Port verbs](#port-verbs), [Exclusivity](#exclusivity)
 - [Flashing reset and passthrough](#flashing-reset-and-passthrough): [Flashing](#flashing), [The flash queue](#the-flash-queue), [What a board carries](#what-a-board-carries), [Reset](#reset)
 - [Hardware utility baseline](#hardware-utility-baseline): [When a restore happens](#when-a-restore-happens), [Three rules it never breaks](#three-rules-it-never-breaks), [Unloaded wiring holds it](#unloaded-wiring-holds-it), [Running a task from Debug Mode](#running-a-task-from-debug-mode)
-- [Session lifecycle](#session-lifecycle): [The flow](#the-flow), [Configuration](#configuration), [Mapping and the placement walk](#mapping-and-the-placement-walk), [Group step](#group-step), [Running boxes](#running-boxes), [Entering IN_SESSION](#entering-in_session), [Clean exit](#clean-exit), [Board drop](#board-drop), [Stop reasons](#stop-reasons)
+- [Session lifecycle](#session-lifecycle): [The flow](#the-flow), [Configuration](#configuration), [Mapping and the placement walk](#mapping-and-the-placement-walk), [Between rounds](#between-rounds), [Running boxes](#running-boxes), [Entering IN_SESSION](#entering-in_session), [Clean exit](#clean-exit), [Board drop](#board-drop), [Stop reasons](#stop-reasons)
 - [Frontend](#frontend): [Routes](#routes), [The shell module](#the-shell-module), [One sky](#one-sky), [Cohort browser](#cohort-browser), [Shaders and lights](#shaders-and-lights), [Live session views](#live-session-views), [Export progress](#export-progress)
 - [Theme](#theme): [Telemetry panels](#telemetry-panels), [Printed documents](#printed-documents)
 - [Module map](#module-map)
@@ -492,12 +492,10 @@ flowchart TD
     isRec -->|yes| record["Record<br/>/session/:id/recording"]
     record -->|"intan.configure"| control["Run: Mission Control<br/>/session/:id/control"]
     isRec -->|no| control
-    control -->|"Switch Group:<br/>sessions.endGroup"| group["Group step<br/>/session/:id/group"]
-    group -->|"Run this group"| mapping
-    group -->|"End session:<br/>sessions.end"| analytics["Analytics"]
-    control -->|"End Session:<br/>sessions.end"| analytics
-    dash -->|"dock: Continue with another group"| group
-    config -->|"Continue today"| group
+    control -->|"Run more animals:<br/>sessions.endRound"| mapping
+    control -->|"End Session:<br/>sessions.end"| analytics["Analytics"]
+    dash -->|"dock: Run more animals<br/>sessions.resume"| mapping
+    config -->|"Continue today:<br/>sessions.resume"| mapping
 ```
 
 ```mermaid
@@ -505,7 +503,7 @@ stateDiagram-v2
     [*] --> configuring: sessions.create
     configuring --> running: first box starts
     configuring --> aborted: sessions.abandon
-    running --> running: sessions.endGroup, now between groups
+    running --> running: sessions.endRound, now between rounds
     running --> completed: sessions.end
     completed --> running: sessions.resume, same day only
 ```
@@ -519,37 +517,47 @@ box or probe map. A Boxes draft keeps the operator's overrides, never the merged
 
 ### Configuration
 
-`sessions.create` needs a cohort group holding an animal with a box. The operator picks **which group runs
-first** (groups have no run order), a prefix, a number and an optional time limit, **enforced per box by the
+`sessions.create` needs a cohort with an animal. The operator picks the cohort from `CohortManifest`, the
+list Analytics and Log open on, then a prefix, a number and an optional time limit, **enforced per box by the
 sidecar**, from that box's start, by sending `STOP`; a box ending early cancels its pending stop.
 
 ### Mapping and the placement walk
 
 <a id="flash-sequence"></a>
 
-Mapping changes are session-local. `sessions.confirmMapping` holds the baseline; the **placement walk** then
-lights each box with `utility.identify`, and closing an enclosure calls `sessions.flash`, which the
-[flash queue](#the-flash-queue) runs in the order closed.
+The Boxes step sets up one [round](../GLOSSARY.md#round): **any animal of the cohort in any box**. It opens on
+the animals that have not run in this session (`sessions.status.ranAnimalIds`), each on its usual box
+(`seedRound`); picking an animal that is in another box swaps the two (`assignBox`). The rules are pure, in
+`lib/sessions/placementWalk.ts`. Choices are session-local and never write the cohort's usual boxes. The
+boxes are a list and the selected box's parameters fill one panel beside it (`TaskConfigForm`, pinned), with
+a copy to the other boxes on the same task.
+
+`sessions.confirmMapping` refuses a box or an animal named twice and holds the baseline; the **placement
+walk** then lights each box with `utility.identify`, and closing an enclosure calls `sessions.flash`, which
+the [flash queue](#the-flash-queue) runs in the order closed.
 
 > [!CAUTION]
 > **The walk goes in box-number order, not animal order.** A mis-placed animal yields a plausible, silently
 > mislabelled data file.
 
-### Group step
+### Between rounds
 
-`sessions.endGroup` ends the group and leaves the session `running` between groups; any group may run next,
-or again. `sessions.resume` continues one of today's sessions, **same day only**.
+When every box of a round has finished (`SessionFlow.roundOver`, from the runner's `ended`), Mission Control
+asks one question: run more animals, or end the session. **Run more animals** is `sessions.endRound`: it ends
+the round and leaves the session `running` and held with no boxes, and the Boxes step sets up the next round.
+The sidecar never ends a session or starts a round on its own. `sessions.resume` continues one of today's
+sessions the same way, **same day only**.
 
 ### Running boxes
 
-![Mission Control for session 2O-Bdisc_15 with Group A running: the clock and elapsed time, the journey rail at Run, Switch Group and End Session, the session's 3D sky, and a tile per box reading IN_SESSION with its run clock, Start, Stop and Reset, and two live metrics with sparklines](images/mission-control.webp)
+![Mission Control for session 2O-Bdisc_15 with a round running: the clock and elapsed time, the journey rail at Run, Run more animals and End Session, the session's 3D sky, and a tile per box reading IN_SESSION with its run clock, Start, Stop and Reset, and two live metrics with sparklines](images/mission-control.webp)
 
 **Start All** and **Start** (`sessions.startAll`, `port.startSession`) refuse first if any box doesn't
 [carry its sketch](#what-a-board-carries); a recording starts RHX first
 ([RECORDING.md](RECORDING.md#start-and-end)). **Stop** writes `STOP`. **End Session** (`sessions.end`) stops
 every box, waits `graceful_timeout_s`, force-finalizes the rest and releases the baseline. Run clocks and
 "finished" come from the runner, never the client, so a reload resumes mid-run. **A box that has started is
-a run**: a Start All refused at box *k* still records the group run for the boxes it started.
+a run**: a Start All refused at box *k* still records the round for the boxes it started.
 
 ### Entering IN_SESSION
 
@@ -614,7 +622,7 @@ flowchart TD
     running -->|"Stop, or the time limit"| stop["STOP written to the port"]
     stop --> boundary["Board finishes its trial,<br/>emits its end strobe"]
     running -->|"trial cap reached"| boundary
-    running -->|"End Session or Switch Group"| endAll["STOP every box, wait graceful_timeout_s:<br/>0.1 s, or 45 s while recording"]
+    running -->|"End Session or Run more animals"| endAll["STOP every box, wait graceful_timeout_s:<br/>0.1 s, or 45 s while recording"]
     endAll -->|"end strobe in time"| boundary
     boundary -->|"stop_reason: BF_END_SESSION received"| finalize["Finalize: .tsv footer, .json, .mat"]
     endAll -->|"no end strobe in time"| forced["Force-finalize"]
@@ -717,6 +725,12 @@ The theme forbids gradients and glow except **two bounded exceptions** whose loo
 
 Mission Control's star panel and Debug Mode's live tile share `MetricStrip` and `LivePanels`.
 
+Beside each box's tile, `BoxInsightTab` shows the run in counts: trials offered, completed and correct, as
+three figures, a cumulative record and an outcome bar. The counts are the sidecar's whole-run totals, summed
+by `lib/sessions/boxProgress.ts`: a legacy run's ride each `TelemetryMetric` (`triggered`, `counted`, `hits`),
+a spine run's are its replay's pooled figure. The store keeps the totals each time they move, since only the
+latest is ever sent; a page reloaded mid-run draws from the origin to the first totals it sees.
+
 > [!IMPORTANT]
 > **Legacy live panels read one derived record** (`lib/sessions/liveTrials.ts`), decoded by **strobe name,
 > never code**, from the store's own per-box strobe log, never the capped console ring.
@@ -728,8 +742,8 @@ a `diverged` run shows no numbers. The store forgets a run only when the sidecar
 began, never on a click, so a refused start leaves the last run on screen. `test_live_replay_load.py` bounds what scoring costs six boxes' fsyncs.
 
 > [!CAUTION]
-> **A new group run is detected by the `confirmations` counter, never by comparing payloads**: re-confirming a
-> group can repeat every other field byte for byte, leaving the last run's trials on screen.
+> **A new round is detected by the `confirmations` counter, never by comparing payloads**: re-confirming a
+> mapping can repeat every other field byte for byte, leaving the last run's trials on screen.
 
 Elapsed time and the log's T+ offsets read the session clock ([DATA.md](DATA.md#the-session-clock)).
 
@@ -775,7 +789,7 @@ The dependency policy lives in [DEVELOPING.md](DEVELOPING.md#dependency-policy).
 | `sidecar/ephymeris_sidecar/` | `server.py` (socket, auth, dispatch), `app.py` (registers every handler: start here), `utility.py`, `debug_run.py`, `discovery.py`, `settings.py` |
 | `…/ports/`, `…/boards/` | State machine, per-port handler, manager, flash queue; `arduino-cli` backends |
 | `…/sessions/` | Lifecycle, runner, writers, scorer, recovery ([DATA.md](DATA.md#per-animal-files)) |
-| `…/cohorts/`, `…/analytics/`, `…/backup/`, `…/logbook/` | [DATA.md](DATA.md#cohorts-animals-and-groups), [ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#the-folder-at-a-glance) |
+| `…/cohorts/`, `…/analytics/`, `…/backup/`, `…/logbook/` | [DATA.md](DATA.md#cohorts-and-animals), [ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#the-folder-at-a-glance) |
 | `…/tasks/`, `…/taskdef/`, `…/rig/`, `…/strobes/`, `…/hardware/` | [TASKS.md](TASKS.md#the-rig-definition) |
 | `…/intan/` | [RECORDING.md](RECORDING.md) |
 | `src/lib/`, `src/components/`, `src/routes/` | Pure logic and stores; UI by domain; routes |

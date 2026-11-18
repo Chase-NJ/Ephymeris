@@ -87,7 +87,7 @@ def rewrite_paths(
     """Point every path this cohort's records store below `old_root` at the
     same place below `new_root`. Never commits; returns how many rows changed.
 
-    That includes where each recorded group run told RHX to save: by default
+    That includes where each recorded round told RHX to save: by default
     `<session folder>/ephys`, which moves with the folder
     (`RECORDING.md#what-is-written`), whichever cohort's session it now is. A
     save location elsewhere is left alone.

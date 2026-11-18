@@ -18,7 +18,7 @@ from typing import Any, Callable
 from ..cohorts.db import Database, Tx
 from ..logbook.models import SessionLog, merge_logs
 from .models import (
-    GroupRun,
+    Round,
     Prefix,
     PrefixNameTaken,
     Session,
@@ -206,7 +206,7 @@ class SessionRepository:
             unit.execute(
                 "INSERT INTO sessions"
                 " (id, cohort_id, prefix_id, prefix_name, session_number, date,"
-                "  started_at, ended_at, status, folder_path, group_runs,"
+                "  started_at, ended_at, status, folder_path, rounds,"
                 "  duration_minutes, recording_json)"
                 " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
@@ -248,12 +248,12 @@ class SessionRepository:
             )
         return self.get_session(session_id)
 
-    def set_group_runs(
-        self, session_id: str, runs: list[GroupRun], *, tx: Tx | None = None
+    def set_rounds(
+        self, session_id: str, runs: list[Round], *, tx: Tx | None = None
     ) -> Session:
         with self._db.write(tx) as unit:
             unit.execute(
-                "UPDATE sessions SET group_runs = ? WHERE id = ?",
+                "UPDATE sessions SET rounds = ? WHERE id = ?",
                 (json.dumps([r.to_json() for r in runs]), session_id),
             )
         return self.get_session(session_id)
@@ -441,7 +441,7 @@ class SessionRepository:
         keep_id: str,
         absorb_ids: list[str],
         *,
-        group_runs: list[GroupRun],
+        rounds: list[Round],
         recording: dict[str, Any] | None,
         started_at: str,
         ended_at: str | None,
@@ -509,10 +509,10 @@ class SessionRepository:
                     ),
                 )
             conn.execute(
-                "UPDATE sessions SET group_runs = ?, recording_json = ?,"
+                "UPDATE sessions SET rounds = ?, recording_json = ?,"
                 " started_at = ?, ended_at = ?, status = ? WHERE id = ?",
                 (
-                    json.dumps([r.to_json() for r in group_runs]),
+                    json.dumps([r.to_json() for r in rounds]),
                     json.dumps(recording) if recording is not None else None,
                     started_at,
                     ended_at,
@@ -548,7 +548,7 @@ class SessionRepository:
 
     @staticmethod
     def _hydrate(row: sqlite3.Row) -> Session:
-        raw_runs = json.loads(row["group_runs"] or "[]")
+        raw_runs = json.loads(row["rounds"] or "[]")
         return Session(
             id=row["id"],
             cohort_id=row["cohort_id"],
@@ -560,7 +560,7 @@ class SessionRepository:
             ended_at=row["ended_at"],
             status=row["status"],
             folder_path=row["folder_path"],
-            group_runs=[GroupRun.from_json(r) for r in raw_runs],
+            rounds=[Round.from_json(r) for r in raw_runs],
             duration_minutes=row["duration_minutes"],
             recording=json.loads(row["recording_json"]) if row["recording_json"] else None,
         )

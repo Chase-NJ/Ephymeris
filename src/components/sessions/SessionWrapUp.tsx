@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { Check, ChartLine, Home } from "lucide-react";
+import { Check, ChartLine, Home, Users } from "lucide-react";
 import { useEffect, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
@@ -10,21 +10,24 @@ import { springModal } from "@/lib/motion";
 import { useReduceMotion } from "@/lib/useReduceMotion";
 
 /**
- * The end of the line — the last group has run, every box has finished, and
- * the operator's next act is to carry the animals home and close the session
- * (`USER-GUIDE.md#ending-the-session`).
+ * The end of a round — every box has finished, the operator's next act is to
+ * carry the animals home, and then there is one question: run more animals
+ * under this session, or end it (`USER-GUIDE.md#when-a-round-finishes`).
  *
- * A pop-up rather than another centre-stage card, because this is the one
- * moment in the flow that is genuinely *over*: nothing on the rails is the
- * next step any more, and a prompt that shares the screen with six Start
- * buttons reads as one option among seven. It takes the screen, says what
- * happened, shows the placement scene played backwards (the same drawing the
- * group swap uses), keeps count of the animals going home, and ends the
- * session — landing on Analytics with this run already open.
+ * A pop-up rather than a centre-stage card, because the round is genuinely
+ * *over*: nothing on the rails is the next step any more, and a prompt that
+ * shares the screen with six Start buttons reads as one option among seven.
+ * It takes the screen, says what happened, shows the placement scene played
+ * backwards, keeps count of the animals going home, and then either opens the
+ * Boxes step for the next round or ends the session, landing on Analytics
+ * with this session already open.
+ *
+ * Both answers wait for every animal to be ticked out: the next round's
+ * animals go into these same chambers, and a session ends on an empty rig.
  *
  * Still dismissable. "Not yet" puts the rails back for the operator who wants
- * to restart a box or read a tile before closing out; the End Session button
- * in the left rail is the same action and stays where it was.
+ * to restart a box or read a tile first; the rail's Run more animals and End
+ * Session are the same two actions and stay where they were.
  *
  * Matte throughout (`ARCHITECTURE.md#theme`): the flourish is three flat rings
  * expanding from the Ion check — the constellation's arrival rings, on a
@@ -33,30 +36,32 @@ import { useReduceMotion } from "@/lib/useReduceMotion";
 export function SessionWrapUp({
   open,
   sessionName,
+  round,
   boxes,
   facts,
   returned,
   busy,
   onToggle,
   onAll,
+  onMore,
   onEnd,
-  onAnotherGroup,
   onDismiss,
   log,
 }: {
   open: boolean;
   sessionName: string;
+  /** The round that just finished, 1-based. */
+  round: number;
   boxes: ReadonlyArray<{ box: number; animalName: string }>;
-  /** The session in numbers — animals, groups, elapsed — as one mono line. */
+  /** The session in numbers — animals, round, elapsed — as one mono line. */
   facts: string;
   returned: ReadonlySet<number>;
   busy: boolean;
   onToggle: (box: number) => void;
   onAll: () => void;
+  /** End this round and set up the next: any animals, in any boxes. */
+  onMore: () => void;
   onEnd: () => void;
-  /** Every group has run, but one may be run again — offered on a multi-group
-   *  cohort only, since groups no longer run in a fixed order to a fixed end. */
-  onAnotherGroup?: (() => void) | undefined;
   onDismiss: () => void;
   /** The session log's corner (`USER-GUIDE.md#ending-the-session`) —
    *  optional, and never a step between the operator and End session. */
@@ -89,7 +94,7 @@ export function SessionWrapUp({
           <motion.div
             role="dialog"
             aria-modal="true"
-            aria-label="Session complete"
+            aria-label="Round finished"
             className="vibrancy relative flex max-h-full w-full max-w-[640px] flex-col overflow-hidden rounded-lg border border-halo shadow-xl"
             initial={{ opacity: 0, scale: 0.96, y: 12 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -101,10 +106,10 @@ export function SessionWrapUp({
                 <Flourish />
                 <div className="min-w-0">
                   <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-static/70">
-                    every group has run
+                    round {round} finished
                   </p>
                   <h2 className="font-display text-[24px] leading-tight text-starlight">
-                    That&rsquo;s a wrap
+                    Every box has finished
                   </h2>
                   <p className="mt-0.5 font-mono text-[11px] text-static">
                     <span className="text-starlight">{sessionName}</span> · {facts}
@@ -113,17 +118,18 @@ export function SessionWrapUp({
               </div>
 
               <p className="mt-4 text-[13px] leading-relaxed text-static">
-                Every box has finished. Carry each animal back to its home cage,
-                tick it off as you go, then end the session — the files are
-                already on disk, and Analytics opens on this run.
+                Carry each animal back to its home cage and tick it off as you
+                go. Then run more animals under this session, in whichever boxes
+                you like, or end it — the files are already on disk, and
+                Analytics opens on this session.
               </p>
 
-              {/* The same scene the group swap plays, for the same reason: the
-                  drawing IS the instruction. Its own top margin is the gap. */}
+              {/* The placement scene played backwards: the drawing IS the
+                  instruction. Its own top margin is the gap. */}
               <RatPlacementBanner
                 mode="return"
                 boxes={boxes.map((b) => b.box)}
-                caption="Home cages, not the next group — this was the last one."
+                caption="Home cages first — the boxes are needed empty either way."
               />
 
               <div className="mt-4">
@@ -145,13 +151,18 @@ export function SessionWrapUp({
               </Button>
               <div className="flex items-center gap-2">
                 <span className="font-mono text-[10px] text-static/70">
-                  {allOut ? "ready to close out" : "tick every animal first"}
+                  {allOut ? "run more, or end?" : "tick every animal first"}
                 </span>
-                {onAnotherGroup && (
-                  <Button disabled={busy || !allOut} onClick={onAnotherGroup}>
-                    Run another group
-                  </Button>
-                )}
+                <Button
+                  disabled={busy || !allOut}
+                  onClick={onMore}
+                  {...(allOut
+                    ? {}
+                    : { title: "Every animal needs to be back in its cage first" })}
+                >
+                  <Users size={13} strokeWidth={1.75} />
+                  Run more animals
+                </Button>
                 <Button
                   variant="primary"
                   disabled={busy || !allOut}

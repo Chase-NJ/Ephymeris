@@ -118,7 +118,7 @@ async def rig():
 
 async def test_configure_tells_rhx_exactly_what_was_asked(rig, tmp_path):
     h = await rig()
-    await h.service.configure("s1", "g1", config(tmp_path), "GRGL_7_2026-09-20_A", ("a", "b", "c"))
+    await h.service.configure("s1", config(tmp_path), "GRGL_7_2026-09-20_A", ("a", "b", "c"))
     p = h.fake.params
 
     assert p["fileformat"] == "OneFilePerSignalType"
@@ -148,7 +148,7 @@ async def test_configure_tells_rhx_exactly_what_was_asked(rig, tmp_path):
 async def test_channels_nobody_claimed_are_switched_off(rig, tmp_path):
     h = await rig()
     boxes = [{"box": 1, "port": "A", "firstChannel": 0, "lastChannel": 7}]
-    await h.service.configure("s1", "g1", config(tmp_path, boxes=boxes), "x")
+    await h.service.configure("s1", config(tmp_path, boxes=boxes), "x")
     assert h.fake.params["a-007.enabled"] == "true"
     assert h.fake.params["a-008.enabled"] == "false"
 
@@ -160,7 +160,7 @@ async def test_a_save_location_rhx_would_truncate_is_refused_not_recorded_elsewh
     h = await rig(truncate_at_space=True)
     spaced = tmp_path / "Hart Lab" / "ephys"
     with pytest.raises(RhxCommandFailed, match="space"):
-        await h.service.configure("s1", "g1", config(tmp_path, saveDirectory=str(spaced)), "x")
+        await h.service.configure("s1", config(tmp_path, saveDirectory=str(spaced)), "x")
     assert h.service.status_json()["state"] != "configured"
 
 
@@ -185,19 +185,19 @@ async def test_a_save_location_rhx_would_truncate_is_refused_not_recorded_elsewh
 async def test_a_setup_that_cannot_record_says_why(rig, tmp_path, kwargs, edits, says):
     h = await rig(**kwargs)
     with pytest.raises(IntanNotReady, match=says):
-        await h.service.configure("s1", "g1", config(tmp_path, **edits), "x")
+        await h.service.configure("s1", config(tmp_path, **edits), "x")
 
 
 async def test_an_rhx_left_running_is_stopped_but_one_recording_is_not_touched(rig, tmp_path):
     h = await rig()
     h.fake.params["runmode"] = "Run"
-    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.configure("s1", config(tmp_path), "x")
     assert h.fake.params["runmode"] == "Stop"
 
     await h.service.disconnect()
     h.fake.params["runmode"] = "Record"
     with pytest.raises(IntanNotReady, match="already recording"):
-        await h.service.configure("s1", "g1", config(tmp_path), "x")
+        await h.service.configure("s1", config(tmp_path), "x")
     assert h.fake.params["runmode"] == "Record"
 
 
@@ -206,7 +206,7 @@ async def test_an_rhx_left_running_is_stopped_but_one_recording_is_not_touched(r
 
 async def test_start_means_samples_are_arriving_not_that_record_was_requested(rig, tmp_path):
     h = await rig(runmode_delay_s=0.12)
-    await h.service.configure("s1", "g1", config(tmp_path), "base")
+    await h.service.configure("s1", config(tmp_path), "base")
     await h.service.start_recording()
 
     assert h.fake.params["runmode"] == "Record"
@@ -228,7 +228,7 @@ async def test_start_means_samples_are_arriving_not_that_record_was_requested(ri
 async def test_a_recording_that_cannot_start_refuses(rig, tmp_path):
     """The one place RHX may fail the session path: before any box has started."""
     h = await rig()
-    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.configure("s1", config(tmp_path), "x")
     h.fake.refuse.add("runmode")
     with pytest.raises(RhxCommandFailed):
         await h.service.start_recording()
@@ -242,13 +242,13 @@ async def test_stop_returns_the_run_and_never_raises_even_with_rhx_dead(rig, tmp
     """By the time this runs the animals are done. A raise here could only
     strand the session as `running`."""
     h = await rig()
-    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.configure("s1", config(tmp_path), "x")
     await h.service.start_recording()
     await h.fake.die()
 
     run = await h.service.stop_recording()
 
-    assert run is not None and run["groupId"] == "g1" and run["endedAt"]
+    assert run is not None and run["endedAt"]
     status = h.service.status_json()
     assert status["state"] == "error" and "Stop it from RHX" in status["message"]
 
@@ -257,7 +257,7 @@ async def test_a_stop_rhx_never_answers_is_bounded_and_sent_once_it_does(rig, tm
     """THE RULE at End: a wedged RHX costs the stop `stop_timeout_s`, not the
     session. The stop is owed, and the first poll RHX answers sends it."""
     h = await rig(poll_s=30.0, stop_timeout_s=0.5)
-    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.configure("s1", config(tmp_path), "x")
     await h.service.start_recording()
     h.fake.silent = True
 
@@ -279,7 +279,7 @@ async def test_a_stop_rhx_never_answers_is_bounded_and_sent_once_it_does(rig, tm
 
 async def _owe_a_stop(h, tmp_path) -> None:  # noqa: ANN001
     """A recording whose stop RHX never answered: the stop is owed."""
-    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.configure("s1", config(tmp_path), "x")
     await h.service.start_recording()
     h.fake.silent = True
     await h.service.stop_recording()
@@ -342,7 +342,7 @@ async def test_a_reconnect_does_not_adopt_a_recording_started_by_hand(rig, tmp_p
     reconnect RHX is in Record, but not writing this run: it is not picked
     back up as ours, and the End that follows does not stop it."""
     h = await rig(poll_s=0.05, stop_timeout_s=0.5)
-    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.configure("s1", config(tmp_path), "x")
     await h.service.start_recording()
     await h.fake.stop_listening()
     await h.until(lambda: h.service.status_json()["state"] == "error")
@@ -365,7 +365,7 @@ async def test_an_end_waiting_on_boxes_offers_end_now_with_rhx_lost(rig, tmp_pat
     lost, an End still waits on the boxes, so it must still be offered --
     and the reason RHX is in trouble must not vanish."""
     h = await rig(poll_s=0.05)
-    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.configure("s1", config(tmp_path), "x")
     await h.service.start_recording()
     await h.fake.stop_listening()
     await h.until(lambda: h.service.status_json()["state"] == "error")
@@ -387,7 +387,7 @@ async def test_a_reconnect_adopts_the_run_once_its_stamp_can_be_read(rig, tmp_pa
     """One stamp read that fails on reconnect is not a verdict: a later poll
     reads it, finds RHX on this run's file, and picks the run back up."""
     h = await rig(poll_s=0.05)
-    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.configure("s1", config(tmp_path), "x")
     await h.service.start_recording()
     await h.fake.stop_listening()
     await h.until(lambda: h.service.status_json()["state"] == "error")
@@ -430,7 +430,7 @@ async def test_an_end_during_an_adoption_is_not_undone_by_it(rig, tmp_path, via)
     run that is no longer open: it must not adopt it, leaving `recording` with
     no run and live streams, for the next poll to call "stopped from RHX"."""
     h = await rig(poll_s=30.0)
-    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.configure("s1", config(tmp_path), "x")
     await h.service.start_recording()
     await h.fake.stop_listening()
     await h.service._poll_once()  # the link is lost
@@ -458,7 +458,7 @@ async def test_an_end_during_a_reconnects_stamp_read_keeps_its_message(rig, tmp_
     is being read. End's verdict on the recording it left alone stands; the
     reconnect's stale "not this run" must not overwrite it."""
     h = await rig(poll_s=30.0)
-    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.configure("s1", config(tmp_path), "x")
     await h.service.start_recording()
     await h.fake.stop_listening()
     await h.service._poll_once()  # the link is lost
@@ -477,7 +477,7 @@ async def test_a_stop_and_record_by_hand_during_the_grace_is_not_stopped(rig, tm
     """While End waits on the boxes, Stop then Record is pressed in RHX: a new
     file. The post-roll stop must not end that recording as if it were ours."""
     h = await rig(poll_s=30.0, stop_timeout_s=0.5)
-    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.configure("s1", config(tmp_path), "x")
     await h.service.start_recording()
     h.service.note_waiting([1])
     h.fake.params["runmode"] = "Stop"
@@ -498,7 +498,7 @@ async def test_an_owed_stop_is_dropped_when_rhx_was_stopped_by_hand(rig, tmp_pat
     """Stopped from RHX before the link came back: nothing is left to stop, and
     the next recording RHX is put in is not touched."""
     h = await rig(poll_s=30.0, stop_timeout_s=0.5)
-    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.configure("s1", config(tmp_path), "x")
     await h.service.start_recording()
     h.fake.silent = True
     await h.service.stop_recording()
@@ -514,7 +514,7 @@ async def test_an_owed_stop_is_dropped_when_rhx_was_stopped_by_hand(rig, tmp_pat
 
 async def test_losing_rhx_mid_recording_is_loud_and_the_run_is_kept(rig, tmp_path):
     h = await rig()
-    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.configure("s1", config(tmp_path), "x")
     await h.service.start_recording()
     await h.fake.die()
 
@@ -527,7 +527,7 @@ async def test_losing_rhx_mid_recording_is_loud_and_the_run_is_kept(rig, tmp_pat
 async def test_every_status_is_the_declared_wire_shape(rig, tmp_path):
     h = await rig()
     assert validate(("ref", "IntanStatus"), h.service.status_json()) == []
-    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.configure("s1", config(tmp_path), "x")
     await h.service.start_recording()
     h.service.box_started(1, "R12")
     await asyncio.sleep(0)
@@ -611,7 +611,7 @@ async def test_strobes_and_sync_edges_meet(rig, tmp_path):
     """The whole chain: a box's serial strobes (its own ms clock) and the edges
     its sync pin put on ITS digital input, paired into the sync check."""
     h = await rig(params={"synthetic": "False"})  # a controller, with real DINs
-    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.configure("s1", config(tmp_path), "x")
     await h.service.start_recording()
     h.service.box_started(3, "R12")
     await asyncio.sleep(0)
@@ -643,7 +643,7 @@ async def test_spikes_reach_the_firing_map_batched_by_box(rig, tmp_path):
     last send; a channel no box records is not reported; and once RHX's clock
     has been read the batch says how late its slowest spike was."""
     h = await rig()
-    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.configure("s1", config(tmp_path), "x")
     assert h.fake.params["tcpnumberdatablocksperwrite"] == "2"
     await h.service.start_recording()
     await h.until(lambda: h.service._clock is not None and h.service._clock.lag_ms(0, 0.0) is not None)
@@ -670,7 +670,7 @@ async def test_a_tick_pulsed_box_matches_every_strobe_of_a_tick_to_its_one_edge(
     strobes; the runner says so at START and the box's matcher pairs by tick.
     Matched per strobe, every one, with no edge left over and none missing."""
     h = await rig(params={"synthetic": "False"})
-    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.configure("s1", config(tmp_path), "x")
     await h.service.start_recording()
     h.service.box_started(3, "R12", tick_pulsed=True)
     await asyncio.sleep(0)
@@ -698,7 +698,7 @@ async def test_synthetic_data_has_no_sync_line_so_the_check_is_off(rig, tmp_path
     published."""
     h = await rig()  # the fake is synthetic by default, as RHX's demo is
     assert h.service.status_json()["synthetic"] is False  # not yet asked
-    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.configure("s1", config(tmp_path), "x")
     await h.service.start_recording()
     assert h.service.status_json()["synthetic"] is True
     h.service.box_started(3, "R12")

@@ -99,7 +99,6 @@ def make_runner(  # noqa: ANN201
     runner.configure(
         tmp_path,
         "2O-Bdisc_25",
-        "g1",
         [
             BoxConfig(
                 box=box,
@@ -383,6 +382,7 @@ async def test_strobes_push_rolling_telemetry(tmp_path: Path, bench: Bench) -> N
     assert metric["id"] == "p_r_odor1"
     assert metric["value"] == 1.0
     assert metric["n"] == 1
+    assert (metric["triggered"], metric["counted"], metric["hits"]) == (1, 1, 1)
 
 
 async def test_the_end_code_finalizes_the_run_cleanly(tmp_path: Path, bench: Bench) -> None:
@@ -503,7 +503,7 @@ async def test_a_new_mapping_forgets_finished_boxes(tmp_path: Path, bench: Bench
     await board.said("246\t100")
     await wait_until(lambda: bool(ended))
 
-    runner.configure(tmp_path, "2O-Bdisc_25", "g2", runner.box_configs(), session_id="s1")
+    runner.configure(tmp_path, "2O-Bdisc_25", runner.box_configs(), session_id="s1")
     assert runner.snapshot()[0]["ended"] is False
 
 
@@ -588,7 +588,6 @@ async def test_the_snapshot_reports_the_mapping_and_what_is_live(tmp_path: Path,
     """`sessions.status` is built from this — Mission Control's per-box tiles
     (`USER-GUIDE.md#reading-a-box-tile`)."""
     runner, _events, _ended = make_runner(tmp_path, bench)
-    assert runner.group_id == "g1"
     assert runner.snapshot() == [
         {
             "box": 1,

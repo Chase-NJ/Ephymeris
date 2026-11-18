@@ -287,14 +287,14 @@ screen. Link (left) and Defaults (right) use `SettingRow` at **compact** density
 
 Start Recording opens `/session/new?mode=recording`, creating the session with `recording: true`; the flow
 then reads the flag from the session record (`SessionFlow.isRecording`, `lib/sessions/flow.ts`), not the
-URL, because it is re-entered from the dock, a group switch and a reload.
+URL, because it is re-entered from the dock, between rounds and after a reload.
 
 ```
 /session/new → /session/:id/mapping → /session/:id/recording → /session/:id/control
                                        (SessionRecording.tsx)
 ```
 
-It comes **after mapping** (it asks for each *mapped* box's headstage port), runs **once per group**, and
+It comes **after mapping** (it asks for each *mapped* box's headstage port), runs **once per [round](../GLOSSARY.md#round)**, and
 opens prefilled from `settings.recordingDefaults`, which it writes back on Continue. Whether a box records,
 its port and channel range are remembered **by box**; a probe map is the animal's implant, remembered **by
 animal id** (`probeMaps`).
@@ -304,7 +304,7 @@ animal id** (`probeMaps`).
 - **Saving**: `<session folder>/ephys` by default, or the session's folder name under a chosen root.
 - **Boxes**: Record or Behavior only, DIN, port, channel range, optional probe-map XML (parsed by
   `intan.parseProbeMap`; a parse cut off by a lost connection reruns on reconnect). Boxes may share a
-  port on disjoint ranges only. A box not in the group's confirmed mapping is refused before RHX is
+  port on disjoint ranges only. A box not in the round's confirmed mapping is refused before RHX is
   touched (`SessionLifecycle.mapped_boxes`).
 
 The setup belongs to the mapping confirmed when **Continue** was pressed (`SessionLifecycle.confirmations`):
@@ -317,7 +317,7 @@ re-picked without it.
 
 On **Continue**, `intan.configure` (`IntanService.configure`) applies the plan in one pass. An RHX in `Run`
 is stopped (it ignores saving parameters while running); one in `Record` is refused. **Unclaimed channels
-are switched off.** RHX's three notes carry the session, cohort and group, and the box→animal→port map;
+are switched off.** RHX's three notes carry the session, the cohort, and the box→animal→port map;
 `livenotes` stamps each box's start and end.
 
 ### Impedance tracking
@@ -384,7 +384,7 @@ live, since the map opened (`FiringModel.activeCount`), after its first 10 s.
 
 ## Start and end
 
-Context: [ARCHITECTURE.md](ARCHITECTURE.md#session-lifecycle). One group's recording
+Context: [ARCHITECTURE.md](ARCHITECTURE.md#session-lifecycle). One round's recording
 (`SessionLifecycle` in `sessions/lifecycle.py`, `IntanService.start_recording`/`stop_recording`):
 
 ```mermaid
@@ -424,7 +424,7 @@ sequenceDiagram
 unreachable or stopped by hand, End still attempts the stop and records the run. Only a run RHX is known
 to be writing is stopped outright; any other goes through the owed-stop check.
 
-**One recording per group run**: another group is different animals, possibly on different ports.
+**One recording per round**: another round is different animals, possibly on different ports.
 
 ### Start
 
@@ -438,16 +438,16 @@ to be writing is stopped outright; any other goes through the owed-stop check.
 5. Start the boxes.
 
 A failure in 1–2 is an `INTAN_*` error with no box started. First, `IntanService.refuse_unless_ready`
-refuses with `INTAN_NOT_READY` (no recording set up for this group, or set up before its mapping was last
+refuses with `INTAN_NOT_READY` (no recording set up for this round, or set up before its mapping was last
 confirmed, or Stop pressed in RHX) or `INTAN_UNAVAILABLE` (RHX out of reach, including a box started
-while the group's recording has lost its link).
+while the round's recording has lost its link).
 
 A box refused after step 5 leaves RHX recording, so a retry starts its boxes inside the same recording.
-`sessions.abandon` stops it and keeps the run on the aborted session, its only run without a group run.
+`sessions.abandon` stops it and keeps the run on the aborted session, its only run without a round.
 
 ### Graceful end
 
-`sessions.end` and `sessions.endGroup` via `SessionLifecycle.end`/`end_group`:
+`sessions.end` and `sessions.endRound` via `SessionLifecycle.end`/`end_round`:
 
 1. `STOP` to every box.
 2. **Wait for each box's `BF_END_SESSION`**, up to `RECORDING_GRACE_S` (longer than any trial the lab
@@ -480,10 +480,10 @@ A box refused after step 5 leaves RHX recording, so a retry starts its boxes ins
 ## What is written
 
 **By RHX**: its own files under `Filename.Path`, in a directory it timestamps (`createnewdirectory
-true`). Ephymeris never reads them and moves them only with a [relocated](DATA.md#data-folder) cohort
+true`), named `<prefix>_<number>_<date>_<animal>-<animal>…`: the animals recorded, in box order. Ephymeris never reads them and moves them only with a [relocated](DATA.md#data-folder) cohort
 folder. Probe-map XMLs are copied beside them as `box<n>_<name>.xml`.
 
-**`sessions.recording_json`** ([DATA.md](DATA.md#sqlite-database)): `{"runs": [...]}`, one per group run
+**`sessions.recording_json`** ([DATA.md](DATA.md#sqlite-database)): `{"runs": [...]}`, one per round
 (path, base filename, RHX's file timestamp, format, sample rate, start/end, and per box its DIN, port,
 channels and probe-map file). `NULL` means behavior only. A save location inside a cohort folder follows
 a relocate of that folder.

@@ -13,19 +13,27 @@ import { CASCADE, RISE } from "@/lib/motion";
 const FILTER_FROM = 8;
 
 /**
- * The cohort list Analytics and Log open on (`ARCHITECTURE.md#cohort-browser`).
+ * The cohort list Analytics and Log open on, and the one session set-up
+ * picks from (`ARCHITECTURE.md#cohort-browser`).
  *
  * Choosing which cohort to read is a list choice, so it is drawn as one: a
  * telemetry panel of rows, most recently run first, each carrying the world's
  * disc so it is still recognisably the planet from `/cohorts`. The 3D browser
  * stays where the library is managed; here a pick IS the action.
+ *
+ * It fills the height it is given and scrolls its rows inside it. Analytics
+ * and Log give it the page; set-up, where it is one section of a form, caps
+ * it with `className`.
  */
 export function CohortManifest({
   cohorts,
   onPick,
+  className = "max-h-full",
 }: {
   cohorts: CohortSummary[];
   onPick: (id: string) => void;
+  /** The panel's height bound. */
+  className?: string;
 }) {
   const ids = useMemo(() => cohorts.map((c) => c.id), [cohorts]);
   const stats = useCohortSessionStats(ids);
@@ -54,7 +62,7 @@ export function CohortManifest({
   if (cohorts.length === 0) return null;
 
   return (
-    <section className="telemetry flex max-h-full min-h-0 flex-col p-4">
+    <section className={`telemetry flex min-h-0 flex-col p-4 ${className}`}>
       <div className="mb-3 flex items-center gap-3">
         <PanelTitle
           name="Cohorts"
@@ -102,8 +110,7 @@ export function CohortManifest({
                 <PlanetDisc cohortId={cohort.id} appearance={cohort.appearance} size={24} />
                 <span className="truncate text-[13px] text-starlight">{cohort.name}</span>
                 <span className="font-mono text-[11px] text-static tabular-nums">
-                  {plural(cohort.animalCount, "animal")} · {plural(cohort.groupCount, "group")} ·{" "}
-                  {plural(cohort.cageCount, "cage")}
+                  {plural(cohort.animalCount, "animal")} · {plural(cohort.cageCount, "cage")}
                 </span>
                 <span className="text-right font-mono text-[11px] text-starlight tabular-nums">
                   {s ? s.sessions : <span className="text-static/50">—</span>}

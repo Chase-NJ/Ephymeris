@@ -2,8 +2,8 @@
 
 Two kinds of leftover pile up when a day goes wrong:
 
-* **Split records.** Before groups could be chosen on the fly, closing the app
-  between groups (or ending a session too early) left the operator starting a
+* **Split records.** Closing the app between rounds without continuing the
+  session (or ending a session too early) leaves the operator starting a
   *second* session under the same number to finish the day. Both records write
   into the one folder — the folder name is `<prefix>_<number>_<date>` — and
   Analytics shows the day twice. They are merged into the earliest record.
@@ -28,7 +28,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from ..cohorts.folders import sanitize_name
-from .models import GroupRun, Session
+from .models import Round, Session
 
 #: What a folder holds, as far as the planner can honestly say. `None` is
 #: "unreachable" — an unmounted drive — and is never read as empty.
@@ -177,19 +177,18 @@ def _folder_exists(session: Session) -> bool:
 def merged_fields(merge: Merge) -> dict[str, Any]:
     """The kept record after absorbing the others.
 
-    * **Group runs** from every record, in the order they started, renumbered —
-      the order a group ran in is the order it started in.
+    * **Rounds** from every record, in the order they started, renumbered.
     * **Recording runs** likewise; a session is a recording if any part was.
     * **started_at** the earliest, **ended_at** the latest, so the record spans
       the whole day it now stands for.
     * **completed** — every record merged is closed by construction (a live one
-      protects its group), and a crash-orphaned `running` record is what a
+      protects the records it would merge with), and a crash-orphaned `running` record is what a
       tidy exists to close out. A same-day completed session can still be
-      continued with another group (`sessions.resume`).
+      continued with another round (`sessions.resume`).
     """
     everyone = [merge.keep, *merge.absorb]
-    runs: list[GroupRun] = sorted(
-        (run for s in everyone for run in s.group_runs), key=lambda r: r.started_at
+    runs: list[Round] = sorted(
+        (run for s in everyone for run in s.rounds), key=lambda r: r.started_at
     )
     runs = [replace(run, order=index) for index, run in enumerate(runs)]
 
@@ -203,7 +202,7 @@ def merged_fields(merge: Merge) -> dict[str, Any]:
 
     ended = [s.ended_at for s in everyone if s.ended_at]
     return {
-        "group_runs": runs,
+        "rounds": runs,
         "recording": recording,
         "started_at": min(s.started_at for s in everyone),
         "ended_at": max(ended) if ended else None,
@@ -220,7 +219,7 @@ def session_json(session: Session, run_count: int) -> dict[str, Any]:
         "status": session.status,
         "startedAt": session.started_at,
         "runCount": run_count,
-        "groupIds": [run.group_id for run in session.group_runs],
+        "roundLabels": [run.label for run in session.rounds],
     }
 
 

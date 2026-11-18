@@ -104,7 +104,7 @@ sketches get ([TASKS.md](TASKS.md#compiling-and-the-host-tests)).
 | `check.yml` | every push to `main` and every PR | `npm run check`, the sidecar suite on Windows and Linux, firmware host tests and compiles |
 | `release.yml` | a pushed `v*` tag | builds the installer and attaches it to a **draft** pre-release |
 | `ship-main.yml` | by hand | builds `main` as `<package.json version>.<commit count>` and publishes it |
-| `installer.yml` | called by the two above | the one copy of the build steps, on a clean Windows runner |
+| `installer.yml` | called by the two above | the one copy of the build steps: the Windows installer, and the Apple silicon `.dmg` on a macOS runner (a failed Mac build never blocks a release) |
 | `publish-update.yml` | publishing a release | points the update feed (`updates` branch) at it ([ARCHITECTURE.md](ARCHITECTURE.md#updates)) |
 
 Tests that need hardware, `arduino-cli`, RHX or the lab's probe maps skip themselves in CI.
@@ -129,8 +129,19 @@ npm run package:electron
 `build/resources/` to re-seed), and the sketch library from `firmware/`. `electron-builder`
 (`electron-builder.yml`) then writes `release/Ephymeris-<version>-setup.exe`, its `.blockmap` and
 `latest.yml`. The frozen sidecar carries the Python that built it; use 3.13, as CI does (3.12's Windows
-asyncio clock makes short waits end early). Packaging is proven on Windows only; the installer is
-unsigned.
+asyncio clock makes short waits end early). The installer is unsigned.
+
+The same command on an Apple silicon Mac writes `release/Ephymeris-<version>-arm64.dmg`, for reading
+data, the logbook and simulations away from the rigs. Everything it bundles is the build machine's own
+architecture, so build it on Apple silicon. It differs from the Windows installer in three ways:
+
+- **Ad-hoc signed, not notarized** (`identity: "-"`). Apple silicon runs no unsigned code, and there is
+  no Developer ID; the first launch is allowed by hand ([README](../README.md#install)). The hardened runtime is off, because
+  its library validation needs a Team ID and the frozen sidecar could not load its own libraries.
+- **No updates.** `updatesSupported()` is Windows-only; a new `.dmg` replaces the old copy.
+- **Compiling needs Rosetta.** Arduino ships `avr-gcc` for macOS as x86_64 only. Nothing else does.
+
+Packaging is proven on Windows x64 and Apple silicon only.
 
 ## Dependency policy
 

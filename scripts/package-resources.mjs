@@ -6,11 +6,11 @@
  *
  *   resources/
  *     sidecar/                PyInstaller-frozen sidecar (onedir)
- *       ephymeris-sidecar.exe
+ *       ephymeris-sidecar[.exe]
  *       _internal/ephymeris_sidecar/rig/
  *         schema/ hardware/              the channel, pinout and strobe registries
  *     arduino/
- *       arduino-cli.exe       copied from this machine's PATH
+ *       arduino-cli[.exe]     copied from this machine's PATH
  *       data/                 a clean `arduino:avr` install (core + avr-gcc +
  *                             avrdude) seeded via `core install` into an empty
  *                             directory, so nothing from the dev machine's own
@@ -27,7 +27,7 @@
  */
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, rmSync, statSync, readdirSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, rmSync, statSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
@@ -38,11 +38,11 @@ const resourcesDir = join(repoRoot, "build", "resources");
 const win = process.platform === "win32";
 const exe = win ? ".exe" : "";
 
-// Packaging has only been exercised on Windows — the lab targets. The macOS
-// path would need a mac arduino-cli and a mac PyInstaller run; nothing here is
-// Windows-specific by design, but don't pretend it's been proven.
-if (!win) {
-  console.warn("warning: packaging has only been verified on Windows; continuing anyway");
+// Packaging is proven on Windows x64 (the lab PCs) and Apple silicon macOS.
+// Everything staged here is this machine's own architecture: the freeze, the
+// arduino-cli on PATH and the avr toolchain `core install` downloads.
+if (!win && !(process.platform === "darwin" && process.arch === "arm64")) {
+  console.warn(`warning: packaging is unproven on ${process.platform}/${process.arch}; continuing anyway`);
 }
 
 function run(cmd, args, opts = {}) {
@@ -149,7 +149,10 @@ run(python, [
 const frozen = join(sidecarDir, "dist", "ephymeris-sidecar");
 rmSync(join(resourcesDir, "sidecar"), { recursive: true, force: true });
 mkdirSync(resourcesDir, { recursive: true });
-cpSync(frozen, join(resourcesDir, "sidecar"), { recursive: true });
+// Links copied as written: a macOS freeze holds relative ones (Python.framework's
+// `Versions/Current`), and cpSync otherwise rewrites each into an absolute path
+// back into this checkout, which codesign refuses and no other Mac could follow.
+cpSync(frozen, join(resourcesDir, "sidecar"), { recursive: true, verbatimSymlinks: true });
 console.log(`\nstaged sidecar (${sizeOf(join(resourcesDir, "sidecar"))})`);
 
 // --- 2. bundle arduino-cli -------------------------------------------------
@@ -165,7 +168,9 @@ try {
 
 const arduinoDir = join(resourcesDir, "arduino");
 mkdirSync(arduinoDir, { recursive: true });
-cpSync(cliPath, join(arduinoDir, `arduino-cli${exe}`));
+// The binary itself: Homebrew's `arduino-cli` on PATH is a link into its Cellar.
+rmSync(join(arduinoDir, `arduino-cli${exe}`), { force: true });
+copyFileSync(cliPath, join(arduinoDir, `arduino-cli${exe}`));
 console.log(`staged arduino-cli from ${cliPath}`);
 
 // --- 3. seed the arduino:avr core -----------------------------------------

@@ -17,7 +17,7 @@ the [Releases](https://github.com/Chase-NJ/Ephymeris/releases) page.
 
 ## What you need
 
-- A Windows 10 or 11 PC. No administrator account, Python, Arduino IDE or internet connection is
+- A Windows 10 or 11 PC to run sessions. No administrator account, Python, Arduino IDE or internet connection is
   needed: everything ships inside the installer.
 - One to six Arduino Mega2560 R3 boards, each wired into a behaviour box and connected by USB.
   Genuine boards need no driver; CH340 clones need the CH340 driver.
@@ -32,6 +32,12 @@ the [Releases](https://github.com/Chase-NJ/Ephymeris/releases) page.
    **More info**, then **Run anyway**.
 4. Start Ephymeris from the Start menu or the desktop shortcut. On the first start it unpacks its
    Arduino toolchain, so boards take a few extra seconds to appear that once.
+
+**On an Apple silicon Mac**, for looking at data, the logbook and simulations away from the rigs:
+download `Ephymeris-<version>-arm64.dmg` from the same page, open it and drag Ephymeris to
+Applications. It is not notarized, so the first launch is refused: open **System Settings → Privacy &
+Security** and click **Open Anyway**. A Mac copy does not update itself: install a newer
+`.dmg` over it.
 
 ## Set up the rig (once)
 

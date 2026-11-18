@@ -1,5 +1,6 @@
-# The Electron shell's Windows installer (ADR 0006, `ARCHITECTURE.md#the-electron-shell`).
-# Built by `npm run package:electron`; the version is package.json's, which a CI
+# The Electron shell's Windows installer and Apple silicon .dmg (ADR 0006,
+# `ARCHITECTURE.md#the-electron-shell`). Built by `npm run package:electron`, for
+# whichever of the two the build machine is; the version is package.json's, which a CI
 # build overrides with `-c.extraMetadata.version=<version>`.
 
 appId: edu.hartlab.ephymeris
@@ -46,6 +47,22 @@ nsis:
   uninstallDisplayName: Ephymeris
   # Removes a Tauri shell's copy left on the PC before installing (ADR 0006's crossover).
   include: electron/installer.nsh
+
+# Apple silicon, for reading data away from the rigs (`DEVELOPING.md#building-the-installer`).
+# Ad-hoc signed (`identity: "-"`): arm64 macOS runs no unsigned code at all, and there is no
+# Developer ID to sign or notarize with, so the first launch is allowed by hand in System Settings.
+# The hardened runtime stays off because its library validation needs a Team ID, which an
+# ad-hoc signature lacks: the frozen sidecar could not load its own libraries.
+# A Mac copy never updates itself (`updatesSupported()`); a new .dmg replaces it.
+mac:
+  target:
+    - target: dmg
+      arch: [arm64]
+  icon: electron/icons/icon.icns
+  category: public.app-category.education
+  identity: "-"
+  hardenedRuntime: false
+  artifactName: "${productName}-${version}-arm64.${ext}"
 
 # The update feed (`electron/updater.ts`), baked into every copy as
 # resources/app-update.yml. `latest.yml` is written to the `updates` branch by

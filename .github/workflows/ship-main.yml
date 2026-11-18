@@ -64,9 +64,11 @@ jobs:
     needs: [version, installer]
     runs-on: ubuntu-24.04
     steps:
+      # `installer`, and `installer-mac` when the Mac build made one.
       - uses: actions/download-artifact@v8
         with:
-          name: installer
+          pattern: installer*
+          merge-multiple: true
           path: installer
       - name: Publish a pre-release with the installer and its feed file
         env:

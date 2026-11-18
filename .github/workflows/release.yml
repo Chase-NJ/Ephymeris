@@ -1,5 +1,5 @@
 # Pushing a tag like v1.1.1-alpha builds the Windows installer on a clean machine, with its
-# latest.yml (installer.yml), and attaches them to a DRAFT release. Nothing reaches the lab
+# latest.yml, and the Apple silicon .dmg (installer.yml), and attaches them to a DRAFT release. Nothing reaches the lab
 # until the draft is published, which is when publish-update.yml points installed copies at it.
 #
 # To ship main without a tag, use ship-main.yml instead.
@@ -37,9 +37,11 @@ jobs:
     needs: installer
     runs-on: ubuntu-24.04
     steps:
+      # `installer`, and `installer-mac` when the Mac build made one.
       - uses: actions/download-artifact@v8
         with:
-          name: installer
+          pattern: installer*
+          merge-multiple: true
           path: installer
       - name: Draft a release with the installer and its feed file
         env:

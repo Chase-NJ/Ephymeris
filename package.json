@@ -24,7 +24,7 @@
     "start": "node scripts/electron-dev.mjs",
     "electron:dev": "node scripts/electron-dev.mjs",
     "build:electron": "tsc -p electron/tsconfig.build.json",
-    "package:electron": "node scripts/package-resources.mjs && npm run build && npm run build:electron && electron-builder --win --publish never"
+    "package:electron": "node scripts/package-resources.mjs && npm run build && npm run build:electron && electron-builder --publish never"
   },
   "dependencies": {
     "electron-updater": "6.8.12"

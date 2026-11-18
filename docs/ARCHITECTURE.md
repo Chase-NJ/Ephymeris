@@ -147,7 +147,7 @@ set (never installed), else `dist/` from `app://ephymeris/`, because `fetch` ref
 
 | Part | Does |
 |---|---|
-| `release.yml`, `ship-main.yml` | Build the installer and put up a release: `*-setup.exe`, `.blockmap` and `latest.yml`. `release.yml` drafts from a tag; `ship-main.yml`, run by hand only, publishes `main` as `<version>.<commit count>` |
+| `release.yml`, `ship-main.yml` | Build the installer and put up a release: `*-setup.exe`, `.blockmap` and `latest.yml`, plus the Apple silicon `.dmg`, which is outside the feed ([DEVELOPING.md](DEVELOPING.md#building-the-installer)). `release.yml` drafts from a tag; `ship-main.yml`, run by hand only, publishes `main` as `<version>.<commit count>` |
 | `publish-update.yml` | On publish, writes `latest.yml` to the `updates` branch |
 | `electron/updater.ts` | Check the feed; download, verify the sha512, stop the sidecar, run the installer |
 

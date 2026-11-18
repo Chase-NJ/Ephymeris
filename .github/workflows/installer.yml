@@ -1,9 +1,12 @@
 # Builds the Windows installer on a clean machine and hands it on as the `installer`
-# artifact. Called, never run on its own: release.yml builds a tagged version with it,
+# artifact, and the Apple silicon .dmg as `installer-mac`. Called, never run on its own: release.yml builds a tagged version with it,
 # ship-main.yml a build of main.
 #
 # Ephymeris-<v>-setup.exe, its .blockmap, and latest.yml, the feed entry naming the
 # installer and its sha512 (ADR 0006, docs/ARCHITECTURE.md#updates).
+#
+# Ephymeris-<v>-arm64.dmg is for reading data away from the rigs: ad-hoc signed, outside the
+# update feed (docs/DEVELOPING.md#building-the-installer).
 #
 # One copy of these steps, so a tagged release and a main build can't drift apart in what
 # they bundle.
@@ -85,5 +88,54 @@ jobs:
         with:
           name: installer
           path: out/*
+          if-no-files-found: error
+          retention-days: 7
+
+  # The lab runs on the Windows installer, so a failed Mac build never holds a release
+  # back: the release then simply carries no .dmg.
+  mac:
+    runs-on: macos-15 # Apple silicon; everything bundled is the runner's own architecture
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - uses: arduino/setup-arduino-cli@v2
+        with:
+          version: "1.5.1"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: |
+          python -m venv sidecar/.venv
+          sidecar/.venv/bin/pip install -e "sidecar[dev]"
+
+      - run: npm ci
+
+      - name: Version override
+        if: inputs.version != ''
+        env:
+          VERSION: ${{ inputs.version }}
+        run: echo "VERSION_CONFIG=-c.extraMetadata.version=$VERSION" >> "$GITHUB_ENV"
+
+      - run: npm run package:electron -- $VERSION_CONFIG
+
+      - name: The .dmg carries the version and a valid signature
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          ls release/
+          if [ -n "$VERSION" ]; then ls "release/Ephymeris-${VERSION}-arm64.dmg"; fi
+          codesign --verify --deep --strict release/mac-arm64/Ephymeris.app
+
+      # The .dmg alone: latest-mac.yml stays behind, since no Mac copy reads a feed.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: installer-mac
+          path: release/*-arm64.dmg
           if-no-files-found: error
           retention-days: 7

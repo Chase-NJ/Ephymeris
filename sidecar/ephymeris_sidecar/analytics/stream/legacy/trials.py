@@ -42,9 +42,22 @@ class MetricValue:
     id: str
     value: float | None  # P(hit) over the window; None until a trial counts
     n: int  # counted trials in the window
+    #: Whole-run totals, monotonic: trials offered (each trigger), those that
+    #: counted as a hit or a miss, and the hits among them. What a live view
+    #: plots as progress, where `value` and `n` describe only the window.
+    triggered: int = 0
+    counted: int = 0
+    hits: int = 0
 
     def to_json(self) -> dict[str, object]:
-        return {"id": self.id, "value": self.value, "n": self.n}
+        return {
+            "id": self.id,
+            "value": self.value,
+            "n": self.n,
+            "triggered": self.triggered,
+            "counted": self.counted,
+            "hits": self.hits,
+        }
 
 
 class MetricAccumulator:
@@ -70,6 +83,9 @@ class MetricAccumulator:
         #: recovered from it, so whole-session P(hit) is an exact integer ratio
         #: instead of a proportion multiplied back out by its own denominator.
         self._hits = 0
+        #: Trials offered: every arrival of the trigger, whether it went on to
+        #: count, was excluded by the next boundary, or is still open.
+        self._triggered = 0
 
     @property
     def id(self) -> str:
@@ -114,13 +130,20 @@ class MetricAccumulator:
 
         if code == self._metric.trigger_code:
             self._pending = True
+            self._triggered += 1
+
+    @property
+    def triggered_total(self) -> int:
+        """Trials offered so far, the open one included."""
+        return self._triggered
 
     def value(self) -> MetricValue:
         n = len(self._window)
+        totals = {"triggered": self._triggered, "counted": self._counted, "hits": self._hits}
         if n == 0:
-            return MetricValue(id=self._metric.id, value=None, n=0)
+            return MetricValue(id=self._metric.id, value=None, n=0, **totals)
         hits = sum(1 for outcome in self._window if outcome)
-        return MetricValue(id=self._metric.id, value=hits / n, n=n)
+        return MetricValue(id=self._metric.id, value=hits / n, n=n, **totals)
 
 
 class MetricSet:

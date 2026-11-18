@@ -22,7 +22,7 @@ import { assignShips } from "@/lib/constellations/ships";
  *
  * An animal stands on its box's star. Unoccupied stars of the asterism are still
  * drawn, faint, because a rig with two boxes would otherwise show two dots and
- * no constellation at all — and an animal with **no** box in the running group
+ * no constellation at all — and an animal with **no** box in the running round
  * gets no star, because it is not on the rig the sky is a picture of.
  *
  * Camera, controls and the whole animation grammar live in
@@ -70,7 +70,7 @@ export function Constellation3D({
 }) {
   // The rig's own sky, resolved the one way every view resolves it
   // (`useRigSky`). An animal stands on its box's star; an animal with no box in
-  // this group has no star at all, because the sky is the rig.
+  // this round has no star at all, because the sky is the rig.
   const occupants = useMemo(
     () => animals.map((a) => ({ occupantId: a.animalId, box: a.box ?? null })),
     [animals],
@@ -197,7 +197,7 @@ export function Constellation3D({
 }
 
 /**
- * An unoccupied star of the chosen asterism — a box that isn't in this group,
+ * An unoccupied star of the chosen asterism — a box that isn't in this round,
  * or a star the rig has no box for at all.
  *
  * Drawn rather than omitted because the asterism is the subject: a two-box rig

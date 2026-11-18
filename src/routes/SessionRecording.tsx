@@ -11,7 +11,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router";
+import { useNavigate, useParams } from "react-router";
 
 import { HudTile } from "@/components/common/HudTile";
 import { Button, NumberInput, Segmented } from "@/components/common/controls";
@@ -64,12 +64,12 @@ import { CMD } from "@/lib/ws/protocol";
  *
  * AFTER the mapping on purpose: what this screen asks is which headstage port
  * each MAPPED box is on, and there is nothing to ask until the mapping exists.
- * It runs once per group, because the animals — and so the ports and probes —
- * change between groups; the second time it opens prefilled.
+ * It runs once per round, because the animals — and so the ports and probes —
+ * change between rounds; the second time it opens prefilled.
  *
  * The policy — what to save, how to set thresholds — has a home of its own on
  * the Recording tab now, so here it is a collapsed summary with an Edit door:
- * this step's job is the per-group facts (which port, which range, which
+ * this step's job is the per-round facts (which port, which range, which
  * probe). Whatever is confirmed here is written back as the new defaults.
  *
  * Nothing here talks to RHX until Continue. The form is a description of a
@@ -87,8 +87,6 @@ interface RecordingDraft {
 
 export function SessionRecording() {
   const { id: sessionId } = useParams<{ id: string }>();
-  const [params] = useSearchParams();
-  const groupId = params.get("group") ?? "";
   const navigate = useNavigate();
   const { client, status: link } = useSidecar();
   const { settings } = useSettings();
@@ -98,11 +96,11 @@ export function SessionRecording() {
   // The form as it was left for another tab (`setupResume.ts`). Seeding below
   // keeps a restored draft's row for every box still mapped, so it wins over
   // the defaults, and follows the mapping for the rest (`reconcileRows`).
-  const draftKey = `record:${sessionId ?? ""}:${groupId}`;
+  const draftKey = `record:${sessionId ?? ""}`;
   const [draft] = useState(() => getSetupDraft<RecordingDraft>(draftKey));
 
   // The mapped boxes and the session's own folder come from the sidecar.
-  const { session, boxes, flow, error: loadError } = useSessionFlow(sessionId, groupId);
+  const { session, boxes, flow, error: loadError } = useSessionFlow(sessionId);
   const [config, setConfig] = useState<RecordingConfigDefaults | null>(draft?.config ?? null);
   const [saveRoot, setSaveRoot] = useState<string | null>(
     draft ? draft.saveRoot : defaults.saveRoot,
@@ -236,7 +234,6 @@ export function SessionRecording() {
     try {
       await client.call(CMD.INTAN_CONFIGURE, {
         sessionId,
-        groupId,
         config: configurePayload(rows, config, saveRoot, sessionFolder),
       });
       // Remembered as the next recording's starting point.
@@ -284,7 +281,6 @@ export function SessionRecording() {
     try {
       const reply = await client.call(CMD.INTAN_MEASURE_IMPEDANCE, {
         sessionId,
-        groupId,
         saveDirectory: saveDir,
         boxes: measurable.map((r) => ({
           box: r.box,
@@ -329,7 +325,7 @@ export function SessionRecording() {
         className="scrollbar-none pointer-events-none absolute inset-0 overflow-y-auto"
       >
         <section className="pointer-events-auto mx-auto max-w-4xl px-8 py-8">
-          <SessionJourney step="record" hint={hint} group={flow.group} recording />
+          <SessionJourney step="record" hint={hint} round={flow.round} recording />
           <h1 className="font-display text-[22px] text-starlight">Set Up the Recording</h1>
 
           {(error ?? loadError) && (
@@ -457,7 +453,7 @@ export function SessionRecording() {
                 }
               >
                 {rows.length === 0 && (
-                  <p className="px-4 py-6 text-center text-[12px] text-static">Waiting for this group's mapping…</p>
+                  <p className="px-4 py-6 text-center text-[12px] text-static">Waiting for this round's mapping…</p>
                 )}
                 <div className={rows.length > 0 ? "flex flex-col gap-2.5 p-3" : ""}>
                   {rows.map((row) => {
@@ -639,7 +635,7 @@ export function SessionRecording() {
               </Button>
               <Button
                 variant="ghost"
-                onClick={() => navigate(stepUrl.boxes(sessionId!, groupId))}
+                onClick={() => navigate(stepUrl.boxes(sessionId!))}
               >
                 Back to boxes
               </Button>

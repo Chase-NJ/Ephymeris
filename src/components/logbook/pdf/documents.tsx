@@ -357,7 +357,7 @@ export function CohortLogbookDocument({ cohort }: { cohort: DocCohort }) {
           </View>
           <Text style={[s.fine, { marginTop: 10 }]}>
             Exported {cohort.exportedAt}. Times are local to the rig. Elapsed time runs from each
-            session's first group start to its last group end.
+            session's first round start to its last round end.
           </Text>
         </View>
 

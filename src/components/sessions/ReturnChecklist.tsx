@@ -13,9 +13,8 @@ import { springSnappy } from "@/lib/motion";
  * mis-placed animal is a silently mislabelled file. Removal has no such
  * failure: an animal carried to the wrong home cage is noticed at the cage,
  * not in the data. So this is a checklist, not a walk — it keeps count, and
- * **All animals are out** answers the whole thing in one press. The two
- * prompts that use it (the group swap and the session wrap-up) gate their
- * action on every row being ticked, so the shortcut is what makes that gate
+ * **All animals are out** answers the whole thing in one press. The
+ * round-over prompt gates both of its actions on every row being ticked, so the shortcut is what makes that gate
  * a courtesy rather than a chore.
  */
 export function ReturnChecklist({

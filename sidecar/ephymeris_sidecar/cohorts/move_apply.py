@@ -35,7 +35,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from ..sessions.models import GroupRun
+from ..sessions.models import Round
 from ..sessions.repository import SessionRepository
 from ..sessions.tidy import Merge, merged_fields
 from . import freshness, relocate, transfer
@@ -215,12 +215,11 @@ def _apply_records(conn: Tx, plan: MovePlan, sessions: SessionRepository) -> Non
             conn.execute("DELETE FROM former_animals WHERE id = ?", (animal.source_id,))
             if animal.status == "active":
                 conn.execute(
-                    "INSERT INTO animals (id, cohort_id, group_id, name, box_number, cage, sex,"
-                    " id_number, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO animals (id, cohort_id, name, box_number, cage, sex,"
+                    " id_number, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         animal.source_id,
                         dest.id,
-                        animal.dest_group_id,
                         animal.name,
                         animal.dest_box,
                         row["cage"] if row else None,
@@ -232,7 +231,7 @@ def _apply_records(conn: Tx, plan: MovePlan, sessions: SessionRepository) -> Non
             else:
                 conn.execute(
                     "INSERT INTO former_animals (id, cohort_id, name, cage, sex, id_number,"
-                    " notes, group_name, removed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    " notes, removed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         animal.source_id,
                         dest.id,
@@ -241,7 +240,6 @@ def _apply_records(conn: Tx, plan: MovePlan, sessions: SessionRepository) -> Non
                         row["sex"] if row else None,
                         row["id_number"] if row else None,
                         row["notes"] if row else None,
-                        row["group_name"] if former else None,
                         (former["removed_at"] if former else None) or now,
                     ),
                 )
@@ -366,8 +364,8 @@ def _apply_session(
     if entry.kind == "whole" and entry.dest_session_id is None:
         # The record itself goes, with everything hanging off it.
         conn.execute(
-            "UPDATE sessions SET cohort_id = ?, folder_path = ?, group_runs = ? WHERE id = ?",
-            (dest.id, entry.dest_folder, _group_runs_json(entry.dest_group_runs), session.id),
+            "UPDATE sessions SET cohort_id = ?, folder_path = ?, rounds = ? WHERE id = ?",
+            (dest.id, entry.dest_folder, _rounds_json(entry.dest_rounds), session.id),
         )
         conn.execute("UPDATE session_notes SET cohort_id = ? WHERE session_id = ?", (dest.id, session.id))
         remap_animal_notes(session.id)
@@ -377,7 +375,7 @@ def _apply_session(
         target = str(uuid.uuid4())
         conn.execute(
             "INSERT INTO sessions (id, cohort_id, prefix_id, prefix_name, session_number, date,"
-            " started_at, ended_at, status, folder_path, group_runs, duration_minutes,"
+            " started_at, ended_at, status, folder_path, rounds, duration_minutes,"
             " recording_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
             (
                 target,
@@ -390,7 +388,7 @@ def _apply_session(
                 session.ended_at,
                 session.status,
                 entry.dest_folder,
-                _group_runs_json(entry.dest_group_runs),
+                _rounds_json(entry.dest_rounds),
                 session.duration_minutes,
             ),
         )
@@ -444,25 +442,25 @@ def _apply_session(
         )
         conn.execute("DELETE FROM sessions WHERE id = ?", (session.id,))
     else:
-        sessions.set_group_runs(session.id, list(entry.source_group_runs), tx=conn)
+        sessions.set_rounds(session.id, list(entry.source_rounds), tx=conn)
 
 
 def _fold_into(
     conn: Tx, target_id: str, entry: SessionMove, sessions: SessionRepository
 ) -> None:
-    """Merge the moved half's group runs (and, for a whole record, its
+    """Merge the moved half's rounds (and, for a whole record, its
     recording) into the destination's record of the same day — tidy's rule."""
     keep = sessions.get_session(target_id)
     moved = entry.source
-    moved.group_runs = list(entry.dest_group_runs)
+    moved.rounds = list(entry.dest_rounds)
     if entry.kind == "split":
         moved.recording = None
     fields = merged_fields(Merge(keep=keep, absorb=[moved]))
     conn.execute(
-        "UPDATE sessions SET group_runs = ?, recording_json = ?, started_at = ?, ended_at = ?,"
+        "UPDATE sessions SET rounds = ?, recording_json = ?, started_at = ?, ended_at = ?,"
         " status = ? WHERE id = ?",
         (
-            _group_runs_json(fields["group_runs"]),
+            _rounds_json(fields["rounds"]),
             json.dumps(fields["recording"]) if fields["recording"] is not None else None,
             fields["started_at"],
             fields["ended_at"],
@@ -472,7 +470,7 @@ def _fold_into(
     )
 
 
-def _group_runs_json(runs: list[GroupRun]) -> str:
+def _rounds_json(runs: list[Round]) -> str:
     return json.dumps([r.to_json() for r in runs])
 
 

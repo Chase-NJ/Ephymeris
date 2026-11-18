@@ -129,11 +129,11 @@ def settings(*, bound: dict[int, str] | None = None, **overrides: Any) -> dict[s
     }
 
 
-def animal(name: str, group_id: str, *, box: int | None = None) -> dict[str, Any]:
+def animal(name: str, *, box: int | None = None) -> dict[str, Any]:
     """An `Animal` as the cohort editor sends one: every field, most of them
     null. The sidecar checks the shape before any handler runs."""
     return {
-        "id": f"a-{name}", "name": name, "groupId": group_id, "boxNumber": box,
+        "id": f"a-{name}", "name": name, "boxNumber": box,
         "cage": None, "sex": None, "idNumber": None, "notes": None,
     }
 
@@ -142,8 +142,7 @@ async def create_cohort(sidecar: LiveSidecar, folder: Path) -> dict[str, Any]:
     """A cohort at `folder` with one animal on box 1, so a session can run."""
     created = await sidecar.call(
         "cohorts.create", name=folder.name, dataFolder=str(folder),
-        groups=[{"id": "g1", "name": "Morning", "order": 0}],
-        animals=[animal("rat1", "g1", box=1)],
+        animals=[animal("rat1", box=1)],
     )
     return created["cohort"]
 
@@ -163,7 +162,7 @@ async def hold_the_rig(sidecar: LiveSidecar, cohort: dict[str, Any]) -> str:
     [animal] = cohort["animals"]
     grgl = await sketch_path(sidecar, "GRGL")
     await sidecar.call(
-        "sessions.confirmMapping", sessionId=session["id"], groupId="g1",
+        "sessions.confirmMapping", sessionId=session["id"],
         boxes=[{"box": 1, "animalId": animal["id"], "sketchPath": str(grgl), "config": {}}],
     )
     return session["id"]

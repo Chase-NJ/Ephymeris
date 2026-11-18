@@ -25,28 +25,73 @@ export function rigDefaultsFor(taskDefaults: TaskDefaults, sketchPath: string | 
 // --- the mapping ----------------------------------------------------------------
 
 /**
- * The mapping the step opens on: the draft the operator left, while it still
- * describes this group's animals, otherwise each animal on its standing box
- * with no sketch chosen. An animal moved or removed in Cohorts meanwhile
- * starts the step over. The draft holds only the operator's own edits, so
- * restoring it cannot carry a default that changed during the visit
- * (`TASKS.md#three-layer-merge`).
+ * The round the step opens on: the draft the operator left, while every animal
+ * in it is still on the roster, otherwise the animals that have not run in
+ * this session yet, each on its usual box. Two animals that share a usual box
+ * cannot both take it: the first by name does, and the other waits on the
+ * bench for the operator to place. An empty rig (every animal has run) is a
+ * legitimate opening: the operator picks who runs again. The draft holds only
+ * the operator's own edits, so restoring it cannot carry a default that
+ * changed during the visit (`TASKS.md#three-layer-merge`).
  */
-export function seedMappings(
-  animals: readonly Pick<Animal, "id" | "boxNumber">[],
+export function seedRound(
+  animals: readonly Pick<Animal, "id" | "name" | "boxNumber">[],
+  ranAnimalIds: ReadonlySet<string>,
   draft: BoxMapping[] | undefined,
 ): BoxMapping[] {
-  const sameAnimals =
-    draft !== undefined &&
-    draft.length === animals.length &&
-    draft.every((m) => animals.some((a) => a.id === m.animalId));
-  if (sameAnimals) return draft;
-  return animals.map((a) => ({
-    box: a.boxNumber as number,
-    animalId: a.id,
-    sketchPath: null,
-    overrides: {},
-  }));
+  if (draft !== undefined && draft.every((m) => animals.some((a) => a.id === m.animalId))) {
+    return draft;
+  }
+  const taken = new Set<number>();
+  const seeded: BoxMapping[] = [];
+  const byName = [...animals].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  for (const animal of byName) {
+    const box = animal.boxNumber;
+    if (box === null || ranAnimalIds.has(animal.id) || taken.has(box)) continue;
+    taken.add(box);
+    seeded.push({ box, animalId: animal.id, sketchPath: null, overrides: {} });
+  }
+  return placementOrder(seeded);
+}
+
+/**
+ * Put `animalId` in `box`, or take whoever is there out with `null`. An animal
+ * already in another box moves, keeping its sketch and edits, and whoever held
+ * the box takes the one it left: picking an animal that is elsewhere is a
+ * swap. An animal coming off the bench sends the box's occupant to it. One
+ * animal per box and one box per animal, by construction
+ * (`ARCHITECTURE.md#mapping-and-the-placement-walk`).
+ */
+export function assignBox(
+  mappings: readonly BoxMapping[],
+  box: number,
+  animalId: string | null,
+): BoxMapping[] {
+  if (animalId === null) return placementOrder(mappings.filter((m) => m.box !== box));
+  const moving = mappings.find((m) => m.animalId === animalId);
+  if (moving?.box === box) return placementOrder(mappings);
+  const displaced = mappings.find((m) => m.box === box);
+  const rest = mappings.filter((m) => m !== moving && m !== displaced);
+  return placementOrder([
+    ...rest,
+    moving ? { ...moving, box } : { box, animalId, sketchPath: null, overrides: {} },
+    ...(moving && displaced ? [{ ...displaced, box: moving.box }] : []),
+  ]);
+}
+
+/**
+ * Give every other box on `from`'s sketch the same edits: the way to tune one
+ * animal and have its cagemates follow. A box on another sketch is left alone,
+ * since its parameters are different ones.
+ */
+export function copyOverrides(mappings: readonly BoxMapping[], from: number): BoxMapping[] {
+  const source = mappings.find((m) => m.box === from);
+  if (!source || source.sketchPath === null) return [...mappings];
+  return mappings.map((m) =>
+    m.box !== from && m.sketchPath === source.sketchPath
+      ? { ...m, overrides: { ...source.overrides } }
+      : m,
+  );
 }
 
 /** The walk order: by box number, never by animal (`ARCHITECTURE.md#mapping-and-the-placement-walk`). */
@@ -87,8 +132,8 @@ export function mappingReadiness(
   portStates: Readonly<Record<number, { state: PortStateName } | undefined>>,
   configuredBoxes: ReadonlySet<number>,
 ): MappingReadiness {
-  // Two animals can't share a box — reassigning one here has to displace the
-  // other, and the operator is the one who decides which.
+  // Two animals can't share a box. `assignBox` never produces that; a
+  // restored draft is the one way it could arrive.
   let duplicateBox: number | null = null;
   const seen = new Set<number>();
   for (const m of mappings) {
@@ -111,10 +156,12 @@ export function mappingReadiness(
       ? `Box ${erroredBoxes.join(", ")} needs acknowledging before it can flash.`
       : duplicateBox !== null
         ? `Two animals share box ${duplicateBox} — move one first.`
-        : !allChosen
+        : mappings.length === 0
+          ? "Put an animal in a box to set up this round."
+          : !allChosen
           ? mappings.every((m) => m.sketchPath !== null)
             ? "Reading the chosen sketches' parameters…"
-            : "Pick a sketch for every box, then confirm."
+            : "Pick a task for every animal, then place them."
           : null;
   return {
     duplicateBox,

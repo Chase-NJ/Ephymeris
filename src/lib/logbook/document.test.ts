@@ -18,7 +18,7 @@ const SESSION: SessionListItem = {
   status: "completed",
   folderPath: "/x",
   ordinal: 14,
-  groupRuns: [],
+  rounds: [],
 };
 
 function note(id: string, at: string, offsetMs: number | null, extra: Partial<SessionNote> = {}): SessionNote {

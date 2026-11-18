@@ -22,14 +22,11 @@ import { useSidecar } from "@/lib/ws/context";
 export function TidyRecords({
   open,
   cohortId,
-  groupNames,
   onClose,
   onDone,
 }: {
   open: boolean;
   cohortId: string;
-  /** Group id → name, for the "ran Morning, Afternoon" lines. */
-  groupNames: Map<string, string>;
   onClose: () => void;
   onDone: (result: TidyPlan) => void;
 }) {
@@ -64,7 +61,7 @@ export function TidyRecords({
   }
 
   const nothing = plan !== null && plan.merges.length === 0 && plan.empty.length === 0;
-  const describe = (session: TidySession) => describeSession(session, groupNames);
+  const describe = describeSession;
 
   return (
     <Modal open={open} onClose={onClose} title="Tidy session records" size="lg">
@@ -155,14 +152,17 @@ export function TidyRecords({
   );
 }
 
-function describeSession(session: TidySession, groupNames: Map<string, string>): string {
+function describeSession(session: TidySession): string {
   const parts = [
     `${session.runCount} run${plural(session.runCount)}`,
     statusWord(session.status),
   ];
-  if (session.groupIds.length > 0) {
+  const rounds = session.roundLabels.length;
+  if (rounds > 0) {
+    // A round recorded while the cohort still had groups carries that group's name.
+    const named = session.roundLabels.filter((label): label is string => label !== null);
     parts.push(
-      `ran ${session.groupIds.map((id) => groupNames.get(id) ?? "a removed group").join(", ")}`,
+      named.length === rounds ? `ran ${named.join(", ")}` : `${rounds} round${plural(rounds)}`,
     );
   }
   return parts.join(" · ");

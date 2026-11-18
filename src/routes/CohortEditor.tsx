@@ -30,7 +30,6 @@ import { PlanetDisc } from "@/components/cohorts/PlanetDisc";
 import { DataFolderField } from "@/components/cohorts/DataFolderField";
 import { FormerMembers } from "@/components/cohorts/FormerMembers";
 import { MoveAnimals } from "@/components/cohorts/MoveAnimals";
-import { GroupsPanel } from "@/components/cohorts/GroupsPanel";
 import {
   assignmentProblems,
   problemSummary,
@@ -46,7 +45,7 @@ import {
   setDataFolder,
   updateCohort,
 } from "@/lib/cohorts/commands";
-import type { Animal, Cohort, Group } from "@/lib/cohorts/types";
+import type { Animal, Cohort } from "@/lib/cohorts/types";
 import { springPanel, springSnappy } from "@/lib/motion";
 import { useRegisterUnsaved } from "@/lib/nav/unsavedGuard";
 import { useSettings } from "@/lib/settings/context";
@@ -54,26 +53,21 @@ import { shell } from "@/lib/shell";
 import { useReduceMotion } from "@/lib/useReduceMotion";
 import { useSidecar } from "@/lib/ws/context";
 
-/** Seeds the one group every cohort has, even before its first save (`DATA.md#data-model`). */
-function newLocalGroupId(): string {
-  return `group-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
-}
-
 /**
  * Create / edit / manage — `USER-GUIDE.md#setting-up-a-cohort`.
  *
- * A full route rather than a modal: the roster, groups panel and Auto-Balance
- * preview together are more than a dialog can hold comfortably. The cohort's
+ * A full route rather than a modal: the roster and its cages together are
+ * more than a dialog can hold comfortably. The cohort's
  * icon shares a `layoutId` with its grid card, so opening one morphs the icon
  * into this header instead of cutting.
  *
  * **Creating and editing share this component but not its shape.** A new
- * cohort is a flow: name, then roster, then groups and boxes, each revealing
+ * cohort is a flow: name, then roster, then cages, each revealing
  * the next as it's satisfied, so there is exactly one thing to do at a time
  * and the order is legible without reading anything. An existing cohort shows
  * everything at once — you came back to change one thing, and being walked
  * past the other three would be an obstacle rather than guidance. Splitting
- * these into two components would duplicate the roster, group and box logic
+ * these into two components would duplicate the roster and cage logic
  * to express a difference that is purely presentational.
  */
 export function CohortEditor() {
@@ -86,13 +80,6 @@ export function CohortEditor() {
   const [cohort, setCohort] = useState<Cohort | null>(null);
   const [name, setName] = useState("");
   const [animals, setAnimals] = useState<Animal[]>([]);
-  // Groups are real, editable state from the very start — even a brand-new
-  // cohort gets its one implicit group locally, so group management and box
-  // assignment (`GroupsPanel`) work identically before and after the first
-  // save, rather than being gated on the cohort existing server-side.
-  const [groups, setGroups] = useState<Group[]>(() =>
-    isNew ? [{ id: newLocalGroupId(), name: "Group 1", order: 0 }] : [],
-  );
   const [dataFolder, setDataFolderPath] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [message, setMessage] = useState<string | null>(null);
@@ -104,12 +91,7 @@ export function CohortEditor() {
   const connected = status === "connected";
   const reduceMotion = useReduceMotion();
   const { statusOf } = useBoxAvailability();
-  // Falls back to a placeholder only in the brief window an existing cohort
-  // hasn't finished loading yet — `adopt()` replaces it with the real groups.
-  const defaultGroupId =
-    [...groups].sort((a, b) => a.order - b.order)[0]?.id ?? "pending";
   const named = name.trim() !== "";
-  const readyToRun = animals.some((a) => a.boxNumber !== null);
 
   /**
    * How far down the create flow to reveal. An existing cohort is always fully
@@ -127,8 +109,8 @@ export function CohortEditor() {
 
   /** Assignments this machine can't currently honour (`boxAvailability.ts`). */
   const problems = useMemo(
-    () => assignmentProblems(animals, groups, statusOf),
-    [animals, groups, statusOf],
+    () => assignmentProblems(animals, statusOf),
+    [animals, statusOf],
   );
 
   /*
@@ -150,10 +132,9 @@ export function CohortEditor() {
     return (
       name !== cohort.name ||
       dataFolder !== cohort.dataFolder ||
-      JSON.stringify(animals) !== JSON.stringify(cohort.animals) ||
-      JSON.stringify(groups) !== JSON.stringify(cohort.groups)
+      JSON.stringify(animals) !== JSON.stringify(cohort.animals)
     );
-  }, [isNew, cohort, name, dataFolder, animals, groups]);
+  }, [isNew, cohort, name, dataFolder, animals]);
 
   useRegisterUnsaved(`cohort-editor:${id ?? "new"}`, isDirty);
 
@@ -161,7 +142,6 @@ export function CohortEditor() {
     setCohort(next);
     setName(next.name);
     setAnimals(next.animals);
-    setGroups(next.groups);
     setDataFolderPath(next.dataFolder);
   }, []);
 
@@ -211,14 +191,13 @@ export function CohortEditor() {
         return;
       }
       const created = await run(async () => {
-        // One call, roster included. Groups and animals were built entirely
+        // One call, roster included. The animals were built entirely
         // client-side with their own ids before this cohort existed, and the
         // sidecar validates them before writing anything — so a rejected
         // roster leaves no half-made cohort and no orphaned folder.
         const fresh = await createCohort(client, name, {
           ...(dataFolder ? { dataFolder } : {}),
           animals,
-          groups,
         });
         navigate(`/cohorts/${fresh.id}`, { replace: true });
       });
@@ -231,7 +210,6 @@ export function CohortEditor() {
       const saved = await updateCohort(client, cohort.id, {
         name,
         animals,
-        groups,
       });
       adopt(saved);
     });
@@ -285,7 +263,6 @@ export function CohortEditor() {
               </h1>
               <p className="font-mono text-[11px] text-static">
                 {animals.length} {animals.length === 1 ? "animal" : "animals"}
-                {groups.length > 1 && ` · ${groups.length} groups`}
                 {cohort?.archivedAt && " · archived"}
               </p>
             </div>
@@ -295,7 +272,6 @@ export function CohortEditor() {
             <ReadinessStrip
               named={named}
               animalCount={animals.length}
-              readyToRun={readyToRun}
             />
           )}
 
@@ -368,10 +344,45 @@ export function CohortEditor() {
           </SettingGroup>
 
           <Reveal open={stage >= 1} still={reduceMotion}>
+            {/* Above the section that fixes it, not at the top of the page: the
+            remedy is the Usual box column just below this sentence. */}
+            {problems.length > 0 && (
+              <div className="mt-7 flex items-start justify-between gap-4 rounded-sm border border-halo px-3 py-2.5">
+                <div className="min-w-0">
+                  <p
+                    className="text-[12px]"
+                    style={{ color: "var(--color-status-warning)" }}
+                  >
+                    {problemSummary(problems)}.
+                  </p>
+                  <p className="mt-0.5 text-[12px] leading-relaxed text-static">
+                    {problems.length === 1
+                      ? `${problems[0]!.animalName} is assigned to it`
+                      : `${problems.length} animals are assigned to ${
+                          problems.length === 2 ? "them" : "those"
+                        }`}
+                    {" — "}
+                    {problems
+                      .slice(0, 4)
+                      .map((p) => `${p.animalName} (box ${p.box})`)
+                      .join(", ")}
+                    {problems.length > 4 && `, and ${problems.length - 4} more`}
+                    . Session set-up offers those animals no box until the
+                    boxes are back; give them another usual box below, or
+                    place them by hand at set-up.
+                  </p>
+                </div>
+                <div className="shrink-0">
+                  <Button onClick={() => navigate("/config")}>
+                    <Radio size={13} strokeWidth={1.75} />
+                    Open Rig
+                  </Button>
+                </div>
+              </div>
+            )}
             <SettingGroup title="Animals">
               <AnimalTable
                 animals={animals}
-                defaultGroupId={defaultGroupId}
                 errors={errors}
                 attention={isNew && stage === 1}
                 onChange={setAnimals}
@@ -391,8 +402,6 @@ export function CohortEditor() {
                 <FormerMembers
                   former={cohort.formerAnimals}
                   animals={animals}
-                  groups={groups}
-                  defaultGroupId={defaultGroupId}
                   onRestore={(animal) => setAnimals((current) => [...current, animal])}
                   onMove={
                     isDirty || !connected
@@ -427,55 +436,6 @@ export function CohortEditor() {
             point — the dock is a fine place to live. */}
             <SettingGroup title="Cages & spaceships">
               <CageAssignment animals={animals} onChange={setAnimals} />
-            </SettingGroup>
-          </Reveal>
-
-          <Reveal open={stage >= 2} still={reduceMotion}>
-            {/* Above the section that fixes it, not at the top of the page: the
-            remedy is a box selector twelve inches below this sentence. */}
-            {problems.length > 0 && (
-              <div className="mt-7 flex items-start justify-between gap-4 rounded-sm border border-halo px-3 py-2.5">
-                <div className="min-w-0">
-                  <p
-                    className="text-[12px]"
-                    style={{ color: "var(--color-status-warning)" }}
-                  >
-                    {problemSummary(problems)}.
-                  </p>
-                  <p className="mt-0.5 text-[12px] leading-relaxed text-static">
-                    {problems.length === 1
-                      ? `${problems[0]!.animalName} is assigned to it`
-                      : `${problems.length} animals are assigned to ${
-                          problems.length === 2 ? "them" : "those"
-                        }`}
-                    {" — "}
-                    {problems
-                      .slice(0, 4)
-                      .map((p) => `${p.animalName} (box ${p.box})`)
-                      .join(", ")}
-                    {problems.length > 4 && `, and ${problems.length - 4} more`}
-                    . A session can't start those animals until the boxes are
-                    back, or they're moved to boxes that are.
-                  </p>
-                </div>
-                <div className="shrink-0">
-                  <Button onClick={() => navigate("/config")}>
-                    <Radio size={13} strokeWidth={1.75} />
-                    Open Rig
-                  </Button>
-                </div>
-              </div>
-            )}
-
-            <SettingGroup title="Groups & boxes">
-              <GroupsPanel
-                groups={groups}
-                animals={animals}
-                onChange={(nextGroups, nextAnimals) => {
-                  setGroups(nextGroups);
-                  setAnimals(nextAnimals);
-                }}
-              />
             </SettingGroup>
           </Reveal>
 
@@ -570,9 +530,9 @@ function Reveal({
 }
 
 /**
- * Lightweight coaching, not a gate — three quiet checkpoints against what a
- * cohort actually needs before it can start a session (`ARCHITECTURE.md#configuration`:
- * at least one group with at least one box-assigned animal). A cohort can
+ * Lightweight coaching, not a gate — two quiet checkpoints against what a
+ * cohort actually needs before it can start a session
+ * (`ARCHITECTURE.md#configuration`: an animal). A cohort can
  * still be saved and left incomplete at any point (`DATA.md#data-model` — real lab
  * setup rarely happens in one sitting); this just orients the user on what's
  * left without blocking anything.
@@ -585,11 +545,9 @@ function Reveal({
 function ReadinessStrip({
   named,
   animalCount,
-  readyToRun,
 }: {
   named: boolean;
   animalCount: number;
-  readyToRun: boolean;
 }) {
   const items: Array<{ label: string; done: boolean }> = [
     { label: named ? "Named" : "Name this cohort", done: named },
@@ -599,12 +557,6 @@ function ReadinessStrip({
           ? `${animalCount} ${animalCount === 1 ? "animal" : "animals"}`
           : "Add animals",
       done: animalCount > 0,
-    },
-    {
-      label: readyToRun
-        ? "Ready to run"
-        : "Assign a box to make it session-ready",
-      done: readyToRun,
     },
   ];
   // The first unfinished checkpoint is where the user is standing.

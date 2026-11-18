@@ -23,12 +23,14 @@ import { QUICK_TUNE_GROUPS } from "@/lib/tasks/topology";
  * task-specific. A sketch with no profile renders nothing at all, and gets a
  * bare `START`.
  *
- * Collapsed by default, and that is the point: this is the *override* layer
- * (`TASKS.md#three-layer-merge`). A behaviour sketch now declares forty-odd
- * fields, and six of those expanded inline would bury the mapping step's actual
- * job — choosing a sketch per animal — under two hundred inputs. The summary
- * line says how many values differ from the rig's defaults for this animal,
- * which is the only thing an operator needs to see at a glance.
+ * This is the *override* layer (`TASKS.md#three-layer-merge`), and the summary
+ * line says how many values differ from the rig's defaults for this animal.
+ * Two shapes, by where it sits. In a list of boxes it is a disclosure,
+ * collapsed by default and capped in height when open: a behaviour sketch
+ * declares forty-odd fields, and six of those expanded inline would bury the
+ * list. `pinned`, it is the one form on screen (the Boxes step's tuning
+ * panel shows the selected box's): always open, as tall as its fields, and
+ * its host scrolls.
  *
  * **It holds the operator's edits, not the values.** What it shows is rebuilt
  * on every render from the profile and rig defaults it is given, with
@@ -57,6 +59,7 @@ export function TaskConfigForm({
   overrides,
   onOverridesChange,
   disabled = false,
+  pinned = false,
 }: {
   profile: TaskProfile | null;
   /** This rig's saved defaults for the sketch — with the profile's, what "overridden" is measured against. */
@@ -65,8 +68,11 @@ export function TaskConfigForm({
   overrides: Record<string, unknown>;
   onOverridesChange: (next: Record<string, unknown>) => void;
   disabled?: boolean;
+  /** Always open and uncapped: the host shows one form and scrolls it. */
+  pinned?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [toggled, setOpen] = useState(false);
+  const open = pinned || toggled;
   if (!profile || profile.config.length === 0) return null;
 
   const baseline = defaultConfig(profile, rigDefaults);
@@ -102,15 +108,18 @@ export function TaskConfigForm({
   ).length;
 
   return (
-    <div className="mt-2 flex flex-col gap-1.5 border-t border-halo pt-2">
+    <div className={pinned ? "flex flex-col gap-1.5" : "mt-2 flex flex-col gap-1.5 border-t border-halo pt-2"}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
+        disabled={pinned}
         className="flex w-full items-center gap-1.5 text-left"
       >
-        <motion.span animate={{ rotate: open ? 90 : 0 }} transition={springSnappy} className="flex">
-          <ChevronRight size={11} strokeWidth={1.75} className="text-static" />
-        </motion.span>
+        {!pinned && (
+          <motion.span animate={{ rotate: open ? 90 : 0 }} transition={springSnappy} className="flex">
+            <ChevronRight size={11} strokeWidth={1.75} className="text-static" />
+          </motion.span>
+        )}
         <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-static">
           {profile.taskName}
         </span>
@@ -141,13 +150,19 @@ export function TaskConfigForm({
             className="overflow-hidden"
           >
             {/* Capped and scrolled, not grown. Forty fields open inline made the
-                tile as tall as its contents, so one animal's overrides pushed
-                the rest of the group's cards off the screen — on the step whose
-                whole job is comparing them. The height animation is unchanged:
+                tile as tall as its contents, so one box's overrides pushed
+                the rest of the list off the screen. (Pinned, there is no list
+                to push: the host scrolls.) The height animation is unchanged:
                 Framer measures this pane, and the pane is never taller than the
                 cap. The hairline edges are what make a list cut mid-field read
                 as a scroll region rather than a clipping bug. */}
-            <div className="my-1 max-h-[min(46vh,380px)] overflow-y-auto border-y border-halo py-2 pr-1">
+            <div
+              className={
+                pinned
+                  ? "my-1 border-t border-halo py-2"
+                  : "my-1 max-h-[min(46vh,380px)] overflow-y-auto border-y border-halo py-2 pr-1"
+              }
+            >
               {offered !== null && offered.size === 0 && (
                 <p className="px-1 py-2 text-[11px] leading-relaxed text-static">
                   This task exposes no parameters: every value is the task's default and is sent as it
@@ -223,6 +238,7 @@ export function SketchPicker({
   onChange,
   label,
   disabled = false,
+  quiet = false,
   className = "",
 }: {
   sketches: Array<{ category: string; name: string; path: string }>;
@@ -230,6 +246,8 @@ export function SketchPicker({
   onChange: (path: string | null) => void;
   label: string;
   disabled?: boolean;
+  /** A shortcut, not a requirement: never pulses for attention while unset. */
+  quiet?: boolean;
   /** Layout-only — forwarded to the underlying control. */
   className?: string;
 }) {
@@ -251,7 +269,7 @@ export function SketchPicker({
       disabled={disabled}
       // The flow is waiting on exactly this control until a sketch is picked —
       // but not while it's locked, when waiting on it would be a lie.
-      attention={value === null && !disabled}
+      attention={value === null && !disabled && !quiet}
       className={className}
     />
   );

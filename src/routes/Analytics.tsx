@@ -339,12 +339,6 @@ export function Analytics() {
     }
   }
 
-  // Group names for the tidy preview's "ran Morning, Afternoon" lines.
-  const groupNames = useMemo(
-    () => new Map((summary?.groups ?? []).map((g) => [g.id, g.name])),
-    [summary],
-  );
-
   /** The tidy is applied: the merged and removed sessions leave the rail. */
   async function afterTidy(result: TidyPlan) {
     setTidyOpen(false);
@@ -603,7 +597,6 @@ export function Analytics() {
             <TidyRecords
               open={tidyOpen}
               cohortId={cohortId}
-              groupNames={groupNames}
               onClose={() => setTidyOpen(false)}
               onDone={(result) => void afterTidy(result)}
             />
@@ -888,7 +881,6 @@ function ArchiveFact({
   const former = summary.animals.filter((animal) => animal.former).length;
   const parts = [n(sessions.length, "session"), n(summary.animals.length - former, "animal")];
   if (former > 0) parts.push(`${former} former`);
-  if (summary.groups.length > 1) parts.push(n(summary.groups.length, "group"));
   parts.push(last ? `last ran ${last.date}` : "nothing recorded yet");
   if (folderMissing) parts.push("folder unreachable");
   return (

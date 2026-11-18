@@ -6,7 +6,7 @@ import { useCallback, useEffect, useSyncExternalStore } from "react";
  *
  * The cohort editor holds an entire roster in local component state and only
  * persists on Save. Every sidebar click is an unconditional immediate unmount,
- * so one mis-click discarded names, cages, boxes and groups with no warning and
+ * so one mis-click discarded names, cages and boxes with no warning and
  * nothing to recover from — `/cohorts/new` has no server copy to refetch.
  *
  * **Why this and not `useBlocker`.** React Router's navigation blocker requires

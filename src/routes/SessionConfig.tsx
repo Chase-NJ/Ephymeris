@@ -6,21 +6,23 @@ import { useNavigate, useSearchParams } from "react-router";
 import { Button, TextInput } from "@/components/common/controls";
 import { Dropdown } from "@/components/common/Dropdown";
 import { Modal } from "@/components/common/Modal";
+import { ChangeCohort } from "@/components/analytics/ChangeCohort";
+import { CohortManifest } from "@/components/cohorts/CohortManifest";
 import { PlanetDisc } from "@/components/cohorts/PlanetDisc";
 import { CarryForwardPanel } from "@/components/logbook/CarryForwardPanel";
 import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
-import { GroupPicker } from "@/components/sessions/GroupPicker";
 import { SessionJourney } from "@/components/sessions/SessionJourney";
 import { SettingGroup } from "@/components/settings/SettingRow";
 import { errorMessage } from "@/lib/cohorts/commands";
 import { useActiveCohorts } from "@/lib/cohorts/context";
 import { getCohort } from "@/lib/cohorts/commands";
-import type { Cohort, CohortSummary } from "@/lib/cohorts/types";
-import { CASCADE, RISE, springPanel, springSnappy } from "@/lib/motion";
+import type { Cohort } from "@/lib/cohorts/types";
+import { CASCADE, RISE, springPanel } from "@/lib/motion";
 import {
   createPrefix,
   createSession,
   deletePrefix,
+  resumeSession,
   suggestSessionNumber,
 } from "@/lib/sessions/commands";
 import { listSessions } from "@/lib/analytics/commands";
@@ -39,20 +41,21 @@ import {
   isContinuable,
   isReadyToRun,
   localToday,
-  populatedGroups,
 } from "@/lib/sessions/types";
 import { useSidecar } from "@/lib/ws/context";
 
 /**
  * Step 1 — Configuration (`ARCHITECTURE.md#configuration`).
  *
- * Cohort is picked from a card grid, each card carrying the cohort's world
- * (`PlanetDisc`) as it appears on the Cohorts tab, rather than a dropdown; the
- * group to run first is picked right under it — there is no run order.
+ * The cohort is picked from the same list Analytics and Log open on
+ * (`CohortManifest`), held to a panel's height here because it is one section
+ * of a form; once picked it folds down to a breadcrumb that leads back to the
+ * list. Which animals run, and in which boxes, is the next step's question.
  *
- * A cohort with one of TODAY's sessions that already ran a group (the app was
- * closed between groups, or the session was ended too early) offers to continue
- * that session with another group instead (`sessions.resume`, `ARCHITECTURE.md#group-step`).
+ * A cohort with one of TODAY's sessions that already ran a round (the app was
+ * closed between rounds, or the session was ended too early) offers to continue
+ * that session with another round instead (`sessions.resume`,
+ * `ARCHITECTURE.md#between-rounds`).
  *
  * The form survives a trip to another tab: it is kept as a draft
  * (`setupResume.ts`) and seeds the fields on the way back in, one draft per
@@ -61,7 +64,6 @@ import { useSidecar } from "@/lib/ws/context";
 
 interface ConfigDraft {
   cohortId: string | null;
-  groupId: string | null;
   prefixId: string;
   sessionNumber: string;
   durationText: string;
@@ -80,7 +82,6 @@ export function SessionConfig() {
 
   const [cohortId, setCohortId] = useState<string | null>(draft?.cohortId ?? null);
   const [cohort, setCohort] = useState<Cohort | null>(null);
-  const [groupId, setGroupId] = useState<string | null>(draft?.groupId ?? null);
   const [todays, setTodays] = useState<SessionListItem[]>([]);
   const active = useActiveSessions();
   const [prefixId, setPrefixId] = useState<string>(draft?.prefixId ?? "");
@@ -97,12 +98,11 @@ export function SessionConfig() {
   useEffect(() => {
     setSetupDraft<ConfigDraft>(draftKey, {
       cohortId,
-      groupId,
       prefixId,
       sessionNumber,
       durationText,
     });
-  }, [draftKey, cohortId, groupId, prefixId, sessionNumber, durationText]);
+  }, [draftKey, cohortId, prefixId, sessionNumber, durationText]);
 
   // Full cohort detail is needed for the readiness check (`ARCHITECTURE.md#configuration`).
   useEffect(() => {
@@ -128,7 +128,7 @@ export function SessionConfig() {
     [cohort],
   );
 
-  // Today's sessions for this cohort that another group can still run under.
+  // Today's sessions for this cohort that another round can still run under.
   // The one currently held is left to the Dashboard's dock and Mission Control.
   const heldId = active?.running?.session.id ?? null;
   useEffect(() => {
@@ -146,18 +146,6 @@ export function SessionConfig() {
       alive = false;
     };
   }, [client, connected, cohortId, heldId]);
-
-  // Pre-select the first populated group; a cohort switch starts over.
-  useEffect(() => {
-    if (!cohort) {
-      setGroupId(null);
-      return;
-    }
-    const groups = populatedGroups(cohort);
-    setGroupId((current) =>
-      current && groups.some((g) => g.id === current) ? current : (groups[0]?.id ?? null),
-    );
-  }, [cohort]);
 
   useEffect(() => {
     if (!prefixId && prefixes[0]) setPrefixId(prefixes[0].id);
@@ -184,10 +172,7 @@ export function SessionConfig() {
   }, [client, connected, prefixId]);
 
   const ready = cohort ? isReadyToRun(cohort) : false;
-  const groupNames = useMemo(
-    () => new Map((cohort?.groups ?? []).map((g) => [g.id, g.name])),
-    [cohort],
-  );
+  const picked = cohorts.find((c) => c.id === cohortId) ?? null;
   // Empty = no limit; otherwise a positive whole number of minutes.
   const durationTrim = durationText.trim();
   const durationMinutes = /^\d+$/.test(durationTrim)
@@ -199,7 +184,6 @@ export function SessionConfig() {
     connected &&
     cohort !== null &&
     ready &&
-    groupId !== null &&
     prefixId !== "" &&
     sessionNumber.trim() !== "" &&
     durationValid;
@@ -229,7 +213,7 @@ export function SessionConfig() {
       : !cohort
         ? "Pick the cohort you're running."
         : !ready
-          ? "This cohort needs box assignments — set them in Cohorts."
+          ? "This cohort has no animals — add them in Cohorts."
           : prefixes.length === 0
             ? "Add a prefix — it names this task's data files."
             : sessionNumber.trim() === ""
@@ -238,10 +222,10 @@ export function SessionConfig() {
                 ? "That session already ran today — continue it above instead."
                 : sameDayReuse
                 ? "That number already ran today — continue only to append."
-                : "Ready — continue to box mapping.";
+                : "Ready — continue to choose who runs, and where.";
 
   async function continueToMapping() {
-    if (!cohort || !groupId) return;
+    if (!cohort) return;
     await run(async () => {
       const session = await createSession(
         client,
@@ -251,10 +235,9 @@ export function SessionConfig() {
         durationTrim === "" ? undefined : (durationMinutes ?? undefined),
         recording,
       );
-      // The session exists now; from here the way back is the mapping step,
-      // which carries the cohort and group in its URL.
+      // The session exists now; from here the way back is the Boxes step.
       clearSetupDraft(draftKey);
-      navigate(stepUrl.boxes(session.id, groupId));
+      navigate(stepUrl.boxes(session.id));
     });
   }
 
@@ -305,41 +288,54 @@ export function SessionConfig() {
               first screen assembling top-down, in the order it is filled. */}
           <motion.div variants={CASCADE} initial="hidden" animate="shown">
           <motion.div variants={RISE}>
-          <SettingGroup title="Cohort" variant="hud">
-            <div className="p-4">
-              {cohorts.length === 0 ? (
-                <p className="text-[12px] leading-relaxed text-static">
-                  No cohorts yet. Create one first — sessions run against a
-                  cohort.
+          {cohorts.length === 0 ? (
+            <SettingGroup title="Cohort" variant="hud">
+              <p className="p-4 text-[12px] leading-relaxed text-static">
+                No cohorts yet. Create one first — sessions run against a cohort.
+              </p>
+            </SettingGroup>
+          ) : picked ? (
+            <SettingGroup title="Cohort" variant="hud">
+              <div className="px-4 py-3">
+                <ChangeCohort
+                  name={picked.name}
+                  disc={<PlanetDisc cohortId={picked.id} appearance={picked.appearance} size={16} />}
+                  onBack={() => {
+                    setCohortId(null);
+                    setCohort(null);
+                  }}
+                />
+                <p className="mt-2 font-mono text-[11px] text-static">
+                  {picked.animalCount} {picked.animalCount === 1 ? "animal" : "animals"}
+                  {picked.cageCount > 0 &&
+                    ` · ${picked.cageCount} ${picked.cageCount === 1 ? "cage" : "cages"}`}
                 </p>
-              ) : (
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-                  {cohorts.map((c) => (
-                    <CohortPick
-                      key={c.id}
-                      cohort={c}
-                      selected={c.id === cohortId}
-                      onSelect={() => {
-                        setCohortId(c.id);
-                        setCohort(null);
-                      }}
-                    />
-                  ))}
-                </div>
-              )}
-
-              {/* Readiness, checked before the user can go further. */}
-              {cohort && !ready && (
-                <p
-                  className="mt-3 text-[12px] leading-relaxed"
-                  style={{ color: "var(--color-status-warning)" }}
-                >
-                  This cohort has no animal with a box assigned yet, so there's
-                  nothing to run. Assign boxes in Cohorts first.
-                </p>
-              )}
+                {/* Readiness, checked before the user can go further. */}
+                {cohort && !ready && (
+                  <p
+                    className="mt-2 text-[12px] leading-relaxed"
+                    style={{ color: "var(--color-status-warning)" }}
+                  >
+                    This cohort has no animals yet, so there's nothing to run. Add them
+                    in Cohorts first.
+                  </p>
+                )}
+              </div>
+            </SettingGroup>
+          ) : (
+            // The list Analytics and Log open on, capped: here it is one
+            // section of a form, not the page.
+            <div className="mt-7">
+              <CohortManifest
+                cohorts={cohorts}
+                className="max-h-[340px]"
+                onPick={(id) => {
+                  setCohortId(id);
+                  setCohort(null);
+                }}
+              />
             </div>
-          </SettingGroup>
+          )}
           </motion.div>
 
           {cohortId && logEntry.openFlags.length > 0 && (
@@ -366,8 +362,8 @@ export function SessionConfig() {
               <SettingGroup title="Continue today" variant="hud">
                 <div className="flex flex-col gap-2 p-4">
                   <p className="text-[12px] leading-relaxed text-static">
-                    Closed between groups, or ended too early? Pick the session back up
-                    and run another group under it — same folder, same session number.
+                    Closed between rounds, or ended too early? Pick the session back up
+                    and run more animals under it — same folder, same session number.
                   </p>
                   {todays.map((s) => (
                     <div
@@ -379,17 +375,17 @@ export function SessionConfig() {
                           {s.prefixName}_{s.sessionNumber}
                         </div>
                         <div className="mt-0.5 font-mono text-[11px] text-static">
-                          ran{" "}
-                          {s.groupRuns
-                            .map((run) => groupNames.get(run.groupId) ?? "a removed group")
-                            .join(", ")}
+                          ran {s.rounds.length} round{s.rounds.length === 1 ? "" : "s"}
                           {s.status === "running" && " · the app closed during it"}
                         </div>
                       </div>
                       <Button
                         disabled={busy || !connected}
                         onClick={() =>
-                          navigate(stepUrl.group(s.id))
+                          void run(async () => {
+                            await resumeSession(client, s.id);
+                            navigate(stepUrl.boxes(s.id));
+                          })
                         }
                       >
                         Continue
@@ -397,27 +393,6 @@ export function SessionConfig() {
                       </Button>
                     </div>
                   ))}
-                </div>
-              </SettingGroup>
-            </motion.div>
-          )}
-
-          {cohort && ready && (
-            <motion.div variants={RISE}>
-              <SettingGroup title="Group" variant="hud">
-                <div className="p-4">
-                  <GroupPicker
-                    cohort={cohort}
-                    session={null}
-                    value={groupId}
-                    onChange={setGroupId}
-                  />
-                  {populatedGroups(cohort).length > 1 && (
-                    <p className="mt-3 text-[12px] text-static">
-                      Groups run in whatever order you pick — the next one is chosen
-                      when this one finishes.
-                    </p>
-                  )}
                 </div>
               </SettingGroup>
             </motion.div>
@@ -560,7 +535,7 @@ export function SessionConfig() {
                   Session {sessionNumber.trim()} for this prefix already has
                   data from today — continuing will write into the same folder.
                   {reusedToday &&
-                    " To run another group under it, use Continue today above instead."}
+                    " To run more animals under it, use Continue today above instead."}
                 </p>
               </div>
             )}
@@ -629,38 +604,5 @@ export function SessionConfig() {
         </section>
       </motion.div>
     </div>
-  );
-}
-
-function CohortPick({
-  cohort,
-  selected,
-  onSelect,
-}: {
-  cohort: CohortSummary;
-  selected: boolean;
-  onSelect: () => void;
-}) {
-  return (
-    <motion.button
-      type="button"
-      onClick={onSelect}
-      whileHover={{ y: -2 }}
-      whileTap={{ scale: 0.99 }}
-      transition={springSnappy}
-      className={`flex flex-col items-start gap-2 rounded-md border p-3 text-left transition-colors ${
-        selected ? "border-pulsar bg-pulsar/12" : "border-halo bg-nebula"
-      }`}
-    >
-      <PlanetDisc cohortId={cohort.id} appearance={cohort.appearance} size={40} />
-      <span className="min-w-0 w-full">
-        <span className="block truncate text-[12px] font-medium text-starlight">
-          {cohort.name}
-        </span>
-        <span className="font-mono text-[10px] text-static">
-          {cohort.animalCount} {cohort.animalCount === 1 ? "animal" : "animals"}
-        </span>
-      </span>
-    </motion.button>
   );
 }

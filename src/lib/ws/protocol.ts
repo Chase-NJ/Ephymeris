@@ -66,7 +66,6 @@ export const CMD = {
   COHORTS_DELETE: "cohorts.delete",
   COHORTS_SET_DATA_FOLDER: "cohorts.setDataFolder",
   COHORTS_MOVE_ANIMALS: "cohorts.moveAnimals",
-  COHORTS_SUGGEST_GROUPS: "cohorts.suggestGroups",
 
   // Prefixes and sessions
   PREFIXES_LIST: "prefixes.list",
@@ -79,7 +78,7 @@ export const CMD = {
   SESSIONS_FLASH: "sessions.flash",
   SESSIONS_STATUS: "sessions.status",
   SESSIONS_START_ALL: "sessions.startAll",
-  SESSIONS_END_GROUP: "sessions.endGroup",
+  SESSIONS_END_ROUND: "sessions.endRound",
   SESSIONS_RESUME: "sessions.resume",
   SESSIONS_END: "sessions.end",
   SESSIONS_ACTIVE: "sessions.active",
@@ -527,22 +526,13 @@ export interface SyncResult {
 
 export type Sex = "M" | "F" | "unknown";
 
-export interface Group {
-  id: string;
-  name: string;
-  /**
-   * Display order of the cohort's groups. Not a run order: any group may run at any time, and
-   * more than once.
-   */
-  order: number;
-}
-
 export interface Animal {
   id: string;
   name: string;
-  /** Exactly one group. */
-  groupId: string;
-  /** Abstract slot 1–6, never a live port. */
+  /**
+   * The usual box, 1–6: what session set-up offers first for this animal, and nothing more.
+   * Animals may share one; the box a run used is `RunSummary.boxNumber`.
+   */
   boxNumber: number | null;
   /**
    * Home-cage number — cagemates share one. A grouping label validated as ≥ 1 and nothing else;
@@ -581,13 +571,11 @@ export interface Cohort {
   name: string;
   /**
    * Resolved once at creation and persisted verbatim; renaming the cohort never moves it
-   * (`DATA.md#cohorts-animals-and-groups`).
+   * (`DATA.md#cohorts-and-animals`).
    */
   dataFolder: string;
   /** The roster: active members only. */
   animals: Animal[];
-  /** Always ≥ 1 — a default group always exists. */
-  groups: Group[];
   archivedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -623,11 +611,6 @@ export interface FormerAnimal {
   idNumber: string | null;
   cage: number | null;
   notes: string | null;
-  /**
-   * The group it was in, by name — groups are rewritten on every roster edit, so an id would not
-   * survive.
-   */
-  groupName: string | null;
 }
 
 /** Enough for the cohort browser and the dashboard tile, no per-animal detail. */
@@ -635,7 +618,6 @@ export interface CohortSummary {
   id: string;
   name: string;
   animalCount: number;
-  groupCount: number;
   /**
    * Distinct box numbers this cohort's animals hold. Animal detail the summary carries so the
    * browser can flag a cohort whose boxes no longer exist on this machine without fetching every
@@ -659,38 +641,8 @@ export interface CohortPatch {
   name?: string;
   /** Replaced wholesale. */
   animals?: Animal[];
-  /** Replaced wholesale. */
-  groups?: Group[];
   /** Replaced wholesale. Explicit null resets the world to the one derived from the cohort's id. */
   appearance?: CohortAppearance | null;
-}
-
-export interface ProposedAnimal {
-  animalId: string;
-  boxNumber: number;
-}
-
-export interface ProposedGroup {
-  name: string;
-  order: number;
-  animals: ProposedAnimal[];
-}
-
-export interface GroupRejection {
-  reason: string;
-  /** The minimum viable count, so the user can accept it. */
-  minimumGroups: number;
-}
-
-/** An Auto-Balance preview. Nothing is written; apply via cohorts.update. */
-export interface GroupProposal {
-  groups: ProposedGroup[];
-  /**
-   * Set when the request would break the six-animals-per-group hard constraint (one box each).
-   * Guidance rather than a failure, so not an error reply: `minimumGroups` is the smallest viable
-   * count, which the user can accept.
-   */
-  rejected: GroupRejection | null;
 }
 
 /** Global — shared across cohorts. */
@@ -701,12 +653,22 @@ export interface Prefix {
 
 export type SessionStatus = "configuring" | "running" | "completed" | "aborted";
 
-export interface GroupRun {
-  groupId: string;
-  /** 0-based position in the session's run sequence. A group may appear more than once. */
+/**
+ * One set of animals run together in a session (`GLOSSARY.md#round`). Which animals, in which
+ * boxes, is on the session's run records.
+ */
+export interface Round {
+  /** 0-based position in the session's sequence of rounds. */
   order: number;
+  /** When its first box started. */
   startedAt: string;
+  /** Null while the round is open. */
   endedAt: string | null;
+  /**
+   * Set only on a round recorded before rounds existed: the name of the group that ran. Null on
+   * every round recorded since.
+   */
+  label: string | null;
 }
 
 export interface Session {
@@ -721,20 +683,20 @@ export interface Session {
   startedAt: string;
   endedAt: string | null;
   /**
-   * When the session actually began running: the first group run's start, or `startedAt` before
-   * any group ran (`DATA.md#the-session-clock`). `startedAt` is when Step 1 created the record.
+   * When the session actually began running: the first round's start, or `startedAt` before any
+   * round ran (`DATA.md#the-session-clock`). `startedAt` is when Step 1 created the record.
    * Elapsed time and note offsets count from this.
    */
   clockStartedAt: string;
   /**
-   * The last group run's end once every run is closed, else `endedAt`; null while the session is
+   * The last round's end once every round is closed, else `endedAt`; null while the session is
    * open. For a session recovered from files, the latest run's start plus its stream's span, once
    * the index has read the files (`DATA.md#the-session-clock`) — derived, so shown as `~`.
    */
   clockEndedAt: string | null;
   status: SessionStatus;
   folderPath: string;
-  groupRuns: GroupRun[];
+  rounds: Round[];
   /**
    * Per-box time limit: the sidecar sends STOP to a box this many minutes after that box's own
    * start. Null means no limit.
@@ -742,7 +704,7 @@ export interface Session {
   durationMinutes: number | null;
   /**
    * Set when the session is also an Intan recording (`RECORDING.md#what-is-written`): one entry
-   * per group run recorded. Null = behavior only.
+   * per round recorded. Null = behavior only.
    */
   recording: SessionRecording | null;
 }
@@ -965,20 +927,36 @@ export interface SessionBox {
    */
   startedAt: string | null;
   /**
-   * This box's run in the group on the rig has finished and been recorded, and the box has not
+   * This box's run in the round on the rig has finished and been recorded, and the box has not
    * been started again. Cleared by a new mapping and by the box's next start. What lets a
-   * reloaded Mission Control tell a finished group from one never started
+   * reloaded Mission Control tell a finished round from one never started
    * (`ARCHITECTURE.md#running-boxes`).
    */
   ended: boolean;
 }
 
+/**
+ * One live metric: its rolling value, and its whole-run totals
+ * (`ARCHITECTURE.md#live-session-views`). The totals only grow within a run.
+ */
 export interface TelemetryMetric {
   id: string;
   /** P(hit) over the rolling window; null until a trial counts. */
   value: number | null;
   /** Counted (hit-or-miss) trials in the window — a window length, not a trial count. */
   n: number;
+  /**
+   * Trials of this condition offered so far in the run: every arrival of its trigger, the open
+   * trial included.
+   */
+  triggered: number;
+  /**
+   * Those that ended as a hit or a miss. `triggered` minus this is the trials with no scored
+   * response, and the one open.
+   */
+  counted: number;
+  /** Hits among `counted`: `hits / counted` is whole-run P(hit). */
+  hits: number;
 }
 
 export interface BoxTelemetry {
@@ -1079,11 +1057,13 @@ export interface LiveReplay {
   divergence: ReplayDivergence | null;
 }
 
-/** The runner-held session — the same shape a sessions.status reply carries. */
+/** The runner-held session: the session and boxes of a `sessions.status` reply. */
 export interface RunnerSession {
   session: Session;
-  /** Null when the runner holds no group — before a mapping is confirmed, and between groups. */
-  groupId: string | null;
+  /**
+   * The round on the rig. Empty when the runner holds no mapping: before one is confirmed, and
+   * between rounds.
+   */
   boxes: SessionBox[];
 }
 
@@ -1094,23 +1074,23 @@ export interface RunnerSession {
 export interface ActiveSessions {
   /**
    * Keyed off the live runner, never a bare DB status query — a 'running' row with no live runner
-   * is a crash orphan. A held session with `groupId: null` and no boxes is BETWEEN GROUPS,
-   * awaiting a choice.
+   * is a crash orphan. A held session with no boxes is BETWEEN ROUNDS, awaiting the next mapping
+   * or an end.
    */
   running: RunnerSession | null;
   /** Setup never finished; legitimately resumable into the mapping flow. */
   configuring: Session[];
   /**
    * DB says 'running' but no runner holds them — a crash or a closed app. The .tsv on disk is the
-   * record; a same-day one can be continued with another group (`sessions.resume`), never
-   * mid-group.
+   * record; a same-day one can be continued with another round (`sessions.resume`), never
+   * mid-round.
    */
   stale: Session[];
   /**
    * How many mappings `sessions.confirmMapping` has confirmed since the sidecar started. Nothing
    * else in this payload is guaranteed to change when the same mapping is confirmed again, so
-   * this is how a client learns a new group run is set up: a value it has not seen means clear
-   * every box's live run (`ARCHITECTURE.md#live-session-views`). Per process, not persisted.
+   * this is how a client learns a new round is set up: a value it has not seen means clear every
+   * box's live run (`ARCHITECTURE.md#live-session-views`). Per process, not persisted.
    */
   confirmations: number;
 }
@@ -1125,13 +1105,13 @@ export interface SessionListItem {
   startedAt: string;
   endedAt: string | null;
   /**
-   * When the session actually began running: the first group run's start, or `startedAt` before
-   * any group ran (`DATA.md#the-session-clock`). `startedAt` is when Step 1 created the record.
+   * When the session actually began running: the first round's start, or `startedAt` before any
+   * round ran (`DATA.md#the-session-clock`). `startedAt` is when Step 1 created the record.
    * Elapsed time and note offsets count from this.
    */
   clockStartedAt: string;
   /**
-   * The last group run's end once every run is closed, else `endedAt`; null while the session is
+   * The last round's end once every round is closed, else `endedAt`; null while the session is
    * open. For a session recovered from files, the latest run's start plus its stream's span, once
    * the index has read the files (`DATA.md#the-session-clock`) — derived, so shown as `~`.
    */
@@ -1145,10 +1125,10 @@ export interface SessionListItem {
   ordinal: number;
   runCount?: number;
   /**
-   * Which groups ran, so Step 1 can offer to continue one of today's sessions with another group
+   * The rounds it ran, so Step 1 can offer to continue one of today's sessions with another
    * (`sessions.resume`).
    */
-  groupRuns: GroupRun[];
+  rounds: Round[];
 }
 
 /**
@@ -1547,13 +1527,13 @@ export interface RunSummary {
 export interface AnalyticsAnimal {
   id: string;
   name: string;
-  groupId: string;
+  /** The usual box, same field as Animal.boxNumber. */
   boxNumber: number | null;
   /** Home-cage number, same field as Animal.cage. */
   cage: number | null;
   /**
    * A former member (`DATA.md#former-members`), listed after the roster and only when it has runs
-   * in this summary. Its `groupId` is empty and `boxNumber` null.
+   * in this summary. Its `boxNumber` is null.
    */
   former: boolean;
 }
@@ -1614,7 +1594,6 @@ export interface AnalyticsSummary {
   dataFolder: string;
   sessions: SessionListItem[];
   animals: AnalyticsAnimal[];
-  groups: Group[];
   /**
    * Flat, not a matrix — two runs really can share one (animal, session). False starts excluded:
    * every metric reads this list.
@@ -1992,8 +1971,11 @@ export interface TidySession {
    * day's total.
    */
   runCount: number;
-  /** Its group runs, in order; a group may repeat. */
-  groupIds: string[];
+  /**
+   * One entry per round, in order: `Round.label`, null on every round recorded since groups were
+   * removed.
+   */
+  roundLabels: Array<string | null>;
 }
 
 export interface TidyMerge {
@@ -2874,11 +2856,15 @@ export interface RecordingBox {
 }
 
 /**
- * One group run's recording. A session records once per group, because the animals — and so the
- * ports and probes — change between groups.
+ * One round's recording. A session records once per round, because the animals — and so the ports
+ * and probes — change between rounds.
  */
 export interface RecordingRun {
-  groupId: string;
+  /**
+   * Present only on a recording made before rounds existed: the name of the group recorded, as
+   * `Round.label`.
+   */
+  label?: string | null;
   /** The directory handed to RHX as `Filename.Path`. */
   path: string;
   baseFilename: string;
@@ -3278,25 +3264,24 @@ export interface CommandArgsMap {
   "strobes.import": { document: unknown; apply: boolean };
   "cohorts.list": Record<string, never>;
   "cohorts.get": { id: string };
-  "cohorts.create": { name: string; dataFolder?: string; animals?: Animal[]; groups?: Group[] };
+  "cohorts.create": { name: string; dataFolder?: string; animals?: Animal[] };
   "cohorts.update": { id: string; patch: CohortPatch };
   "cohorts.archive": { id: string };
   "cohorts.restore": { id: string };
   "cohorts.delete": { id: string; confirm: boolean };
   "cohorts.setDataFolder": { id: string; path: string; moveExisting: boolean };
-  "cohorts.moveAnimals": { cohortId: string; animalIds: string[]; destinationCohortId: string; destinationGroupId?: string; apply?: boolean };
-  "cohorts.suggestGroups": { id: string; groupCount?: number; maxGroupSize?: number; balanceBySex?: boolean };
+  "cohorts.moveAnimals": { cohortId: string; animalIds: string[]; destinationCohortId: string; apply?: boolean };
   "prefixes.list": Record<string, never>;
   "prefixes.create": { name: string };
   "prefixes.delete": { id: string };
   "sessions.suggestNumber": { prefixId: string };
   "sessions.create": { cohortId: string; prefixId: string; sessionNumber: string; durationMinutes?: number; recording?: boolean };
   "sessions.abandon": { sessionId: string };
-  "sessions.confirmMapping": { sessionId: string; groupId: string; boxes: SessionBoxMapping[] };
+  "sessions.confirmMapping": { sessionId: string; boxes: SessionBoxMapping[] };
   "sessions.flash": { sessionId: string; boxes: number[] };
   "sessions.status": { sessionId: string };
   "sessions.startAll": { sessionId: string };
-  "sessions.endGroup": { sessionId: string };
+  "sessions.endRound": { sessionId: string };
   "sessions.resume": { sessionId: string };
   "sessions.end": { sessionId: string };
   "sessions.active": Record<string, never>;
@@ -3323,10 +3308,10 @@ export interface CommandArgsMap {
   "intan.status": Record<string, never>;
   "intan.connect": Record<string, never>;
   "intan.disconnect": Record<string, never>;
-  "intan.configure": { sessionId: string; groupId: string; config: RecordingConfig };
+  "intan.configure": { sessionId: string; config: RecordingConfig };
   "intan.parseProbeMap": { path: string };
   "intan.probeMap": { box: number };
-  "intan.measureImpedance": { sessionId: string; groupId: string; saveDirectory: string; boxes: Array<{ box: number; port: string; firstChannel: number; lastChannel: number }> };
+  "intan.measureImpedance": { sessionId: string; saveDirectory: string; boxes: Array<{ box: number; port: string; firstChannel: number; lastChannel: number }> };
   "intan.impedanceHistory": { animalIds: string[] };
   "intan.yieldHistory": { animalIds: string[]; limit?: number };
   "intan.acknowledgeTether": { box: number };
@@ -3384,7 +3369,6 @@ export interface CommandResultMap {
   "cohorts.delete": { deleted: boolean };
   "cohorts.setDataFolder": { cohort: Cohort };
   "cohorts.moveAnimals": AnimalMovePlan;
-  "cohorts.suggestGroups": GroupProposal;
   "prefixes.list": { prefixes: Prefix[] };
   "prefixes.create": { prefix: Prefix };
   "prefixes.delete": { deleted: boolean };
@@ -3393,9 +3377,9 @@ export interface CommandResultMap {
   "sessions.abandon": { session: Session };
   "sessions.confirmMapping": { ok: boolean };
   "sessions.flash": FlashQueueStatus;
-  "sessions.status": { session: Session; groupId: string | null; boxes: SessionBox[] };
+  "sessions.status": { session: Session; boxes: SessionBox[]; ranAnimalIds: string[] };
   "sessions.startAll": { session: Session };
-  "sessions.endGroup": { session: Session };
+  "sessions.endRound": { session: Session };
   "sessions.resume": { session: Session };
   "sessions.end": { session: Session };
   "sessions.active": ActiveSessions;

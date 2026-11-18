@@ -32,7 +32,7 @@ import { useMemo } from "react";
 import { useBoardPresence } from "@/lib/hardware/context";
 import { useBoundBoxes } from "@/lib/settings/context";
 import { useSidecar } from "@/lib/ws/context";
-import type { Animal, Group } from "./types";
+import type { Animal } from "./types";
 
 export type BoxAvailability = "available" | "disconnected" | "unbound";
 
@@ -103,7 +103,6 @@ export function useBoxAvailability(): BoxAvailabilityView {
 export interface AssignmentProblem {
   animalId: string;
   animalName: string;
-  groupName: string;
   box: number;
   availability: Exclude<BoxAvailability, "available">;
 }
@@ -118,10 +117,8 @@ export interface AssignmentProblem {
  */
 export function assignmentProblems(
   animals: Animal[],
-  groups: Group[],
   statusOf: (box: number) => BoxAvailability,
 ): AssignmentProblem[] {
-  const groupNames = new Map(groups.map((g) => [g.id, g.name]));
   const problems: AssignmentProblem[] = [];
 
   for (const animal of animals) {
@@ -131,7 +128,6 @@ export function assignmentProblems(
     problems.push({
       animalId: animal.id,
       animalName: animal.name.trim() || "Unnamed animal",
-      groupName: groupNames.get(animal.groupId) ?? "",
       box: animal.boxNumber,
       availability,
     });

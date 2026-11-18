@@ -56,8 +56,7 @@ async def _recording_session(app, folder: Path) -> tuple[str, dict[str, Any]]:  
     Its mapping is not confirmed yet."""
     cohort = (await dispatch(
         app, "cohorts.create", name=folder.name, dataFolder=str(folder),
-        groups=[{"id": "g1", "name": "Morning", "order": 0}],
-        animals=[animal("rat1", "g1", box=1), animal("rat2", "g1")],
+        animals=[animal("rat1", box=1), animal("rat2")],
     ))["cohort"]
     prefix = (await dispatch(app, "prefixes.create", name="2O-Bdisc"))["prefix"]["id"]
     session = (await dispatch(
@@ -75,7 +74,7 @@ async def _grgl(app) -> str:  # noqa: ANN001
 async def _confirm_box_1(app, session_id: str, cohort: dict[str, Any], rat: str = "rat1") -> None:  # noqa: ANN001
     animal_id = next(a["id"] for a in cohort["animals"] if a["name"] == rat)
     await dispatch(
-        app, "sessions.confirmMapping", sessionId=session_id, groupId="g1",
+        app, "sessions.confirmMapping", sessionId=session_id,
         boxes=[{"box": 1, "animalId": animal_id, "sketchPath": await _grgl(app), "config": {}}],
     )
 
@@ -87,7 +86,7 @@ async def test_a_box_the_held_mapping_does_not_have_is_refused(app, rhx: FakeRhx
     await _confirm_box_1(app, session_id, cohort)
 
     with pytest.raises(Refused) as refused:
-        await dispatch(app, "intan.configure", sessionId=session_id, groupId="g1", config=config(tmp_path))
+        await dispatch(app, "intan.configure", sessionId=session_id, config=config(tmp_path))
 
     assert refused.value.code == "SESSION_INVALID"
     assert refused.value.detail == {"boxes": [3]}
@@ -101,24 +100,11 @@ async def test_a_session_whose_mapping_is_not_confirmed_is_refused(app, rhx: Fak
     only_box_1 = config(tmp_path, boxes=[{"box": 1, "port": "A", "firstChannel": 0, "lastChannel": 15}])
 
     with pytest.raises(Refused) as refused:
-        await dispatch(app, "intan.configure", sessionId=session_id, groupId="g1", config=only_box_1)
+        await dispatch(app, "intan.configure", sessionId=session_id, config=only_box_1)
 
     assert refused.value.code == "SESSION_INVALID"
     assert refused.value.detail == {"boxes": [1]}
     assert "note3" not in rhx.params
-
-
-async def test_another_groups_mapping_is_not_this_groups(app, rhx: FakeRhx, tmp_path: Path) -> None:  # noqa: ANN001
-    """The held mapping is one group's: its box 1 is not another group's box 1."""
-    session_id, cohort = await _recording_session(app, tmp_path / "Batch C")
-    await _confirm_box_1(app, session_id, cohort)
-    only_box_1 = config(tmp_path, boxes=[{"box": 1, "port": "A", "firstChannel": 0, "lastChannel": 15}])
-
-    with pytest.raises(Refused) as refused:
-        await dispatch(app, "intan.configure", sessionId=session_id, groupId="g2", config=only_box_1)
-
-    assert refused.value.code == "SESSION_INVALID"
-    assert refused.value.detail == {"boxes": [1]}
 
 
 async def test_a_mapped_box_reaches_rhx_with_its_animal(app, rhx: FakeRhx, tmp_path: Path) -> None:  # noqa: ANN001
@@ -126,10 +112,13 @@ async def test_a_mapped_box_reaches_rhx_with_its_animal(app, rhx: FakeRhx, tmp_p
     await _confirm_box_1(app, session_id, cohort)
     only_box_1 = config(tmp_path, boxes=[{"box": 1, "port": "A", "firstChannel": 0, "lastChannel": 15}])
 
-    status = await dispatch(app, "intan.configure", sessionId=session_id, groupId="g1", config=only_box_1)
+    status = await dispatch(app, "intan.configure", sessionId=session_id, config=only_box_1)
 
     assert status["state"] == "configured"
     assert "box 1=rat1 port A" in rhx.params["note3"]
+    # Named for the animals recorded, in box order (`RECORDING.md#what-is-written`).
+    assert rhx.params["filename.basefilename"].startswith("2O-Bdisc_1_")
+    assert rhx.params["filename.basefilename"].endswith("_rat1")
 
 
 async def test_a_recording_set_up_for_an_earlier_mapping_does_not_start(app, rhx: FakeRhx, tmp_path: Path) -> None:  # noqa: ANN001
@@ -143,7 +132,7 @@ async def test_a_recording_set_up_for_an_earlier_mapping_does_not_start(app, rhx
     grgl = await _grgl(app)
     await until(lambda: (c := app.ports.carried(1)) is not None and c.is_of(grgl), timeout=10)
     only_box_1 = config(tmp_path, boxes=[{"box": 1, "port": "A", "firstChannel": 0, "lastChannel": 15}])
-    await dispatch(app, "intan.configure", sessionId=session_id, groupId="g1", config=only_box_1)
+    await dispatch(app, "intan.configure", sessionId=session_id, config=only_box_1)
     assert "box 1=rat1" in rhx.params["note3"]
 
     await _confirm_box_1(app, session_id, cohort, rat="rat2")

@@ -20,7 +20,7 @@ from ephymeris_sidecar.cohorts.db import Database
 from ephymeris_sidecar.logbook import mirror
 from ephymeris_sidecar.logbook.models import SessionLog, SessionNote
 from ephymeris_sidecar.logbook.service import LogbookService
-from ephymeris_sidecar.sessions.models import GroupRun, Session
+from ephymeris_sidecar.sessions.models import Round, Session
 from tests.test_analytics_service import HIT_1, Rig
 
 DAY = "2026-07-22"
@@ -38,7 +38,7 @@ def _session(sid: str, start: str, end: str) -> Session:
         status="completed",
         folder_path="/x",
         ended_at=end,
-        group_runs=[GroupRun("g", 0, start, end)],
+        rounds=[Round(0, start, end)],
     )
 
 

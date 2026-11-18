@@ -2,7 +2,7 @@
  * The recording defaults — `settings.recordingDefaults`, fully shaped.
  *
  * Everything the Record step collects that is NOT per session (the save
- * directory) or per group (the box list). The Recording tab edits them
+ * directory) or per round (the box list). The Recording tab edits them
  * outright; the Record step opens prefilled from them and writes back what
  * the operator confirmed. Shell-only on the wire (`Record<string, unknown>`;
  * the sidecar never reads the key), which is why the shape can live here in

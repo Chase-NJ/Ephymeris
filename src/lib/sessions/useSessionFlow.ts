@@ -25,10 +25,13 @@ export interface SessionFlowView {
   cohort: Cohort | null;
   /** This session holds the rig. */
   held: boolean;
-  /** The group on the rig; null unless held with a group mapped. */
-  rigGroupId: string | null;
-  /** The rig's boxes; empty unless held. */
+  /** The rig's boxes; empty unless held with a round mapped. */
   boxes: SessionBox[];
+  /**
+   * Animals with a recorded run in this session, from the latest
+   * `sessions.status`; null until it arrives.
+   */
+  ranAnimalIds: ReadonlySet<string> | null;
   flow: SessionFlow;
   /** The latest failure to load the session or its cohort. */
   error: string | null;
@@ -45,14 +48,8 @@ export interface SessionFlowView {
  * `session.lifecycle`, and on every `session.animalEnded` — the one per-box
  * fact (`SessionBox.ended`) that lifecycle broadcasts leave out. The cohort is
  * fetched once per session.
- *
- * `groupId` names the group a step is about when it is not the rig's: Boxes
- * and Record carry theirs in the URL.
  */
-export function useSessionFlow(
-  sessionId: string | undefined,
-  groupId?: string | null,
-): SessionFlowView {
+export function useSessionFlow(sessionId: string | undefined): SessionFlowView {
   const { client, status } = useSidecar();
   const connected = status === "connected";
   const active = useActiveSessions();
@@ -118,21 +115,20 @@ export function useSessionFlow(
 
   // The rig is the held session's alone; the sidecar reports none for any
   // other, and an answer from before a lifecycle change is not trusted to.
-  const rigGroupId = held && session ? (snapshot?.groupId ?? null) : null;
   const boxes = held && session ? (snapshot?.boxes ?? NO_BOXES) : NO_BOXES;
+
+  const ran = session ? snapshot?.ranAnimalIds : undefined;
+  const ranAnimalIds = useMemo(() => (ran ? new Set(ran) : null), [ran]);
 
   const flow = useMemo(
     () =>
       sessionFlow({
         session,
-        cohort: cohort?.id === cohortId ? cohort : null,
         held,
-        rigGroupId,
         boxes,
-        groupId: groupId ?? null,
         isLive: (box) => portStates[box]?.state === "IN_SESSION",
       }),
-    [session, cohort, cohortId, held, rigGroupId, boxes, groupId, portStates],
+    [session, held, boxes, portStates],
   );
 
   return {
@@ -140,8 +136,8 @@ export function useSessionFlow(
     cohortId,
     cohort: cohort?.id === cohortId ? cohort : null,
     held,
-    rigGroupId,
     boxes,
+    ranAnimalIds,
     flow,
     error,
     refresh,

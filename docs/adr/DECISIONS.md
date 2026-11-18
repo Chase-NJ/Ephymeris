@@ -6,7 +6,7 @@ only what the code does now and link here.
 
 **How to keep it.**
 
-- **Number entries in sequence and never reuse a number.** The next is **0008**. Code and docs cite an
+- **Number entries in sequence and never reuse a number.** The next is **0009**. Code and docs cite an
   entry as `DECISIONS.md#<heading-slug>`; `test_doc_links.py` checks every citation.
 - **A proposal gets its own file** in this folder (`NNNN-slug.md`, `status: proposed`) while it is
   argued and built. When it is accepted and done, fold it in here as an entry and delete the file.
@@ -27,6 +27,7 @@ only what the code does now and link here.
 | [0005](#0005-a-spine-run-strobes-each-trials-outcome-class) | A spine run strobes each trial's outcome class | accepted, codes withdrawn for now | 2026-11-05 |
 | [0006](#0006-the-shell-is-electron-not-tauri) | The shell is Electron, not Tauri | accepted, Tauri removed | 2026-11-13 |
 | [0007](#0007-rhxs-own-windows-replace-the-recording-pop-ups) | RHX's own windows replace the recording pop-ups | accepted | 2026-11-15 |
+| [0008](#0008-rounds-replace-groups) | Rounds replace groups | accepted | 2026-11-18 |
 
 ## 0001: A hypothetical rig definition is context-local
 
@@ -291,3 +292,40 @@ against the busiest site, did not feel live.
 **Amendment, 2026-11-15.** The event-aligned PSTH returned **after** the session, as this entry said it
 should: computed from RHX's saved spikes and digital inputs and the run's strobes, in Analytics
 ([RECORDING.md](../RECORDING.md#event-psth)). Still not live, by design.
+
+## 0008: Rounds replace groups
+
+A cohort's animals were divided into **groups**: each animal belonged to exactly one, held a box unique
+within it, and a session ran one group at a time. The lab swaps animals between boxes and runs them out
+of their usual order often enough that the fixed membership was the obstacle, not the help: every
+exception meant editing the cohort first. **We removed groups. A session is a sequence of
+[rounds](../../GLOSSARY.md#round), and each round's animals, boxes and tasks are chosen at set-up**
+([ARCHITECTURE.md](../ARCHITECTURE.md#mapping-and-the-placement-walk)). An animal keeps one optional
+[usual box](../../GLOSSARY.md#usual-box) that set-up offers first; when a round's boxes have all finished
+the operator is asked whether to run more animals or end the session
+([ARCHITECTURE.md](../ARCHITECTURE.md#between-rounds)).
+
+The sidecar never enforced a group's membership or its boxes at `sessions.confirmMapping`: the constraint
+lived in the cohort model and the screens, so the session path changed little.
+
+**Rejected.**
+
+- **Keep groups as optional presets** that pre-fill a round. Two ways to say who runs together, one of
+  them stale the first time an animal is swapped, and the group step stays in the flow for everyone.
+- **No stored box at all**, pre-filling from each animal's last run. The lab does have usual boxes; a
+  cohort that has never run would open on an empty rig, and one odd day would become the next day's
+  default.
+- **A usual box that must be unique in the cohort.** A cohort of twelve on six boxes shares them by
+  design. A clash matters only among the animals of one round, and set-up resolves it there.
+
+**Costs.**
+
+- **Schema v17 is the first migration that is not additive** ([DATA.md](../DATA.md#changing-the-schema)):
+  the `groups` table and `animals.group_id` are gone, so a build older than v17 cannot open a migrated
+  database. Both lab machines must be updated together.
+- **Auto-Balance is gone** with the groups it balanced. Balancing a round by sex is now the operator's
+  job at set-up.
+- A round recorded before this keeps its group's name as `Round.label`; a round recorded since has only
+  its order. Which animals ran in a round is read from the run records' start times, as before.
+- An RHX recording is named for the animals recorded rather than for a group, so its name grows with the
+  number of boxes recorded.

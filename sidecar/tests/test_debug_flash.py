@@ -515,7 +515,9 @@ async def test_one_payload_per_batch_carrying_the_latest_values(rig_definition, 
 
     assert len(telemetry(app)) == before + 1
     by_id = {m["id"]: m for m in telemetry(app)[-1]["metrics"]}
-    assert by_id["p_r_odor1"] == {"id": "p_r_odor1", "value": 2 / 3, "n": 3}
+    assert by_id["p_r_odor1"] == {
+        "id": "p_r_odor1", "value": 2 / 3, "n": 3, "triggered": 3, "counted": 3, "hits": 2,
+    }
 
 
 async def test_the_boards_end_strobe_ends_the_run(rig_definition, grgl_on_disk) -> None:  # noqa: ANN001

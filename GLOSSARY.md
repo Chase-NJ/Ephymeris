@@ -36,8 +36,18 @@ _Avoid_: visible parameter, enabled parameter
 
 <a id="held-session"></a>
 **Held session**:
-The one session that holds the rig, from its mapping's confirmation (or a resume) until it ends or is abandoned, including between groups; it may still read `configuring`.
+The one session that holds the rig, from its mapping's confirmation (or a resume) until it ends or is abandoned, including between rounds; it may still read `configuring`.
 _Avoid_: running session, active session
+
+<a id="round"></a>
+**Round**:
+One set of animals run together in a session: up to six, each in a box and on a task chosen for that round. A session has one or more, and any animal of the cohort may run in any of them.
+_Avoid_: group, group run, batch
+
+<a id="usual-box"></a>
+**Usual box**:
+The box session set-up offers first for an animal. A default and nothing more: animals may share one, and the box a run used is on its run record.
+_Avoid_: standing box, assigned box
 
 <a id="trial-type"></a>
 **Trial type**:

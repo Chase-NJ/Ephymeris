@@ -95,13 +95,12 @@ class LegacyRig:
 
         self.root.mkdir(parents=True, exist_ok=True)
         self.cohort = self.cohorts.create("The Remy's", str(self.root))
-        group = self.cohort.groups[0].id
         self.cohorts.update(
             self.cohort.id,
             {
                 "animals": [
-                    {"id": "a1", "name": "remy1", "groupId": group, "boxNumber": 1},
-                    {"id": "a2", "name": "remy2", "groupId": group, "boxNumber": 2},
+                    {"id": "a1", "name": "remy1", "boxNumber": 1},
+                    {"id": "a2", "name": "remy2", "boxNumber": 2},
                 ]
             },
         )
@@ -768,10 +767,9 @@ def _second_cohort(rig: LegacyRig, folder: Path) -> str:
     """Another cohort in the same database, attached to `folder`, whose
     roster also holds a `remy1`, under its own animal id."""
     cohort = rig.cohorts.create("The Remy's, again", str(folder))
-    group = cohort.groups[0].id
     rig.cohorts.update(
         cohort.id,
-        {"animals": [{"id": "b1", "name": "remy1", "groupId": group, "boxNumber": 1}]},
+        {"animals": [{"id": "b1", "name": "remy1", "boxNumber": 1}]},
     )
     return cohort.id
 

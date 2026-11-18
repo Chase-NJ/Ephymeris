@@ -1,4 +1,4 @@
-"""Cohort/Animal/Group data model — `DATA.md#data-model`.
+"""Cohort/Animal data model — `DATA.md#data-model`.
 
 `to_json` produces exactly the payload shapes documented in
 `PROTOCOL.md#payload-shapes`, so the wire format is defined in one place rather
@@ -21,10 +21,6 @@ PLANET_TYPES = ("rocky", "gas", "ice", "ocean", "lava")
 #: `boxNumber` spans an abstract slot range, validated against nothing else.
 MIN_BOX = 1
 MAX_BOX = 6
-
-#: No group may exceed this (`DATA.md#auto-balance`), since a larger one could never be uniquely
-#: box-assigned within itself.
-MAX_GROUP_SIZE = MAX_BOX
 
 
 @dataclass
@@ -74,24 +70,16 @@ class Appearance:
 
 
 @dataclass
-class Group:
-    id: str
-    name: str
-    order: int
-
-    def to_json(self) -> dict[str, Any]:
-        return {"id": self.id, "name": self.name, "order": self.order}
-
-
-@dataclass
 class Animal:
     id: str
     name: str
-    group_id: str
+    #: The usual box: what session set-up offers first for this animal. A
+    #: default and nothing more — any number of animals may share one, and the
+    #: box an animal actually ran in is on its run record.
     box_number: int | None = None
     #: Home-cage number — cagemates share one. A grouping label (≥ 1), not a
-    #: slot: any number of animals may share a cage, across groups included,
-    #: because housing and run order are independent facts.
+    #: slot: any number of animals may share a cage, because housing and which
+    #: animals run together are independent facts.
     cage: int | None = None
     sex: Sex | None = None
     id_number: str | None = None
@@ -101,7 +89,6 @@ class Animal:
         return {
             "id": self.id,
             "name": self.name,
-            "groupId": self.group_id,
             "boxNumber": self.box_number,
             "cage": self.cage,
             "sex": self.sex,
@@ -134,9 +121,6 @@ class FormerAnimal:
     id_number: str | None = None
     cage: int | None = None
     notes: str | None = None
-    #: The group it was in, by name: groups are rewritten on every roster edit,
-    #: so an id would dangle by the next save.
-    group_name: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -149,7 +133,6 @@ class FormerAnimal:
             "idNumber": self.id_number,
             "cage": self.cage,
             "notes": self.notes,
-            "groupName": self.group_name,
         }
 
 
@@ -162,7 +145,6 @@ class Cohort:
     updated_at: str
     archived_at: str | None = None
     animals: list[Animal] = field(default_factory=list)
-    groups: list[Group] = field(default_factory=list)
     #: None means "derive from `id`" — see `Appearance`.
     appearance: Appearance | None = None
     #: Animals with history here that are no longer on the roster. Filled only
@@ -190,7 +172,6 @@ class Cohort:
             "name": self.name,
             "dataFolder": self.data_folder,
             "animals": [a.to_json() for a in self.animals],
-            "groups": [g.to_json() for g in sorted(self.groups, key=lambda g: g.order)],
             "archivedAt": self.archived_at,
             "createdAt": self.created_at,
             "updatedAt": self.updated_at,
@@ -201,7 +182,7 @@ class Cohort:
         }
 
     def to_summary(self) -> dict[str, Any]:
-        """The grid/dashboard shape — no animal or group detail (`PROTOCOL.md#shape-cohortsummary`).
+        """The grid/dashboard shape — no animal detail (`PROTOCOL.md#shape-cohortsummary`).
 
         `assignedBoxes` and `cageCount` are the two exceptions to "no animal
         detail", and both earn it the same way — the browser needs the answer
@@ -215,7 +196,6 @@ class Cohort:
             "id": self.id,
             "name": self.name,
             "animalCount": len(self.animals),
-            "groupCount": len(self.groups),
             "assignedBoxes": sorted(
                 {a.box_number for a in self.animals if a.box_number is not None}
             ),

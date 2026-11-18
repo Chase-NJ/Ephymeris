@@ -2,12 +2,13 @@ import { createContext, useCallback, useContext, useSyncExternalStore } from "re
 
 import type { LiveReplay } from "@/lib/ws/protocol";
 
+import type { Tally } from "./boxProgress";
 import type { SessionStore } from "./store";
 import type {
   ActiveSessions,
   AnimalEnded,
   Prefix,
-  SessionSnapshot,
+  RunnerSession,
   TelemetryMetric,
 } from "./types";
 
@@ -40,7 +41,7 @@ export function useActiveLoaded(): boolean {
 }
 
 /** The runner-held session, or null — what the sidebar dot and hero CTA read. */
-export function useRunningSession(): SessionSnapshot | null {
+export function useRunningSession(): RunnerSession | null {
   const store = useSessionStore();
   const subscribe = useCallback((cb: () => void) => store.subscribe("active", cb), [store]);
   return useSyncExternalStore(subscribe, () => store.getActive()?.running ?? null);
@@ -74,6 +75,16 @@ export function useMetricHistory(box: number, metricId: string): number[] {
     [store, box],
   );
   return useSyncExternalStore(subscribe, () => store.getHistory(box, metricId));
+}
+
+/** One box's run in counts, oldest first (`boxProgress.ts`). */
+export function useBoxProgress(box: number): readonly Tally[] {
+  const store = useSessionStore();
+  const subscribe = useCallback(
+    (cb: () => void) => store.subscribe(`progress:${box}`, cb),
+    [store, box],
+  );
+  return useSyncExternalStore(subscribe, () => store.getProgress(box));
 }
 
 /** The finished run for one box, once `session.animalEnded` arrives. */

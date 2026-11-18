@@ -10,10 +10,10 @@ import { useReduceMotion } from "@/lib/useReduceMotion";
  * actually mapped below. The chamber's number lights Ion once the animal is
  * inside.
  *
- * `mode="return"` plays the same scene backwards — the group-swap prompt in
+ * `mode="return"` plays the same scene backwards — the round-over prompt in
  * Mission Control: the animal is lifted back *out* of the chamber and
  * carried home to its cage, because that is literally the operator's next
- * physical act before the next group runs. Same scenery, same performers;
+ * physical act before anything else runs. Same scenery, same performers;
  * only the choreography and which lid opens are mirrored.
  *
  * **Deliberately off-theme in style, not in palette.** The rest of the app is
@@ -187,7 +187,7 @@ export function RatPlacementBanner({
       <p className="text-center text-[11px] text-static">
         {caption ??
           (returning
-            ? "Return each animal to its home cage before the next group runs."
+            ? "Return each animal to its home cage before the next round runs."
             : "Lift each animal into the box shown on its card, then confirm and flash.")}
       </p>
       {footer && <div className="flex justify-center pb-1.5 pt-2.5">{footer}</div>}

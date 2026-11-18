@@ -44,19 +44,18 @@ the [Releases](https://github.com/Chase-NJ/Ephymeris/releases) page.
 3. **Settings → Storage.** Choose the **Data directory** where session files go, and optionally a
    **Backup directory** on another drive or a network share.
 4. **Task.** Save at least one task: pick a sketch from the library and set its parameters.
-5. **Cohorts.** Create a cohort, add its animals, and assign each animal to a box within a group.
+5. **Cohorts.** Create a cohort, add its animals, and optionally give each a usual box.
 
 Idle boxes are kept on a utility sketch (`BOX_Utility`) that the app builds from your wiring; that is
 what lets it light up a box while you place an animal. You never flash it by hand.
 
 ## Run a session
 
-1. On the Dashboard, click **Start a Session**, pick the cohort, the session prefix and number, and the
-   group to run.
-2. Check each box's task, then let the app flash the boxes. Place each animal when its box lights up.
+1. On the Dashboard, click **Start a Session**, pick the cohort, the session prefix and number.
+2. Choose which animals run, in which boxes and on which task, then let the app flash the boxes. Place each animal when its box lights up.
 3. Click **Start All**. Mission Control shows every box live: trials, accuracy and the event stream.
-4. A box finishes on its own (trial limit or time limit). **Switch Group** moves on to the next group;
-   **End Session** stops any box still running and finishes the session.
+4. A box finishes on its own (trial limit or time limit). When every box has finished the app asks whether to
+   **run more animals** under the same session or end it; **End Session** stops any box still running and finishes the session.
 
 Each animal gets `<animal>_<prefix>_<n>_<date>_<time>.tsv`, written event by event as the session runs
 (nothing is lost if the PC crashes mid-session), plus `.json` and `.mat` files when its run ends

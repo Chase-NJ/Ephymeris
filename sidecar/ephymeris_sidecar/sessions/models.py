@@ -22,27 +22,34 @@ class Prefix:
 
 
 @dataclass
-class GroupRun:
-    group_id: str
+class Round:
+    """One set of animals run together in a session (`GLOSSARY.md#round`).
+
+    `label` is set only on rounds migrated from a group run recorded before
+    rounds existed: it is that group's name, kept so the record still says
+    which animals' group ran. A round recorded now is known by its order alone.
+    """
+
     order: int
     started_at: str
     ended_at: str | None = None
+    label: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
-            "groupId": self.group_id,
             "order": self.order,
             "startedAt": self.started_at,
             "endedAt": self.ended_at,
+            "label": self.label,
         }
 
     @classmethod
-    def from_json(cls, raw: dict[str, Any]) -> "GroupRun":
+    def from_json(cls, raw: dict[str, Any]) -> "Round":
         return cls(
-            group_id=str(raw.get("groupId", "")),
             order=int(raw.get("order", 0)),
             started_at=str(raw.get("startedAt", "")),
             ended_at=raw.get("endedAt"),
+            label=raw.get("label") or None,
         )
 
 
@@ -58,12 +65,12 @@ class Session:
     status: SessionStatus
     folder_path: str
     ended_at: str | None = None
-    group_runs: list[GroupRun] = field(default_factory=list)
+    rounds: list[Round] = field(default_factory=list)
     #: Per-box time limit in whole minutes (`ARCHITECTURE.md#configuration`);
     #: None means the session runs until stopped by the operator or board.
     duration_minutes: int | None = None
     #: Set when the session is also an Intan recording (`RECORDING.md#what-is-written`):
-    #: `{"runs": [...]}`, one entry per group run. None = behavior only. Kept as
+    #: `{"runs": [...]}`, one entry per round. None = behavior only. Kept as
     #: the JSON it is stored as -- nothing in the sidecar branches on its
     #: contents, only on its presence.
     recording: dict[str, Any] | None = None
@@ -73,24 +80,24 @@ class Session:
         """When the session actually began running (`DATA.md#the-session-clock`).
 
         `started_at` is when Step 1 created the record, which can be many
-        minutes of set-up before a box ran. The first group run's start is the
+        minutes of set-up before a box ran. The first round's start is the
         moment the operator thinks of as "the session started"; a session that
-        never ran a group falls back to the record's own time.
+        never ran a round falls back to the record's own time.
         """
-        starts = [run.started_at for run in self.group_runs if run.started_at]
+        starts = [run.started_at for run in self.rounds if run.started_at]
         return min(starts) if starts else self.started_at
 
     @property
     def clock_ended_at(self) -> str | None:
         """When the session stopped running, or `None` while it is still open.
 
-        The last group run's end when every run is closed — the operator may
+        The last round's end when every round is closed — the operator may
         leave the wrap-up screen open long after the boxes stopped, and that
         is not session time — falling back to the record's `ended_at`.
         """
         if self.status in ("configuring", "running"):
             return None
-        ends = [run.ended_at for run in self.group_runs]
+        ends = [run.ended_at for run in self.rounds]
         if ends and all(ends):
             return max(e for e in ends if e)
         return self.ended_at
@@ -109,7 +116,7 @@ class Session:
             "clockEndedAt": self.clock_ended_at,
             "status": self.status,
             "folderPath": self.folder_path,
-            "groupRuns": [g.to_json() for g in self.group_runs],
+            "rounds": [r.to_json() for r in self.rounds],
             "durationMinutes": self.duration_minutes,
             "recording": self.recording,
         }
@@ -135,7 +142,7 @@ class Session:
             "status": self.status,
             "folderPath": self.folder_path,
             "ordinal": ordinal,
-            "groupRuns": [g.to_json() for g in self.group_runs],
+            "rounds": [r.to_json() for r in self.rounds],
         }
         if run_count is not None:
             item["runCount"] = run_count

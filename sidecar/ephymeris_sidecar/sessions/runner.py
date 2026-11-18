@@ -139,7 +139,7 @@ class SessionRunner:
         # Per-session box configs, and the currently-running boxes.
         self._configs: dict[int, BoxConfig] = {}
         self._active: dict[int, ActiveRun] = {}
-        # Boxes whose run in this group has finished and not been restarted —
+        # Boxes whose run in this round has finished and not been restarted —
         # the `ended` a reloaded client reads, since `session.animalEnded` is
         # never replayed (`ARCHITECTURE.md#replay-on-connect`).
         self._ended: set[int] = set()
@@ -161,7 +161,6 @@ class SessionRunner:
         self._session_folder: Path | None = None
         self._session_id_label: str = ""
         self._session_id: str = ""
-        self._group_id: str = ""
         self._duration_s: float | None = None
         # The recording subsystem's three taps (`intan/service.py`), all
         # optional and all called ON THE SESSION THREAD, so whatever is hung
@@ -183,13 +182,12 @@ class SessionRunner:
         self,
         session_folder: Path,
         session_id_label: str,
-        group_id: str,
         box_configs: list[BoxConfig],
         duration_s: float | None = None,
         *,
         session_id: str,
     ) -> None:
-        """Store the confirmed mapping for the group about to run
+        """Store the confirmed mapping for the round about to run
         (`ARCHITECTURE.md#mapping-and-the-placement-walk`).
 
         `duration_s` is the optional per-box time limit: each box gets an
@@ -200,7 +198,6 @@ class SessionRunner:
         self._session_folder = session_folder
         self._session_id_label = session_id_label
         self._session_id = session_id
-        self._group_id = group_id
         self._configs = {c.box: c for c in box_configs}
         self._ended = set()
         self._forget_replays()
@@ -219,13 +216,7 @@ class SessionRunner:
         self._session_folder = None
         self._session_id_label = ""
         self._session_id = ""
-        self._group_id = ""
         self._duration_s = None
-
-    @property
-    def group_id(self) -> str:
-        """The group whose mapping is currently loaded (`ARCHITECTURE.md#group-step`)."""
-        return self._group_id
 
     def snapshot(self) -> list[dict[str, Any]]:
         """What Mission Control renders: the confirmed boxes and their state.
@@ -274,7 +265,7 @@ class SessionRunner:
 
         address = self._ports.resolve_address(box)
         # Drawn *here*, on the click, and never at `configure` time: a seed
-        # settled with the mapping would be shared by every box in the group and
+        # settled with the mapping would be shared by every box in the round and
         # would survive a Start → Stop → Start, which is exactly the
         # reproducibility this exists to prevent (`tasks/seed.py`).
         host_seed = new_trial_seed()
@@ -623,11 +614,11 @@ class SessionRunner:
             await self.finalize_box(box, reason)
         # Fire-and-forget finalizations (an end strobe that landed just before
         # or during the grace window, a board drop racing the stop) may still
-        # be mid-write. Wait them out: the caller closes the group run, clears
+        # be mid-write. Wait them out: the caller closes the round, clears
         # this runner and releases the rig as soon as this returns, and every
         # file and `session_animal_runs` row must be written by then. (Each
         # run carries its own `session_id`, so a late one would still be
-        # recorded against the right session, but after the group had closed
+        # recorded against the right session, but after the round had closed
         # -- `DATA.md#orphan-adoption`.)
         #
         # Only the unfinished ones: a task that just finished stays in the set

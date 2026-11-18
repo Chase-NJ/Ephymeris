@@ -32,7 +32,14 @@ export function replayStrip(replay: LiveReplay | null): {
     if (m.wilsonLow !== null && m.wilsonHigh !== null) intervals[m.id] = [m.wilsonLow, m.wilsonHigh];
   }
   return {
-    metrics: summaries.map((m) => ({ id: m.id, value: m.pSession, n: m.counted })),
+    metrics: summaries.map((m) => ({
+      id: m.id,
+      value: m.pSession,
+      n: m.counted,
+      triggered: m.triggered,
+      counted: m.counted,
+      hits: m.hits,
+    })),
     labels: Object.fromEntries(summaries.map((m) => [m.id, m.label])),
     intervals,
   };

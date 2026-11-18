@@ -22,7 +22,7 @@ from ephymeris_sidecar.logbook.models import (
 )
 from ephymeris_sidecar.logbook.service import LogbookService
 from ephymeris_sidecar.protocol import validate, validate_command_result
-from ephymeris_sidecar.sessions.models import GroupRun, Session
+from ephymeris_sidecar.sessions.models import Round, Session
 from tests.test_analytics_service import Rig
 
 DAY = "2026-07-22"
@@ -61,8 +61,8 @@ def logbook(rig: Rig) -> LogbookService:
 
 
 def ran(rig: Rig, session_id: str, start: str, end: str | None) -> None:
-    rig.sessions.set_group_runs(
-        session_id, [GroupRun(group_id="g", order=0, started_at=start, ended_at=end)]
+    rig.sessions.set_rounds(
+        session_id, [Round(order=0, started_at=start, ended_at=end)]
     )
 
 
@@ -88,9 +88,9 @@ def _session(**kw) -> Session:
 
 def test_the_clock_starts_at_the_first_group_run_not_the_record() -> None:
     session = _session(
-        group_runs=[
-            GroupRun("b", 1, "2026-07-22T10:00:00+00:00", "2026-07-22T10:30:00+00:00"),
-            GroupRun("a", 0, "2026-07-22T09:00:00+00:00", "2026-07-22T09:40:00+00:00"),
+        rounds=[
+            Round(1, "2026-07-22T10:00:00+00:00", "2026-07-22T10:30:00+00:00"),
+            Round(0, "2026-07-22T09:00:00+00:00", "2026-07-22T09:40:00+00:00"),
         ]
     )
     assert session.clock_started_at == "2026-07-22T09:00:00+00:00"
@@ -107,7 +107,7 @@ def test_a_session_that_never_ran_uses_its_record_times() -> None:
 def test_an_open_session_has_no_clock_end() -> None:
     session = _session(
         status="running",
-        group_runs=[GroupRun("a", 0, "2026-07-22T09:00:00+00:00", "2026-07-22T09:40:00+00:00")],
+        rounds=[Round(0, "2026-07-22T09:00:00+00:00", "2026-07-22T09:40:00+00:00")],
     )
     assert session.clock_ended_at is None
 

@@ -334,12 +334,12 @@ describe("configurePayload", () => {
         "5": { record: false, port: "", firstChannel: 0, lastChannel: -1 },
       },
       // R3's map replaced, R5's cleared on the form and so forgotten, and an
-      // animal not on the rig this group keeps its own.
+      // animal not on the rig this round keeps its own.
       probeMaps: { "id-R3": "/maps/a.xml", "id-Rat-02": "/maps/rat02.xml" },
     });
   });
 
-  it("follows an animal's probe map through Continue and a later group on another box", () => {
+  it("follows an animal's probe map through Continue and a later round on another box", () => {
     const first = [row(3, "Rat-07", { port: "A", lastChannel: 31, probeMapPath: "/maps/rat07.xml", probeMap: map })];
     const saved = { ...DEFAULT_RECORDING_DEFAULTS, ...rememberedDefaults(first, config, null, {}) };
     const next = reconcileRows([mapped(5, "Rat-07"), mapped(3, "Rat-02")], saved, []);

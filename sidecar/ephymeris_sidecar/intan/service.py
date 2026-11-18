@@ -148,7 +148,6 @@ class BoxPlan:
 @dataclass
 class Recording:
     session_id: str
-    group_id: str
     path: str
     base_filename: str
     file_format: str
@@ -166,7 +165,6 @@ class Recording:
 
     def to_json(self) -> dict[str, Any]:
         return {
-            "groupId": self.group_id,
             "path": self.path,
             "baseFilename": self.base_filename,
             "fileTimestamp": self.file_timestamp,
@@ -443,7 +441,7 @@ class IntanService:
     async def disconnect(self) -> None:
         if self._run_open:
             raise IntanNotReady(
-                "A recording Ephymeris started is still open. Switch Group or End the "
+                "A recording Ephymeris started is still open. End the round or the "
                 "session to close it out first."
             )
         self._close_streams()
@@ -577,14 +575,13 @@ class IntanService:
     async def configure(
         self,
         session_id: str,
-        group_id: str,
         config: dict[str, Any],
         base_filename: str,
         notes: tuple[str, str, str] = ("", "", ""),
         *,
         confirmation: int | None = None,
     ) -> None:
-        """Set RHX up for this group's recording. `confirmation` is the mapping
+        """Set RHX up for this round's recording. `confirmation` is the mapping
         confirmation the boxes in `config` were read from: a recording only
         starts for that one (`refuse_unless_ready`)."""
         if self._run_open:
@@ -603,7 +600,7 @@ class IntanService:
             await client.set_run_mode("stop")
             self._run_mode = "stop"
 
-        plan = self._plan(session_id, group_id, config, base_filename)
+        plan = self._plan(session_id, config, base_filename)
         plan.confirmation = confirmation
         plan.threshold = dict(config.get("threshold") or {}) or None
         controller = self._info.get("controller")
@@ -746,9 +743,7 @@ class IntanService:
                 )
             await asyncio.sleep(0.25)
 
-    def _plan(
-        self, session_id: str, group_id: str, config: dict[str, Any], base_filename: str
-    ) -> Recording:
+    def _plan(self, session_id: str, config: dict[str, Any], base_filename: str) -> Recording:
         if not self._rig_has_sync():
             raise IntanNotReady(
                 "This rig's wiring declares no sync channel, so no box pulses on its "
@@ -803,7 +798,6 @@ class IntanService:
 
         return Recording(
             session_id=session_id,
-            group_id=group_id,
             path=directory,
             base_filename=base_filename,
             file_format=file_format,
@@ -854,7 +848,7 @@ class IntanService:
                 box.probe_map_file = source.name
 
     def release(self) -> None:
-        """The session let go without recording (abandon, or a group that
+        """The session let go without recording (abandon, or a round that
         never started). Refuses nothing; a started recording is left alone."""
         if self._run_open:
             return
@@ -865,13 +859,13 @@ class IntanService:
                 self._set_state("idle", None)
             self._loop.create_task(self.publish())
 
-    def refuse_unless_ready(self, session_id: str, group_id: str, confirmation: int) -> None:
-        """Raise unless this group's recording is set up for this mapping
+    def refuse_unless_ready(self, session_id: str, confirmation: int) -> None:
+        """Raise unless this round's recording is set up for this mapping
         confirmation and RHX can be told to start it, or is recording it
         already. The refusal says what is actually wrong: a lost link sends the
         operator to RHX, not back to a Recording step they finished."""
         r = self._recording
-        ours = r is not None and r.session_id == session_id and r.group_id == group_id
+        ours = r is not None and r.session_id == session_id
         if ours and self._state == "recording":
             return
         if ours and self._state == "configured":
@@ -886,23 +880,23 @@ class IntanService:
             )
         if ours and self._run_open and not self._client.connected:
             raise RhxUnavailable(
-                "Lost contact with RHX, which keeps recording this group on its own. "
+                "Lost contact with RHX, which keeps recording this round on its own. "
                 "No box can start until it is back: Ephymeris is reconnecting, and if it "
                 "does not, open Network → Remote TCP Control in RHX and press Connect."
             )
         if ours and self._run_open:
             raise IntanNotReady(
-                "RHX is no longer recording this group — it was stopped from RHX itself. "
-                "Switch Group or End the session to close the recording out."
+                "RHX is no longer recording this round — it was stopped from RHX itself. "
+                "End the round or the session to close the recording out."
             )
         if not self._client.connected:
             raise RhxUnavailable(
-                "RHX is not reachable, so this group's recording cannot start. Once it "
+                "RHX is not reachable, so this round's recording cannot start. Once it "
                 "is connected again, set the recording up on the Recording step."
             )
         raise IntanNotReady(
             "This is a recording session, but no recording is set up for this "
-            "group. Finish the Recording step first."
+            "round. Finish the Recording step first."
         )
 
     # --- record -----------------------------------------------------------
@@ -912,7 +906,7 @@ class IntanService:
         if self._state == "recording":
             return
         if self._state != "configured" or self._recording is None:
-            raise IntanNotReady("No recording is configured for this group.")
+            raise IntanNotReady("No recording is configured for this round.")
         client = self._client
         await client.set_run_mode("record")
         self._run_mode = "record"

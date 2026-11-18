@@ -25,7 +25,7 @@
  * > made Mission Control a *different sky* from the Dashboard and Debug, holding
  * > different stars at different coordinates under a different camera-memory
  * > key. Navigating between them could then only cut, and animals with no box in
- * > the running group left stray stars in the field with nothing to explain
+ * > the running round left stray stars in the field with nothing to explain
  * > them. A rig cannot run more animals than it has boxes, so the roster never
  * > needed places the rig does not have.
  *

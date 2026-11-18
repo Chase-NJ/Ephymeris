@@ -130,8 +130,7 @@ export function Observatory() {
                     <PlanetDisc cohortId={cohort.id} appearance={cohort.appearance} size={16} />
                     <span className="min-w-0 flex-1 truncate text-[12.5px] text-starlight">{cohort.name}</span>
                     <span className="shrink-0 font-mono text-[10.5px] text-static">
-                      {cohort.animalCount} animal{cohort.animalCount === 1 ? "" : "s"} · {cohort.groupCount} group
-                      {cohort.groupCount === 1 ? "" : "s"}
+                      {cohort.animalCount} animal{cohort.animalCount === 1 ? "" : "s"}
                     </span>
                   </Row>
                 ))

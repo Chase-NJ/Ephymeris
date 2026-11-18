@@ -23,7 +23,7 @@ task's short name, such as `2O-Bdisc`) and a number.
 
 Before your first session, check that:
 
-1. **A cohort exists**, each animal with a box in its group ([Setting up a cohort](#setting-up-a-cohort)).
+1. **A cohort exists**, with its animals ([Setting up a cohort](#setting-up-a-cohort)).
 2. **The boxes are bound**: on the **Rig** tab each box is linked to its board (usually done once by the
    lab manager).
 3. **A task is saved** on the **Task** tab.
@@ -127,32 +127,20 @@ A **cohort** is a batch of animals trained together.
 1. On **Cohorts**, click **New cohort** and type a unique **Name**. Its data folder is made in the **Data
    directory** (with none set, the page asks for a **Data folder**).
 2. Add **Animals**: paste names (one per line) or type a pattern like `R- × 8` for `R-1` to `R-8`, then
-   **Add**. **Sex**, **ID number** and **Notes** are optional.
+   **Add**. **Sex**, **Usual box**, **ID number** and **Notes** are optional.
 
 ![The cohort editor: the Name field, the Data folder with its Change data folder… button, and the Animals section with the bulk-add box and a table of animals with Sex, ID number and Notes](images/cohort-editor.webp)
 
 3. Optional: under **Cages & spaceships**, drag cagemates onto one spaceship per home cage.
-4. Under **Groups & boxes**, drag each animal onto its box (or click the animal, then the box).
 
-![The lower half of the cohort editor: spaceship cards each holding two cagemates, then Groups & boxes with Group A and Group B, each showing Box 1 to Box 6 with one animal in each](images/cohort-groups.webp)
-
-5. Click **Create cohort** (later, **Save changes**). An unfinished cohort can be saved; the ticks at the
+4. Click **Create cohort** (later, **Save changes**). An unfinished cohort can be saved; the ticks at the
    top show what is missing.
 
-### Groups
+### Usual boxes
 
-A **group** is the animals in the boxes at the same time; box numbers repeat between groups. Use **Split
-into groups** or **Add a group** and drag animals between cards; **Fill boxes** gives a box to anyone
-under **No box yet**. You pick which group runs at each start and switch.
-
-**Auto-balance…** proposes a grouping:
-
-1. Under **Split by**, choose **Number of groups** or **Max group size** and type the number; optionally
-   turn on **Balance by sex**.
-2. Click **Suggest grouping** and adjust the preview if you like.
-3. Click **Apply grouping** (it replaces the current grouping) or **Cancel**.
-
-![The Auto-balance panel: Split by set to Number of groups, Groups set to 2, the Balance by sex switch, Suggest grouping, and a preview of Group 1 and Group 2 with each animal's box, above Apply grouping and Cancel](images/auto-balance.webp)
+An animal's **Usual box** is the box session set-up offers first for it, and nothing more. Animals may
+share one, and none is required: which animals run together, and in which boxes, is chosen each time you
+set up a [round](#boxes). Only boxes this machine has are offered.
 
 ### Removing an animal
 
@@ -166,7 +154,7 @@ A move takes an animal's files, sessions and notes to another cohort, so its his
 
 1. Create the destination cohort if needed.
 2. In the **Animals** table, click **⇄** on the animal's row (or **Move history…** under **Former members**).
-3. Choose the destination cohort and group, and check the preview.
+3. Choose the destination cohort, and check the preview.
 4. Click **Move**.
 
 A same-named animal in the destination receives the history. A session shared with animals that stay is
@@ -196,17 +184,17 @@ permanently** (archived cohorts only) **never deletes the data folder**.
 
 ```mermaid
 flowchart TD
-    cohort["Cohort ready: animals in groups,<br/>each with a box"] --> start["Dashboard: Start a Session,<br/>or Start a Recording"]
-    start --> configure["Configure: cohort, first group,<br/>prefix, session number"]
-    configure --> boxes["Boxes: check each box's task"]
+    cohort["Cohort ready:<br/>its animals added"] --> start["Dashboard: Start a Session,<br/>or Start a Recording"]
+    start --> configure["Configure: cohort,<br/>prefix, session number"]
+    configure --> boxes["Boxes: who runs, in which box,<br/>on which task"]
     boxes --> place["Place the animals in box-number order,<br/>closing each box as you go"]
     place --> flashed["Each box loads its program"]
     flashed --> recording{"Recording session?"}
     recording -->|"yes"| record["Set Up the Recording"]
     recording -->|"no"| run["Mission Control: Start All,<br/>watch until every box finishes"]
     record --> run
-    run --> another{"Another group to run?"}
-    another -->|"yes"| swap["Switch Group: animals home,<br/>pick the next group"]
+    run --> another{"Every box finished:<br/>run more animals?"}
+    another -->|"yes"| swap["Animals home,<br/>then Run more animals"]
     swap --> boxes
     another -->|"no"| finish["End session"]
     finish --> results["Check the results in Analytics"]
@@ -215,31 +203,30 @@ flowchart TD
 ### Configure
 
 1. On the Dashboard, click **Start a Session**.
-2. Pick the **Cohort**. Deal with any note under **Before you start**, then **Resolve** it.
-3. Pick the **Group** to run first.
-4. Pick the **Prefix** (or **Add a prefix**) and check the **Session number**.
-5. Optional: a **Time limit** in minutes, counted from each box's own start.
-6. Click **Continue**.
+2. Pick the **Cohort** from the list (**All cohorts** goes back to it). Deal with any note under **Before
+   you start**, then **Resolve** it.
+3. Pick the **Prefix** (or **Add a prefix**) and check the **Session number**.
+4. Optional: a **Time limit** in minutes, counted from each box's own start.
+5. Click **Continue**.
 
-![The Configure step of Start a Session: cohort cards with Odor Discrimination 2026 selected, Group A and Group B cards with Group A selected, and the Prefix and Session number fields](images/session-configure.webp)
-
-A warning that the number already has data today means you would write into the same folder; to add a
-group to today's session, [continue it](#continue-a-session-from-earlier-today) instead.
+A warning that the number already has data today means you would write into the same folder; to run more
+animals under today's session, [continue it](#continue-a-session-from-earlier-today) instead.
 
 ### Boxes
 
-1. On **Confirm boxes**, pick each animal's **sketch** and **box** (for this run only).
-2. Open the parameter line to change **Quick tune** (the values usually changed per animal, per day) or
-   **All parameters**.
+The Boxes step sets up one **round**: the animals that run together. It lists the rig's six boxes and opens
+with each animal that has not run yet today on its usual box.
 
-![The Confirm boxes step with remy1's sketch list open, showing — none —, GRGL, BOX_Utility, GRGL_Sim, 2-Odor Discrimination, 4-Odor Discrimination and Shaping - Both Sides](images/session-sketch-picker.webp)
+1. Under **Boxes**, pick the **animal** for each box. Any animal can take any box, for this round only:
+   picking an animal that is in another box swaps the two, **— empty —** leaves a box out, and the line under
+   the list names who is not running.
+2. Pick each box's **task**, or one for all of them under **Every box on**.
+3. Click a box to see its animal's parameters in the panel beside the list: **Quick tune** (the values
+   usually changed per animal, per day), then **All parameters**. A box with changed values reads **tuned**.
+   **Copy to other boxes** gives the same values to every other box on that task.
 
-![Confirm boxes with every card set to 2-Odor Discrimination and Box 1 to Box 6, each with a collapsed "28 parameters" line, above the Place the animals button](images/session-boxes.webp)
-
-![One box card with its parameters opened: the QUICK TUNE section showing Left and Right correction budgets, each with a short explanation](images/session-quick-tune.webp)
-
-3. **Acknowledge** any box in error (it blocks the step).
-4. Click **Place the animals** (or **They're already in — flash all** if the rig is loaded).
+4. **Acknowledge** any box in error (it blocks the step).
+5. Click **Place the animals** (or **They're already in — flash all** if the rig is loaded).
 
 ### Place the animals
 
@@ -248,10 +235,6 @@ group to today's session, [continue it](#continue-a-session-from-earlier-today) 
 2. Put the named animal in and close the box.
 3. Click **Enclosure closed**. The box loads its program while you fetch the next animal.
 4. Repeat. **Skip this box** passes one; **All animals are in** finishes the walk.
-
-![Place the animals: a drawing of remy1 being lifted into box 1, and remy1's card saying "Place this animal in box 1 — Its light is on" with the Enclosure closed button. Box 1's star in the sidebar is green](images/session-placement.webp)
-
-![Later in the walk: remy1 and remy2 are ticked and marked flashed, and the screen now asks for remy3 in box 3](images/session-placement-flashing.webp)
 
 > [!CAUTION]
 > **An animal in the wrong box produces a normal-looking file under the wrong name, undetectable later.**
@@ -267,32 +250,28 @@ On **Mission Control**, click **Start All**, or **Start** on one box. If a box *
 
 ![Mission Control before starting: the session name 2O-Bdisc_15, the clock, Start All and Discard session on the left, and six box tiles on the right, each IDLE with Start, Stop and Reset buttons](images/mission-control-ready.webp)
 
-### Switching groups
+### When a round finishes
 
-When every box in the group has finished, a return checklist appears.
+When every box has finished, a window asks what happens next.
 
 1. Return each animal to its home cage and tick it (or **All animals are out**).
-2. Click **Pick next group**, or **End session** (**Switch Group** works any time after a group has run).
-3. Choose any group and click **Run this group**. Rerunning a group adds new files and overwrites nothing.
-4. Confirm the boxes and place the new animals.
+2. Click **Run more animals** to set up another round under this session, or **End session**. **Not yet**
+   closes the window so you can restart a box first.
+3. After **Run more animals**, the Boxes step opens with the animals that have not run yet. Running an animal
+   again adds new files and overwrites nothing.
 
-![The group-finished prompt over Mission Control: a drawing of an animal going home, a checklist of the six animals with "0 of 6 back in their cages", All animals are out, and the Pick next group and End session buttons](images/group-switch-prompt.webp)
-
-![The Next Group step: Group A marked "ran 23:34", Group B selected, and the Run this group and End session buttons](images/group-step.webp)
+**Run more animals** in Mission Control's left column does the same at any time after a box has run.
 
 ### Ending the session
 
-After the last group, **That's a wrap** appears: tick each animal home and click **End session**. **For
-the log** takes the operator, a summary and a last note ([Keeping the log](#keeping-the-log)). Analytics
-then opens on the session.
-
-![The That's a wrap window: "Every group has run", a checklist with all six animals ticked home, and the Not yet, Run another group and End session buttons](images/wrap-up.webp)
+**End session** closes the session and opens Analytics on it. In the window, **For the log** takes the
+operator, a summary and a last note ([Keeping the log](#keeping-the-log)).
 
 **End Session** in Mission Control works at any time; before any box has run it reads **Discard
-session**. Only ending finishes a session; switching groups never does.
+session**. Only ending finishes a session; running more animals never does.
 
 > [!IMPORTANT]
-> **End Session and Switch Group stop running boxes at once, cutting the current trial short.** For
+> **End Session and Run more animals stop running boxes at once, cutting the current trial short.** For
 > complete trials, **Stop** each box and wait for **Finished** first. Recording sessions wait by themselves.
 
 ### Leaving set-up and coming back
@@ -303,18 +282,16 @@ throws it away.
 
 ### Continue a session from earlier today
 
-To run another group in the same session folder after the app closed or the session ended early: **Start
-a Session**, pick the cohort and click **Continue** under **Continue today** (or **Continue with another
-group** on a dock card marked **Ended unexpectedly**), then pick the group. Same day only; a group cannot
-be resumed mid-run.
-
-![The Configure step with a CONTINUE TODAY panel under the cohort: session 2O-Bdisc_15, "ran Group A, Group B", and a Continue button](images/session-continue-today.webp)
+To run more animals in the same session folder after the app closed or the session ended early: **Start
+a Session**, pick the cohort and click **Continue** under **Continue today** (or **Run more animals** on a
+dock card marked **Ended unexpectedly**). The Boxes step opens for the next round. Same day only; a round
+cannot be resumed mid-run.
 
 ## During a session
 
 The session keeps running if you leave Mission Control; **Resume Session** brings you back.
 
-![Mission Control while running: the session name, the clock with time elapsed, Switch Group and End Session on the left, the session drawn as a 3D sky, and box tiles on the right, each IN_SESSION with its own clock and two live metrics](images/mission-control.webp)
+![Mission Control while running: the session name, the clock with time elapsed and the session's buttons on the left, the session drawn as a 3D sky, and box tiles on the right, each IN_SESSION with its own clock and two live metrics](images/mission-control.webp)
 
 - **Start** resets the board, waits for it, then sends the task.
 - **Stop** ends the box **at the end of the current trial**. Wait; do not click again or reset.
@@ -332,6 +309,18 @@ The session keeps running if you leave Mission Control; **Resume Session** bring
 - **Live metrics**: rolling accuracy per condition, counted as Analytics will.
 - **Finished — …** gives why the run ended: *BF_END_SESSION received* is normal, *board disconnected*
   is [an error](#when-a-box-shows-error-or-a-board-disconnects).
+
+### Reading a progress tab
+
+Beside each tile, a tab shows how far the run has got. **Hide graphs** in the left column puts them away.
+
+- **offered**, **completed** and **correct**: trials that began, those that ended in a scored answer, and
+  those answered right (with their share of the completed). The figure at the top right is completed trials
+  per minute.
+- **The chart** draws completed (grey) and correct (green) against trials offered. The dashed diagonal is
+  every trial completed and correct: grey falling below it is trials going unanswered, green falling below
+  grey is wrong answers, and a flat stretch is an animal that has stopped working.
+- **The bar** divides the trials offered into correct, wrong and no answer.
 
 Click a tile or star for the box's panel (trial flow, outcome mix, recent strobes); Esc returns.
 **Diverged** means the box did something its task does not do: everything is recorded but the run will not
@@ -412,14 +401,14 @@ thresholds.
    noisy for 20 seconds, its card shows a **tether alarm**: check that animal's tether, headstage and
    ground, then click **Acknowledge**. The recording carries on, and the session log notes the time.
    The first two minutes of each box are its baseline, so the alarm watches from then on. For one channel's waveforms, threshold, ISI or PSTH, use RHX's own tools.
-8. **End Session** and **Switch Group** let each box finish its trial (up to 45 seconds) under **ENDING**;
+8. **End Session** and **Run more animals** let each box finish its trial (up to 45 seconds) under **ENDING**;
    **End now** stops RHX without waiting.
 
 ![Mission Control during a recording: the Recording panel with REC, the file name, the format and 30 kS/s, and a SYNC CHECK table of matched, missed and stray pulses per box; each box tile shows port A, its DIN and channel range](images/mission-control-recording.webp)
 
 ![A recording ending: the panel reads ENDING, "Finishing the trials in flight" and "Waiting for box 1, 4, 5 to finish its trial…", with an End now button; boxes 2 and 3 already show Finished](images/mission-control-ending.webp)
 
-There is one recording per group; the Record step returns for each new group.
+There is one recording per round; the Record step returns for each new round.
 
 ## Checking a box
 
@@ -473,7 +462,7 @@ Each run gives an animal a `.tsv` (written live), a `.json` and a `.mat`, in the
 
 1. Open **Analytics** and click a cohort.
 
-![The Analytics landing: "Pick a cohort to study its recorded sessions" above a list of four cohorts, each with its planet, its animals and groups, its session count and when it last ran](images/analytics-landing.webp)
+![The Analytics landing: "Pick a cohort to study its recorded sessions" above a list of four cohorts, each with its planet, its animals and cages, its session count and when it last ran](images/analytics-landing.webp)
 
 2. The **Sessions** rail is spaced by date. Below it: **Animals**, **Strategy space**, **Accuracy** under a
    **Task** strip, **Effort** and **Outcome mix**. Each chart has a **how to read this** note.
@@ -493,7 +482,7 @@ Each run gives an animal a `.tsv` (written live), a `.json` and a `.mat`, in the
 
 ![Analytics for one cohort: the Data folder, Rescan, Recover, Tidy records and Export cohort PNG buttons at the top, the Sessions rail spaced by date, the Task strip changing from Shaping to 2-Odor Discrimination, and the Accuracy chart with response and rewarded lines](images/analytics-cohort.webp)
 
-![The lower half of the cohort view: Effort and Outcome mix bar charts, the Animals rail grouped by Group A and B with a trend and score for each animal, the Strategy space scatter, and Overall accuracy per animal](images/analytics-panels.webp)
+![The lower half of the cohort view: Effort and Outcome mix bar charts, the Animals rail with a trend and score for each animal, the Strategy space scatter, and Overall accuracy per animal](images/analytics-panels.webp)
 
 ![One session selected: the Session summary for 2O-Bdisc_14 with a row per animal giving start, end, trials sampled and percent rewarded for all trials and for each odor, and the Export session PNG button](images/analytics-session.webp)
 
@@ -534,7 +523,7 @@ The **Log** tab is each cohort's lab notebook: sessions on the left, the selecte
 Sessions sit on a timeline, newest first, **spaced by real days**. Scroll or press **j**/**k** to step;
 click a session or month to jump. A filled diamond is finished, green **live** running, hollow abandoned
 or recovered; a number counts notes, a flag marks a carried-forward note. The page shows **Start** (when
-the first group began), **End** and **Elapsed** (**~** when read from files), and **Session folder**
+the first round began), **End** and **Elapsed** (**~** when read from files), and **Session folder**
 opens the folder.
 
 ### Writing notes
@@ -581,7 +570,7 @@ usually means no internet; ask the lab manager for the installer.
 | **Stop** seems to do nothing | The box stops at the end of the trial. Wait |
 | *Waiting for the backend*, *The backend isn't connected*, *sidecar down* | Close Ephymeris and open it again |
 | **backup failing** | Tell the lab manager; the refresh button in Settings copies what is missing once the drive is back |
-| The dock shows **Ended unexpectedly** | **Continue with another group** (same day), **View in Analytics** or **Close out**, then **Recover** in Analytics |
+| The dock shows **Ended unexpectedly** | **Run more animals** (same day), **View in Analytics** or **Close out**, then **Recover** in Analytics |
 | No box will start, flash or light, and the message is about the rig's wiring | See [below](#when-the-rigs-wiring-does-not-load) |
 
 ### When the rig's wiring does not load
@@ -616,7 +605,7 @@ takes effect only once checked and saved; **Reset** discards it.
 | Term | Meaning |
 |---|---|
 | **Cohort** | Animals trained together, with their own data folder |
-| **Group** | The animals in the boxes at the same time |
+| **Round** | The animals in the boxes at the same time. A session has one or more |
 | **Box** | One chamber, numbered 1 to 6 |
 | **Sketch** | A program for a box's board; saving a **task** makes one |
 | **Prefix** | The task's short name in folder and file names, such as `2O-Bdisc` |

@@ -11,7 +11,7 @@
  *
  * A note only marks a run it could be about: a session note marks every run,
  * an animal or box note only that animal's or box's. And only while the run
- * was going — a box note from the afternoon group says nothing about the
+ * was going — a box note from the afternoon round says nothing about the
  * morning animal that sat in the same box.
  */
 

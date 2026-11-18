@@ -32,6 +32,8 @@ from ephymeris_sidecar.cohorts.db import (
     add_column,
     table_columns,
 )
+from ephymeris_sidecar.cohorts.repository import CohortRepository
+from ephymeris_sidecar.sessions.repository import SessionRepository
 from tests.conftest import statements
 
 #: The schema exactly as it stood at v1 — cohorts, groups, animals, and nothing
@@ -131,7 +133,8 @@ def test_a_fresh_database_lands_at_the_current_version(tmp_path: Path) -> None:
 
     assert user_version(path) == SCHEMA_VERSION
     # SCHEMA carries the final shape, so a fresh file is correct with no migration.
-    assert {"cohorts", "groups", "animals", "prefixes", "sessions", "session_animal_runs"} <= tables(path)
+    assert {"cohorts", "animals", "prefixes", "sessions", "session_animal_runs"} <= tables(path)
+    assert "groups" not in tables(path)
 
 
 # --- the upgrade case -----------------------------------------------------
@@ -337,7 +340,7 @@ def write_v2_database(path: Path) -> None:
                 prefix_id TEXT NOT NULL, prefix_name TEXT NOT NULL,
                 session_number TEXT NOT NULL, date TEXT NOT NULL,
                 started_at TEXT NOT NULL, ended_at TEXT, status TEXT NOT NULL,
-                folder_path TEXT NOT NULL, group_runs TEXT NOT NULL DEFAULT '[]'
+                folder_path TEXT NOT NULL, rounds TEXT NOT NULL DEFAULT '[]'
             );
             CREATE TABLE session_animal_runs (
                 id TEXT PRIMARY KEY,
@@ -1166,6 +1169,87 @@ def test_a_v15_run_record_gains_interp_channel_set_and_diverged_as_null(tmp_path
         conn.close()
 
 
+# --- v17: groups removed, group runs become rounds -----------------------------
+
+
+def write_v16_lab_database(path: Path) -> None:
+    """A v16 file as a lab machine holds one: two groups reusing box 1, a
+    session that ran both, a recording per group run and a former member."""
+    write_shipped_database(path, 16)
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        INSERT INTO cohorts (id, name, data_folder, created_at, updated_at)
+            VALUES ('c1', 'Batch A', '/data/Batch A', 'then', 'then');
+        INSERT INTO groups (id, cohort_id, name, "order") VALUES
+            ('g1', 'c1', 'Morning', 0), ('g2', 'c1', 'Evening', 1);
+        INSERT INTO animals (id, cohort_id, group_id, name, box_number, cage, sex) VALUES
+            ('a1', 'c1', 'g1', 'remy1', 1, 2, 'F'),
+            ('a2', 'c1', 'g2', 'remy2', 1, NULL, NULL),
+            ('a3', 'c1', 'g2', 'remy3', NULL, NULL, NULL);
+        INSERT INTO former_animals (id, cohort_id, name, group_name, removed_at)
+            VALUES ('a0', 'c1', 'remy0', 'Morning', 'then');
+        INSERT INTO sessions (id, cohort_id, prefix_id, prefix_name, session_number, date,
+            started_at, status, folder_path, group_runs, recording_json) VALUES
+            ('s1', 'c1', 'p1', 'P', '1', '2026-10-30', 'then', 'completed', '/data',
+             '[{"groupId": "g2", "order": 0, "startedAt": "t0", "endedAt": "t1"},
+               {"groupId": "g1", "order": 1, "startedAt": "t2", "endedAt": "t3"},
+               {"groupId": "gone", "order": 2, "startedAt": "t4", "endedAt": null}]',
+             '{"runs": [{"groupId": "g2", "path": "/ephys", "startedAt": "t0"}]}'),
+            ('s2', 'c1', 'p1', 'P', '2', '2026-10-31', 'then', 'configuring', '/data', '[]', NULL);
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_v17_keeps_every_animal_and_its_usual_box(tmp_path: Path) -> None:
+    """`DATA.md#data-model`: `animals.group_id` cascaded from `groups`, so a
+    migration that dropped `groups` first would have emptied every roster."""
+    path = tmp_path / "ephymeris.db"
+    write_v16_lab_database(path)
+
+    db = Database(path)
+    db.connect()
+    try:
+        cohort = CohortRepository(db).get("c1")
+    finally:
+        db.close()
+
+    assert user_version(path) == SCHEMA_VERSION
+    assert "groups" not in tables(path)
+    # Two animals shared box 1 across groups; both keep it as their usual box.
+    assert [(a.id, a.box_number, a.cage, a.sex) for a in cohort.animals] == [
+        ("a1", 1, 2, "F"),
+        ("a2", 1, None, None),
+        ("a3", None, None, None),
+    ]
+    assert [f.id for f in cohort.former_animals] == ["a0"]
+
+
+def test_v17_turns_group_runs_into_rounds_labelled_with_the_group(tmp_path: Path) -> None:
+    """`DATA.md#session-records`: order and times as recorded, the group's
+    name as the label, and no label for a group the roster no longer had."""
+    path = tmp_path / "ephymeris.db"
+    write_v16_lab_database(path)
+
+    db = Database(path)
+    db.connect()
+    try:
+        repo = SessionRepository(db)
+        ran, unstarted = repo.get_session("s1"), repo.get_session("s2")
+    finally:
+        db.close()
+
+    assert [(r.order, r.started_at, r.ended_at, r.label) for r in ran.rounds] == [
+        (0, "t0", "t1", "Evening"),
+        (1, "t2", "t3", "Morning"),
+        (2, "t4", None, None),
+    ]
+    assert ran.recording == {"runs": [{"path": "/ephys", "startedAt": "t0", "label": "Evening"}]}
+    assert (unstarted.rounds, unstarted.recording) == ([], None)
+
+
 # --- every upgrade lands on today's schema -----------------------------------
 
 
@@ -1209,7 +1293,7 @@ def _shipped(version: int):  # noqa: ANN202
     [
         write_v1_database, write_v2_database, write_v3_database, write_v5_database,
         write_v6_database, write_v7_database, write_v8_database, write_v9_database,
-        *(_shipped(v) for v in (4, 10, 11, 12, 13, 14, 15)),
+        *(_shipped(v) for v in (4, 10, 11, 12, 13, 14, 15, 16)),
     ],
     ids=lambda writer: writer.__name__.removeprefix("write_").removesuffix("_database"),
 )

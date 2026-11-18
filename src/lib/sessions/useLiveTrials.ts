@@ -53,7 +53,7 @@ export function useLiveTrials(
     if (!usable) return;
     const log = store.getStrobes(box);
     // A log shorter than the cursor means the store was reset under us (a new
-    // group, or this box restarted) — rebuild from the beginning.
+    // round, or this box restarted) — rebuild from the beginning.
     const from = log.length < stateRef.current.cursor ? EMPTY_LIVE_TRIALS : stateRef.current;
     const next = advance(from, log, vocab);
     if (next !== stateRef.current) {

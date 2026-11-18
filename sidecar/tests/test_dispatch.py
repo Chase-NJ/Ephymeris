@@ -30,8 +30,7 @@ async def app(tmp_path: Path):
 async def _cohort(app, folder: Path) -> dict:  # noqa: ANN001
     created = await dispatch(
         app, "cohorts.create", name=folder.name, dataFolder=str(folder),
-        groups=[{"id": "g1", "name": "Morning", "order": 0}],
-        animals=[animal("rat1", "g1", box=1)],
+        animals=[animal("rat1", box=1)],
     )
     return created["cohort"]
 
@@ -95,7 +94,7 @@ async def test_a_move_while_the_rig_is_in_use_carries_the_refusal_in_its_plan(
     source = await _cohort(app, tmp_path / "Batch A")
     dest = (await dispatch(
         app, "cohorts.create", name="Batch B", dataFolder=str(tmp_path / "Batch B"),
-        groups=[{"id": "g2", "name": "Evening", "order": 0}], animals=[],
+        animals=[],
     ))["cohort"]
     monkeypatch.setattr(app.runner, "running_boxes", lambda: [2])
     args = {

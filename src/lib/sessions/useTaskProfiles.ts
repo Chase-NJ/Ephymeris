@@ -19,7 +19,7 @@ const PATH_SEP = "\u0000";
 /**
  * The Task Profiles behind a set of sketch paths, fetched once each.
  *
- * KEYED BY SKETCH PATH, NOT BY BOX. A group usually runs one sketch across all
+ * KEYED BY SKETCH PATH, NOT BY BOX. A round usually runs one sketch across all
  * six boxes, so a per-box fetch would ask the sidecar the same question six
  * times for one answer; and the answer is a property of the sketch on disk, not
  * of the box carrying it.

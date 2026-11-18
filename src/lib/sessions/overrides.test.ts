@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   defaultConfig,
   editedOverrides,
+  overriddenCount,
   startConfig,
   withoutOverrides,
   type TaskProfile,
@@ -69,6 +70,24 @@ describe("editedOverrides", () => {
   it("keeps a value the operator typed even when it equals the value underneath", () => {
     const shown = { reward_ul: 40 };
     expect(editedOverrides({ reward_ul: 40 }, shown, { reward_ul: 30 })).toEqual({ reward_ul: 30 });
+  });
+});
+
+describe("overriddenCount", () => {
+  const p = profile({ hold_ms: 500, iti_ms: 4000 });
+
+  it("counts the values that differ from the layers underneath", () => {
+    expect(overriddenCount(p, {}, {})).toBe(0);
+    expect(overriddenCount(p, {}, { hold_ms: 800 })).toBe(1);
+    expect(overriddenCount(p, { hold_ms: 600 }, { hold_ms: 800, iti_ms: 1 })).toBe(2);
+  });
+
+  it("does not count an override set back to the value underneath", () => {
+    expect(overriddenCount(p, { hold_ms: 600 }, { hold_ms: 600 })).toBe(0);
+  });
+
+  it("is zero for a sketch with no profile", () => {
+    expect(overriddenCount(null, {}, { hold_ms: 800 })).toBe(0);
   });
 });
 

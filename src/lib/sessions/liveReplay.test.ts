@@ -59,8 +59,8 @@ describe("a spine run's live numbers, as the sidecar sent them", () => {
       }),
     );
     expect(strip.metrics).toEqual([
-      { id: "replay:go:correct", value: 0.75, n: 4 },
-      { id: "overall", value: 0.5, n: 8 },
+      { id: "replay:go:correct", value: 0.75, n: 4, triggered: 4, counted: 4, hits: 0 },
+      { id: "overall", value: 0.5, n: 8, triggered: 8, counted: 8, hits: 0 },
     ]);
     expect(strip.labels).toEqual({ "replay:go:correct": "P(correct | Go)", overall: "Overall accuracy" });
   });

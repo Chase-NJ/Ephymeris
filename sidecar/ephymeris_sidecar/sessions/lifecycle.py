@@ -32,7 +32,7 @@ from ..rig import registry
 from ..rig.definition import WiringNotLoaded
 from ..tasks import profile as task_profile
 from ..tasks.start_command import build_start_command
-from .models import GroupRun, Session, SessionAnimalRun, SessionNotFound
+from .models import Round, Session, SessionAnimalRun, SessionNotFound
 from .runner import ActiveRun, BoxConfig
 
 if TYPE_CHECKING:
@@ -70,14 +70,14 @@ class BoxesNotMapped(SessionRefused):
     """A recording was set up for boxes the held mapping doesn't have
     (`SessionLifecycle.mapped_boxes`). Nothing reached RHX."""
 
-    def __init__(self, boxes: list[int], *, this_group: bool) -> None:
-        if not this_group:
-            message = "Confirm this group's mapping before setting up its recording."
+    def __init__(self, boxes: list[int], *, held: bool) -> None:
+        if not held:
+            message = "Confirm this round's mapping before setting up its recording."
         else:
             names = ", ".join(str(b) for b in boxes)
             message = (
                 f"{'Box' if len(boxes) == 1 else 'Boxes'} {names} "
-                f"{'is' if len(boxes) == 1 else 'are'} not in this group's confirmed "
+                f"{'is' if len(boxes) == 1 else 'are'} not in this round's confirmed "
                 "mapping, so RHX was not set up."
             )
         super().__init__(message)
@@ -147,7 +147,6 @@ def build_active_payload(
         if held is not None:
             running = {
                 "session": held.to_json(),
-                "groupId": runner.group_id or None,
                 "boxes": runner.snapshot(),
             }
     # Only a session that actually made it into the running slot is excluded
@@ -213,7 +212,7 @@ class SessionLifecycle:
     @property
     def held(self) -> str | None:
         """The session holding the rig: from its mapping's confirmation (or a
-        resume) until it ends or is abandoned. Between groups it is still held."""
+        resume) until it ends or is abandoned. Between rounds it is still held."""
         return self._held
 
     @property
@@ -238,37 +237,35 @@ class SessionLifecycle:
     # --- reads --------------------------------------------------------------
 
     async def status(self, session_id: str) -> dict[str, Any]:
-        """The session's record, with the rig's group and boxes only if it holds the rig.
+        """The session's record, with the rig's boxes only if it holds the rig.
 
         The runner carries one session's mapping; answering with it for any
         other id would show that session's animals, and their box numbers,
         under this one.
         """
         session = await asyncio.to_thread(self._sessions.get_session, session_id)
+        runs = await asyncio.to_thread(self._sessions.runs_for, session_id)
         held = self._held == session_id
         return {
             "session": session.to_json(),
-            "groupId": (self._runner.group_id or None) if held else None,
+            "ranAnimalIds": sorted({run.animal_id for run in runs}),
             "boxes": self._runner.snapshot() if held else [],
         }
 
-    def mapped_boxes(
-        self, session_id: str, group_id: str, boxes: Iterable[int]
-    ) -> dict[int, BoxConfig]:
+    def mapped_boxes(self, session_id: str, boxes: Iterable[int]) -> dict[int, BoxConfig]:
         """The held mapping's row for each of these boxes, as a recording's
         setup names them (`RECORDING.md#record-step`).
 
         Raises `BoxesNotMapped` naming every box the mapping lacks: all of them
-        unless the held session is this one and its mapping is this group's,
-        because the runner carries one group's mapping and its box 1 is not
-        another group's box 1.
+        unless the held session is this one, because the runner carries one
+        session's mapping and its box 1 is not another session's box 1.
         """
         wanted = list(dict.fromkeys(boxes))
-        this_group = self._held == session_id and self._runner.group_id == group_id
-        configs = {c.box: c for c in self._runner.box_configs()} if this_group else {}
+        held = self._held == session_id
+        configs = {c.box: c for c in self._runner.box_configs()} if held else {}
         missing = [box for box in wanted if box not in configs]
         if missing:
-            raise BoxesNotMapped(missing, this_group=this_group)
+            raise BoxesNotMapped(missing, held=held)
         return {box: configs[box] for box in wanted}
 
     async def active(self) -> dict[str, Any]:
@@ -288,9 +285,12 @@ class SessionLifecycle:
 
     # --- transitions --------------------------------------------------------
 
-    async def confirm_mapping(
-        self, session_id: str, group_id: str, entries: list[MappingEntry]
-    ) -> None:
+    async def confirm_mapping(self, session_id: str, entries: list[MappingEntry]) -> None:
+        """Load one round's box → animal → sketch mapping and hold the rig.
+
+        Any animal of the cohort may take any box; the only rule among the
+        entries is one animal and one box each.
+        """
         async with self._lock:
             session = await asyncio.to_thread(self._sessions.get_session, session_id)
             cohort = await asyncio.to_thread(self._cohorts.get, session.cohort_id)
@@ -306,6 +306,7 @@ class SessionLifecycle:
                 channel_set_hash = await asyncio.to_thread(
                     lambda: registry.channel_set().content_hash()
                 )
+                _refuse_repeats(entries, names)
                 box_configs: list[BoxConfig] = []
                 for entry in entries:
                     if entry.box is None or entry.animal_id not in names or not entry.sketch_path:
@@ -350,7 +351,6 @@ class SessionLifecycle:
                 self._runner.configure(
                     Path(session.folder_path),
                     f"{session.prefix_name}_{session.session_number}",
-                    group_id,
                     box_configs,
                     duration_s=(
                         session.duration_minutes * 60.0
@@ -425,15 +425,15 @@ class SessionLifecycle:
                     self._start_box(box)
             except BoxRefused:
                 # A box that has started is a run, as for `start_box`: if any
-                # box is running the group has run, and the record says so
-                # before the refusal goes out. Then End and Switch Group see a
-                # running session, and Resume a group that ran.
+                # box is running the round has run, and the record says so
+                # before the refusal goes out. Then End and the next round see
+                # a running session, and Resume a round that ran.
                 if self._runner.running_boxes():
-                    await asyncio.to_thread(self._open_group_run, session_id, self._runner.group_id)
+                    await asyncio.to_thread(self._open_round, session_id)
                     await asyncio.to_thread(self._sessions.set_status, session_id, "running")
                     await self.announce()
                 raise
-            await asyncio.to_thread(self._open_group_run, session_id, self._runner.group_id)
+            await asyncio.to_thread(self._open_round, session_id)
             session = await asyncio.to_thread(self._sessions.set_status, session_id, "running")
             await self.announce()
             return session
@@ -446,13 +446,12 @@ class SessionLifecycle:
             if session_id is not None:
                 await self._begin_recording_if_any(session_id)
             self._start_box(box)
-            if session_id is not None and self._runner.group_id:
-                # A group started one box at a time has run exactly as much as
+            if session_id is not None and self._runner.configured_boxes():
+                # A round started one box at a time has run exactly as much as
                 # one started with Start All. Without this it was never
-                # recorded: the group step could not say it had run, and the
-                # session sat in `configuring`, where Back on the next mapping
-                # discarded it.
-                await asyncio.to_thread(self._open_group_run, session_id, self._runner.group_id)
+                # recorded: the session could not be continued, and it sat in
+                # `configuring`, where Back on the next mapping discarded it.
+                await asyncio.to_thread(self._open_round, session_id)
                 session = await asyncio.to_thread(self._sessions.get_session, session_id)
                 if session.status != "running":
                     await asyncio.to_thread(self._sessions.set_status, session_id, "running")
@@ -472,21 +471,22 @@ class SessionLifecycle:
         if not self._runner.stop_box(box):
             raise StopRefused(box)
 
-    async def end_group(self, session_id: str) -> Session:
-        """End the group on the rig and wait BETWEEN GROUPS
-        (`ARCHITECTURE.md#group-step`).
+    async def end_round(self, session_id: str) -> Session:
+        """End the round on the rig and wait BETWEEN ROUNDS
+        (`ARCHITECTURE.md#between-rounds`).
 
-        The session stays `running` and held, with an empty runner: which group
-        runs next is the operator's choice, made on the group step, and a
-        session is only ever finished by an explicit `end`.
+        The session stays `running` and held, with an empty runner: which
+        animals run next, and in which boxes, is the operator's choice, made on
+        the boxes step, and a session is only ever finished by an explicit
+        `end`.
         """
         async with self._lock:
             await self._end_all_boxes(session_id)
-            session = await asyncio.to_thread(self._close_group_run, session_id)
+            session = await asyncio.to_thread(self._close_round, session_id)
             self._flashes.cancel(origins=("session",), clear=True)
             self._clear_runner()
             # The boxes are idle and the operator is about to walk the rig
-            # again for the next group, so the baseline comes back now rather
+            # again for the next round, so the baseline comes back now rather
             # than after the whole session — that walk is the one that needs
             # the lights.
             await self._release_baseline()
@@ -500,7 +500,7 @@ class SessionLifecycle:
             # not stop whichever OTHER session the runner is holding.
             if held or self._held is None:
                 await self._end_all_boxes(session_id)
-            await asyncio.to_thread(self._close_group_run, session_id)
+            await asyncio.to_thread(self._close_round, session_id)
             session = await asyncio.to_thread(self._sessions.set_status, session_id, "completed")
             if held:
                 self._flashes.cancel(origins=("session",), clear=True)
@@ -515,14 +515,14 @@ class SessionLifecycle:
         return session
 
     async def resume(self, session_id: str) -> Session:
-        """Continue one of today's sessions with another group.
+        """Continue one of today's sessions with another round.
 
         Deliberately NOT session resumption
-        (`DATA.md#continuing-between-groups`): nothing is picked up mid-group.
-        A group that was running when the app died is closed as it stands --
+        (`DATA.md#continuing-between-rounds`): nothing is picked up mid-round.
+        A round that was running when the app died is closed as it stands --
         its animals' `.tsv` files are the record, and `sessions.recover`
-        backfills them -- and the session re-enters the between-groups state
-        `end_group` leaves, as if the operator had pressed Switch Group.
+        backfills them -- and the session re-enters the between-rounds state
+        `end_round` leaves, as if the operator had chosen to run more animals.
 
         Same day only: the session folder carries its date in its name, and a
         run appended to it tomorrow would be filed under the wrong day.
@@ -531,11 +531,11 @@ class SessionLifecycle:
             session = await asyncio.to_thread(self._sessions.get_session, session_id)
             if session.status not in ("running", "completed"):
                 raise SessionRefused(
-                    f"session is {session.status}; only one that ran a group can be continued"
+                    f"session is {session.status}; only one that ran a round can be continued"
                 )
-            if not session.group_runs:
+            if not session.rounds:
                 raise SessionRefused(
-                    "this session never ran a group — start a new session instead"
+                    "this session never ran an animal — start a new session instead"
                 )
             if session.date != datetime.now().date().isoformat():
                 raise SessionRefused(
@@ -552,7 +552,7 @@ class SessionLifecycle:
                 if self._held == session_id and self._runner.configured_boxes():
                     # Already held with a mapping loaded: nothing to resume.
                     return session
-                await asyncio.to_thread(self._close_group_run, session_id)
+                await asyncio.to_thread(self._close_round, session_id)
                 session = await asyncio.to_thread(self._sessions.set_status, session_id, "running")
                 self._clear_runner()
                 self._held = session_id
@@ -562,7 +562,7 @@ class SessionLifecycle:
     async def abandon(self, session_id: str) -> Session:
         async with self._lock:
             session = await asyncio.to_thread(self._sessions.get_session, session_id)
-            # Once a group has run the record holds real history; only a
+            # Once a round has run the record holds real history; only a
             # session still in Step 2 limbo may be discarded.
             if session.status != "configuring":
                 raise SessionRefused(
@@ -766,9 +766,7 @@ class SessionLifecycle:
             return
         # Raises the refusal that names what is wrong: nothing set up, or RHX
         # out of reach (`RECORDING.md#when-rhx-goes-away`).
-        self._intan.refuse_unless_ready(
-            session_id, self._runner.group_id, self._confirmations
-        )
+        self._intan.refuse_unless_ready(session_id, self._confirmations)
         await self._intan.start_recording()
 
     async def _end_all_boxes(self, session_id: str) -> None:
@@ -825,43 +823,59 @@ class SessionLifecycle:
         await self._utility.publish()
 
     def _clear_runner(self) -> None:
-        """Drop the finished group's mapping so the runner holds no boxes.
+        """Drop the finished round's mapping so the runner holds no boxes.
 
-        Between groups the runner must not still describe the previous group:
+        Between rounds the runner must not still describe the previous round:
         a reload would otherwise offer Start All on animals already carried
         home. `clear` refuses while a run is active, which after `end_all`
         cannot be the case -- but a refusal is logged rather than raised,
-        because the group HAS ended and the session must not be stranded.
+        because the round HAS ended and the session must not be stranded.
         """
         try:
             self._runner.clear()
         except RuntimeError:
-            log.warning("runner still holds active runs after the group ended")
+            log.warning("runner still holds active runs after the round ended")
 
-    def _open_group_run(self, session_id: str, group_id: str) -> None:
-        """Record that a group started running.
+    def _open_round(self, session_id: str) -> None:
+        """Record that a round started running.
 
-        What the group step reads to badge a group "ran 10:42", and what
-        `resume` requires before a session can be continued. Deduped only
-        against an OPEN run of the same group: running a group a second time is
-        allowed and appends a second entry, while Start All after a per-box
-        start (both in one group run) does not.
+        What gives the session its clock, and what `resume` requires before a
+        session can be continued. A no-op while a round is open: Start All
+        after a per-box start is one round, not two.
         """
         session = self._sessions.get_session(session_id)
-        if any(
-            run.group_id == group_id and run.ended_at is None
-            for run in session.group_runs
-        ):
+        if any(r.ended_at is None for r in session.rounds):
             return
-        runs = [*session.group_runs, GroupRun(group_id=group_id, order=len(session.group_runs), started_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))]
-        self._sessions.set_group_runs(session_id, runs)
+        self._sessions.set_rounds(
+            session_id, [*session.rounds, Round(len(session.rounds), _now())]
+        )
 
-    def _close_group_run(self, session_id: str) -> Session:
-        """Close the open group run, if there is one."""
+    def _close_round(self, session_id: str) -> Session:
+        """Close the open round, if there is one."""
         session = self._sessions.get_session(session_id)
-        runs = list(session.group_runs)
-        for index, run in enumerate(runs):
-            if run.ended_at is None:
-                runs[index] = replace(run, ended_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
-                return self._sessions.set_group_runs(session_id, runs)
+        rounds = list(session.rounds)
+        for index, round_ in enumerate(rounds):
+            if round_.ended_at is None:
+                rounds[index] = replace(round_, ended_at=_now())
+                return self._sessions.set_rounds(session_id, rounds)
         return session
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _refuse_repeats(entries: list[MappingEntry], names: dict[str, str]) -> None:
+    """Refuse a mapping that puts one animal in two boxes or two animals in
+    one box: the second would start over the first's run."""
+    boxes: set[int] = set()
+    animals: set[str] = set()
+    for entry in entries:
+        if entry.box is not None and entry.box in boxes:
+            raise SessionRefused(f"Box {entry.box} is in this mapping twice.")
+        if entry.animal_id in animals:
+            name = names.get(entry.animal_id, entry.animal_id)
+            raise SessionRefused(f"{name} is in this mapping twice.")
+        if entry.box is not None:
+            boxes.add(entry.box)
+        animals.add(entry.animal_id)

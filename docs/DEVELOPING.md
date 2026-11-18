@@ -171,12 +171,12 @@ Frontend packages are bundled at build time; `@react-pdf/renderer` still loads o
 
 ### Known bugs
 
-- `sessions.status` reports `groupId: ""` with no group held; `sessions.active` reports `null`.
+None recorded.
 
 ### Open decisions
 
 - Analytics with large cohorts: the session rail grows long; the animal colours repeat past six.
-- `cohorts.list`, `prefixes.list` and `cohorts.suggestGroups` have no frontend caller.
+- `cohorts.list` and `prefixes.list` have no frontend caller.
 - Frontend coverage beyond the pure layer and two stores; no linter.
 - `settings.taskDefaults` has no editor, so stale entries cannot be cleared.
 - No back-pressure policy on `port.output`.
@@ -189,7 +189,7 @@ Frontend packages are bundled at build time; `@react-pdf/renderer` still loads o
 
 | Item | Decision |
 |---|---|
-| Resuming a group mid-run, auto-respawning the sidecar, recovering from a board drop | No: each would come back without the state it had; the `.tsv` is the record |
+| Resuming a round mid-run, auto-respawning the sidecar, recovering from a board drop | No: each would come back without the state it had; the `.tsv` is the record |
 | Light mode | Not in v1 |
 | Sketches from outside the bundled library, or a watcher on it | No; saved tasks extend it, and it changes only when the app does |
 | A `states`/`graph` key in `task.json` | No: it changes `profile_hash` and splits a sketch's runs |

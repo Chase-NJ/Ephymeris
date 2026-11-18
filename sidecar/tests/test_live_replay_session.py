@@ -78,7 +78,7 @@ def make_runner(tmp_path: Path, bench: Bench, recorded: dict,
     runner = SessionRunner(loop=asyncio.get_running_loop(), ports=bench.ports,
                            broadcast=broadcast, on_animal_ended=nothing, scorer=scorer)
     runner.configure(
-        tmp_path, "SPN-gng_1", "g1",
+        tmp_path, "SPN-gng_1",
         [BoxConfig(box=1, animal_id="a1", animal_name="remy1", sketch_path="/sk/spine",
                    sketch_name="Spine Go No-Go", start_command=build_start_command(profile, config),
                    config_metadata=config, profile=profile)],

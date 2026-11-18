@@ -8,7 +8,7 @@ What lands on disk and in the database, and how it is read back. Metric definiti
 ## Contents
 
 - [Directory layout and naming](#directory-layout-and-naming)
-- [Cohorts animals and groups](#cohorts-animals-and-groups)
+- [Cohorts and animals](#cohorts-and-animals)
 - [Sessions and runs](#sessions-and-runs)
 - [The session log](#the-session-log)
 - [Per-animal files](#per-animal-files)
@@ -54,19 +54,18 @@ Older folders use `MM_DD_YY`, which does not sort across years. Hyphenated ISO c
 
 Names are read as written: `parse_session_folder` finds the session number by being numeric, trailing or leading (`00_01_shaping_gr_06_17_26`), and separators are never normalized (`2O-Bdisc` and `2O_bdisc` are distinct prefixes).
 
-## Cohorts animals and groups
+## Cohorts and animals
 
 ### Data model
 
-`cohorts/models.py`; tables `cohorts`, `groups`, `animals` ([Tables](#tables)).
+`cohorts/models.py`; tables `cohorts`, `animals` ([Tables](#tables)).
 
 | Entity | Notes |
 |---|---|
 | **Cohort** | `name`; `dataFolder` (absolute, resolved once); `archivedAt` (null = active); `appearance` (null = derived from `id`) |
-| **Animal** | `groupId` (exactly one); `boxNumber` (1–6 or null, the standing box); `cage` (≥ 1 or null); `sex` (`M`/`F`/`unknown`/null); `idNumber` (free text) |
-| **Group** | `order` is **display order only**; the operator picks which group runs next |
+| **Animal** | `boxNumber` (1–6 or null, the **usual box**); `cage` (≥ 1 or null); `sex` (`M`/`F`/`unknown`/null); `idNumber` (free text) |
 
-Every cohort has at least one group (default `Group 1`). `cage` only changes what the 3D views draw.
+The usual box is only where session set-up starts: which animals run together, and in which boxes, is chosen per [round](../GLOSSARY.md#round) ([ARCHITECTURE.md](ARCHITECTURE.md#mapping-and-the-placement-walk)), and the box a run used is on its [run record](#run-records). `cage` only changes what the 3D views draw.
 
 ### Validation
 
@@ -77,7 +76,7 @@ Every cohort has at least one group (default `Group 1`). `cage` only changes wha
 | Cohort name | Unique among **active** cohorts (`idx_cohorts_active_name`) |
 | Animal name | Unique within the roster, case-insensitively; a [former member](#former-members)'s may be reused |
 | Animal id | Refused if another cohort holds it; use a [move](#moving-animals-between-cohorts) |
-| `boxNumber` | `1`–`6` only, unique within the **group** |
+| `boxNumber` | `1`–`6` only. Animals may share a usual box: a clash matters only among the animals of one round, where set-up gives the box to one of them |
 
 > [!IMPORTANT]
 > **The box rule is split on purpose.** The sidecar checks only the range, since two machines with different bindings share one data directory; the editor offers only boxes bound here (`src/lib/cohorts/boxAvailability.ts`). A stored box this machine can't honour is **kept and reported, never rewritten**, and not reported while the sidecar is disconnected.
@@ -88,18 +87,10 @@ History keeps `animal_id` with no foreign key ([Indexes](#indexes)), so a **form
 
 | Source | What it is |
 |---|---|
-| `removed` | Removed by `cohorts.update` while it had a run, adoption or note; kept in `former_animals` with its name, biography and group name. An animal with no history is just deleted |
+| `removed` | Removed by `cohorts.update` while it had a run, adoption or note; kept in `former_animals` with its name and biography. An animal with no history is just deleted |
 | `files` | An id the history names with no row; named at read time from its runs' stored paths, never written back |
 
-On the wire as `Cohort.formerAnimals` (single-cohort loads only); `Cohort.animals` stays the roster. Restoring is posting the id in `animals` again. Analytics lists former members after the roster (`AnalyticsAnimal.former`), so no colour shifts. `former_animals` is its own table because `animals` rows are deleted with their groups on every roster save.
-
-### Auto-Balance
-
-`cohorts.suggestGroups` returns a full regrouping as an editable preview, applied by `cohorts.update`. Implemented in `cohorts/grouping.py` and `src/lib/cohorts/grouping.ts`, **kept in sync by hand** against `sidecar/tests/test_grouping.py`.
-
-- Input: a group count or a max size; optional sex balance. Size pre-fills with the boxes **bound** here.
-- At most 6 per group (`MAX_GROUP_SIZE`), else rejected with `minimumGroups`.
-- Round-robin over `M`, `F`, then the rest, with **one cursor across buckets**; boxes numbered in landing order.
+On the wire as `Cohort.formerAnimals` (single-cohort loads only); `Cohort.animals` stays the roster. Restoring is posting the id in `animals` again. Analytics lists former members after the roster (`AnalyticsAnimal.former`), so no colour shifts. `former_animals` is its own table because `animals` rows are deleted and re-inserted on every roster save.
 
 ### Data folder
 
@@ -168,7 +159,7 @@ A **prefix** names a task and is global (`prefixes.*`, unique case-insensitively
 
 ### Session records
 
-One `sessions` row per session flow (`sessions/models.py`'s `Session`). `sessionNumber` is free text: never sort by it. `startedAt`/`endedAt` are when the record opened (Step 1) and closed, not when boxes ran ([The session clock](#the-session-clock)). `status` runs `configuring` → `running` → `completed`, or `aborted`. `groupRuns` lists `{groupId, order, startedAt, endedAt}` per group run; `durationMinutes` is an optional per-box limit; `recording` is null for behavior only ([RECORDING.md](RECORDING.md#what-is-written)). Listings are ordered by `(date, startedAt)` and carry an `ordinal`.
+One `sessions` row per session flow (`sessions/models.py`'s `Session`). `sessionNumber` is free text: never sort by it. `startedAt`/`endedAt` are when the record opened (Step 1) and closed, not when boxes ran ([The session clock](#the-session-clock)). `status` runs `configuring` → `running` → `completed`, or `aborted`. `rounds` lists `{order, startedAt, endedAt, label}` per [round](../GLOSSARY.md#round), `label` being the group's name on a round recorded while cohorts had groups and null since; `durationMinutes` is an optional per-box limit; `recording` is null for behavior only ([RECORDING.md](RECORDING.md#what-is-written)). Listings are ordered by `(date, startedAt)` and carry an `ordinal`.
 
 ### Run records
 
@@ -177,9 +168,9 @@ One `session_animal_runs` row per animal per session (`SessionAnimalRun`), the u
 > [!IMPORTANT]
 > **`profileHash` records the Task Profile the run used**, since `task.json` can change later; null marks a run from before snapshots ([TASKS.md](TASKS.md#profile-and-params-hashes)).
 
-### Continuing between groups
+### Continuing between rounds
 
-Resuming a group mid-run is out of scope. `sessions.resume` re-holds one of *today's* sessions that already ran a group, closes any group run left open, and waits between groups ([ARCHITECTURE.md](ARCHITECTURE.md#session-lifecycle)).
+Resuming a round mid-run is out of scope. `sessions.resume` re-holds one of *today's* sessions that already ran a round, closes any round left open, and waits between rounds ([ARCHITECTURE.md](ARCHITECTURE.md#between-rounds)).
 
 ## The session log
 
@@ -190,7 +181,7 @@ The **Log** tab: notes and free fields per session, the session clock and what c
 
 ### The session clock
 
-Derived, never stored (`Session.clock_started_at`, `clock_ended_at`): `clockStartedAt` is the earliest group run's start (else the record's), `clockEndedAt` the latest group run's end once all are closed (null while open). Elapsed time everywhere uses it. A recovered session (`adopted:…`) runs from its earliest file to its latest stream end (from the [metrics cache](#caching)), shown with `~`. A note's T+ offset (`offsetMs`) is derived on read, and absent outside the clock's span.
+Derived, never stored (`Session.clock_started_at`, `clock_ended_at`): `clockStartedAt` is the earliest round's start (else the record's), `clockEndedAt` the latest round's end once all are closed (null while open). Elapsed time everywhere uses it. A recovered session (`adopted:…`) runs from its earliest file to its latest stream end (from the [metrics cache](#caching)), shown with `~`. A note's T+ offset (`offsetMs`) is derived on read, and absent outside the clock's span.
 
 > [!CAUTION]
 > **The session clock is not a run's clock**: a stream's `t = 0` trails its run's `started_at`, so notes on a [trial tape](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#per-trial-tape) are approximate.
@@ -315,7 +306,7 @@ flowchart TD
 
 ### What is guaranteed
 
-After a power loss, every strobe through the last complete line is in the `.tsv`; a dropped board finalizes as `board disconnected`. Resuming a group mid-run is not offered ([Continuing between groups](#continuing-between-groups)).
+After a power loss, every strobe through the last complete line is in the `.tsv`; a dropped board finalizes as `board disconnected`. Resuming a round mid-run is not offered ([Continuing between rounds](#continuing-between-rounds)).
 
 ## Crash recovery
 
@@ -341,10 +332,8 @@ Solid lines are foreign keys; dotted ones deliberately have none ([Indexes](#ind
 
 ```mermaid
 erDiagram
-    cohorts ||--o{ groups : "cascade"
     cohorts ||--o{ animals : "cascade"
     cohorts ||--o{ former_animals : "cascade"
-    groups ||--o{ animals : "cascade"
     cohorts ||--o{ sessions : "cascade"
     sessions ||--o{ session_animal_runs : "cascade"
     cohorts ||--o{ adopted_runs : "cascade"
@@ -368,16 +357,9 @@ erDiagram
         TEXT archived_at
         TEXT appearance_json
     }
-    groups {
-        TEXT id PK
-        TEXT cohort_id FK
-        TEXT name
-        INTEGER order
-    }
     animals {
         TEXT id PK
         TEXT cohort_id FK
-        TEXT group_id FK
         TEXT name
         INTEGER box_number
         INTEGER cage
@@ -393,7 +375,6 @@ erDiagram
         TEXT sex
         TEXT id_number
         TEXT notes
-        TEXT group_name
         TEXT removed_at
     }
     animal_moves {
@@ -431,7 +412,7 @@ erDiagram
         TEXT ended_at
         TEXT status
         TEXT folder_path
-        TEXT group_runs
+        TEXT rounds
         INTEGER duration_minutes
         TEXT recording_json
     }
@@ -577,13 +558,16 @@ A finalization records its profile and run in one unit; an indexing pass writes 
 ### Changing the schema
 
 > [!CAUTION]
-> **A new table** needs only `CREATE TABLE IF NOT EXISTS` in `SCHEMA`. **A new column** needs all three: bump `SCHEMA_VERSION`, update `SCHEMA`, **and** add a `MIGRATIONS` entry keyed by the version it upgrades to; otherwise existing databases claim the version without the column.
+> **A new table** needs only `CREATE TABLE IF NOT EXISTS` in `SCHEMA`. **A new column** needs all three: bump `SCHEMA_VERSION`, update `SCHEMA`, **and** add a `MIGRATIONS` entry keyed by the version it upgrades to; otherwise existing databases claim the version without the column. **Removing** a table or column needs the same three, and a migration that carries what was recorded there first.
 
 1. Make new columns nullable or constant-default; `add_column` is idempotent.
 2. Migrations may re-key or repair a cache, never reinterpret data.
 3. Add the version you are leaving to `tests/fixtures/schemas/` as `vN.sql`, copied from git; `tests/test_migrations.py` upgrades each and compares it with a fresh database.
 
-A database newer than the build still opens, with a loud error.
+A database newer than the build still opens, with a loud error, and works as long as every change since was additive. v17 was not (it removed groups), so a build older than it fails on a v17 file's first roster query.
+
+> [!CAUTION]
+> **Dropping a table deletes the rows that cascade from it.** A column with a foreign key cannot be dropped in place, so its table is rebuilt without it first, and the referenced table dropped last (`_to_v17`).
 
 ## Backup mirroring
 

@@ -13,7 +13,6 @@ import type {
   Animal,
   Cohort,
   CohortPatch,
-  Group,
 } from "./types";
 
 export async function getCohort(client: SidecarPort, id: string): Promise<Cohort> {
@@ -25,24 +24,22 @@ export async function getCohort(client: SidecarPort, id: string): Promise<Cohort
  * Create a cohort, roster and all.
  *
  * The roster travels with the create rather than following it in a patch: the
- * editor builds animals and groups client-side with their own ids before the
+ * editor builds animals client-side with their own ids before the
  * cohort exists, and sending them separately meant a second call that could
  * fail on its own and leave a named, empty cohort behind.
  */
 export async function createCohort(
   client: SidecarPort,
   name: string,
-  options: { dataFolder?: string; animals?: Animal[]; groups?: Group[] } = {},
+  options: { dataFolder?: string; animals?: Animal[] } = {},
 ): Promise<Cohort> {
   const args: {
     name: string;
     dataFolder?: string;
     animals?: Animal[];
-    groups?: Group[];
   } = { name };
   if (options.dataFolder) args.dataFolder = options.dataFolder;
   if (options.animals && options.animals.length > 0) args.animals = options.animals;
-  if (options.groups && options.groups.length > 0) args.groups = options.groups;
   const result = await client.call(CMD.COHORTS_CREATE, args);
   return result.cohort;
 }
@@ -99,7 +96,6 @@ export async function moveAnimals(
     cohortId: string;
     animalIds: string[];
     destinationCohortId: string;
-    destinationGroupId?: string;
     apply: boolean;
   },
 ): Promise<AnimalMovePlan> {

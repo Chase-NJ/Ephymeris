@@ -177,7 +177,7 @@ async def test_a_cut_tether_reaches_the_status_rhx_s_notes_and_the_session_log(r
         told.append(args)
 
     h.service.on_tether = tell
-    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.configure("s1", config(tmp_path), "x")
     await h.service.start_recording()
     h.service.box_started(1, "R7")
     await asyncio.sleep(0)

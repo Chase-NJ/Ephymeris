@@ -23,6 +23,7 @@ would otherwise fail on exactly the databases the migration exists for.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sqlite3
@@ -61,7 +62,7 @@ DB_FILENAME = "ephymeris.db"
 #: is derived from a hash of the cohort's `id` when absent.
 #: v10 added sessions.recording_json (`RECORDING.md#what-is-written`) --
 #: whether a session is
-#: also an electrophysiology recording, and what each group run's recording was.
+#: also an electrophysiology recording, and what each round's recording was.
 #: NULL on every behavior-only session, which is every session before this.
 #: v11 added session_notes / session_logs (`DATA.md#the-session-log`) — new
 #: tables only, so no migration; the bump marks a file a v10 build should know
@@ -82,7 +83,11 @@ DB_FILENAME = "ephymeris.db"
 #: (`DATA.md#run-records`) -- which interpreter ran a run, which channel set its
 #: sketch was generated against, and whether its replay diverged
 #: (`ANALYTICS.md#how-a-spine-run-is-scored`).
-SCHEMA_VERSION = 16
+#: v17 removed groups (`DATA.md#cohorts-and-animals`): the `groups` table,
+#: animals.group_id and former_animals.group_name are gone, and
+#: sessions.group_runs became sessions.rounds. The first change that is not
+#: additive, so a build older than this cannot open a v17 file.
+SCHEMA_VERSION = 17
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS cohorts (
@@ -95,18 +100,12 @@ CREATE TABLE IF NOT EXISTS cohorts (
     appearance_json TEXT
 );
 
-CREATE TABLE IF NOT EXISTS groups (
-    id         TEXT PRIMARY KEY,
-    cohort_id  TEXT NOT NULL REFERENCES cohorts(id) ON DELETE CASCADE,
-    name       TEXT NOT NULL,
-    "order"    INTEGER NOT NULL DEFAULT 0
-);
-
 CREATE TABLE IF NOT EXISTS animals (
     id          TEXT PRIMARY KEY,
     cohort_id   TEXT NOT NULL REFERENCES cohorts(id) ON DELETE CASCADE,
-    group_id    TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
     name        TEXT NOT NULL,
+    -- The usual box: what session set-up offers first, nothing more. Any
+    -- number of animals may share one (DATA.md#data-model).
     box_number  INTEGER,
     cage        INTEGER,
     sex         TEXT,
@@ -116,9 +115,8 @@ CREATE TABLE IF NOT EXISTS animals (
 
 -- Animals taken off a roster that still have history in the cohort
 -- (DATA.md#former-members). A table of their own rather than a removed_at
--- column on `animals`: that table's group_id cascades from `groups`, which
--- every roster edit deletes and re-inserts, so a former member kept there
--- would be deleted along with its old group. The group is kept by name.
+-- column on `animals`: every roster edit deletes and re-inserts that table's
+-- rows, so a former member kept there would be deleted by the next save.
 CREATE TABLE IF NOT EXISTS former_animals (
     id          TEXT PRIMARY KEY,
     cohort_id   TEXT NOT NULL REFERENCES cohorts(id) ON DELETE CASCADE,
@@ -127,7 +125,6 @@ CREATE TABLE IF NOT EXISTS former_animals (
     sex         TEXT,
     id_number   TEXT,
     notes       TEXT,
-    group_name  TEXT,
     removed_at  TEXT NOT NULL
 );
 
@@ -191,13 +188,13 @@ CREATE TABLE IF NOT EXISTS sessions (
     ended_at       TEXT,
     status         TEXT NOT NULL,
     folder_path    TEXT NOT NULL,
-    group_runs     TEXT NOT NULL DEFAULT '[]',  -- JSON array, small and read whole
+    rounds         TEXT NOT NULL DEFAULT '[]',  -- JSON array, small and read whole
     -- Optional per-box time limit (ARCHITECTURE.md#configuration). NULL = no
     -- limit; the runner STOPs each box this many minutes after ITS OWN start.
     duration_minutes INTEGER,
     -- Set when the session is also an Intan recording
     -- (RECORDING.md#what-is-written): a JSON
-    -- object holding one entry per group run -- where RHX saved it, under what
+    -- object holding one entry per round -- where RHX saved it, under what
     -- name, at what sample rate, and which digital input and headstage port
     -- each box was on. NULL = behavior only.
     recording_json TEXT
@@ -431,7 +428,6 @@ CREATE TABLE IF NOT EXISTS run_spike_counts (
 #: migration exists for — `CREATE INDEX` does not honour a column that isn't
 #: there yet, and `executescript(SCHEMA)` runs before `_migrate`.
 INDEXES = """
-CREATE INDEX IF NOT EXISTS idx_groups_cohort  ON groups(cohort_id);
 CREATE INDEX IF NOT EXISTS idx_animals_cohort ON animals(cohort_id);
 CREATE INDEX IF NOT EXISTS idx_former_cohort  ON former_animals(cohort_id);
 -- Name uniqueness applies to active cohorts only (DATA.md#validation):
@@ -465,8 +461,8 @@ CREATE INDEX IF NOT EXISTS idx_notes_open_flags ON session_notes(cohort_id)
 
 #: Every column that stores where a file or folder lies inside a data folder,
 #: so a relocate must rebase it (`relocate.rewrite_paths`,
-#: `DATA.md#data-folder`). `recording_json` carries one per recorded group
-#: run, as `runs[].path`. A new column that names a path goes here or in
+#: `DATA.md#data-folder`). `recording_json` carries one per recorded
+#: round, as `runs[].path`. A new column that names a path goes here or in
 #: `OTHER_PATHS`; `test_relocate.py` fails until it does.
 DATA_PATHS: tuple[tuple[str, str], ...] = (
     ("sessions", "folder_path"),
@@ -707,6 +703,96 @@ def _to_v16(conn: sqlite3.Connection) -> None:
     add_column(conn, "session_animal_runs", "diverged", "INTEGER")
 
 
+def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def _group_runs_to_rounds(conn: sqlite3.Connection, names: dict[str, str]) -> None:
+    """Rewrite every session's group runs as rounds labelled with the group's
+    name, and rename the column (`_to_v17`)."""
+    for row in conn.execute("SELECT id, group_runs, recording_json FROM sessions").fetchall():
+        rounds = [
+            {
+                "order": run.get("order", index),
+                "startedAt": run.get("startedAt", ""),
+                "endedAt": run.get("endedAt"),
+                "label": names.get(run.get("groupId")),
+            }
+            for index, run in enumerate(json.loads(row["group_runs"] or "[]"))
+        ]
+        recording = json.loads(row["recording_json"]) if row["recording_json"] else None
+        if isinstance(recording, dict):
+            for run in recording.get("runs", []):
+                if isinstance(run, dict) and "groupId" in run:
+                    run["label"] = names.get(run.pop("groupId"))
+        conn.execute(
+            "UPDATE sessions SET group_runs = ?, recording_json = ? WHERE id = ?",
+            (
+                json.dumps(rounds),
+                json.dumps(recording) if recording is not None else None,
+                row["id"],
+            ),
+        )
+    conn.execute("ALTER TABLE sessions RENAME COLUMN group_runs TO rounds")
+
+
+def _to_v17(conn: sqlite3.Connection) -> None:
+    """v16 → v17: groups removed, group runs become rounds
+    (`DATA.md#cohorts-and-animals`, `DATA.md#session-records`).
+
+    Nothing recorded is lost: each group run becomes a round that keeps its
+    group's name as `label`, and each recording entry trades its `groupId` for
+    the same label. An animal keeps its box as its usual box.
+
+    ORDER MATTERS. `animals.group_id` cascades from `groups`, so `groups` is
+    dropped only after `animals` has been rebuilt without the column; dropping
+    it first would delete every animal. The column cannot simply be dropped,
+    because SQLite refuses to drop one that carries a foreign key.
+    """
+    # A file an older build never gave a roster to has neither: `SCHEMA` has
+    # just created its tables whole, already in this shape.
+    has_groups = "id" in _columns(conn, "groups")
+    names = (
+        {row["id"]: row["name"] for row in conn.execute("SELECT id, name FROM groups")}
+        if has_groups
+        else {}
+    )
+    if "group_runs" in _columns(conn, "sessions"):
+        _group_runs_to_rounds(conn, names)
+    if "group_id" in _columns(conn, "animals"):
+        _rebuild_animals_without_group(conn)
+    conn.execute("DROP TABLE IF EXISTS groups")
+    if "group_name" in _columns(conn, "former_animals"):
+        conn.execute("ALTER TABLE former_animals DROP COLUMN group_name")
+
+
+def _rebuild_animals_without_group(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE animals_v17 (
+            id          TEXT PRIMARY KEY,
+            cohort_id   TEXT NOT NULL REFERENCES cohorts(id) ON DELETE CASCADE,
+            name        TEXT NOT NULL,
+            box_number  INTEGER,
+            cage        INTEGER,
+            sex         TEXT,
+            id_number   TEXT,
+            notes       TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO animals_v17
+            (id, cohort_id, name, box_number, cage, sex, id_number, notes)
+        SELECT id, cohort_id, name, box_number, cage, sex, id_number, notes
+        FROM animals
+        """
+    )
+    conn.execute("DROP TABLE animals")
+    conn.execute("ALTER TABLE animals_v17 RENAME TO animals")
+
+
 #: Migrations, keyed by the version they upgrade **to**, applied in ascending
 #: order.
 #:
@@ -728,6 +814,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     12: _to_v12,
     13: _to_v13,
     16: _to_v16,
+    17: _to_v17,
 }
 
 
@@ -764,10 +851,12 @@ def _statements(script: str) -> Iterator[str]:
 def _migrate(conn: sqlite3.Connection, found: int) -> None:
     """Bring an existing database up to `SCHEMA_VERSION`. Never commits."""
     if found > SCHEMA_VERSION:
-        # Someone opened a newer database with an older build. Every change so
-        # far is additive, so the extra tables and columns are inert here and
-        # continuing is safer than refusing to start — but say so loudly,
-        # because the reverse assumption would corrupt data silently.
+        # Someone opened a newer database with an older build. A change that
+        # only added tables or columns is inert here, so continuing is safer
+        # than refusing to start — but say so loudly, because the reverse
+        # assumption would corrupt data silently. (v17 was the first change
+        # that is not additive; a build older than it fails on its first
+        # roster query instead, which is loud enough.)
         log.error(
             "database is schema v%d but this build expects v%d; continuing, but "
             "it was written by a newer version of Ephymeris",

@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowLeft,
+  ChartLine,
   CircleAlert,
   NotebookPen,
   Play,
@@ -17,14 +18,13 @@ import { QuickNote } from "@/components/logbook/QuickNote";
 import { WrapUpLog } from "@/components/logbook/WrapUpLog";
 import { BACKUP_TONE_COLOR, backupPill } from "@/lib/backup/report";
 import { useBackupStatus } from "@/lib/backup/useBackupStatus";
-import { RatPlacementBanner } from "@/components/sessions/RatPlacementBanner";
-import { ReturnChecklist } from "@/components/sessions/ReturnChecklist";
 import { SessionWrapUp } from "@/components/sessions/SessionWrapUp";
 import { ElapsedClock, StateChip, clockSpan } from "@/components/sessions/BoxStatus";
 import { Constellation3D } from "@/components/sessions/Constellation3D";
 import { LiveProbeMap } from "@/components/recording/LiveProbeMap";
 import { TetherAlarm } from "@/components/recording/TetherAlarm";
 import { RecordingRail } from "@/components/recording/RecordingRail";
+import { BoxInsightTab, INSIGHT_TAB_WIDTH } from "@/components/sessions/BoxInsightTab";
 import { SessionJourney } from "@/components/sessions/SessionJourney";
 import { MetricStrip } from "@/components/sessions/MetricStrip";
 import { StarPanel } from "@/components/sessions/StarPanel";
@@ -38,7 +38,7 @@ import {
   endSession,
   startAll,
   startBox,
-  endGroup,
+  endRound,
   stopBox,
 } from "@/lib/sessions/commands";
 import {
@@ -86,6 +86,19 @@ const ACCURACY_WINDOW = 20;
 /** The right rail's resting width — six tiles' worth. Mirrored in the left
  *  rail's literal `w-[392px]` and the centre stage's `left-[392px]`. */
 const RAIL_WIDTH = 392;
+/** The rail with each tile's progress tab beside it, and the gap between them. */
+const RAIL_WIDTH_WITH_TABS = RAIL_WIDTH + INSIGHT_TAB_WIDTH + 8;
+/** Where the operator's choice to hide the progress tabs is kept, per machine. */
+const TABS_PREFERENCE = "ephymeris:mission-control-tabs";
+
+/** Shown unless this machine's operator hid them. Storage can be unavailable. */
+function readTabsPreference(): boolean {
+  try {
+    return window.localStorage.getItem(TABS_PREFERENCE) !== "hidden";
+  } catch {
+    return true;
+  }
+}
 /**
  * The rail's width while a star's panel is open. Wide enough that the panel
  * shows the graph, charts, metrics and strobe feed without scrolling at the
@@ -115,23 +128,19 @@ export function MissionControl() {
 
   const connected = status === "connected";
 
-  const { session, cohortId, cohort, rigGroupId, boxes, flow, error: loadError, refresh } =
+  const { session, cohortId, cohort, boxes, flow, error: loadError, refresh } =
     useSessionFlow(sessionId);
   const error = actionError ?? loadError;
   const {
     hasRun,
-    // Switch Group (`ARCHITECTURE.md#group-step`) is only meaningful with more than one populated group.
-    multiGroup,
     // Also an Intan recording (`RECORDING.md`). Everything it adds to this screen
     // is an ADDITION — the rail block and each box's live firing map — and renders
     // nothing for a behavior-only session.
     isRecording,
-    group: groupInfo,
-    lastGroup,
     neverConfirmed,
     name: sessionName,
   } = flow;
-  const groupDone = flow.progress.done;
+  const roundDone = flow.progress.done;
 
   // The session log (`DATA.md#the-session-log`): the quick note, this cohort's
   // open carry-forward flags, and the wrap-up's operator and summary.
@@ -158,8 +167,8 @@ export function MissionControl() {
   );
 
   // Every animal in the cohort gets a star; only those whose box is
-  // actually IN_SESSION are lit and interactive. An animal in a group that
-  // isn't running, or with no box at all, is present but inert.
+  // actually IN_SESSION are lit and interactive. An animal that is not in
+  // this round is present but inert.
   const portStates = useAllPortStatuses();
   // A lit star's colour is its temperature, and its temperature is this
   // animal's pooled rolling accuracy (`ARCHITECTURE.md#live-session-views`) — so the overview answers "who is
@@ -197,6 +206,21 @@ export function MissionControl() {
     });
   }, [cohort, boxes, portStates, accuracies, lastRuns]);
 
+  // The progress tabs beside the tiles: on by default, and the operator's to
+  // hide when they would rather see more sky.
+  const [showTabs, setShowTabs] = useState(readTabsPreference);
+  const toggleTabs = useCallback(() => {
+    setShowTabs((shown) => {
+      try {
+        window.localStorage.setItem(TABS_PREFERENCE, shown ? "hidden" : "shown");
+      } catch {
+        // A preference that cannot be kept is still honoured for this visit.
+      }
+      return !shown;
+    });
+  }, []);
+  const railWidth = showTabs ? RAIL_WIDTH_WITH_TABS : RAIL_WIDTH;
+
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const focusedBox = boxes.find((b) => b.animalId === focusedId) ?? null;
 
@@ -217,21 +241,22 @@ export function MissionControl() {
 
   // --- guided-flow state ---------------------------------------------------
 
-  const journeyStep = groupDone && lastGroup ? ("finish" as const) : ("run" as const);
+  const journeyStep = flow.roundOver ? ("finish" as const) : ("run" as const);
 
   /*
-   * The way back out (`USER-GUIDE.md#switching-groups`): which boxes have had their animal carried
-   * home, ticked by the operator. Kept per group — a new group's animals are
-   * new animals — and "All animals are out" is the one-press answer for the
-   * operator who emptied the rig before looking at the screen.
+   * The way back out (`USER-GUIDE.md#when-a-round-finishes`): which boxes have
+   * had their animal carried home, ticked by the operator. Kept per round — a
+   * new round's animals are new animals — and "All animals are out" is the
+   * one-press answer for the operator who emptied the rig before looking at
+   * the screen.
    */
   const [returned, setReturned] = useState<Set<number>>(() => new Set());
   const [wrapDismissed, setWrapDismissed] = useState(false);
-  const groupKey = rigGroupId;
+  const roundKey = boxes.map((b) => `${b.box}:${b.animalId}`).join(",");
   useEffect(() => {
     setReturned(new Set());
     setWrapDismissed(false);
-  }, [groupKey]);
+  }, [roundKey]);
   const toggleReturned = useCallback((box: number) => {
     setReturned((prev) => {
       const next = new Set(prev);
@@ -244,15 +269,14 @@ export function MissionControl() {
     () => setReturned(new Set(boxes.map((b) => b.box))),
     [boxes],
   );
-  const everyoneOut = boxes.length > 0 && boxes.every((b) => returned.has(b.box));
 
-  // The wrap-up is dismissable — "Not yet" puts the rails back — but comes
-  // back for the next group, and for the same group only if a box restarts and
-  // finishes again (`groupDone` flips false and true).
+  // The prompt is dismissable — "Not yet" puts the rails back — but comes
+  // back for the next round, and for the same round only if a box restarts and
+  // finishes again (`roundDone` flips false and true).
   useEffect(() => {
-    if (!groupDone) setWrapDismissed(false);
-  }, [groupDone]);
-  const wrapOpen = connected && flow.wrapUpDue && !wrapDismissed;
+    if (!roundDone) setWrapDismissed(false);
+  }, [roundDone]);
+  const wrapOpen = connected && flow.roundOver && !wrapDismissed;
 
   // N takes a note from anywhere on the screen — hands are often full, and the
   // moment is the point. Not while typing, and not over the wrap-up, which has
@@ -274,13 +298,13 @@ export function MissionControl() {
 
   // Whole-session elapsed, for the wrap-up's fact line only — the header has
   // its own ticking clock. Both count from the session clock
-  // (`DATA.md#the-session-clock`): the first group's start, never the record's.
+  // (`DATA.md#the-session-clock`): the first round's start, never the record's.
   const sessionSeconds = session?.clockStartedAt
     ? Math.max(0, Math.floor((Date.now() - new Date(session.clockStartedAt).getTime()) / 1000))
     : 0;
   const wrapFacts = [
     `${boxes.length} animal${boxes.length === 1 ? "" : "s"}`,
-    groupInfo ? `${groupInfo.ran}/${groupInfo.count} groups` : "1 group",
+    `round ${flow.round}`,
     `${clockSpan(sessionSeconds)} elapsed`,
   ].join(" · ");
   const hint = missionControlHint(flow, connected);
@@ -305,13 +329,12 @@ export function MissionControl() {
   // them when the port enters IN_SESSION, so a rejected start keeps them.
   const startOne = (box: number) => startBox(client, box);
 
-  // Back to a choice of group for a never-confirmed session: Step 2 needs a
-  // group, and the record doesn't carry one.
+  // Back to the Boxes step for a never-confirmed session.
   function resumeSetup() {
-    navigate(stepUrl.group(sessionId!));
+    navigate(stepUrl.boxes(sessionId!));
   }
 
-  // Shared by the left rail's End Session and the wrap-up's (`USER-GUIDE.md#ending-the-session`).
+  // Shared by the left rail's End Session and the round-over prompt's (`USER-GUIDE.md#ending-the-session`).
   function doEndSession() {
     void run(async () => {
       // A session that never ran is discarded, not "ended": marking it
@@ -335,24 +358,25 @@ export function MissionControl() {
     });
   }
 
-  // Shared by the rail's button, the group-swap prompt (`USER-GUIDE.md#switching-groups`) and the wrap-up:
-  // end this group on the rig, then choose — any group, or end the session.
-  function doSwitchGroup() {
+  // Shared by the rail's button and the round-over prompt
+  // (`USER-GUIDE.md#when-a-round-finishes`): end this round on the rig, then
+  // choose who runs next, and where, on the Boxes step.
+  function doRunMore() {
     void run(async () => {
-      await endGroup(client, sessionId!);
-      navigate(stepUrl.group(sessionId!));
+      await endRound(client, sessionId!);
+      navigate(stepUrl.boxes(sessionId!));
     });
   }
 
   /*
-   * Reloaded (or arrived from the dock) BETWEEN groups: the session is held but
-   * the rig carries no group, so there is nothing here to run. The group step
-   * is the next thing, not an empty cockpit.
+   * Reloaded (or arrived from the dock) BETWEEN rounds: the session is held but
+   * the rig carries no mapping, so there is nothing here to run. The Boxes
+   * step is the next thing, not an empty cockpit.
    */
-  const betweenGroups = flow.rigStep === "group";
+  const betweenRounds = flow.rigStep === "boxes";
   useEffect(() => {
-    if (betweenGroups) navigate(stepUrl.group(sessionId!), { replace: true });
-  }, [betweenGroups, navigate, sessionId]);
+    if (betweenRounds) navigate(stepUrl.boxes(sessionId!), { replace: true });
+  }, [betweenRounds, navigate, sessionId]);
 
   return (
     // No `overflow-hidden`: it would clip the shared canvas back out of the
@@ -442,17 +466,17 @@ export function MissionControl() {
               name={sessionName ?? "—"}
               date={session?.date ?? ""}
               // The session clock (`DATA.md#the-session-clock`): the first
-              // group's start, the same moment the log's T+ offsets count
+              // round's start, the same moment the log's T+ offsets count
               // from. Gated on the session having run — until then, "started
               // 11:49" with a ticking counter describes a run that never began.
               startedAt={hasRun ? (session?.clockStartedAt ?? null) : null}
-              groupName={groupInfo?.name ?? null}
+              round={flow.round}
             />
 
             <SessionJourney
               step={journeyStep}
               hint={hint}
-              group={groupInfo}
+              round={flow.round}
               compact
               recording={isRecording}
             />
@@ -471,10 +495,10 @@ export function MissionControl() {
                 where set-up ends, so nothing else leads back to the step that
                 flashes. Not while a box runs: re-confirming there would reset
                 the mapping under it. */}
-            {needFlash && actionError && rigGroupId && flow.progress.running === 0 && (
+            {needFlash && actionError && boxes.length > 0 && flow.progress.running === 0 && (
               <Button
                 disabled={busy || !connected}
-                onClick={() => navigate(stepUrl.boxes(sessionId!, rigGroupId))}
+                onClick={() => navigate(stepUrl.boxes(sessionId!))}
               >
                 Back to Boxes
               </Button>
@@ -498,17 +522,16 @@ export function MissionControl() {
                   Start All
                 </Button>
               )}
-              {/* Only once a group is under way: "switch" implies one already
-                  ran, and before that Resume setup (or Start All) is the real
-                  path. */}
-              {multiGroup && hasRun && (
+              {/* Only once a round is under way: before that there is nothing
+                  to end, and Resume setup (or Start All) is the real path. */}
+              {hasRun && boxes.length > 0 && (
                 <Button
                   disabled={busy || !connected}
-                  title="Ends this group's runs, then lets you pick which group runs next"
-                  onClick={doSwitchGroup}
+                  title="Ends this round's runs, then lets you choose which animals run next, and in which boxes"
+                  onClick={doRunMore}
                 >
                   <Users size={13} strokeWidth={1.75} />
-                  Switch Group
+                  Run more animals
                 </Button>
               )}
               <Button
@@ -527,6 +550,19 @@ export function MissionControl() {
               >
                 <NotebookPen size={13} strokeWidth={1.75} />
                 Note
+              </Button>
+              <Button
+                variant="outline"
+                disabled={boxes.length === 0}
+                title={
+                  showTabs
+                    ? "Hide the progress tabs beside the boxes"
+                    : "Show each box's trials offered, completed and correct beside it"
+                }
+                onClick={toggleTabs}
+              >
+                <ChartLine size={13} strokeWidth={1.75} />
+                {showTabs ? "Hide graphs" : "Graphs"}
               </Button>
             </div>
 
@@ -559,7 +595,7 @@ export function MissionControl() {
             short to show the whole panel. */}
         <motion.div
           initial={false}
-          animate={{ width: focusedBox ? RAIL_WIDTH_FOCUSED : RAIL_WIDTH }}
+          animate={{ width: focusedBox ? RAIL_WIDTH_FOCUSED : railWidth }}
           transition={springPanel}
           // The max-width caps the animated width on windows too narrow for
           // the focused rail — the panel gives up width (and falls back to
@@ -625,8 +661,19 @@ export function MissionControl() {
                 className="pointer-events-auto flex flex-col gap-3 pt-3"
               >
                 {boxes.map((box) => (
+                  // A tile and, beside it, its run in counts
+                  // (`BoxInsightTab`): `items-start`, so a tile growing its
+                  // firing map never stretches the tab.
+                  <div key={box.box} className="flex items-start gap-2">
+                    {showTabs && (
+                      <BoxInsightTab
+                        box={box.box}
+                        startedAt={box.startedAt}
+                        live={portStates[box.box]?.state === "IN_SESSION"}
+                      />
+                    )}
+                    <div className="min-w-0 flex-1">
                   <BoxCard
-                    key={box.box}
                     box={box}
                     busy={busy || !connected}
                     metricLabels={labelsFor[box.sketchPath] ?? {}}
@@ -639,6 +686,8 @@ export function MissionControl() {
                     onStop={() => void run(() => stopBox(client, box.box))}
                     onReset={() => void run(() => client.call(CMD.PORT_RESET, { box: box.box }))}
                   />
+                    </div>
+                  </div>
                 ))}
               </motion.div>
             ) : null}
@@ -648,67 +697,16 @@ export function MissionControl() {
         {/* Centre stage, between the rails: the moments that are about the
             whole rig rather than one box, and that the operator has to act on
             before anything else means much. Its right edge follows the rail's
-            animated width so the group-swap prompt never underlaps an open
+            animated width so the centre card never underlaps an open
             panel. */}
         <motion.div
           initial={false}
-          animate={{ right: focusedBox ? RAIL_WIDTH_FOCUSED : RAIL_WIDTH }}
+          animate={{ right: focusedBox ? RAIL_WIDTH_FOCUSED : railWidth }}
           transition={springPanel}
           className="pointer-events-none absolute inset-y-0 left-[392px] flex items-center justify-center p-6"
         >
           <AnimatePresence mode="popLayout">
-            {groupDone && !lastGroup ? (
-              /* The group-swap prompt (`USER-GUIDE.md#switching-groups`): every box in this group has
-                 finished and another group is waiting, so the operator's next
-                 physical act is returning animals to their cages. The placement
-                 scene walked backwards says so better than a sentence would. */
-              <motion.div
-                key="swap"
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-                transition={springPanel}
-                className="hud pointer-events-auto max-h-full w-full max-w-[520px] overflow-y-auto rounded-lg p-4"
-              >
-                <RatPlacementBanner
-                  mode="return"
-                  boxes={boxes.map((b) => b.box)}
-                  caption="All boxes finished — return each animal to its home cage, then pick the next group."
-                />
-                {/* Ticked off per box, or all at once: the next group's
-                    animals go into these same chambers, so "everyone is out"
-                    is the fact Switch Group waits on. */}
-                <div className="mt-3">
-                  <ReturnChecklist
-                    boxes={boxes}
-                    returned={returned}
-                    onToggle={toggleReturned}
-                    onAll={allReturned}
-                    disabled={busy || !connected}
-                  />
-                </div>
-                <div className="mt-3 flex justify-center gap-2">
-                  <Button
-                    variant="primary"
-                    disabled={busy || !connected || !everyoneOut}
-                    onClick={doSwitchGroup}
-                    {...(everyoneOut
-                      ? {}
-                      : { title: "Every animal needs to be out of its box first" })}
-                  >
-                    <Users size={13} strokeWidth={1.75} />
-                    Pick next group
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    disabled={busy || !connected || !everyoneOut}
-                    onClick={doEndSession}
-                  >
-                    End session
-                  </Button>
-                </div>
-              </motion.div>
-            ) : boxes.length === 0 ? (
+            {boxes.length === 0 ? (
               <motion.div
                 key="empty"
                 initial={{ opacity: 0, y: 8 }}
@@ -719,8 +717,7 @@ export function MissionControl() {
               >
                 {neverConfirmed ? (
                   // The hint in the left rail says what's wrong; this is the way
-                  // back. Same derivation as the session dock's "Resume setup" —
-                  // Step 2 needs a group and the record doesn't carry one.
+                  // back, the same as the session dock's "Resume setup".
                   <div className="flex flex-col items-start gap-3">
                     <p className="text-[13px] leading-relaxed text-static">
                       Boxes were never confirmed for this session, so there is
@@ -746,11 +743,13 @@ export function MissionControl() {
         </motion.div>
       </motion.div>
 
-      {/* The wrap-up (`USER-GUIDE.md#ending-the-session`): the last group has run and every box has finished: the
-          session is over in every sense but the record, and this says so. */}
+      {/* The round-over prompt (`USER-GUIDE.md#when-a-round-finishes`): every
+          box has finished, and what happens next is the operator's call: more
+          animals under this session, or the end of it. */}
       <SessionWrapUp
         open={wrapOpen}
         sessionName={sessionName ?? "—"}
+        round={flow.round}
         boxes={boxes}
         facts={wrapFacts}
         returned={returned}
@@ -758,7 +757,7 @@ export function MissionControl() {
         onToggle={toggleReturned}
         onAll={allReturned}
         onEnd={doEndSession}
-        onAnotherGroup={multiGroup ? doSwitchGroup : undefined}
+        onMore={doRunMore}
         onDismiss={() => setWrapDismissed(true)}
         log={
           session && cohortId ? (
@@ -794,12 +793,13 @@ function Header({
   name,
   date,
   startedAt,
-  groupName,
+  round,
 }: {
   name: string;
   date: string;
   startedAt: string | null;
-  groupName: string | null;
+  /** The session's round on the rig, 1-based; named from the second on. */
+  round: number;
 }) {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -820,7 +820,7 @@ function Header({
         <p className="mt-1 font-mono text-[11px] text-static">
           {date}
           {startedAt && ` · started ${clock24(new Date(startedAt))}`}
-          {groupName && ` · ${groupName}`}
+          {round > 1 && ` · round ${round}`}
         </p>
       </div>
       <div className="flex items-baseline gap-4">

@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from ..sessions.models import Session
-from .models import SessionLog, SessionNote, offset_ms, parse_iso
+from .models import HealthEntry, SessionLog, SessionNote, offset_ms, parse_iso
 
 log = logging.getLogger(__name__)
 
@@ -103,6 +103,25 @@ def change_lines(changes: Iterable[dict[str, Any]], names: dict[str, str]) -> li
     return lines
 
 
+def grams(weight_g: float) -> str:
+    """`312.4 g`, `298 g`: what the scale read, without padding."""
+    return f"{weight_g:.2f}".rstrip("0").rstrip(".") + " g"
+
+
+def weight_lines(weights: Iterable[HealthEntry], names: dict[str, str]) -> list[str]:
+    """The day's weigh-ins (`DATA.md#weigh-ins`), by animal name. A folder
+    whose records span days says which day each is."""
+    entries = sorted(weights, key=lambda e: (e.date, names.get(e.animal_id, e.animal_id).casefold()))
+    dated = len({entry.date for entry in entries}) > 1
+    return [
+        "- "
+        + (f"{entry.date} · " if dated else "")
+        + f"**{names.get(entry.animal_id, entry.animal_id)}**: {grams(entry.weight_g)}"
+        + (" (baseline)" if entry.baseline else "")
+        for entry in entries
+    ]
+
+
 def render_markdown(
     *,
     cohort_name: str,
@@ -112,8 +131,10 @@ def render_markdown(
     changes: list[dict[str, Any]],
     animal_names: dict[str, str],
     now: datetime,
+    weights: Iterable[HealthEntry] = (),
 ) -> str:
-    """One folder's log. `sessions` are every record sharing the folder."""
+    """One folder's log. `sessions` are every record sharing the folder;
+    `weights` the weigh-ins of their day."""
     ordered = sorted(sessions, key=lambda s: (s.clock_started_at, s.id))
     first = ordered[0]
     start = first.clock_started_at
@@ -143,6 +164,10 @@ def render_markdown(
     summaries = [entry.summary for entry in logs if entry.summary]
     if summaries:
         out += ["## Summary", "", *("\n\n".join(summaries).splitlines()), ""]
+
+    weighed = weight_lines(weights, animal_names)
+    if weighed:
+        out += ["## Weights", "", *weighed, ""]
 
     lines = change_lines(changes, animal_names)
     unknown = sum(

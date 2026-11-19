@@ -1,0 +1,273 @@
+/* ---------------------------------------------------------------------------
+   Paper — the Logbook's notebook (`ARCHITECTURE.md#the-paper-exception`).
+
+   Everything here is scoped under `.paper`, the open notebook; the desk it
+   lies on (`.desk`) stays dark and keeps the app's own controls. The rules a
+   page follows are a typesetter's, not the instrument's:
+
+   - one serif face (`--font-paper`) for everything a person reads, digits
+     included; JetBrains Mono only for a literal a machine wrote (a parameter
+     key, a channel name);
+   - tables ruled like `booktabs`: a heavy rule above and below, a light one
+     under the head, never a vertical rule and never a box;
+   - colour is ink: it marks a number, a section, a kind of note. Text that
+     carries a value stays in Ink.
+
+   Shadows are allowed here and only here: a page has a gutter and a leaf
+   casts one as it turns. They are what says "paper"; nothing glows.
+   --------------------------------------------------------------------------- */
+
+@layer components {
+  .desk {
+    background-color: var(--color-desk);
+  }
+
+  .paper {
+    font-family: var(--font-paper);
+    font-size: 15px;
+    line-height: 1.42;
+    color: var(--color-ink);
+    font-variant-numeric: lining-nums tabular-nums;
+    font-kerning: normal;
+    /* Greyscale smoothing thins a Didone's hairlines on a light ground. */
+    -webkit-font-smoothing: auto;
+    text-rendering: optimizeLegibility;
+    cursor: default;
+  }
+
+  /* The app's display face is for the instrument; a page's headings are set
+     in the page's own. */
+  .paper h1,
+  .paper h2,
+  .paper h3 {
+    font-family: var(--font-paper);
+    letter-spacing: 0;
+  }
+
+  .paper ::selection {
+    background-color: color-mix(in srgb, var(--color-highlight) 75%, transparent);
+    color: var(--color-ink);
+  }
+
+  .paper :focus-visible {
+    outline: 2px solid var(--color-ink-blue);
+    outline-offset: 2px;
+  }
+
+  .paper input,
+  .paper textarea,
+  .paper select {
+    font-family: inherit;
+    color: inherit;
+  }
+
+  /* --- the book ---------------------------------------------------------- */
+
+  .book {
+    /* Far enough back that a turning leaf foreshortens without ballooning. */
+    perspective: 2800px;
+    perspective-origin: 50% 40%;
+  }
+
+  .page {
+    background-color: var(--color-paper);
+    /* The folio and running head sit in the margins; the block between them
+       scrolls when a day ran long. */
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* The gutter: each page darkens toward the spine, as bound paper does. */
+  .page-verso {
+    border-radius: 5px 0 0 5px;
+    box-shadow:
+      inset -34px 0 30px -30px rgb(58 46 24 / 0.34),
+      inset 0 0 0 1px rgb(58 46 24 / 0.06);
+  }
+  .page-recto {
+    border-radius: 0 5px 5px 0;
+    box-shadow:
+      inset 34px 0 30px -30px rgb(58 46 24 / 0.34),
+      inset 0 0 0 1px rgb(58 46 24 / 0.06);
+  }
+
+  .page-scroll {
+    overflow-y: auto;
+    /* A table too wide for its page scrolls in its own frame (`.table-frame`),
+       never the page sideways. */
+    overflow-x: hidden;
+    /* What a table drops on a narrow page is decided by the page's width,
+       not the window's. */
+    container-type: inline-size;
+  }
+  .table-frame {
+    overflow-x: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-rule) transparent;
+  }
+  .page-scroll::-webkit-scrollbar {
+    width: 8px;
+  }
+  /* A page has no scrollbar until the hand is on it: a bar standing in the
+     gutter reads as part of the binding. */
+  .page-scroll::-webkit-scrollbar-thumb {
+    background-color: transparent;
+    /* Inset by a clear border, not a paper-coloured one: the page's own
+       shading shows through at the edge, and a painted border would not. */
+    border: 2px solid transparent;
+    background-clip: padding-box;
+    border-radius: 4px;
+  }
+  .page-scroll:hover::-webkit-scrollbar-thumb,
+  .page-scroll:focus-within::-webkit-scrollbar-thumb {
+    background-color: var(--color-rule);
+  }
+  .page-scroll::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-ink-faint);
+  }
+
+  /* The block of leaves under the open spread, seen edge-on. */
+  .book-block {
+    background-color: var(--color-paper-shade);
+    box-shadow:
+      0 1px 0 rgb(58 46 24 / 0.25),
+      0 18px 40px -12px rgb(0 0 0 / 0.6);
+    border-radius: 6px;
+  }
+
+  /* --- type -------------------------------------------------------------- */
+
+  /* Small capitals, set as spaced capitals at a size the caller gives.
+     Latin Modern keeps its small caps in a separate face, and the browser's
+     stand-in for them is capitals at seven tenths, which at these sizes is
+     too small to read across a desk. A size beside this class is therefore
+     the size of the capitals themselves: about three quarters of the text
+     they sit in. */
+  .smallcaps {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .paper .lit {
+    font-family: var(--font-mono);
+    font-size: 0.8em;
+    letter-spacing: -0.01em;
+  }
+
+  /* --- booktabs ---------------------------------------------------------- */
+
+  .booktabs {
+    width: 100%;
+    border-collapse: collapse;
+    border-top: 1.5px solid var(--color-ink);
+    border-bottom: 1.5px solid var(--color-ink);
+  }
+  .booktabs thead th {
+    border-bottom: 0.75px solid var(--color-ink);
+    padding: 5px 7px 4px;
+    font-weight: 400;
+    font-style: italic;
+    text-align: left;
+    white-space: nowrap;
+    vertical-align: bottom;
+  }
+  .booktabs td {
+    padding: 5px 7px;
+    vertical-align: baseline;
+  }
+  .booktabs tbody tr + tr td {
+    border-top: 0.5px solid var(--color-rule);
+  }
+  .booktabs th:first-child,
+  .booktabs td:first-child {
+    padding-left: 2px;
+  }
+  .booktabs th:last-child,
+  .booktabs td:last-child {
+    padding-right: 2px;
+  }
+  .booktabs .num {
+    text-align: right;
+  }
+  /* `\midrule` with a label: the part of a table that is a different group. */
+  .booktabs .midrule td {
+    border-top: 0.75px solid var(--color-ink);
+    padding-top: 6px;
+  }
+
+  /* --- writing on the page ------------------------------------------------ */
+
+  /* A field is a ruled line, not a box: nothing on paper has a border on
+     four sides. */
+  .ink-field {
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid var(--color-rule);
+    border-radius: 0;
+    padding: 1px 2px;
+    outline: none;
+    transition:
+      border-color 120ms,
+      background-color 120ms;
+  }
+  .ink-field::placeholder {
+    color: var(--color-ink-faint);
+    font-style: italic;
+  }
+  .ink-field:hover:not(:disabled) {
+    border-bottom-color: var(--color-ink-faint);
+  }
+  .ink-field:focus-visible {
+    outline: none;
+    border-bottom-color: var(--color-ink-blue);
+    background-color: color-mix(in srgb, var(--color-highlight) 22%, transparent);
+  }
+  .ink-field:disabled {
+    border-bottom-color: transparent;
+  }
+
+  /* A text control: a word in the pen's blue, underlined when it will act. */
+  .ink-link {
+    color: var(--color-ink-blue);
+    text-decoration: underline;
+    text-decoration-color: color-mix(in srgb, var(--color-ink-blue) 35%, transparent);
+    text-underline-offset: 2px;
+    border-radius: 2px;
+  }
+  .ink-link:hover:not(:disabled) {
+    text-decoration-color: var(--color-ink-blue);
+  }
+  .ink-link:disabled {
+    color: var(--color-ink-faint);
+    text-decoration: none;
+  }
+
+  /* The dotted leader of a contents line. */
+  .leader {
+    flex: 1 1 auto;
+    min-width: 16px;
+    margin: 0 6px;
+    border-bottom: 1.5px dotted var(--color-rule);
+    transform: translateY(-4px);
+  }
+
+  /* A carried-forward flag: a sticky note, the one thing on the page that is
+     not ink on paper. */
+  .sticky {
+    background-color: var(--color-highlight);
+    box-shadow:
+      0 1px 0 rgb(58 46 24 / 0.2),
+      0 6px 10px -6px rgb(58 46 24 / 0.45);
+  }
+
+  /* A month tab on the book's fore-edge. */
+  .edge-tab {
+    transition:
+      transform 140ms,
+      filter 140ms;
+  }
+  .edge-tab:hover {
+    transform: translateX(3px);
+  }
+}

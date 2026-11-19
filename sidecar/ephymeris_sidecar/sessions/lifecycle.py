@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any, AsyncContextManager, Awaitable, Callable,
 
 from ..cohorts.db import NestedWrite, TransactionAborted
 from ..intan import sort_export
+from ..intan.quality_store import SiteQualityStore
 from ..intan.rhx_names import recording_folder_name
 from ..intan.yield_store import SpikeYieldStore
 from ..ports.flashing import FlashJob, FlashQueue
@@ -210,7 +211,8 @@ class SessionLifecycle:
         self._lock = asyncio.Lock()
         #: What exports a recording's runs for sorting once RHX has stopped
         #: (`RECORDING.md#the-sort-export`): `(run files, recording name)`,
-        #: blocking. None turns the export off.
+        #: blocking. None turns the export off. What it returns is read for
+        #: each run's site measurements (`_keep_site_quality`).
         self.export_spikes: Callable[[list[str], str], Any] | None = sort_export.export_runs
         #: What aligns a recording's runs once RHX has stopped
         #: (`RECORDING.md#alignment-at-session-end`): `(run files, recording
@@ -852,7 +854,8 @@ class SessionLifecycle:
         """The after-stop pass, in a fixed order so its two steps never work on
         one run at once: **align, then export**. Alignment rewrites each run's
         `.json` and `.mat`; the export then reads the `.json` it left and RHX's
-        `spike.dat`. Each step's failure is its own: neither stops the other."""
+        `spike.dat`. Each step's failure is its own: neither stops the other.
+        What the export measured of each run's sites is kept last."""
         try:
             files = await asyncio.to_thread(
                 lambda: [r.file_path for r in self._sessions.runs_for(session_id) if r.file_path]
@@ -868,9 +871,39 @@ class SessionLifecycle:
                             recording, exc)
         if self.export_spikes is not None:
             try:
-                await asyncio.to_thread(self.export_spikes, files, recording)
+                results = await asyncio.to_thread(self.export_spikes, files, recording)
             except Exception:  # noqa: BLE001 - an export costs only itself
                 log.exception("the spike export of recording %s failed", recording)
+            else:
+                await self._keep_site_quality(session_id, results)
+
+    async def _keep_site_quality(self, session_id: str, results: Any) -> None:
+        """Keep what the export measured of each run's sites, under the run
+        (`RECORDING.md#unit-like-sites`), and tell the Logbook they are there.
+        Off the session's path like the pass it ends; a failure costs only the
+        measurements."""
+        try:
+            kept = await asyncio.to_thread(self._store_site_quality, session_id, results)
+            if kept and self._logbook is not None:
+                session = await asyncio.to_thread(self._sessions.get_session, session_id)
+                await self._logbook.refresh(session.cohort_id, [session.id])
+        except Exception:  # noqa: BLE001
+            log.exception("couldn't keep the site measurements of session %s", session_id)
+
+    def _store_site_quality(self, session_id: str, results: Any) -> int:
+        """Each result goes to the run whose `.json` it was exported from;
+        how many were kept."""
+        by_file = {Path(r.file_path): r.id for r in self._sessions.runs_for(session_id) if r.file_path}
+        store = SiteQualityStore(self._db)
+        kept = 0
+        for result in results if isinstance(results, (list, tuple)) else ():
+            quality, source = getattr(result, "quality", None), getattr(result, "source", None)
+            run_id = by_file.get(Path(source)) if source is not None else None
+            if quality is None or run_id is None:
+                continue
+            store.add(run_id, quality)
+            kept += 1
+        return kept
 
     async def exports_settled(self) -> None:
         """Wait for the after-stop passes under way. For shutdown and tests; no

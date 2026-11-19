@@ -78,3 +78,14 @@ _Avoid_: the cohort's data, history
 **Recovered run**:
 A run known only from its file, with no run record, adopted by a rescan. It counts under the recorded session sharing its folder's prefix, number and date, else under a recovered session of its own.
 _Avoid_: orphan (once adopted), synthetic run
+
+<a id="unit-like-site"></a>
+**Unit-like site**:
+An electrode site that, over a recorded run, carried spikes well clear of its own noise often enough to be a neuron: the Log's estimate of what there is to sort. Judged from amplitude over noise with artifacts set aside, never by sorting.
+_Avoid_: unit (a sorter's word for one neuron), good channel, active site (a site with threshold crossings of any size)
+
+<a id="baseline-weight"></a>
+**Baseline**:
+The weigh-in an operator marks as an animal's reference weight; later weigh-ins are read as a share of the latest one marked.
+_Avoid_: starting weight, first weight (the first on record is not assumed to be a baseline)
+

@@ -322,8 +322,10 @@ class SessionRepository:
                     tuple(chunk),
                 )
                 removed += cursor.rowcount
-                # Its spike counts mean nothing without it (`RECORDING.md#active-site-yield`).
+                # Its spike counts mean nothing without it (`RECORDING.md#active-site-yield`),
+                # nor do its sites' measurements (`RECORDING.md#unit-like-sites`).
                 unit.execute(f"DELETE FROM run_spike_counts WHERE run_id IN ({marks})", tuple(chunk))
+                unit.execute(f"DELETE FROM run_site_quality WHERE run_id IN ({marks})", tuple(chunk))
         return removed
 
     def delete_sessions(self, session_ids: list[str], *, tx: Tx | None = None) -> int:

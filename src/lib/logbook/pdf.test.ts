@@ -45,6 +45,11 @@ function session(n: number): DocSession {
     },
     changes: [{ animal: "remy1", box: "box 1", parts: ["rewardUl 20 → 25"] }],
     changesNote: null,
+    weights: [
+      { animal: "remy1", weight: "312.4 g", change: "−2.1", share: "92%", low: false },
+      { animal: "remy2", weight: "281.0 g", change: "—", share: "baseline", low: false },
+    ],
+    recording: [{ animal: "remy1", sites: "9 / 16 unit-like", verdict: "Sort first" }],
   };
 }
 

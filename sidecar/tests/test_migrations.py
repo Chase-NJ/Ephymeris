@@ -408,6 +408,21 @@ def test_v2_gains_the_analytics_tables(tmp_path: Path) -> None:
     assert {"task_profiles", "run_metrics_cache"} <= tables(path)
 
 
+def test_v18_gains_the_weigh_in_and_site_quality_tables(tmp_path: Path) -> None:
+    """v19 (`DATA.md#weigh-ins`, `RECORDING.md#unit-like-sites`): tables only,
+    so `SCHEMA` alone brings them to a database a v18 build left."""
+    path = tmp_path / "ephymeris.db"
+    write_shipped_database(path, 18)
+    assert not {"animal_health", "run_site_quality"} & tables(path)
+
+    db = Database(path)
+    db.connect()
+    db.close()
+
+    assert {"animal_health", "run_site_quality"} <= tables(path)
+    assert user_version(path) == SCHEMA_VERSION
+
+
 def test_upgrading_from_v2_preserves_existing_runs(tmp_path: Path) -> None:
     path = tmp_path / "ephymeris.db"
     write_v2_database(path)
@@ -1293,7 +1308,7 @@ def _shipped(version: int):  # noqa: ANN202
     [
         write_v1_database, write_v2_database, write_v3_database, write_v5_database,
         write_v6_database, write_v7_database, write_v8_database, write_v9_database,
-        *(_shipped(v) for v in (4, 10, 11, 12, 13, 14, 15, 16, 17)),
+        *(_shipped(v) for v in (4, 10, 11, 12, 13, 14, 15, 16, 17, 18)),
     ],
     ids=lambda writer: writer.__name__.removeprefix("write_").removesuffix("_database"),
 )

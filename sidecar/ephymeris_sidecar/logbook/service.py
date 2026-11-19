@@ -3,8 +3,10 @@
 Owns the `logbook.*` commands' logic: validating a note against its session
 and cohort, deriving each note's T+ offset (`DATA.md#the-session-clock`) on
 every read, assembling a cohort's log with its "what changed" entries
-(`DATA.md#what-changed`), announcing changes, and keeping each session
-folder's `notes.md` mirror current (`DATA.md#the-notesmd-mirror`).
+(`DATA.md#what-changed`), its animals' weigh-ins (`DATA.md#weigh-ins`) and its
+recorded runs' site signal (`RECORDING.md#unit-like-sites`), announcing
+changes, and keeping each session folder's `notes.md` mirror current
+(`DATA.md#the-notesmd-mirror`).
 
 The mirror is fire-and-forget after the database commit: a command reply never
 waits on disk, and nothing here is ever called from the runner, so a slow or
@@ -15,17 +17,24 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
+import re
 import threading
 from collections.abc import Awaitable, Callable
+from datetime import date as calendar_date
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from ..analytics.scoring import current_version
+from ..intan.quality_store import SiteQualityStore
 from ..protocol import Evt, event
 from ..sessions.models import Session, SessionNotFound
 from . import diff, mirror
 from .models import (
+    MAX_WEIGHT_G,
+    MIN_WEIGHT_G,
+    HealthEntry,
     NoteInvalid,
     SessionLog,
     SessionNote,
@@ -53,6 +62,7 @@ class LogbookService:
         enqueue_backup: Callable[[Path], None] | None = None,
     ) -> None:
         self.repo = LogbookRepository(db)
+        self._signals = SiteQualityStore(db)
         self._cohorts = cohorts
         self._sessions = sessions
         self._profiles = profiles
@@ -75,7 +85,7 @@ class LogbookService:
         return await asyncio.to_thread(self._cohort, cohort_id)
 
     def _cohort(self, cohort_id: str) -> dict[str, Any]:
-        self._cohorts.get(cohort_id)  # CohortNotFound for an unknown id
+        cohort = self._cohorts.get(cohort_id)  # CohortNotFound for an unknown id
         sessions = {
             s.id: s for s in self._sessions.list_sessions(cohort_id, include_aborted=True)
         }
@@ -86,6 +96,10 @@ class LogbookService:
             "logs": [entry.to_json() for entry in self.repo.logs_for_cohort(cohort_id)],
             "notes": [self._note_json(n, sessions.get(n.session_id), now) for n in notes],
             "changes": list(self._changes(cohort_id).values()),
+            "health": [
+                entry.to_json() for entry in self.repo.health_for_animals(_members(cohort))
+            ],
+            "signals": self._signals.cohort_signals(cohort_id),
         }
 
     async def open_flags(self, cohort_id: str) -> dict[str, Any]:
@@ -257,6 +271,44 @@ class LogbookService:
         await self._changed(session.cohort_id, [session.id])
         return {"log": entry.to_json()}
 
+    async def set_health(
+        self,
+        cohort_id: str,
+        animal_id: str,
+        date: Any,
+        weight_g: Any,
+        baseline: Any = None,
+    ) -> dict[str, Any]:
+        """Write, change or remove one animal's weigh-in for one day
+        (`DATA.md#weigh-ins`). A null weight removes it; an absent `baseline`
+        keeps the mark the day already has."""
+
+        def write() -> tuple[HealthEntry | None, list[str]]:
+            cohort = self._cohorts.get(cohort_id)  # CohortNotFound
+            if animal_id not in _members(cohort):
+                raise NoteInvalid("That animal isn't in this cohort.")
+            day = _day(date)
+            if day is None:
+                raise NoteInvalid("A weigh-in's date reads YYYY-MM-DD.")
+            if baseline is not None and not isinstance(baseline, bool):
+                raise NoteInvalid("A baseline mark is true or false.")
+            entry: HealthEntry | None = None
+            if weight_g is None:
+                self.repo.delete_health(animal_id, day)
+            else:
+                entry = self.repo.set_health(animal_id, day, _grams(weight_g), baseline)
+            # The day's sessions show it, and their folders' notes.md print it.
+            touched = [
+                s.id
+                for s in self._sessions.list_sessions(cohort_id, include_aborted=True)
+                if s.date == day
+            ]
+            return entry, touched
+
+        entry, session_ids = await asyncio.to_thread(write)
+        await self._changed(cohort_id, session_ids)
+        return {"entry": None if entry is None else entry.to_json()}
+
     # --- announcements ----------------------------------------------------
 
     async def refresh(self, cohort_id: str, session_ids: list[str] | None = None) -> None:
@@ -338,9 +390,6 @@ class LogbookService:
         notes = self.repo.notes_for_sessions(ids)
         logs = self.repo.logs_for_sessions(ids)
         target = folder / mirror.FILENAME
-        annotated = bool(notes) or any(not entry.is_blank for entry in logs)
-        if not annotated and not target.exists():
-            return None
         try:
             cohort = self._cohorts.get(session.cohort_id)
             # Former members too (`DATA.md#former-members`): the file outlives
@@ -348,8 +397,14 @@ class LogbookService:
             names = {f.id: f.name for f in cohort.former_animals if f.name}
             names.update({animal.id: animal.name for animal in cohort.animals})
             cohort_name = cohort.name
+            members = _members(cohort)
         except Exception:  # noqa: BLE001
-            names, cohort_name = {}, ""
+            names, cohort_name, members = {}, "", []
+        # The day's weigh-ins travel with the folder too (`DATA.md#weigh-ins`).
+        weights = self.repo.health_for_animals(members, sorted({s.date for s in mates if s.date}))
+        annotated = bool(notes) or bool(weights) or any(not entry.is_blank for entry in logs)
+        if not annotated and not target.exists():
+            return None
         changes = self._changes(session.cohort_id)
         text = mirror.render_markdown(
             cohort_name=cohort_name,
@@ -359,6 +414,7 @@ class LogbookService:
             changes=[c for c in changes.values() if c["sessionId"] in ids],
             animal_names=names,
             now=datetime.now(timezone.utc),
+            weights=weights,
         )
         return mirror.write_mirror(folder, text)
 
@@ -406,6 +462,38 @@ def _apply_scope(note: SessionNote, scope: Any) -> None:
     note.animal_id = scope.get("animalId") if kind == "animal" else None
     box = scope.get("box")
     note.box_number = box if kind == "box" and isinstance(box, int) and not isinstance(box, bool) else None
+
+
+def _members(cohort: Any) -> list[str]:
+    """The ids a cohort's weigh-ins are kept under: its animals and its
+    former members (`DATA.md#former-members`), who can still be written about."""
+    ids = [animal.id for animal in cohort.animals]
+    ids += [former.id for former in cohort.former_animals if former.id not in ids]
+    return ids
+
+
+_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def _day(value: Any) -> str | None:
+    """A real calendar day written `YYYY-MM-DD`, as a session's `date` is; None
+    for anything else."""
+    if not isinstance(value, str) or not _DAY.fullmatch(value):
+        return None
+    try:
+        calendar_date.fromisoformat(value)
+    except ValueError:
+        return None
+    return value
+
+
+def _grams(value: Any) -> float:
+    """A weight a scale could have read, or `NoteInvalid`."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise NoteInvalid("A weight is a number of grams.")
+    if not MIN_WEIGHT_G <= value <= MAX_WEIGHT_G:
+        raise NoteInvalid(f"A weight is between {MIN_WEIGHT_G:g} and {MAX_WEIGHT_G:g} g.")
+    return round(float(value), 2)
 
 
 def _moment(value: Any) -> str | None:

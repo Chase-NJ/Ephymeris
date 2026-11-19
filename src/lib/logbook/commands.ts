@@ -5,7 +5,14 @@
 
 import type { SidecarPort } from "../ws/port";
 import { CMD } from "../ws/protocol";
-import type { LogbookCohort, NoteScope, NoteTag, SessionLog, SessionNote } from "./types";
+import type {
+  HealthEntry,
+  LogbookCohort,
+  NoteScope,
+  NoteTag,
+  SessionLog,
+  SessionNote,
+} from "./types";
 
 export async function getLogbook(client: SidecarPort, cohortId: string): Promise<LogbookCohort> {
   return client.call(CMD.LOGBOOK_COHORT, { cohortId });
@@ -68,4 +75,19 @@ export async function setSessionLog(
 export async function openFlags(client: SidecarPort, cohortId: string): Promise<SessionNote[]> {
   const result = await client.call(CMD.LOGBOOK_OPEN_FLAGS, { cohortId });
   return result.notes;
+}
+
+/**
+ * Write, change or remove one animal's weigh-in for a day (`DATA.md#weigh-ins`).
+ * `weightG: null` removes it; an absent `baseline` keeps the mark as it is.
+ */
+export async function setHealth(
+  client: SidecarPort,
+  cohortId: string,
+  animalId: string,
+  date: string,
+  fields: { weightG: number | null; baseline?: boolean },
+): Promise<HealthEntry | null> {
+  const result = await client.call(CMD.LOGBOOK_SET_HEALTH, { cohortId, animalId, date, ...fields });
+  return result.entry;
 }

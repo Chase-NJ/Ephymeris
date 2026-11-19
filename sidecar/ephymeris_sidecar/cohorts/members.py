@@ -23,8 +23,8 @@ from .models import FormerAnimal
 def referenced_animal_ids(conn: sqlite3.Connection, cohort_id: str) -> Counter[str]:
     """Every animal id this cohort's history names, with its run count.
 
-    Runs are recorded plus adopted ones; an id named only by a note counts with
-    zero runs, so it is still a key.
+    Runs are recorded plus adopted ones; an id named only by a note or a
+    weigh-in counts with zero runs, so it is still a key.
     """
     counts: Counter[str] = Counter()
     for (animal_id,) in conn.execute(
@@ -41,6 +41,16 @@ def referenced_animal_ids(conn: sqlite3.Connection, cohort_id: str) -> Counter[s
         "SELECT DISTINCT animal_id FROM session_notes"
         " WHERE cohort_id = ? AND animal_id IS NOT NULL",
         (cohort_id,),
+    ):
+        counts.setdefault(animal_id, 0)
+    # A weigh-in is the operator's own measurement, kept under the animal
+    # alone (`DATA.md#weigh-ins`): only this cohort's own animals are asked
+    # about, so it can keep one as a former member but never name a stranger.
+    for (animal_id,) in conn.execute(
+        "SELECT DISTINCT animal_id FROM animal_health WHERE animal_id IN"
+        " (SELECT id FROM animals WHERE cohort_id = ?"
+        "  UNION SELECT id FROM former_animals WHERE cohort_id = ?)",
+        (cohort_id, cohort_id),
     ):
         counts.setdefault(animal_id, 0)
     return counts

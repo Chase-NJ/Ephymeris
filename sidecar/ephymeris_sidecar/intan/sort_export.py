@@ -28,6 +28,11 @@ each variable two or three times over while it compresses it, so the peak is
 about four times the arrays: 2.4 GB for the 2.36 million spikes of one
 animal in the lab's 2.8-hour recording of April 2026, in 20 s.
 
+**The same pass measures each site's signal** (`site_quality`,
+`RECORDING.md#unit-like-sites`): its noise, and its spikes by amplitude over
+that noise. It rides on the records the export already reads and adds 9
+bytes a spike; a measurement that fails costs only itself, never the file.
+
 numpy and scipy are imported on use only (`DATA.md#the-mat-mirror`).
 """
 
@@ -35,12 +40,13 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable, Literal
 
 from ..sessions import run_document as rd
 from ..sessions.writer import write_atomic
+from . import site_quality
 from .rhx_files import RhxFileError, parse_spike_header
 from .rhx_names import channel_names
 
@@ -71,6 +77,13 @@ class SortExport:
     #: Channels with at least one spike, and spikes written.
     channels: int = 0
     spikes: int = 0
+    #: Each site's signal, measured in the same pass
+    #: (`RECORDING.md#unit-like-sites`). None when nothing was written, or the
+    #: snapshots keep too short a lead-in to measure noise from.
+    quality: site_quality.RunQuality | None = None
+    #: The run's `.json` this export was made from (`export_run`), so a caller
+    #: can tell which run a result belongs to.
+    source: Path | None = None
 
 
 def sort_path(run_json: Path) -> Path:
@@ -135,7 +148,12 @@ def _export(spike_path: Path, out_path: Path, channels: list[str], chunk_records
                 yield data
 
         counts = dict.fromkeys(keys, 0)
+        # The recording's own span, any channel: what a site's rate is over.
+        first_stamp = last_stamp = None
         for data in chunks():
+            low, high = int(data["timestamp"].min()), int(data["timestamp"].max())
+            first_stamp = low if first_stamp is None else min(first_stamp, low)
+            last_stamp = high if last_stamp is None else max(last_stamp, high)
             names, tallies = np.unique(data["name"], return_counts=True)
             for name, tally in zip(names.tolist(), tallies.tolist()):
                 if name in counts:
@@ -148,6 +166,7 @@ def _export(spike_path: Path, out_path: Path, channels: list[str], chunk_records
         waves = {key: np.empty((counts[key], SAMPLES_BEFORE + SAMPLES_AFTER), dtype=np.float64)
                  for key in fired}
         filled = dict.fromkeys(fired, 0)
+        gather = _gatherer(np, keys, counts, before, after)
         for data in chunks():
             for key in np.unique(data["name"]).tolist():
                 if key not in filled:
@@ -157,6 +176,11 @@ def _export(spike_path: Path, out_path: Path, channels: list[str], chunk_records
                 times[key][at:at + n, 0] = rows["timestamp"].astype(np.float64) / header.sample_rate
                 waves[key][at:at + n] = UV_PER_COUNT * (rows["snapshot"][:, window].astype(np.float64) - ADC_ZERO)
                 filled[key] = at + n
+                if gather is not None:
+                    gather = _gathered(gather, key, rows, at, spike_path)
+
+    quality = _measured(gather, header.sample_rate, first_stamp, last_stamp, spike_path)
+    del gather  # before `savemat` holds every variable several times over
 
     variables = {
         "spiketimes": _cell_column(np, [times[key] for key in fired]),
@@ -174,7 +198,43 @@ def _export(spike_path: Path, out_path: Path, channels: list[str], chunk_records
         except OSError:
             pass
         raise
-    return SortExport("written", None, out_path, len(fired), sum(counts[key] for key in fired))
+    return SortExport("written", None, out_path, len(fired), sum(counts[key] for key in fired), quality)
+
+
+# --- the measurement riding on the export ---------------------------------------- #
+# Each step is fenced: the file is what the export is for, and a measurement
+# that fails is dropped, with the reason logged, rather than costing it.
+
+def _gatherer(np: Any, keys: list[bytes], counts: dict[bytes, int], before: int, after: int) -> Any:
+    if not site_quality.Gatherer.measurable(before, after):
+        log.info("site signal not measured: each snapshot keeps %d samples before a detection, too few "
+                 "to measure noise from", before)
+        return None
+    try:
+        return site_quality.Gatherer(np, keys, counts, before)
+    except Exception:  # noqa: BLE001
+        log.exception("site signal not measured")
+        return None
+
+
+def _gathered(gather: Any, key: bytes, rows: Any, at: int, spike_path: Path) -> Any:
+    try:
+        gather.add(key, rows, at)
+        return gather
+    except Exception:  # noqa: BLE001
+        log.exception("site signal not measured for %s", spike_path)
+        return None
+
+
+def _measured(gather: Any, sample_rate: float, first: int | None, last: int | None,
+              spike_path: Path) -> site_quality.RunQuality | None:
+    if gather is None or first is None or last is None:
+        return None
+    try:
+        return gather.measure(sample_rate, first, last)
+    except Exception:  # noqa: BLE001
+        log.exception("site signal not measured for %s", spike_path)
+        return None
 
 
 def _cell_column(np: Any, items: list[Any]) -> Any:
@@ -192,7 +252,13 @@ def export_run(run_json: Path, recording: str | None = None) -> SortExport | Non
     document says: its recording's folder and its channels. Never raises.
 
     With `recording`, a run that is inside another recording (an earlier
-    round's) is passed over, and None comes back."""
+    round's) is passed over, and None comes back. The result names the run
+    it is of (`SortExport.source`)."""
+    result = _export_run(run_json, recording)
+    return None if result is None else replace(result, source=run_json)
+
+
+def _export_run(run_json: Path, recording: str | None) -> SortExport | None:
     try:
         document = rd.lifted(json.loads(run_json.read_text(encoding="utf-8")))
     except (OSError, ValueError) as exc:

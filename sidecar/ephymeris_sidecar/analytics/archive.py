@@ -75,6 +75,12 @@ RESCAN_WHILE_WRITING = (
 )
 
 
+ALIGN_WHILE_WRITING = (
+    "A box is running: a recorded run is aligned once every box has finished, "
+    "or when it is first viewed."
+)
+
+
 class ArchiveBusy(Exception):
     """A scan, tidy, relocate, move, recover or re-derive already holds the archive."""
 
@@ -457,6 +463,27 @@ class CohortArchive:
             result = await asyncio.to_thread(derived.rederive_cohort, cohort.data_folder)
             write.changed(files=result.pop("written"))
         return {**result, "cohortId": cohort_id}
+
+    async def align_recorded(
+        self, run_files: list[str], recording: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Align these recorded runs and write each one's sync counts and
+        recording-clock times into its own files
+        (`RECORDING.md#alignment-at-session-end`).
+
+        An archive write like Re-derive: it holds the archive, is refused
+        while a box runs (and stops if one starts), and queues every file it
+        wrote for backup. `ArchiveBusy` or `RigInUse` leaves every run as it
+        was, to be aligned later.
+        """
+        from ..intan import alignment  # intan imports analytics.reader
+
+        async with self.write(refuse_while="writing", because=ALIGN_WHILE_WRITING) as write:
+            entries = await asyncio.to_thread(
+                alignment.align_runs, run_files, recording, stop=lambda: self._rig.writing
+            )
+            write.changed(files=[path for entry in entries for path in entry["written"]])
+        return entries
 
     # --- rescan ------------------------------------------------------------
 

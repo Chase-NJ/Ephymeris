@@ -43,7 +43,7 @@ import math
 import types
 import typing
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from ..analytics import reader
 from ..analytics.stream import grammar2, odors, spine
@@ -59,11 +59,14 @@ log = logging.getLogger(__name__)
 # --- the block ------------------------------------------------------------------
 
 
-def derive(document: dict[str, Any]) -> dict[str, Any] | None:
+def derive(document: dict[str, Any], seconds: Mapping[int, float] | None = None) -> dict[str, Any] | None:
     """The derived block for a run's document, or None for a run neither replay
     nor the grammar-2 decoder describes: a grammar-1 run. Decodes it once.
 
     A stored block in `document` is never read: the run is decoded afresh.
+    `seconds` is a recorded run's alignment, each strobe's time on the
+    recording's clock by its index (`intan/alignment.py`): it fills a
+    grammar-2 table's `*_s` columns.
     """
     if spine.is_spine_run(document):
         try:
@@ -78,7 +81,8 @@ def derive(document: dict[str, Any]) -> dict[str, Any] | None:
     if not grammar2.is_grammar2_run(document, profile):
         return None
     interp = run_document.interp_of(document)
-    block = _block("ok", None, interp if _is_int(interp) else None, (), grammar2.rows_of(document, profile))
+    block = _block("ok", None, interp if _is_int(interp) else None, (),
+                   grammar2.rows_of(document, profile, seconds))
     return {**block, "grammar": grammar2.GRAMMAR_2, "phases": [], "trials": block["trials"]}
 
 
@@ -344,7 +348,8 @@ def rederive_file(json_path: Path) -> dict[str, Any] | None:
     if block is None:
         return None  # a grammar-1 run: nothing to derive
     stored = run_document.trial_table_of(document)
-    held = _kept(stored, block)
+    block = with_stored_seconds(block, stored)
+    held = kept(stored, block)
     if held is not None:
         entry.update(status="skipped", reason=held)
         return entry
@@ -390,7 +395,23 @@ def rederive_file(json_path: Path) -> dict[str, Any] | None:
     return entry
 
 
-def _kept(stored: Any, block: dict[str, Any]) -> str | None:
+def with_stored_seconds(block: dict[str, Any], stored: Any) -> dict[str, Any]:
+    """`block` with each row's recording-clock times (`*_s`) as the stored
+    block has them. Re-derive decodes the strobes, which know nothing of the
+    recording, so without this it would wipe an alignment the session-end pass
+    wrote (`RECORDING.md#alignment-at-session-end`). Row for row, and only
+    where the two tables have the same trials; otherwise the times are left
+    empty, which reads as "not aligned"."""
+    rows, old = block.get("trials"), stored.get("trials") if isinstance(stored, dict) else None
+    if not isinstance(rows, list) or not isinstance(old, list) or len(rows) != len(old):
+        return block
+    if any(not isinstance(b, dict) or a.get("index") != b.get("index") for a, b in zip(rows, old)):
+        return block
+    carried = [{**a, **{k: b[k] for k in a if k.endswith("_s") and k in b}} for a, b in zip(rows, old)]
+    return {**block, "trials": carried}
+
+
+def kept(stored: Any, block: dict[str, Any]) -> str | None:
     """Why a stored block must not be replaced by `block`, or None.
 
     Two lab machines on different builds can share one archive, so an older

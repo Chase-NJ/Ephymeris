@@ -545,7 +545,7 @@ a relocate of that folder.
 
 - K is the animal's channels with at least one spike, in RHX's channel order; a silent channel is left out.
 - µV is `0.195 × (count − 32768)`. The 30 samples run from 6 before the crossing to 24 after: samples 25:54 of a snapshot with 30 pre-detect samples, counted from the crossing for any other lead-in. Spikes RHX flagged as artifacts (id 128) are kept.
-- Written once RHX has confirmed its stop, in the background (`SessionLifecycle._export_spikes_later`): it never holds up an end, and a failure costs only the export. The file is written whole or not at all. While RHX's stop is still owed nothing is exported, since `spike.dat` may still be growing.
+- Written once RHX has confirmed its stop, in the background, after the run is [aligned](#alignment-at-session-end): it never holds up an end, and a failure costs only the export. The file is written whole or not at all. While RHX's stop is still owed nothing is exported, since `spike.dat` may still be growing.
 - **No file, with the reason logged**, when the recording saved no snapshots, keeps fewer than 6 samples before or 24 after a detection, or the animal's channels never fired.
 - `tests/test_sort_export.py` compares it with the lab's `ExtractIntanSpikes.py`, value for value, on a real recording named by `EPHYMERIS_RHX_SAMPLE` and `EPHYMERIS_LAB_EXPORTS`.
 
@@ -643,12 +643,12 @@ the same one, so only Ephymeris can align to `ODOR_1_ON` rather than "something 
 ([ADR 0007](adr/DECISIONS.md#0007-rhxs-own-windows-replace-the-recording-pop-ups)). After the session the
 data is complete: every spike and edge at full rate, every strobe, every trial's outcome.
 
-`intan/offline.py`'s `load_run`, from one run's `.json`:
+`intan/offline.py`'s `align_run`, from one run's `.json`. It is the one alignment: the first view of a run (`load_run`, which adds the spikes) and the [pass at a recording's end](#alignment-at-session-end) both call it.
 
 1. **Find the recording**: the document's `recording.path` / `recording.name`, RHX's per-run folder.
 2. **Read RHX's files** (`intan/rhx_files.py`, layouts from RHX's `FilePerSignalTypeSaveManager`):
-   `spike.dat` for the box's channels, and the rising edges of its `recording.digital_in` in
-   `digitalin.dat`, timed by `time.dat`. A one-hour `digitalin.dat` is about 108 million words; they
+   the rising edges of the box's `recording.digital_in` in `digitalin.dat`, timed by `time.dat`
+   (and, for a PSTH, `spike.dat` for its channels). A one-hour `digitalin.dat` is about 108 million words; they
    are never looped over in Python: each chunk's byte holding the bit is sliced out, mapped to 0/1 with
    `bytes.translate` and searched with `bytes.find`, so only the edges are.
 3. **Align** (`intan/events.py`'s `align`): the live sync check's own `EdgeMatcher`, fed as a live
@@ -678,6 +678,27 @@ panel shows nothing for a session with none.
 > **check the sync line first**: the panel's header gives the whole run's placed, missed and stray
 > counts. A shifted match draws a PSTH that looks as convincing as a right one; a missed or
 > unpaired count is the warning.
+
+### Alignment at session end
+
+Once RHX has confirmed its stop, the lifecycle starts one background pass over the recording's runs (`SessionLifecycle._after_recording`), in a fixed order so its two steps never work on one run at once: **align, then [export](#the-sort-export)**. Neither step can hold up an end or cost a run anything, and a failure of one does not stop the other.
+
+Alignment (`intan/alignment.py`, through `CohortArchive.align_recorded`) writes what `align_run` found into the run's own files:
+
+- **`recording.sync`**: `{"matched", "missed", "stray"}`, the counts the events file and the PSTH panel show.
+- **The trial table's `*_s` columns** ([DATA.md](DATA.md#the-trial-table)): each event's time in seconds on the recording's clock, its sample divided by the sample rate, the clock of `spiketimes` in the sort export. An event whose pulse never came stays null.
+- **The events file**, as at first view.
+
+How it treats the files:
+
+- The `.json` is read, `recording.sync` and `trials` are replaced, and every other block is written back as it was read, whole or not at all; then the `.mat`. **The `.tsv` is never opened.**
+- It is an [archive write](DATA.md#the-cohort-archive): it holds the archive, is refused while a box runs and stops if one starts, and queues the files it wrote for [backup](DATA.md#backup-mirroring). The rewrite changes the file's size and time once, so its [cached score](DATA.md#caching) is recomputed once.
+- **RHX's files missing or unreadable leave the run exactly as finalization wrote it.** A run the pass did not reach is filled the first time it is viewed (`Application._align_later`). A second pass over an aligned run writes nothing.
+- [Re-derive](DATA.md#re-derive) keeps the `*_s` columns it finds (`derived.with_stored_seconds`). A run [recovered](DATA.md#crash-recovery) from its `.tsv` has none until it is aligned again.
+- A version-1 file is never rewritten: its events file is its alignment. Nothing runs while RHX's stop is still owed.
+
+> [!CAUTION]
+> **All-null `*_s` columns mean "not aligned", never "nothing happened"**, and `recording.sync` is absent then. Check `missed` and `stray` before trusting the times: a shifted match is as tidy as a right one.
 
 ## Not yet verified
 

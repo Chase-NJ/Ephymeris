@@ -29,7 +29,7 @@ What lands on disk and in the database, and how it is read back. Metric definiti
     notes.md                                    ← the session log, derived
     behavior.tsv/<animal>_<prefix>_<number>_<date>_<HHMMSS>.tsv     ← written live
     behavior.json/….json  behavior.mat/….mat                         ← built at run end
-    events/….events.json  ….events.mat           ← a recorded run's events on RHX's clock, when first viewed
+    events/….events.json  ….events.mat           ← a recorded run's events on RHX's clock, when its recording ends
     sort/….spikes.mat                            ← a recorded run's spikes for Offline Sorter ([RECORDING.md](RECORDING.md#the-sort-export))
 ```
 
@@ -238,7 +238,7 @@ A run is written as **version 2**: `"schema_version": 2`, then its facts in bloc
 | `task` | `sketch`; `stream`, `interp`, `free_ram`, `sync` as announced before `READY` ([TASKS.md](TASKS.md#confirming-the-parameters), [stream](TASKS.md#stream-grammar), [sync](RECORDING.md#firmware-pulse)); `trial_seed` (the board's `SEED` line) and `host_seed` (the app's `START` line); `channel_set_hash`, `channel_set_hash_version` ([TASKS.md](TASKS.md#registry-rules)) |
 | `params` | The merged parameters, one key per `metadataKey` |
 | `odors` | The [odors table](#the-odors-table); `[]` for a task with none |
-| `recording` | `path`, `name`, `port`, `channels`, `digital_in`, `sample_rate`; recordings only ([RECORDING.md](RECORDING.md#what-is-written)) |
+| `recording` | `path`, `name`, `port`, `channels`, `digital_in`, `sample_rate`, and `sync` once the run is [aligned](RECORDING.md#alignment-at-session-end); recordings only ([RECORDING.md](RECORDING.md#what-is-written)) |
 | `implant`, `channels` | The animal's implant as it stood that day, and one row per recorded channel; recordings only ([RECORDING.md](RECORDING.md#what-is-written)) |
 | `trials` | The [trial table](#the-trial-table) |
 | `ts_data` | `[code, timestamp_ms]` as sent, ms from **that animal's** start |
@@ -326,12 +326,12 @@ A grammar-2 row (`grammar2.TrialRow`) is one trial:
 | `start_s` … `end_s` | The same times on the recording's clock, in seconds |
 
 > [!CAUTION]
-> **The `*_s` columns are null until a recorded run is aligned.** All null means "not aligned", never "nothing happened".
+> **The `*_s` columns are null until a recorded run is aligned**, which happens when its recording ends ([RECORDING.md](RECORDING.md#alignment-at-session-end)). All null means "not aligned", never "nothing happened".
 
 - Columns are the dataclass fields (`grammar2.TrialRow`, `ReplayTrial`), checked as MATLAB identifiers by `test_derived_trials.py`.
 - `diverged` or `unreplayable` blocks have no rows and must not be analysed; a grammar-1 run has no block.
 - `replay_version` (`spine.REPLAY_VERSION`) moves with any table change, pinned by `test_the_replay_version_pins_the_trial_table`.
-- Written at finalization and recovery (last trial `complete: false` in a spine run); rewritten only by [Re-derive](#re-derive).
+- Written at finalization and recovery (last trial `complete: false` in a spine run); rewritten only by [Re-derive](#re-derive), which keeps the `*_s` columns, and by alignment, which fills them.
 - A version-1 file has the same block as `derived`, its rows under `trials`; Re-derive reads and rewrites it there.
 - In the `.mat`, `rows` is an **N×1 struct array** (`struct2table(S.trials.rows)`; `S.derived.trials` in version 1).
 

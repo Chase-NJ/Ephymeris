@@ -35,7 +35,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, Mapping
 
 from ...rig.registry import Vocabulary
 from ...sessions.run_document import odors_of, stream_of
@@ -321,9 +321,20 @@ def _outcome_of(span: _Span, side: str | None) -> tuple[str, int, int | None, st
     return None
 
 
-def table_of(document: dict[str, Any], profile: TaskProfile | None) -> Grammar2Table:
-    """A grammar-2 run's document as its trial table."""
+def table_of(document: dict[str, Any], profile: TaskProfile | None,
+             seconds: Mapping[int, float] | None = None) -> Grammar2Table:
+    """A grammar-2 run's document as its trial table.
+
+    `seconds` is a recorded run's alignment: each strobe's time on the
+    recording's clock, by its index in the stream. It fills the rows' `*_s`
+    columns; a strobe whose pulse never came, and every strobe without it, is
+    None there."""
     pairs = _pairs_of(document)
+    placed = seconds or {}
+
+    def second(strobe: tuple[str, int, int | None] | None) -> float | None:
+        return placed.get(strobe[1]) if strobe else None
+
     names = _names(profile)
     conditions = conditions_of(profile)
     stamps = [ts for _, ts in pairs if ts is not None]
@@ -443,6 +454,16 @@ def table_of(document: dict[str, Any], profile: TaskProfile | None) -> Grammar2T
             outcome_ms=outcome[2] if outcome else None,
             reward_on_ms=fluid[2] if fluid else None,
             end_ms=end[2] if end else None,
+            start_s=second(span.strobes[0] if span.strobes else None),
+            light_on_s=second(light),
+            odor_poke_s=second(poke),
+            odor_on_s=second(onset),
+            odor_off_s=second(odor_off),
+            odor_unpoke_s=second(unpoke),
+            response_s=second(response),
+            outcome_s=second(outcome[:3] if outcome else None),
+            reward_on_s=second(fluid),
+            end_s=second(end),
         ))
         previous_repeats_an_error = repeats and klass in ("wrong_response", "hold_broken", "omission",
                                                           "false_alarm")
@@ -462,9 +483,11 @@ def _with_side(condition: Condition, trials: list[ReplayTrial], spans: list[_Spa
     return condition
 
 
-def rows_of(document: dict[str, Any], profile: TaskProfile | None) -> tuple[TrialRow, ...]:
-    """The per-trial table of a grammar-2 run, for its files."""
-    return table_of(document, profile).rows
+def rows_of(document: dict[str, Any], profile: TaskProfile | None,
+            seconds: Mapping[int, float] | None = None) -> tuple[TrialRow, ...]:
+    """The per-trial table of a grammar-2 run, for its files; with `seconds`,
+    its recording-clock columns filled (`table_of`)."""
+    return table_of(document, profile, seconds).rows
 
 
 def verdicts(table: Grammar2Table, condition: str) -> list[bool]:

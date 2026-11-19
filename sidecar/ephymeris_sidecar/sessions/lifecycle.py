@@ -212,8 +212,13 @@ class SessionLifecycle:
         #: (`RECORDING.md#the-sort-export`): `(run files, recording name)`,
         #: blocking. None turns the export off.
         self.export_spikes: Callable[[list[str], str], Any] | None = sort_export.export_runs
-        # Exports under way: started when a recording stops, awaited by nothing
-        # a session waits on.
+        #: What aligns a recording's runs once RHX has stopped
+        #: (`RECORDING.md#alignment-at-session-end`): `(run files, recording
+        #: name)`, awaited. The app hands it the archive's `align_recorded`;
+        #: None leaves alignment to the first view of each run.
+        self.align_runs: Callable[[list[str], str], Awaitable[Any]] | None = None
+        # After-stop passes under way: started when a recording stops, awaited
+        # by nothing a session waits on.
         self._exports: set[asyncio.Task[None]] = set()
 
     # --- questions --------------------------------------------------------
@@ -823,38 +828,52 @@ class SessionLifecycle:
         run = await self._intan.stop_recording()
         if run is not None:
             await asyncio.to_thread(self._record_recording_run, session_id, run)
-            self._export_spikes_later(session_id, run)
+            self._after_recording_later(session_id, run)
 
-    def _export_spikes_later(self, session_id: str, run: dict[str, Any]) -> None:
-        """Start the spike export of this recording's runs
-        (`RECORDING.md#the-sort-export`) and return at once: it is off the
-        session's path, and nothing it does can fail a run or hold up an end."""
+    def _after_recording_later(self, session_id: str, run: dict[str, Any]) -> None:
+        """Start the after-stop pass over this recording's runs and return at
+        once: it is off the session's path, and nothing it does can fail a run
+        or hold up an end (`RECORDING.md#alignment-at-session-end`)."""
         assert self._intan is not None
         base = run.get("baseFilename")
-        if self.export_spikes is None or not isinstance(base, str) or not base:
+        if (self.export_spikes is None and self.align_runs is None) or not isinstance(base, str) or not base:
             return
         if getattr(self._intan, "stop_owed", False):
-            # RHX has not confirmed the stop, so spike.dat may still be growing:
-            # an export now could be cut short and look whole.
-            log.warning("spike export skipped: RHX has not confirmed that it stopped recording %s", base)
+            # RHX has not confirmed the stop, so its files may still be growing:
+            # an alignment or an export now could be cut short and look whole.
+            log.warning("nothing aligned or exported: RHX has not confirmed that it stopped recording %s", base)
             return
         name = recording_folder_name(base, run.get("fileTimestamp"))
-        task = asyncio.create_task(self._export_spikes(session_id, name))
+        task = asyncio.create_task(self._after_recording(session_id, name))
         self._exports.add(task)
         task.add_done_callback(self._exports.discard)
 
-    async def _export_spikes(self, session_id: str, recording: str) -> None:
+    async def _after_recording(self, session_id: str, recording: str) -> None:
+        """The after-stop pass, in a fixed order so its two steps never work on
+        one run at once: **align, then export**. Alignment rewrites each run's
+        `.json` and `.mat`; the export then reads the `.json` it left and RHX's
+        `spike.dat`. Each step's failure is its own: neither stops the other."""
         try:
             files = await asyncio.to_thread(
                 lambda: [r.file_path for r in self._sessions.runs_for(session_id) if r.file_path]
             )
-            assert self.export_spikes is not None
-            await asyncio.to_thread(self.export_spikes, files, recording)
-        except Exception:  # noqa: BLE001 - an export costs only itself
-            log.exception("the spike export of recording %s failed", recording)
+        except Exception:  # noqa: BLE001
+            log.exception("couldn't list the runs of recording %s", recording)
+            return
+        if self.align_runs is not None:
+            try:
+                await self.align_runs(files, recording)
+            except Exception as exc:  # noqa: BLE001 - left for the first view of each run
+                log.warning("recording %s was not aligned now (%s); each run is aligned when first viewed",
+                            recording, exc)
+        if self.export_spikes is not None:
+            try:
+                await asyncio.to_thread(self.export_spikes, files, recording)
+            except Exception:  # noqa: BLE001 - an export costs only itself
+                log.exception("the spike export of recording %s failed", recording)
 
     async def exports_settled(self) -> None:
-        """Wait for the spike exports under way. For shutdown and tests; no
+        """Wait for the after-stop passes under way. For shutdown and tests; no
         session waits on this."""
         while self._exports:
             await asyncio.gather(*list(self._exports), return_exceptions=True)

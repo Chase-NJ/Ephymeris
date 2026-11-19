@@ -32,7 +32,7 @@ from ..sessions import run_document as rd
 from ..sessions.writer import write_atomic
 from ..tasks.profile import embedded_profile
 from . import events as ev
-from .rhx_files import RhxFileError, read_spikes, rising_edges
+from .rhx_files import RhxFileError, parse_spike_header, read_spikes, rising_edges
 from .rhx_names import channel_names
 
 log = logging.getLogger(__name__)
@@ -63,6 +63,9 @@ class LoadedRun:
     first_stamp: int
     last_stamp: int
     events_file: Path | None
+    #: The run's own document already holds an alignment (`recording.sync`),
+    #: so nothing is left for the pass that fills it (`intan/alignment.py`).
+    filled: bool = True
 
 
 def _strobes(document: dict[str, Any]) -> list[tuple[int, int]]:
@@ -105,8 +108,17 @@ def _time_span(folder: Path) -> tuple[int, int]:
     return first, last
 
 
-def load_run(run_path: str | Path, names_fallback: Callable[[int], str | None] = lambda _c: None) -> LoadedRun:
-    """Everything a PSTH needs from one run, or `NotRecorded` saying why not."""
+def align_run(
+    run_path: str | Path,
+    names_fallback: Callable[[int], str | None] = lambda _c: None,
+    *,
+    need_spikes: bool = False,
+) -> LoadedRun:
+    """One recorded run placed on its recording's clock, with its events file
+    written: THE alignment, shared by the first view of a run (`load_run`) and
+    the pass a recording's end runs (`intan/alignment.py`), so the two can
+    never disagree. Reads RHX's digital input and never its spikes, which only
+    a PSTH needs. `NotRecorded` says why a run cannot be aligned."""
     path = Path(run_path)
     result = reader.read_run(path)
     if not result.ok or result.document is None:
@@ -118,7 +130,7 @@ def load_run(run_path: str | Path, names_fallback: Callable[[int], str | None] =
     folder = Path(str(rd.recording_path_of(document))) / str(recording)
     if not folder.is_dir():
         raise NotRecorded(f"RHX's recording folder is not where the run says: {folder}")
-    if not (folder / "spike.dat").is_file():
+    if need_spikes and not (folder / "spike.dat").is_file():
         raise NotRecorded(
             "No spike.dat beside the recording. Spikes are saved only in the "
             "“per signal type” and “per channel” formats, with Save spikes on."
@@ -129,14 +141,12 @@ def load_run(run_path: str | Path, names_fallback: Callable[[int], str | None] =
         raise NotRecorded("The run does not say which digital input or channels were its.")
 
     try:
-        header, spikes = read_spikes(folder / "spike.dat", set(channels))
         edges = rising_edges(folder, digital_in)
-        first, last = _time_span(folder)
+        rate = float(rd.recording_sample_rate_of(document) or _spike_rate(folder))
     except (RhxFileError, OSError) as exc:
         raise NotRecorded(f"RHX's files could not be read: {exc}") from exc
 
     strobes = _strobes(document)
-    rate = float(rd.recording_sample_rate_of(document) or header.sample_rate)
     alignment = ev.align(strobes, edges, rate, tick_pulsed=rd.sync_of(document) == "tick")
     profile = embedded_profile(document)
     names = dict(profile.strobes) if profile is not None else {}
@@ -144,7 +154,7 @@ def load_run(run_path: str | Path, names_fallback: Callable[[int], str | None] =
         if code not in names and (name := names_fallback(code)):
             names[code] = name
     trials = _trial_starts(document, strobes)
-    loaded = LoadedRun(
+    aligned = LoadedRun(
         run_path=path,
         folder=folder,
         rate=rate,
@@ -154,13 +164,33 @@ def load_run(run_path: str | Path, names_fallback: Callable[[int], str | None] =
         names=names,
         trials=trials,
         event_trials=[ev.trial_of(trials, e.ms) for e in alignment.events],
-        spikes=spikes,
-        first_stamp=first,
-        last_stamp=last,
+        spikes={},
+        first_stamp=0,
+        last_stamp=0,
         events_file=None,
+        filled=rd.recording_sync_of(document) is not None,
     )
-    loaded.events_file = _write_events(loaded)
-    return loaded
+    aligned.events_file = _write_events(aligned)
+    return aligned
+
+
+def _spike_rate(folder: Path) -> float:
+    """The sample rate RHX wrote into spike.dat, for a run that records none."""
+    with (folder / "spike.dat").open("rb") as handle:
+        return parse_spike_header(handle.read(1 << 16)).sample_rate
+
+
+def load_run(run_path: str | Path, names_fallback: Callable[[int], str | None] = lambda _c: None) -> LoadedRun:
+    """Everything a PSTH needs from one run, or `NotRecorded` saying why not:
+    its alignment (`align_run`), then its spikes."""
+    aligned = align_run(run_path, names_fallback, need_spikes=True)
+    try:
+        _header, spikes = read_spikes(aligned.folder / "spike.dat", set(aligned.channels))
+        first, last = _time_span(aligned.folder)
+    except (RhxFileError, OSError) as exc:
+        raise NotRecorded(f"RHX's files could not be read: {exc}") from exc
+    aligned.spikes, aligned.first_stamp, aligned.last_stamp = spikes, first, last
+    return aligned
 
 
 def events_path(run_path: Path) -> Path:
@@ -343,6 +373,13 @@ class OfflineRuns:
             while len(self._runs) > CACHED_RUNS:
                 self._runs.popitem(last=False)
         return loaded
+
+    def get_cached_filled(self, run_path: str) -> bool:
+        """Whether the run as last loaded already held its alignment in its own
+        document; True when it is not loaded, so nothing is assumed missing."""
+        with self._lock:
+            hit = self._runs.get(run_path)
+        return hit[1].filled if hit is not None else True
 
     @staticmethod
     def _key(run_path: str) -> tuple:

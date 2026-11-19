@@ -400,6 +400,18 @@ def recording_sample_rate_of(document: Document) -> Any:
     return _field(document, "intan_sample_rate")
 
 
+def recording_sync_of(document: Document) -> Any:
+    """A recorded run's alignment counts, `{"matched", "missed", "stray"}`
+    (`RECORDING.md#alignment-at-session-end`); None until the run is aligned,
+    and for a version-1 document, which has no place for them."""
+    return _block(document, "recording").get("sync") if is_version_2(document) else None
+
+
+def with_recording_sync(document: Document, counts: Any) -> Document:
+    """A copy of a version-2 `document` with its recording's alignment counts."""
+    return {**document, "recording": {**_block(document, "recording"), "sync": counts}}
+
+
 # --- the parameters the run ran on ------------------------------------------ #
 
 def _params(document: Document) -> Document:

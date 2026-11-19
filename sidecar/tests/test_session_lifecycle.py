@@ -775,6 +775,46 @@ async def test_an_export_that_fails_costs_the_session_nothing(recording_rig) -> 
     assert rig.sessions.get_session(session.id).recording["runs"] == [rig.intan.run_record]
 
 
+async def test_a_stopped_recording_is_aligned_then_exported_in_that_order(recording_rig) -> None:
+    """`RECORDING.md#alignment-at-session-end`: one pass, two steps, never at
+    once: alignment rewrites each run's files, then the export reads them."""
+    rig = recording_rig
+    rig.intan.run_record = {"baseFilename": "rec", "fileTimestamp": "260417_095743"}
+    steps: list[tuple[str, str]] = []
+
+    async def align(files: list[str], recording: str) -> None:
+        await asyncio.sleep(0.02)   # the export must still wait for it
+        steps.append(("align", recording))
+
+    rig.lifecycle.align_runs = align
+    rig.lifecycle.export_spikes = lambda _files, recording: steps.append(("export", recording))
+    session = rig.session(recording=True)
+    await rig.run_round(session)
+    ended = await rig.lifecycle.end(session.id)
+    assert ended.status == "completed" and steps == [], "the end waited for neither"
+    await rig.lifecycle.exports_settled()
+    assert steps == [("align", "rec_260417_095743"), ("export", "rec_260417_095743")]
+
+
+async def test_an_alignment_that_cannot_run_costs_the_session_and_the_export_nothing(recording_rig) -> None:
+    """A busy archive, a box already running again, RHX's files unreadable:
+    the run's files stay as finalization wrote them and the export still runs."""
+    rig = recording_rig
+    rig.intan.run_record = {"baseFilename": "rec", "fileTimestamp": "260417_095743"}
+    exported: list[str] = []
+
+    async def refused(_files: list[str], _recording: str) -> None:
+        raise RuntimeError("a box is running")
+
+    rig.lifecycle.align_runs = refused
+    rig.lifecycle.export_spikes = lambda _files, recording: exported.append(recording)
+    session = rig.session(recording=True)
+    await rig.run_round(session)
+    ended = await rig.lifecycle.end(session.id)
+    await rig.lifecycle.exports_settled()
+    assert ended.status == "completed" and exported == ["rec_260417_095743"]
+
+
 async def test_no_export_starts_while_rhx_has_not_confirmed_its_stop(recording_rig) -> None:
     """Its files may still be growing: an export now could be cut short and look whole."""
     rig = recording_rig
@@ -782,6 +822,11 @@ async def test_no_export_starts_while_rhx_has_not_confirmed_its_stop(recording_r
     rig.intan.stop_owed = True
     asked: list[str] = []
     rig.lifecycle.export_spikes = lambda _files, recording: asked.append(recording)
+
+    async def align(_files: list[str], recording: str) -> None:
+        asked.append(recording)
+
+    rig.lifecycle.align_runs = align
     session = rig.session(recording=True)
     await rig.run_round(session)
     await rig.lifecycle.end(session.id)

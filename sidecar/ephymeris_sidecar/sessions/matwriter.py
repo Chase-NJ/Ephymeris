@@ -113,6 +113,10 @@ def _to_matlab(data: dict[str, Any], *, nulls: bool) -> dict[str, Any]:
         if name == run_document.CHANNELS_KEY and blocks and isinstance(value, list):
             out[name] = derived.channels_to_matlab(value)
             continue
+        if isinstance(value, dict) and nulls:
+            # A block inside a block (`S.recording.sync.matched`): a struct too.
+            out[name] = _to_matlab(value, nulls=True)
+            continue
         if value is None and nulls:
             out[name] = "" if name in _TEXT_FIELDS else math.nan
         elif isinstance(value, bool):

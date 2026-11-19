@@ -157,6 +157,9 @@ class Application:
         #: The held session and its whole lifecycle (`sessions/lifecycle.py`).
         #: Built with the runner it sequences, in `start`.
         self.lifecycle: SessionLifecycle | None = None
+        # Runs being aligned after a first view (`_align_later`): held so the
+        # tasks are not collected mid-flight.
+        self._aligning: set[asyncio.Task[None]] = set()
         #: One preview at a time, for load alone: `hardware.preview` and
         #: `tasks.preview` fire on every keystroke and re-validate every stored
         #: task profile. Correctness needs no lock -- a hypothetical is
@@ -475,6 +478,10 @@ class Application:
             flashes=self.flashes,
             wiring_problem=self.rig_definition.wiring_problem,
         )
+        if self.archive is not None:
+            # A recording's runs are aligned when it stops, through the archive
+            # (`RECORDING.md#alignment-at-session-end`).
+            self.lifecycle.align_runs = self.archive.align_recorded
 
     async def stop(self) -> None:
         # First, and it only closes OUR sockets: a recording in progress belongs
@@ -1849,9 +1856,29 @@ class Application:
             )
 
         try:
-            return await asyncio.to_thread(build)
+            view = await asyncio.to_thread(build)
         except NotRecorded as exc:
             raise CommandError(ErrCode.RECORDING_UNREADABLE, str(exc)) from exc
+        if archive is not None and not self.offline_runs.get_cached_filled(run.file_path):
+            # The pass at the recording's end did not reach this run (RHX was
+            # away, or a box was running): its first view fills its files too.
+            self._align_later(archive, run.file_path)
+        return view
+
+    def _align_later(self, archive: CohortArchive, run_file: str) -> None:
+        """Fill one viewed run's sync counts and recording-clock times, in the
+        background (`RECORDING.md#alignment-at-session-end`). Never raises: a
+        busy archive or a running box leaves it for the next view."""
+
+        async def fill() -> None:
+            try:
+                await archive.align_recorded([run_file])
+            except Exception as exc:  # noqa: BLE001
+                log.info("%s was not aligned in its files now: %s", run_file, exc)
+
+        task = asyncio.create_task(fill())
+        self._aligning.add(task)
+        task.add_done_callback(self._aligning.discard)
 
     async def _intan_acknowledge_tether(self, args: Args) -> dict[str, Any]:
         intan = self._require_intan()

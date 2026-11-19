@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { errorMessage } from "@/lib/analytics/commands";
 import type { SessionListItem } from "@/lib/analytics/types";
@@ -11,6 +11,8 @@ import {
 } from "@/lib/logbook/clock";
 import type { SessionLog } from "@/lib/logbook/types";
 import { shell } from "@/lib/shell";
+
+import { useAutoHeight } from "./parts";
 
 /**
  * The head of a session's left page: the day as the title, then who ran it,
@@ -147,13 +149,7 @@ function Byline({
   useEffect(() => setOperator(log?.operator ?? ""), [log?.operator]);
   useEffect(() => setSummary(log?.summary ?? ""), [log?.summary]);
 
-  // The abstract is as tall as what is written in it, like text on a page.
-  useLayoutEffect(() => {
-    const element = area.current;
-    if (!element) return;
-    element.style.height = "auto";
-    element.style.height = `${element.scrollHeight}px`;
-  }, [summary]);
+  useAutoHeight(area, summary);
 
   async function commit(field: "operator" | "summary", value: string) {
     const current = (field === "operator" ? log?.operator : log?.summary) ?? "";

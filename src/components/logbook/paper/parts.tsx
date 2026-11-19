@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useLayoutEffect, type ReactNode, type RefObject } from "react";
 
 import type { SiteVerdict } from "@/lib/logbook/signal";
 import type { NoteTag } from "@/lib/logbook/types";
@@ -240,4 +240,40 @@ function siteTitle(site: SiteVerdict): string {
   if (site.rateHz !== null) parts.push(`${site.rateHz.toFixed(2)} Hz in all`);
   if (site.noiseUv !== null) parts.push(`noise ${site.noiseUv.toFixed(1)} µV`);
   return parts.join(" · ");
+}
+
+
+/**
+ * A text box as tall as what is written in it, like text on a page.
+ *
+ * Measured again whenever the box's width changes and once the page's face
+ * has loaded: a height taken while the fallback face was still on screen, or
+ * before the page had its width, leaves a hole under the text once Latin
+ * Modern sets the same words in fewer lines.
+ */
+export function useAutoHeight(ref: RefObject<HTMLTextAreaElement | null>, value: string): void {
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    const fit = () => {
+      element.style.height = "auto";
+      element.style.height = `${element.scrollHeight}px`;
+    };
+    fit();
+    let width = element.clientWidth;
+    const watcher = new ResizeObserver(() => {
+      if (element.clientWidth === width) return;
+      width = element.clientWidth;
+      fit();
+    });
+    watcher.observe(element);
+    let live = true;
+    void document.fonts.ready.then(() => {
+      if (live) fit();
+    });
+    return () => {
+      live = false;
+      watcher.disconnect();
+    };
+  }, [ref, value]);
 }

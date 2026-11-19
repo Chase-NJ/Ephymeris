@@ -509,6 +509,10 @@ A page's heading is the day; under it are the session's start and end (when the 
 the last ended; **~** when read from files) and **session folder**, which opens it. **Run by** and
 **Summary** are typed in place and kept when you leave the field.
 
+**Rescan**, above the notebook, is the one in [Analytics](#exporting-and-maintenance): it looks for session
+files this machine has no record of, such as a folder copied in from the other machine, and adds them
+to the notebook.
+
 ### Writing notes
 
 Press **n**, or click **Write a note…** under the last note.

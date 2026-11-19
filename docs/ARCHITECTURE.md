@@ -784,7 +784,14 @@ the one in the air at once. Reduced motion swaps the spread with no leaf.
 > that runs on mount, and has no entry animation; its scroll offset is kept by `Notebook` and put back.
 > A handle to "the" note box is found in the DOM outside `[inert]`, never held in a ref.
 
-The route still mounts `SkyBackdrop`, at `opacity: 0` ([One sky](#one-sky)).
+**The route is three layers, each with its own way in and out** (`routes/Log.tsx`). The sky
+(`SkyBackdrop`, [One sky](#one-sky)) holds still and is only covered, then switched to `opacity: 0` once
+it is. The desk is opaque, so it fades in and out on its own: an opaque layer with no `exit` sits over
+the next route for the whole transition (`AppShell.tsx`'s `RouteTransition` moves a page and never fades
+it, so every route fades its own). What lies on the desk, the cohort list or
+a notebook, crossfades with the other. A notebook is not mounted until its sessions are known, and
+where it lies open is decided in that render, never in an effect after it: laid down a render late, it
+arrives at its title page and turns to the latest session while still fading in.
 
 ### Printed documents
 

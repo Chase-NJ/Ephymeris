@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { errorMessage } from "@/lib/analytics/commands";
 import { atOnDay, formatOffset, shortTime, timeField } from "@/lib/logbook/clock";
@@ -6,7 +6,7 @@ import type { NoteDraft } from "@/lib/logbook/commands";
 import type { NoteScope, NoteTag, SessionNote } from "@/lib/logbook/types";
 
 import { TAGS, byMoment, scopeLabel, tagOf, type RosterAnimal } from "../tags";
-import { TAG_INK } from "./parts";
+import { TAG_INK, useAutoHeight } from "./parts";
 
 /** A note the page has been asked to start: the weights table's "note" link. */
 export interface ComposeRequest {
@@ -296,12 +296,7 @@ function Composer({
     area.current?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [request]);
 
-  useLayoutEffect(() => {
-    const element = area.current;
-    if (!element) return;
-    element.style.height = "auto";
-    element.style.height = `${element.scrollHeight}px`;
-  }, [body]);
+  useAutoHeight(area, body);
 
   useEffect(() => {
     if (initial) area.current?.focus();

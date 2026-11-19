@@ -6,7 +6,7 @@ number. This file is the specification: its numbers are what a paper would repor
 ## Start here
 
 1. **Every number is derived from raw strobes at read time.** A run's file holds `[code, timestamp]` pairs. A
-   spine run's file also carries a [derived trial table](../../../docs/DATA.md#the-derived-trial-table) for
+   spine run's file also carries a [trial table](../../../docs/DATA.md#the-trial-table) for
    outside scripts; `reader.py` drops it and Analytics replays.
 2. **A task profile says what the strobes mean**: its conditions and the strobe names marking a trial's start,
    answer and outcome. A [spine task](../../../docs/TASKS.md#spine-tasks)'s profile carries its state table,
@@ -326,7 +326,7 @@ One row per trial (`stream/trial_table.py`, `ReplayTrial` on the wire):
 The wire `TrialTable` adds `kind` (`replay`) and `gaps`, the columns it cannot fill, so an empty column reads as
 unknown. It rides on `analytics.series`, never cached ([DATA.md](../../../docs/DATA.md#caching)). Finalization and
 recovery mirror it into the run's `.json` and `.mat` in snake_case, stamped `spine.REPLAY_VERSION`
-([DATA.md](../../../docs/DATA.md#the-derived-trial-table)); Analytics never reads that copy.
+([DATA.md](../../../docs/DATA.md#the-trial-table)); Analytics never reads that copy.
 
 ### Metrics from the trial table
 

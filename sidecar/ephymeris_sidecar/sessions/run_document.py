@@ -34,7 +34,7 @@ Document = dict[str, Any]
 SNAPSHOT_KEY = "task_profile"
 
 #: The key a version-1 document carries its derived trial table under
-#: (`DATA.md#the-derived-trial-table`): written by `sessions/derived.py`.
+#: (`DATA.md#the-trial-table`): written by `sessions/derived.py`.
 DERIVED_KEY = "derived"
 
 #: The same block's key in version 2, and the key its rows sit under there
@@ -423,7 +423,7 @@ def stored_trial_table(document: Document, block: Any) -> Any:
 
 
 def trial_table_of(document: Document) -> Any:
-    """The stored trial-table block (`DATA.md#the-derived-trial-table`), in the
+    """The stored trial-table block (`DATA.md#the-trial-table`), in the
     shape `sessions/derived.py` derives it in: its rows under `trials`."""
     if is_version_2(document):
         return _renamed(document.get(TRIALS_KEY), _ROWS[2], _ROWS[1])

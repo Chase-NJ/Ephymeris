@@ -273,7 +273,7 @@ async def test_a_saved_spine_task_runs_a_session_and_its_tsv_alone_replays(tmp_p
         "the present begins at each poke, on the board's own clock"
     assert summary.replay.rewarded.n == sum(t["rewarded"] for t in table["trials"])
     # The real session path wrote the same table into the file as derived
-    # (`DATA.md#the-derived-trial-table`), under the file's own field names.
+    # (`DATA.md#the-trial-table`), under the file's own field names.
     derived = document["trials"]
     assert derived["status"] == "ok" and derived["interp"] == rp.INTERP_VERSION
     assert [t["outcome"] for t in derived["rows"]] == ["correct", "abort_during_sampling", "correct"]

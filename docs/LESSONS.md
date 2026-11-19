@@ -72,9 +72,9 @@ rather than an error, which is the worst kind of failure here.
 - **Run a cohort move on the other machine first**, or its rescan prunes the moved runs
   ([DATA.md](DATA.md#moving-animals-between-cohorts)).
 - **⚠ Move the score version on any scoring change.** The cache is served verbatim
-  ([DATA.md](DATA.md#caching)); `replay_version` moves with any change to the derived trial table
-  ([DATA.md](DATA.md#the-derived-trial-table)).
-- **In the `.mat`, a null is `NaN` or `''`, never `[]`** ([DATA.md](DATA.md#the-derived-trial-table)).
+  ([DATA.md](DATA.md#caching)); `replay_version` moves with any change to the trial table
+  ([DATA.md](DATA.md#the-trial-table)).
+- **In the `.mat`, a null is `NaN` or `''`, never `[]`** ([DATA.md](DATA.md#the-trial-table)).
 - **`to_json` must round-trip byte for byte**, and anything in it moves `profile_hash`. Never add a
   `states` or `graph` key ([TASKS.md](TASKS.md#profile-and-params-hashes),
   [DATA.md](DATA.md#the-embedded-task-profile)).

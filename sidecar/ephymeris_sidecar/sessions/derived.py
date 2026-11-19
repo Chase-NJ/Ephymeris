@@ -1,5 +1,5 @@
 """A run's derived trial table, written into its `.json` and `.mat`
-(`DATA.md#the-derived-trial-table`).
+(`DATA.md#the-trial-table`).
 
 Finalization and recovery derive it once and `run_document.with_trial_table`
 writes what it gives into the document as one block: `trials`, its rows under

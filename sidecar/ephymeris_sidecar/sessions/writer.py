@@ -298,7 +298,7 @@ class AnimalWriter:
                 self._tsv = None
 
         # A spine run's trial table, replayed here, in this worker thread, once
-        # (`DATA.md#the-derived-trial-table`): tens of milliseconds for a long run,
+        # (`DATA.md#the-trial-table`): tens of milliseconds for a long run,
         # and never able to cost the run its files.
         document = derived.with_derived(self._document(stop_reason))
         self._final = document

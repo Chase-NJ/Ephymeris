@@ -226,6 +226,32 @@ async def test_rederive_rewrites_a_version_2_runs_trials_block_in_place(rig) -> 
     assert (await rig.archive.rederive(rig.cohort.id))["current"] == 1
 
 
+async def test_rederive_reads_and_rewrites_an_old_files_derived_block_where_it_is(rig) -> None:  # noqa: ANN001, F811
+    """A version-1 file keeps its shape: the same block, as `derived`, its rows
+    under `trials`. A newer replay's block there is still left alone."""
+    _, json_path, _ = run_through_writer(rig.root, recorded_document())
+    flat = recorded_document()
+    current = derived.derive(flat)
+    assert current["trials"], "the fixture has a table to lose"
+    stale = {**flat, "derived": {**current, "trials": [], "replay_version": 0}}
+    json_path.write_text(json.dumps(stale, indent=2), encoding="utf-8")
+
+    result = await rig.archive.rederive(rig.cohort.id)
+    assert (result["rewritten"], result["failed"], result["skipped"]) == (1, 0, 0), result["entries"]
+    after = read_json(json_path)
+    assert after == {**flat, "derived": current} and "schema_version" not in after
+    assert list(after)[-1] == "derived"
+    assert load_mat(json_path.parent.parent / "behavior.mat" / "remy1.mat")["derived"]["trials"][0, 0].shape == (
+        len(current["trials"]), 1)
+    assert (await rig.archive.rederive(rig.cohort.id))["current"] == 1
+
+    newer = {**flat, "derived": {**current, "trials": [], "replay_version": current["replay_version"] + 1}}
+    json_path.write_text(json.dumps(newer, indent=2), encoding="utf-8")
+    [entry] = (await rig.archive.rederive(rig.cohort.id))["entries"]
+    assert entry["status"] == "skipped" and "newer replay" in entry["reason"]
+    assert read_json(json_path) == newer
+
+
 async def test_rederive_leaves_a_newer_builds_document_alone(rig) -> None:  # noqa: ANN001, F811
     _, json_path, mat = run_through_writer(rig.root, recorded_document())
     newer = json.dumps({**version_2(read_json(json_path)), "schema_version": 3}, indent=2)

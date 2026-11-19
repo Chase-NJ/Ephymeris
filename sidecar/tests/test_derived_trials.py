@@ -1,5 +1,5 @@
 """A spine run's trial table, written into its `.json` and `.mat` as *derived*
-(`DATA.md#the-derived-trial-table`, ADR 0003's *Hashes and data*).
+(`DATA.md#the-trial-table`, ADR 0003's *Hashes and data*).
 
 Finalization and recovery write the replay's trial table into both structured
 files, stamped with the `INTERP` it was replayed under and `REPLAY_VERSION`.
@@ -555,7 +555,10 @@ def test_every_trial_column_has_a_mat_class_and_a_matlab_name() -> None:
             assert kind.name != "json", f"{path}{name} has no .mat class: give `derived._kind` one"
             walk(kind.fields, f"{path}{name}.")
 
+    from ephymeris_sidecar.analytics.stream import grammar2
+
     walk(derived.fields_of(trial_table.ReplayTrial))
+    walk(derived.fields_of(grammar2.TrialRow))
     block = derived.derive(recorded_document())
     assert all(MATLAB_NAME.match(k) for k in block)
 
@@ -593,8 +596,8 @@ def test_a_column_added_to_the_trial_row_is_written_with_no_change_here(tmp_path
 
 #: A fingerprint of the derived blocks of fixed runs. **When this fails, a run's
 #: trial table has changed: bump `spine.REPLAY_VERSION`, then update this pin**,
-#: so a file's stamp says which replay wrote its table (`DATA.md#the-derived-trial-table`).
-REPLAY_PIN = "b8fa7251c0b82c1e"
+#: so a file's stamp says which replay wrote its table (`DATA.md#the-trial-table`).
+REPLAY_PIN = "39c8307f03062351"
 
 
 def test_the_replay_version_pins_the_trial_table() -> None:
@@ -603,8 +606,17 @@ def test_the_replay_version_pins_the_trial_table() -> None:
 
     document = recorded_document()
     crashed = {**document, "ts_data": document["ts_data"][:-6]}
+    # A grammar-2 run's table is stamped with the same version: every
+    # reference sequence, under the generated profile.
+    from ephymeris_sidecar.analytics.stream import grammar2
+    from tests import test_grammar2 as g2
+
     blocks = [derived.derive(d) for d in (document, crashed, diverged_document())]
-    columns = [(name, kind.name) for name, kind in derived.fields_of(trial_table.ReplayTrial)]
+    # Last: the generated profile is built on the shipped wiring, not this file's rig.
+    framed = g2.document(g2.EVERY, stream=2, task_profile=g2.generated_profile().to_json())
+    blocks.append(derived.derive(framed))
+    columns = [(name, kind.name) for cls in (trial_table.ReplayTrial, grammar2.TrialRow)
+               for name, kind in derived.fields_of(cls)]
     canon = json.dumps({"blocks": blocks, "columns": columns}, sort_keys=True, separators=(",", ":"))
     assert hashlib.sha256(canon.encode("utf-8")).hexdigest()[:16] == REPLAY_PIN
 

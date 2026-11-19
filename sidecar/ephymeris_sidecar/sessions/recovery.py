@@ -172,7 +172,7 @@ def parse_tsv(path: Path) -> ParsedTsv:
 def recovered_document(parsed: ParsedTsv) -> dict[str, Any]:
     """The `.json` document a parsed log recovers to: its header fields, its
     strobes, a stop reason from its footer or from how it was cut off, and a
-    spine run's trial table through its last strobe (`DATA.md#the-derived-trial-table`)."""
+    spine run's trial table through its last strobe (`DATA.md#the-trial-table`)."""
     stop_reason = parsed.stop_reason or (
         RECOVERED_LEGACY_STOP_REASON if parsed.dialect == "legacy" else RECOVERED_STOP_REASON
     )

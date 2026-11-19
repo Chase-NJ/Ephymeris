@@ -222,7 +222,7 @@ A run is written as **version 2**: `"schema_version": 2`, then its facts in bloc
 | `params` | The merged parameters, one key per `metadataKey` |
 | `odors` | The [odors table](#the-odors-table); `[]` for a task with none |
 | `recording` | `path`, `name`, `port`, `channels`, `digital_in`, `sample_rate`; recordings only ([RECORDING.md](RECORDING.md#what-is-written)) |
-| `trials` | The [trial table](#the-derived-trial-table) |
+| `trials` | The [trial table](#the-trial-table) |
 | `ts_data` | `[code, timestamp_ms]` as sent, ms from **that animal's** start |
 | `task_profile` | The [profile snapshot](#the-embedded-task-profile) |
 
@@ -282,28 +282,45 @@ One row per odor line a [trial type](TASKS.md#trial-types) presents: which odor,
 - `analytics/reader.py` adds the table, in memory, to a file that has none.
 - In the `.mat`, `odors` is an **N×1 struct array** (`struct2table(S.odors)`, 0×1 when empty), nulls `NaN` or `''`.
 
-### The derived trial table
+<a id="the-derived-trial-table"></a>
+### The trial table
 
-[Spine runs](TASKS.md#spine-tasks) carry their [trial table](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#the-trial-table) (`sessions/derived.py`), and [stream-grammar-2](TASKS.md#stream-grammar) runs theirs (`grammar2.rows_of`, marked `"grammar": 2`), for the lab's scripts:
+[Stream-grammar-2](TASKS.md#stream-grammar) runs carry their trial table under `trials` (`grammar2.rows_of`, marked `"grammar": 2`), and [spine runs](TASKS.md#spine-tasks) theirs ([the replay's](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#the-trial-table), `sessions/derived.py`). It is what people and the lab's scripts read:
 
 ```jsonc
-"trials": {"status": "ok", "detail": null, "interp": 6, "replay_version": 4,
-           "phases": ["wait", "present", "…"], "rows": [{"index": 0, "outcome": "correct", "complete": true}]}
+"trials": {"status": "ok", "detail": null, "interp": 1, "replay_version": 5, "grammar": 2, "phases": [],
+           "rows": [{"index": 0, "odor_line": 1, "odor_name": "GR-Sandalwood", "side": "right",
+                     "outcome_class": "correct", "correct": true, "reward_ms": 100, "odor_on_ms": 5300, "odor_on_s": null}]}
 ```
 
-A version-1 file has the same block as `derived`, its rows under `trials`.
+A grammar-2 row (`grammar2.TrialRow`) is one trial:
 
-- Columns are the dataclass fields (`ReplayTrial`, `grammar2.TrialRow`), checked as MATLAB identifiers by `test_derived_trials.py`.
-- `diverged` or `unreplayable` blocks have no rows and must not be analysed; legacy runs have no block.
+| Column | Meaning |
+|---|---|
+| `index`, `type_slot`, `side` | Its place in the run; its row of the task's table and the side that row rewards (`left`, `right`, `no_go`), from the trial's header |
+| `odor_line`, `odor_name`, `sampled` | The odor delivered and its name in the [odors table](#the-odors-table); `''` and `sampled: false` when none was |
+| `outcome`, `outcome_class`, `correct` | The outcome code's name, its class, and right or wrong; `correct` is null for a trial no accuracy counts (an abort) |
+| `response`, `reaction_ms` | The well first poked; `ODOR_UNPOKE` to that poke |
+| `reward_ms`, `reward_on_ms` | How long the valve was open, from its own strobes, never the parameter: 0 when no reward was given; when it opened |
+| `repeat`, `correction` | The board will re-present this trial; this trial re-presents an error |
+| `start_ms` … `end_ms` | Each event's time, ms from the run's first strobe |
+| `start_s` … `end_s` | The same times on the recording's clock, in seconds |
+
+> [!CAUTION]
+> **The `*_s` columns are null until a recorded run is aligned.** All null means "not aligned", never "nothing happened".
+
+- Columns are the dataclass fields (`grammar2.TrialRow`, `ReplayTrial`), checked as MATLAB identifiers by `test_derived_trials.py`.
+- `diverged` or `unreplayable` blocks have no rows and must not be analysed; a grammar-1 run has no block.
 - `replay_version` (`spine.REPLAY_VERSION`) moves with any table change, pinned by `test_the_replay_version_pins_the_trial_table`.
-- Written at finalization and recovery (last trial `complete: false`); rewritten only by [Re-derive](#re-derive).
+- Written at finalization and recovery (last trial `complete: false` in a spine run); rewritten only by [Re-derive](#re-derive).
+- A version-1 file has the same block as `derived`, its rows under `trials`; Re-derive reads and rewrites it there.
 - In the `.mat`, `rows` is an **N×1 struct array** (`struct2table(S.trials.rows)`; `S.derived.trials` in version 1).
 
 > [!CAUTION]
 > **Nulls are `NaN` (numbers) and `''` (strings) in the `.mat`, never `[]`**, or concatenating a column misaligns every later trial.
 
 > [!IMPORTANT]
-> **The app never reads the derived table**: `analytics/reader.py` drops it and Analytics replays.
+> **The app never reads the stored table**: `analytics/reader.py` drops it and Analytics decodes afresh.
 
 ## Crash safety
 
@@ -340,14 +357,14 @@ After a power loss, every strobe through the last complete line is in the `.tsv`
 `sessions.recover` (`sessions/recovery.py`, the **Recover** button) rebuilds `.json` and `.mat` for each `.tsv` without a parseable `.json` (an unreadable one counts as present). It never talks to a board.
 
 - It uses the archive walker (`walk_orphaned_tsvs`), so it reads every layout [adoption](#orphan-adoption) does and writes into the same one.
-- It writes [version 2](#the-json-document) from any `.tsv`. A footer's `stop_reason` wins; otherwise `"recovered after crash"`. `n_events` is recounted; spine runs get their [table](#the-derived-trial-table).
+- It writes [version 2](#the-json-document) from any `.tsv`. A footer's `stop_reason` wins; otherwise `"recovered after crash"`. `n_events` is recounted; spine runs get their [table](#the-trial-table).
 - Strobe lines must match `^\d{1,3}\t\d+$`, and **an unterminated last line is dropped**, so a torn line never reads as real. A torn `task_profile` line is dropped.
 - **Pre-Ephymeris logs** (first line `LEGACY_HEADER`) allow a third name column and an unterminated last line, and record `"recovered from a legacy log"`; header-only ones are refused.
 - Refused while a box runs; an [archive write](#the-cohort-archive). Recover then runs a rescan to adopt what it wrote.
 
 ## Re-derive
 
-`sessions.rederive` replays every spine run in a cohort's folder and rewrites only the [derived table](#the-derived-trial-table) (in the file's own version), in `.json` then `.mat`, where it differs from this build's; current files are not touched. Every other key is kept and the `.tsv` never opened. A block from a newer `replay_version`, an `ok` block of an unknown `INTERP`, or a document of a newer `schema_version` is `skipped`, so an older build never undoes a newer one. A `.mat` is judged by content, not mtime, and its failure is reported apart (`matError`). Refused while a box runs.
+`sessions.rederive` re-derives every spine and grammar-2 run in a cohort's folder and rewrites only the [trial table](#the-trial-table) (in the file's own version), in `.json` then `.mat`, where it differs from this build's; current files are not touched. Every other key is kept and the `.tsv` never opened. A block from a newer `replay_version`, an `ok` block of an unknown `INTERP`, or a document of a newer `schema_version` is `skipped`, so an older build never undoes a newer one. A `.mat` is judged by content, not mtime, and its failure is reported apart (`matError`). Refused while a box runs.
 
 ## SQLite database
 

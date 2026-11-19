@@ -247,7 +247,7 @@ def parse_run(path: str | Path, stat: StatResult) -> ReadResult:
     if refused is not None:
         return ReadResult(status="unreadable", detail=f"{target.name} {refused}")
 
-    # A spine run's derived trial table (`DATA.md#the-derived-trial-table`) is for
+    # A spine run's derived trial table (`DATA.md#the-trial-table`) is for
     # the lab's own scripts. Analytics never reads it: every number is a replay,
     # so the copy is dropped here, at the one door a file comes in by. A flat
     # (version-1) file is regrouped into the version-2 shape at the same door.

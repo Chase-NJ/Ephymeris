@@ -457,6 +457,7 @@ class Application:
         # The runner's three taps. They run on a port's session thread, which
         # is why the service's side of each is a `call_soon_threadsafe`.
         self.runner.recording_fields = self.intan.recording_fields
+        self.runner.recording_positions = self.intan.recording_positions
         self.runner.on_box_started = self.intan.box_started
         self.runner.on_strobe_tap = self.intan.on_strobe
         self.lifecycle = SessionLifecycle(

@@ -105,6 +105,14 @@ def _to_matlab(data: dict[str, Any], *, nulls: bool) -> dict[str, Any]:
             # one field per column, so `struct2table(S.odors)` is the table.
             out[name] = derived.odors_to_matlab(value)
             continue
+        if name == run_document.IMPLANT_KEY and blocks:
+            # The run's copy of the implant: a struct, its targets an N×1 struct
+            # array. A null one is the same struct, empty, so the class holds.
+            out[name] = derived.implant_to_matlab(value)
+            continue
+        if name == run_document.CHANNELS_KEY and blocks and isinstance(value, list):
+            out[name] = derived.channels_to_matlab(value)
+            continue
         if value is None and nulls:
             out[name] = "" if name in _TEXT_FIELDS else math.nan
         elif isinstance(value, bool):

@@ -157,6 +157,13 @@ def parse_tsv(path: Path) -> ParsedTsv:
                     decoded = _decode_json(value)
                     if decoded is not None:
                         metadata[key] = decoded
+                elif key in run_document.BLOCK_FIELDS and _is_version_2(metadata):
+                    # A recorded run's implant (an object or null) and channels
+                    # (a list), one JSON line each; a torn one is dropped.
+                    try:
+                        metadata[key] = json.loads(value)
+                    except ValueError:
+                        log.warning("a .tsv header carries an unparseable %s line; dropping it", key)
                 elif key not in _FOOTER_KEYS:
                     metadata[key] = _coerce(key, value, strings)
                     if _is_version_2(metadata):

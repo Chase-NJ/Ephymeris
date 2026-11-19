@@ -301,6 +301,7 @@ class SessionLifecycle:
             # just read from (`TASKS.md#the-rig-definition`).
             async with self._rig_reading():
                 names = {a.id: a.name for a in cohort.animals}
+                implanted = {a.id: a.implant for a in cohort.animals}
                 # The channel set every folder this mapping reads was
                 # generated against; no write can land until the session ends.
                 channel_set_hash = await asyncio.to_thread(
@@ -342,6 +343,7 @@ class SessionLifecycle:
                             profile=profile,
                             channel_set_hash=channel_set_hash,
                             channel_set_hash_version=registry.CHANNEL_SET_HASH_VERSION,
+                            implant=implanted.get(entry.animal_id),
                         )
                     )
 

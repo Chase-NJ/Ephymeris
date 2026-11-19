@@ -105,6 +105,8 @@ An animal's **implant** (`cohorts/implants.py`, `Animal.implant` on the wire) is
 - **Depth is a dated history.** One drive carries the whole electrode, so a lowering moves every target. `depth_on(implant, target, date)` gives the surgery `dvMm` plus every lowering on or before the date, with the date of the last one (the surgery date when there is none).
 - **Its own table, `implants`, keyed by the animal's id with no foreign key**, because a roster save deletes and re-inserts every `animals` row ([Indexes](#indexes)). So it survives a rename and a roster re-save, stays with a [former member](#former-members), and a [move](#moving-animals-between-cohorts) re-keys it to the animal it joins unless that animal has its own. An animal deleted outright takes its implant with it.
 - **Posting a roster**: `implant: null` removes it; an animal posted without the key keeps what is stored.
+- **The implant is the one home of a probe map.** The Record step shows it and never asks for one ([RECORDING.md](RECORDING.md#record-step)).
+- **A recorded run copies it** as it stood on the session's date ([RECORDING.md](RECORDING.md#what-is-written)).
 
 ### Data folder
 
@@ -236,6 +238,7 @@ A run is written as **version 2**: `"schema_version": 2`, then its facts in bloc
 | `params` | The merged parameters, one key per `metadataKey` |
 | `odors` | The [odors table](#the-odors-table); `[]` for a task with none |
 | `recording` | `path`, `name`, `port`, `channels`, `digital_in`, `sample_rate`; recordings only ([RECORDING.md](RECORDING.md#what-is-written)) |
+| `implant`, `channels` | The animal's implant as it stood that day, and one row per recorded channel; recordings only ([RECORDING.md](RECORDING.md#what-is-written)) |
 | `trials` | The [trial table](#the-trial-table) |
 | `ts_data` | `[code, timestamp_ms]` as sent, ms from **that animal's** start |
 | `task_profile` | The [profile snapshot](#the-embedded-task-profile) |
@@ -259,6 +262,7 @@ A run is written as **version 2**: `"schema_version": 2`, then its facts in bloc
 # box: 2
 # …                                  ← one line per field of run, task and recording
 # params: {"num_trials":1000,…}      ← the parameters, one JSON line
+# implant: {…}  # channels: […]      ← a recorded run only, one JSON line each
 # task_profile: {…}                  ← snapshot, always the last header line
 221	0
 222	1000

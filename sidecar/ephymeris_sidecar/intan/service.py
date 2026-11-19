@@ -1105,6 +1105,14 @@ class IntanService:
 
     # --- what the runner tells us ----------------------------------------
 
+    def recording_positions(self, box: int) -> dict[str, tuple[float, float]]:
+        """Each of this box's sites' position by native channel, from the probe
+        map it records with (`RECORDING.md#what-is-written`); empty without one."""
+        recording = self._recording
+        if recording is None or box not in recording.boxes:
+            return {}
+        return probemap.positions(recording.boxes[box].probe_map)
+
     def recording_fields(self, box: int) -> dict[str, Any]:
         """One animal's recording fields, by name, for its session document
         (`run_document.build` puts them in its `recording` block)."""

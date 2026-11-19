@@ -154,3 +154,15 @@ def _page(element: ET.Element, top: dict[str, str], index: int, name: str) -> di
         "texts": texts,
         "ports": ports,
     }
+
+
+def positions(parsed: dict[str, Any] | None) -> dict[str, tuple[float, float]]:
+    """Each site's `(x, y)` by native channel name, in the file's own units
+    (micrometres, in the lab's maps). A channel drawn on two pages keeps its
+    first. Empty for no map."""
+    out: dict[str, tuple[float, float]] = {}
+    for page in (parsed or {}).get("pages", []):
+        for port in page.get("ports", []):
+            for site in port.get("sites", []):
+                out.setdefault(site["channel"], (float(site["x"]), float(site["y"])))
+    return out

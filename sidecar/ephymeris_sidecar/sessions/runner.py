@@ -24,6 +24,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from ..analytics.stream.grammar2 import scores_grammar_2
+from ..cohorts import implants
+from ..intan.rhx_names import channel_names
 from ..analytics.stream.legacy import MetricSet
 from ..analytics.stream.spine import is_spine_run
 from ..tasks.profile import TaskProfile
@@ -64,6 +66,9 @@ class BoxConfig:
     #: The rule that made it (`registry.CHANNEL_SET_HASH_VERSION`), recorded
     #: beside it so a reader never mistakes one rule's hash for the other's.
     channel_set_hash_version: int | None = None
+    #: The animal's implant as it is stored (`DATA.md#implants`), None for
+    #: none. A recorded run copies it as it stood on the session's date.
+    implant: dict[str, Any] | None = None
 
 
 @dataclass
@@ -175,10 +180,12 @@ class SessionRunner:
         # -- each call site swallows, because a behavior session never pays for
         # the recording's problems.
         #   recording_fields(box) -> the recording's fields, by name, for the document
+        #   recording_positions(box) -> each site's (x, y) by native channel, from the probe map
         #   on_box_started(box, animal, tick_pulsed): tick_pulsed when the board
         #     announced its sync line pulses once per tick (`SYNC=TICK`)
         #   on_strobe_tap(box, code, ms)
         self.recording_fields: Callable[[int], dict[str, Any]] | None = None
+        self.recording_positions: Callable[[int], dict[str, tuple[float, float]]] | None = None
         self.on_box_started: Callable[[int, str, bool], None] | None = None
         self.on_strobe_tap: Callable[[int, int, int], None] | None = None
 
@@ -273,6 +280,18 @@ class SessionRunner:
         return [self._configs[box] for box in sorted(self._configs)]
 
     # --- start ------------------------------------------------------------
+
+    def _implant_and_channels(
+        self, run: ActiveRun, recording: dict[str, Any], when: datetime
+    ) -> dict[str, Any]:
+        """A recorded run's `implant` and `channels` blocks
+        (`RECORDING.md#what-is-written`): the animal's implant as it stood on
+        the session's date, and one row per channel RHX records for the box."""
+        on = self._session_date or when.date().isoformat()
+        copy = implants.on_date(run.config.implant, on)
+        positions = self.recording_positions(run.box) if self.recording_positions is not None else None
+        native = channel_names(recording.get("intan_channels"))
+        return {"implant": copy, "channels": implants.channel_rows(native, copy, positions)}
 
     def _run_of_day(self, config: BoxConfig) -> int | None:
         """This animal's run number on the session's date, from 1; None when
@@ -418,7 +437,10 @@ class SessionRunner:
             # `params_hash` -- two runs of one tuning are comparable whether or
             # not one of them was recorded.
             try:
-                core.update(self.recording_fields(box))
+                recording = self.recording_fields(box)
+                core.update(recording)
+                if recording:
+                    core.update(self._implant_and_channels(run, recording, when))
             except Exception:  # noqa: BLE001
                 log.exception("box %d: couldn't describe its recording", box)
         config_meta = dict(run.config.config_metadata)

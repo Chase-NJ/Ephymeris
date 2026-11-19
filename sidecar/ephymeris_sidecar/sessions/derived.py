@@ -231,6 +231,34 @@ def odors_to_matlab(rows: list[Any]) -> Any:
     return _mat(_Kind("records", _ODOR_KINDS), rows)
 
 
+_TARGET_KINDS = tuple(
+    (name, _Kind("number" if name.endswith("_mm") else "text"))
+    for name in ("name", "region", "hemisphere", "ap_mm", "ml_mm", "dv_mm", "depth_set_on", "channels")
+)
+_CHANNEL_KINDS = tuple(
+    (name, _Kind("text" if name in ("native", "target") else "number"))
+    for name in ("native", "device_channel", "target", "x_um", "y_um")
+)
+
+
+def implant_to_matlab(implant: Any) -> dict[str, Any]:
+    """A run's implant copy as `savemat` should write it
+    (`RECORDING.md#what-is-written`): a struct whose `targets` is an N×1
+    struct array. None is the same struct with nothing in it."""
+    held = implant if isinstance(implant, dict) else {}
+    return {
+        "device": _mat(_Kind("text"), held.get("device")),
+        "surgery_date": _mat(_Kind("text"), held.get("surgery_date")),
+        "probe_map": _mat(_Kind("text"), held.get("probe_map")),
+        "targets": _mat(_Kind("records", _TARGET_KINDS), held.get("targets") or []),
+    }
+
+
+def channels_to_matlab(rows: list[Any]) -> Any:
+    """A run's channels table: an N×1 struct array, a null `NaN` or `''`."""
+    return _mat(_Kind("records", _CHANNEL_KINDS), rows)
+
+
 def _bmp(text: str) -> str:
     """`text` with each character outside the BMP escaped as JSON escapes it
     (`\\ud83d\\udc2d`), as the embedded profile's labels always were.

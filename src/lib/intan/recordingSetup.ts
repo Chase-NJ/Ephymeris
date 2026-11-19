@@ -38,16 +38,55 @@ export interface MappedBox {
 // --- the rows -----------------------------------------------------------------
 
 /**
- * A new row for a box: its wiring from what the box remembers, and its probe
- * map from its animal — the one chosen for it this visit (`chosen`, a draft
- * row of the same animal on another box), else the one remembered for it,
- * else none.
+ * Each animal's probe map, by animal id: its implant's (`DATA.md#implants`),
+ * the one place a probe map is entered. An animal with no implant, or an
+ * implant with no map, has none.
  */
-function seedRow(box: MappedBox, defaults: RecordingDefaults, chosen: BoxRow | undefined): BoxRow {
+export function implantProbeMaps(
+  animals: readonly { id: string; implant?: { probeMapPath: string | null } | null }[],
+): Record<string, string> {
+  const maps: Record<string, string> = {};
+  for (const animal of animals) {
+    const path = animal.implant?.probeMapPath;
+    if (path) maps[animal.id] = path;
+  }
+  return maps;
+}
+
+/**
+ * The rows with each one's probe map set to its animal's implant's. A row
+ * that already has it is left alone, parse and all; one that differs (a
+ * restored draft, an implant edited since) takes the implant's and parses
+ * again. The same array comes back when nothing changed.
+ */
+export function followImplantMaps(rows: BoxRow[], implantMaps: Readonly<Record<string, string>>): BoxRow[] {
+  let changed = false;
+  const next = rows.map((r) => {
+    const path = implantMaps[r.animalId] ?? null;
+    if (r.probeMapPath === path) return r;
+    changed = true;
+    return { ...r, probeMapPath: path, probeMap: null, probeError: null };
+  });
+  return changed ? next : rows;
+}
+
+/**
+ * A new row for a box: its wiring from what the box remembers, and its probe
+ * map from its animal's implant. A draft row of the same animal on another box
+ * (`chosen`) hands over its parsed map, so a swap does not parse again.
+ */
+function seedRow(
+  box: MappedBox,
+  defaults: RecordingDefaults,
+  implantMaps: Readonly<Record<string, string>>,
+  chosen: BoxRow | undefined,
+): BoxRow {
   const memory = defaults.boxes[String(box.box)];
-  const probe = chosen
-    ? { probeMapPath: chosen.probeMapPath, probeMap: chosen.probeMap, probeError: chosen.probeError }
-    : { probeMapPath: defaults.probeMaps[box.animalId] ?? null, probeMap: null, probeError: null };
+  const path = implantMaps[box.animalId] ?? null;
+  const probe =
+    chosen && chosen.probeMapPath === path
+      ? { probeMapPath: path, probeMap: chosen.probeMap, probeError: chosen.probeError }
+      : { probeMapPath: path, probeMap: null, probeError: null };
   return {
     box: box.box,
     animalId: box.animalId,
@@ -69,7 +108,7 @@ function seedRow(box: MappedBox, defaults: RecordingDefaults, chosen: BoxRow | u
  *   current name, should it have been renamed);
  * - a box no longer mapped is dropped;
  * - a newly mapped box, or one whose animal changed, gets a fresh row
- *   (`seedRow`): the box's wiring, and its animal's probe map.
+ *   (`seedRow`): the box's wiring, and its animal's implant's probe map.
  *
  * The same array comes back when nothing changed, so a repeated answer from
  * the sidecar neither re-renders nor rewrites the draft. No boxes (not loaded
@@ -79,13 +118,16 @@ export function reconcileRows(
   boxes: readonly MappedBox[],
   defaults: RecordingDefaults,
   draftRows: BoxRow[],
+  implantMaps: Readonly<Record<string, string>>,
 ): BoxRow[] {
   if (boxes.length === 0) return draftRows;
   const byBox = new Map(draftRows.map((r) => [r.box, r]));
   const byAnimal = new Map(draftRows.map((r) => [r.animalId, r]));
   const next = boxes.map((b) => {
     const kept = byBox.get(b.box);
-    if (!kept || kept.animalId !== b.animalId) return seedRow(b, defaults, byAnimal.get(b.animalId));
+    if (!kept || kept.animalId !== b.animalId) {
+      return seedRow(b, defaults, implantMaps, byAnimal.get(b.animalId));
+    }
     return kept.animalName === b.animalName ? kept : { ...kept, animalName: b.animalName };
   });
   const unchanged = next.length === draftRows.length && next.every((r, i) => r === draftRows[i]);
@@ -347,25 +389,16 @@ export function configurePayload(
  * What a confirmed Record step leaves as the next one's starting point — not
  * the save directory (it is per session) and not the boxes list (it is per
  * round), but each box's port and range under the box, behavior-only boxes
- * included, and each row's probe map under its animal. `probeMaps` is what was
- * remembered before: an animal not on the form keeps its entry, and one whose
- * row has no probe map forgets it.
+ * included. Never a probe map: that is the animal's implant's.
  */
 export function rememberedDefaults(
   rows: readonly BoxRow[],
   config: RecordingConfigDefaults,
   saveRoot: string | null,
-  probeMaps: Readonly<Record<string, string>>,
 ): Omit<RecordingDefaults, "impedanceFlags" | "activeSiteHz"> {
-  const nextMaps: Record<string, string> = { ...probeMaps };
-  for (const r of rows) {
-    if (r.probeMapPath) nextMaps[r.animalId] = r.probeMapPath;
-    else delete nextMaps[r.animalId];
-  }
   return {
     saveRoot,
     config,
-    probeMaps: nextMaps,
     boxes: Object.fromEntries(
       rows.map((r) => [
         String(r.box),

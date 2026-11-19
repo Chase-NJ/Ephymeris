@@ -9,7 +9,8 @@ document's shape is a change to this file alone;
 
 A document has one of two shapes. **Version 2** is nested: `schema_version`,
 then its facts under `run`, `task`, `params`, `odors`, `recording` and `trials`,
-with `ts_data` and `task_profile` beside them. **Version 1** is flat and has no
+with `ts_data` and `task_profile` beside them; a recorded run also has
+`implant` and `channels`. **Version 1** is flat and has no
 `schema_version`. Every function here takes either; `lifted` turns the first
 into the second, and `analytics/reader.py` does that to every file it opens.
 
@@ -108,9 +109,16 @@ VALUE_BLOCKS = ("run", "task", PARAMS_KEY, "recording")
 #: The key a version-2 document keeps its odors table under (`DATA.md#the-odors-table`).
 ODORS_KEY = "odors"
 
+#: The keys a recorded run keeps its copy of the animal's implant and its
+#: channels table under (`RECORDING.md#what-is-written`). Each is a whole
+#: block, given to `build` by this name among its fields.
+IMPLANT_KEY = "implant"
+CHANNELS_KEY = "channels"
+BLOCK_FIELDS = (IMPLANT_KEY, CHANNELS_KEY)
+
 #: A version-2 document's top-level keys, in the order they are written.
-_ORDER = (VERSION_KEY, "run", "task", PARAMS_KEY, ODORS_KEY, "recording", TRIALS_KEY, _STROBES,
-          SNAPSHOT_KEY)
+_ORDER = (VERSION_KEY, "run", "task", PARAMS_KEY, ODORS_KEY, "recording", IMPLANT_KEY, CHANNELS_KEY,
+          TRIALS_KEY, _STROBES, SNAPSHOT_KEY)
 
 
 # --- which shape ------------------------------------------------------------ #
@@ -170,10 +178,12 @@ def build(fields: Mapping[str, Any], params: Mapping[str, Any], snapshot: Any = 
     for field, block, key in _PLACES:
         if field in fields:
             blocks[block][key] = fields[field]
-    blocks[PARAMS_KEY].update({key: value for key, value in fields.items() if key not in _WHERE})
+    blocks[PARAMS_KEY].update({key: value for key, value in fields.items()
+                               if key not in _WHERE and key not in BLOCK_FIELDS})
     blocks[PARAMS_KEY].update(params)
     out: Document = {VERSION_KEY: SCHEMA_VERSION}
     out.update({name: blocks[name] for name in VALUE_BLOCKS if blocks[name] or name != "recording"})
+    out.update({name: fields[name] for name in BLOCK_FIELDS if name in fields})
     if strobes is not None:
         out[_STROBES] = strobes
     if snapshot is not None:
@@ -196,6 +206,12 @@ def from_header(header: Mapping[str, Any]) -> Document:
     params = header.get(PARAMS_KEY)
     fields = {key: value for key, value in header.items()
               if key not in (VERSION_KEY, PARAMS_KEY, SNAPSHOT_KEY)}
+    # A block line that did not survive as the block it is (a line torn by the
+    # crash) is dropped, never kept as a parameter.
+    if not isinstance(fields.get(IMPLANT_KEY, {}), (dict, type(None))):
+        del fields[IMPLANT_KEY]
+    if not isinstance(fields.get(CHANNELS_KEY, []), list):
+        del fields[CHANNELS_KEY]
     return build({**unknown, **fields}, params if isinstance(params, dict) else {},
                  header.get(SNAPSHOT_KEY))
 
@@ -243,6 +259,24 @@ def with_strobes(document: Document, strobes: Any) -> Document:
     """A copy of `document` with `strobes` as its `ts_data`."""
     out = {**document, _STROBES: strobes}
     return _ordered(out) if is_version_2(document) else out
+
+
+def header_blocks(document: Document) -> Document:
+    """A version-2 document's whole blocks that the `.tsv` header carries as
+    one JSON line each: the implant (null included) and the channels table of
+    a recorded run."""
+    return {name: document[name] for name in BLOCK_FIELDS if name in document}
+
+
+def implant_of(document: Document) -> Any:
+    """A recorded run's copy of its animal's implant; None for an animal with
+    none, a behavior-only run and a version-1 document."""
+    return document.get(IMPLANT_KEY) if is_version_2(document) else None
+
+
+def channels_of(document: Document) -> Any:
+    """A recorded run's channels table; None for a run with none."""
+    return document.get(CHANNELS_KEY) if is_version_2(document) else None
 
 
 def header_fields(document: Document) -> Document:

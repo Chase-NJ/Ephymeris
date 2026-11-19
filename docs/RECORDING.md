@@ -296,13 +296,14 @@ URL, because it is re-entered from the dock, between rounds and after a reload.
 
 It comes **after mapping** (it asks for each *mapped* box's headstage port), runs **once per [round](../GLOSSARY.md#round)**, and
 opens prefilled from `settings.recordingDefaults`, which it writes back on Continue. Whether a box records,
-its port and channel range are remembered **by box**; a probe map is the animal's implant, remembered **by
-animal id** (`probeMaps`).
+its port and channel range are remembered **by box**. **A probe map is never entered here**: each row
+shows its animal's [implant](DATA.md#implants)'s (`implantProbeMaps`, `followImplantMaps`), the one place
+a probe map is entered, so the two can never disagree.
 
 - **Readiness**: RHX connected and not recording, a headstage present, a sync channel in the wiring, a
   digital input for every recorded box. Each failing line links to its fix.
 - **Saving**: `<session folder>/ephys` by default, or the session's folder name under a chosen root.
-- **Boxes**: Record or Behavior only, DIN, port, channel range, optional probe-map XML (parsed by
+- **Boxes**: Record or Behavior only, DIN, port, channel range, and the implant's probe-map XML (parsed by
   `intan.parseProbeMap`; a parse cut off by a lost connection reruns on reconnect). Boxes may share a
   port on disjoint ranges only. A box not in the round's confirmed mapping is refused before RHX is
   touched (`SessionLifecycle.mapped_boxes`).
@@ -495,9 +496,9 @@ folder. Probe-map XMLs are copied beside them as `box<n>_<name>.xml`.
 channels and probe-map file). `NULL` means behavior only. A save location inside a cohort folder follows
 a relocate of that folder.
 
-**Each animal's document** ([DATA.md](DATA.md#the-json-document)) gains a `recording` block. The same
-fields are in the `.tsv` header, as the `intan_*` line named beside each, so a crash-recovered file keeps
-them; a version-1 document has them flat under those names:
+**Each recorded animal's document** ([DATA.md](DATA.md#the-json-document)) gains three blocks. All three are in the `.tsv` header, so a crash-recovered file keeps them.
+
+**`recording`**: which recording the run is inside. In the `.tsv` header each field is the `intan_*` line named beside it; a version-1 document has them flat under those names, and is read into this block:
 
 | Field | `.tsv` line | |
 |---|---|---|
@@ -505,6 +506,28 @@ them; a version-1 document has them flat under those names:
 | `path` | `intan_path` | where RHX was told to save |
 | `digital_in`, `port`, `channels` | `intan_digital_in`, `intan_port`, `intan_channels` | this box's input, port and `A-016:A-031` range |
 | `sample_rate` | `intan_sample_rate` | for converting sample numbers |
+
+**`implant`**: the animal's [implant](DATA.md#implants) as it stood on the session's date (`implants.on_date`); `null` for an animal with none.
+
+```jsonc
+"implant": {"device": "custom 32-channel electrode", "surgery_date": "2026-11-30", "probe_map": null,
+            "targets": [{"name": "OFC", "region": "orbitofrontal cortex", "hemisphere": "left",
+                         "ap_mm": 3.2, "ml_mm": 2.4, "dv_mm": 4.85, "depth_set_on": "2026-12-14", "channels": "0-15"}]}
+```
+
+- `dv_mm` is the depth in force that day and `depth_set_on` the date of the lowering that set it (the surgery date before any). A lowering moves the contacts to other neurons, so only runs sharing `depth_set_on` were recorded in one place.
+- It is a copy: editing the implant later changes no run already written.
+
+**`channels`**: one row per channel RHX records for the box, in order (`implants.channel_rows`). It is the one place RHX's naming and the device's meet.
+
+```jsonc
+"channels": [{"native": "A-016", "device_channel": 0, "target": "OFC", "x_um": null, "y_um": null}]
+```
+
+- **Device channel k is the k-th channel of the box's range**: a box on `A-016:A-047` has device channel 0 at `A-016`. On the lab's custom electrode that is the number printed beside the hole on the EIB.
+- `target` is the implant target claiming that device channel, `''` for none and for an animal with no implant.
+- `x_um`, `y_um` are the site's position in the implant's probe map, `null` without one.
+- In the `.tsv` header `implant` and `channels` are one JSON line each. In the `.mat`, `S.implant.targets` and `S.channels` are N×1 struct arrays.
 
 > [!IMPORTANT]
 > **Never parameters, so they stay out of `params_hash`**: two runs of one tuning must compare in Analytics

@@ -173,6 +173,62 @@ def depth_on(implant: dict[str, Any], target: dict[str, Any], on: str) -> tuple[
     return round(depth, 6), max((entry["date"] for entry in past), default=implant["surgeryDate"])
 
 
+# --- a recorded run's copy (`RECORDING.md#what-is-written`) ---------------------- #
+
+def on_date(implant: dict[str, Any] | None, on: str) -> dict[str, Any] | None:
+    """The implant as a run of `on` copies it into its document: each target
+    with the depth in force that day (`dv_mm`) and the date that depth was set
+    (`depth_set_on`). The history of lowerings stays on the animal, so editing
+    it later changes no run already written. None for an animal with none."""
+    if implant is None:
+        return None
+    targets = []
+    for target in implant["targets"]:
+        depth, since = depth_on(implant, target, on)
+        targets.append({
+            "name": target["name"],
+            "region": target["region"],
+            "hemisphere": target["hemisphere"],
+            "ap_mm": target["apMm"],
+            "ml_mm": target["mlMm"],
+            "dv_mm": depth,
+            "depth_set_on": since,
+            "channels": target["channels"],
+        })
+    return {
+        "device": implant["device"],
+        "surgery_date": implant["surgeryDate"],
+        "probe_map": implant["probeMapPath"],
+        "targets": targets,
+    }
+
+
+def channel_rows(
+    native: list[str],
+    copy: dict[str, Any] | None,
+    positions: dict[str, tuple[float, float]] | None = None,
+) -> list[dict[str, Any]]:
+    """A recorded run's `channels` table: one row per channel RHX recorded for
+    the box, in order.
+
+    `native` is the box's channel range as RHX names it (`A-016` …), so the
+    k-th name is the device's channel k: the one place the two numberings
+    meet. `target` is the run's target that claims channel k, `''` for none
+    (and for an animal with no implant). `x_um`, `y_um` are the site's position
+    in the probe map, None without one.
+    """
+    target_of: dict[int, str] = {}
+    for target in (copy or {}).get("targets", []):
+        for channel in parse_channels(target["channels"]):
+            target_of[channel] = target["name"]
+    rows = []
+    for k, name in enumerate(native):
+        x, y = (positions or {}).get(name, (None, None))
+        rows.append({"native": name, "device_channel": k, "target": target_of.get(k, ""),
+                     "x_um": x, "y_um": y})
+    return rows
+
+
 # --- storage (`DATA.md#implants`) ------------------------------------------------ #
 
 def load(conn: sqlite3.Connection, animal_ids: Iterable[str]) -> dict[str, dict[str, Any]]:

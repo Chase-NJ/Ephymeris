@@ -56,22 +56,18 @@ describe("normalizeRecordingDefaults", () => {
         "1": { record: true, port: "A", firstChannel: 0, lastChannel: -1 },
         "3": { record: false, port: "", firstChannel: 0, lastChannel: -1 },
       },
-      probeMaps: {},
       // Absent from a file written before impedance tracking: the defaults.
       impedanceFlags: DEFAULT_RECORDING_DEFAULTS.impedanceFlags,
       activeSiteHz: DEFAULT_RECORDING_DEFAULTS.activeSiteHz,
     });
   });
 
-  it("keeps each animal's remembered probe map, and drops one that isn't a path", () => {
+  it("drops the per-animal probe maps an older build remembered: the implant holds them now", () => {
     const out = normalizeRecordingDefaults({
       ...STORED_BY_THE_STEP,
-      probeMaps: { "rat-07": "C:/maps/rat07.xml", "rat-09": "   ", "rat-11": 4, "": "C:/maps/x.xml" },
+      probeMaps: { "rat-07": "C:/maps/rat07.xml" },
     });
-    expect(out.probeMaps).toEqual({ "rat-07": "C:/maps/rat07.xml" });
-    expect(normalizeRecordingDefaults({ ...STORED_BY_THE_STEP, probeMaps: ["C:/maps/rat07.xml"] }).probeMaps).toEqual(
-      {},
-    );
+    expect(out).not.toHaveProperty("probeMaps");
   });
 
   it("heals per key, keeping every value that is still legal", () => {

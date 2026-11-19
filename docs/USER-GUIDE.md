@@ -384,7 +384,8 @@ thresholds.
 3. On the Dashboard, click **Start a Recording**.
 4. Configure and place the animals as usual. On **Set Up the Recording**, fix anything under
    **Readiness**, check **Saving** (a yellow line warns of a space in the path), and set each box to
-   **Record** or **Behavior only** with its port, channels and optional probe map.
+   **Record** or **Behavior only** with its port and channels. A probe map comes from the animal's
+   implant, entered in the cohort editor.
    The **Electrodes** tile shows each animal's **active sites** in its recent recordings (e.g.
    `12/16 · 11/16 · 9/16`; a `*` marks a partial or differently-thresholded run). Optionally click
    **Measure impedances**: RHX measures every site (up to a minute), and each animal's values are kept.

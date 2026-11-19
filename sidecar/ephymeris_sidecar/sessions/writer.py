@@ -246,6 +246,10 @@ class AnimalWriter:
             self._tsv.write(f"# {key}: {_render(value)}\n")
         params = json.dumps(run_document.params_of(header), separators=(",", ":"))
         self._tsv.write(f"# {run_document.PARAMS_KEY}: {params}\n")
+        # A recorded run's implant and channels (`RECORDING.md#what-is-written`),
+        # each one JSON line, so a recovered run keeps them.
+        for key, block in run_document.header_blocks(header).items():
+            self._tsv.write(f"# {key}: {json.dumps(block, separators=(',', ':'))}\n")
         # The snapshot rides in the header too, as one compact JSON line, so a
         # `.tsv` recovered after a crash (`DATA.md#crash-recovery`) rebuilds a `.json` that is still
         # self-describing. Written here rather than in the footer for the

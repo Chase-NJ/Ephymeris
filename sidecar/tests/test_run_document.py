@@ -110,7 +110,10 @@ NOT_A_DOCUMENT: dict[str, dict[str, str]] = {
     "rig/transfer.py": {"other": "a rig export file"},
     "sessions/derived.py": {"block": "the derived block itself"},
     "sessions/repository.py": {"row": "a database row"},
-    "sessions/runner.py": {"core": "a run's fields by name, handed to run_document.build"},
+    "sessions/runner.py": {
+        "core": "a run's fields by name, handed to run_document.build",
+        "recording": "the recording's fields by name, as intan/service.py gives them",
+    },
     "taskdef/transfer.py": {"file": "a task export file"},
     "tasks/start_command.py": {"config": "the merged parameters, before any document exists"},
 }

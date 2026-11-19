@@ -33,6 +33,7 @@ from ..sessions.writer import write_atomic
 from ..tasks.profile import embedded_profile
 from . import events as ev
 from .rhx_files import RhxFileError, read_spikes, rising_edges
+from .rhx_names import channel_names
 
 log = logging.getLogger(__name__)
 
@@ -62,18 +63,6 @@ class LoadedRun:
     first_stamp: int
     last_stamp: int
     events_file: Path | None
-
-
-def _channels(spec: Any) -> list[str]:
-    """`"A-016:A-031"` → A-016 … A-031."""
-    if not isinstance(spec, str) or ":" not in spec:
-        return []
-    first, last = (part.strip().upper() for part in spec.split(":", 1))
-    port, _, a = first.partition("-")
-    port2, _, b = last.partition("-")
-    if port != port2 or not a.isdigit() or not b.isdigit():
-        return []
-    return [f"{port}-{n:03d}" for n in range(int(a), int(b) + 1)]
 
 
 def _strobes(document: dict[str, Any]) -> list[tuple[int, int]]:
@@ -135,7 +124,7 @@ def load_run(run_path: str | Path, names_fallback: Callable[[int], str | None] =
             "“per signal type” and “per channel” formats, with Save spikes on."
         )
     digital_in = rd.recording_digital_in_of(document)
-    channels = _channels(rd.recording_channels_of(document))
+    channels = channel_names(rd.recording_channels_of(document))
     if not isinstance(digital_in, int) or not channels:
         raise NotRecorded("The run does not say which digital input or channels were its.")
 

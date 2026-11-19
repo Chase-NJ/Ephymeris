@@ -91,7 +91,10 @@ DB_FILENAME = "ephymeris.db"
 #: v19 added animal_health (`DATA.md#weigh-ins`) and run_site_quality
 #: (`RECORDING.md#unit-like-sites`) -- new tables only, so no migration,
 #: v11's pattern.
-SCHEMA_VERSION = 19
+#: v20 added animal_health.removed_at (`DATA.md#weigh-ins`) -- a removed
+#: weigh-in is kept as a marker, so its removal travels in the session
+#: folder's log file and it is not read back in from an older copy.
+SCHEMA_VERSION = 20
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS cohorts (
@@ -456,6 +459,10 @@ CREATE TABLE IF NOT EXISTS animal_health (
     weight_g     REAL NOT NULL,
     baseline     INTEGER NOT NULL DEFAULT 0, -- marked as the animal's reference weight
     recorded_at  TEXT NOT NULL,
+    -- Set when the operator removed the day's weigh-in: the row stays, as a
+    -- deleted note does, so the removal reaches the other machine's copy
+    -- (DATA.md#the-log-file). Never sent on the wire.
+    removed_at   TEXT,
     PRIMARY KEY (animal_id, date)
 );
 """
@@ -842,6 +849,12 @@ def _rebuild_animals_without_group(conn: sqlite3.Connection) -> None:
 #: new column silently never appears on any database that already exists, while
 #: `user_version` still gets stamped to the new number. Adding a *table* needs
 #: no entry: `CREATE TABLE IF NOT EXISTS` covers both cases on its own.
+def _to_v20(conn: sqlite3.Connection) -> None:
+    """v19 → v20: a removed weigh-in's marker (`DATA.md#weigh-ins`). The table
+    is v19's; `SCHEMA` made it on a database older than that."""
+    add_column(conn, "animal_health", "removed_at", "TEXT")
+
+
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     3: _to_v3,
     4: _to_v4,
@@ -855,6 +868,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     13: _to_v13,
     16: _to_v16,
     17: _to_v17,
+    20: _to_v20,
 }
 
 

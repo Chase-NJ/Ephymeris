@@ -21,6 +21,7 @@ import math
 import re
 import threading
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import date as calendar_date
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,7 +31,8 @@ from ..analytics.scoring import current_version
 from ..intan.quality_store import SiteQualityStore
 from ..protocol import Evt, event
 from ..sessions.models import Session, SessionNotFound
-from . import diff, mirror
+from . import diff, logfile, mirror
+from .intake import Intake, LogIntake
 from .models import (
     MAX_WEIGHT_G,
     MIN_WEIGHT_G,
@@ -49,6 +51,21 @@ log = logging.getLogger(__name__)
 MIRROR_DEBOUNCE_S = 1.0
 
 
+@dataclass
+class _Mirrored:
+    """What one folder's mirror wrote, and what it first took in."""
+
+    cohort_id: str
+    notes_md: Path | None = None
+    log_json: Path | None = None
+    #: What the folder's own `log.json` held that this database did not.
+    taken: Intake | None = None
+
+    @property
+    def written(self) -> list[Path]:
+        return [path for path in (self.log_json, self.notes_md) if path is not None]
+
+
 class LogbookService:
     def __init__(
         self,
@@ -63,6 +80,7 @@ class LogbookService:
     ) -> None:
         self.repo = LogbookRepository(db)
         self._signals = SiteQualityStore(db)
+        self._intake = LogIntake(db=db, cohorts=cohorts, sessions=sessions)
         self._cohorts = cohorts
         self._sessions = sessions
         self._profiles = profiles
@@ -350,21 +368,48 @@ class LogbookService:
 
     async def _mirror(self, session_id: str) -> None:
         try:
-            written = await asyncio.to_thread(self.write_mirror, session_id)
+            done = await asyncio.to_thread(self._mirror_session, session_id)
         except Exception:  # noqa: BLE001 - a mirror must never surface as a failure
-            log.exception("logbook: couldn't render notes.md for session %s", session_id)
+            log.exception("logbook: couldn't mirror the log of session %s", session_id)
             return
-        if written is not None and self._enqueue_backup is not None:
-            self._enqueue_backup(written)
+        if done is None:
+            return
+        if self._enqueue_backup is not None:
+            for path in done.written:
+                self._enqueue_backup(path)
+        if done.taken is not None and done.taken.changed:
+            # The folder's file held something this database lacked, and it is
+            # in the log now: say so, and the folders it touched are rewritten.
+            await self._changed(done.cohort_id, sorted(done.taken.touched))
+
+    async def mirror_cohort(self, cohort_id: str) -> None:
+        """Rewrite every session folder's files soon, once per folder: after a
+        Rescan, so a session whose log nobody has touched since log files
+        existed gets one too (`DATA.md#the-log-file`)."""
+        sessions = await asyncio.to_thread(
+            lambda: self._sessions.list_sessions(cohort_id, include_aborted=True)
+        )
+        seen: set[str] = set()
+        for session in sessions:
+            if not session.folder_path:
+                continue
+            key = _folder_key(session.folder_path)
+            if key not in seen:
+                seen.add(key)
+                self.schedule_mirror(session.id)
 
     def write_mirror(self, session_id: str) -> Path | None:
-        """Render and write one session folder's `notes.md`; synchronous.
+        """Write one session folder's `notes.md` and `log.json`; synchronous.
+        The `notes.md` it wrote, or None.
 
         Covers every record sharing the folder — split records write into one
         folder (`DATA.md#tidy-records`), and a file per record would have
-        folder-mates overwrite each other. Skipped when nobody in the folder
-        has written anything and there is no earlier `notes.md` to update.
+        folder-mates overwrite each other.
         """
+        done = self._mirror_session(session_id)
+        return None if done is None else done.notes_md
+
+    def _mirror_session(self, session_id: str) -> _Mirrored | None:
         try:
             session = self._sessions.get_session(session_id)
         except SessionNotFound:
@@ -379,17 +424,35 @@ class LogbookService:
         with self._folder_locks_guard:
             return self._folder_locks.setdefault(key, threading.Lock())
 
-    def _write_folder_mirror(self, session: Session) -> Path | None:
+    def _write_folder_mirror(self, session: Session) -> _Mirrored:
         folder = Path(session.folder_path).expanduser()
+        done = _Mirrored(cohort_id=session.cohort_id)
+
+        # Read before it is written over (`DATA.md#the-log-file`): a folder
+        # copied in from another machine may hold notes this database has
+        # never seen, and the rewrite below would be the end of them.
+        document, on_disk = logfile.read(folder)
+        writable = True
+        if document is not None:
+            try:
+                done.taken = self._intake.take(
+                    session.cohort_id, folder, document, create_sessions=False
+                )
+            except Exception:  # noqa: BLE001
+                log.exception("logbook: couldn't take in %s; it is left as it is", folder / logfile.FILENAME)
+                writable = False
+        elif on_disk is not None and logfile.from_newer_build(on_disk):
+            writable = False
+
         mates = [
             s
             for s in self._sessions.list_sessions(session.cohort_id, include_aborted=True)
             if s.folder_path and _same_folder(s.folder_path, session.folder_path)
         ]
         ids = [s.id for s in mates]
-        notes = self.repo.notes_for_sessions(ids)
+        every_note = self.repo.every_note_for_sessions(ids)
+        notes = [note for note in every_note if not note.deleted_at]
         logs = self.repo.logs_for_sessions(ids)
-        target = folder / mirror.FILENAME
         try:
             cohort = self._cohorts.get(session.cohort_id)
             # Former members too (`DATA.md#former-members`): the file outlives
@@ -400,11 +463,37 @@ class LogbookService:
             members = _members(cohort)
         except Exception:  # noqa: BLE001
             names, cohort_name, members = {}, "", []
-        # The day's weigh-ins travel with the folder too (`DATA.md#weigh-ins`).
-        weights = self.repo.health_for_animals(members, sorted({s.date for s in mates if s.date}))
+            # A log file without its animals' names cannot be read anywhere else.
+            writable = False
+        # The day's weigh-ins travel with the folder too (`DATA.md#weigh-ins`),
+        # the removed ones as markers in the log file only.
+        every_weight = self.repo.health_for_animals(
+            members, sorted({s.date for s in mates if s.date}), removed=True
+        )
+        weights = [entry for entry in every_weight if not entry.removed_at]
         annotated = bool(notes) or bool(weights) or any(not entry.is_blank for entry in logs)
+
+        written_in = annotated or bool(every_note) or bool(every_weight)
+        if writable and self._wants_log_file(folder, mates, written_in):
+            done.log_json = logfile.write(
+                folder,
+                logfile.dumps(
+                    logfile.build(
+                        cohort_name=cohort_name,
+                        sessions=mates,
+                        logs=logs,
+                        notes=every_note,
+                        weights=every_weight,
+                        animal_names=names,
+                    )
+                ),
+            )
+
+        # `notes.md` is for a person: skipped when nobody in the folder has
+        # written anything and there is no earlier one to bring up to date.
+        target = folder / mirror.FILENAME
         if not annotated and not target.exists():
-            return None
+            return done
         changes = self._changes(session.cohort_id)
         text = mirror.render_markdown(
             cohort_name=cohort_name,
@@ -416,7 +505,24 @@ class LogbookService:
             now=datetime.now(timezone.utc),
             weights=weights,
         )
-        return mirror.write_mirror(folder, text)
+        done.notes_md = mirror.write_mirror(folder, text)
+        return done
+
+    @staticmethod
+    def _wants_log_file(folder: Path, mates: list[Session], written_in: bool) -> bool:
+        """Whether this folder gets a `log.json`. One somebody wrote in always
+        does, and its folder is made if only it is missing, as for `notes.md`.
+        One nobody wrote in gets its session's record all the same, so the
+        session can be told from a recovered one on the next machine, but
+        only into a folder that is already there: an empty session leaves no
+        folder behind for the sake of a file about it."""
+        try:
+            if written_in:
+                folder.mkdir(exist_ok=True)
+                return True
+            return folder.is_dir() and any(s.status != "aborted" for s in mates)
+        except OSError:
+            return False
 
     async def drain(self) -> None:
         """Flush pending mirrors now — shutdown, and tests."""

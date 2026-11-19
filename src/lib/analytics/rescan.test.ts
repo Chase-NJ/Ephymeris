@@ -11,6 +11,15 @@ function result(extra: Partial<RescanResult> = {}): RescanResult {
     rehomed: 0,
     duplicates: 0,
     orphans: [],
+    logs: {
+      files: 0,
+      unreadable: 0,
+      sessions: 0,
+      notes: 0,
+      logs: 0,
+      weighIns: 0,
+      unknownAnimals: [],
+    },
     cohortId: "c",
     dataFolder: "D:/data/Batch A",
     folderMissing: false,
@@ -39,5 +48,30 @@ describe("the rescan note", () => {
     expect(note).toContain("skipped 1 duplicate copy");
     expect(note).toContain("dropped the records of 1 run and 2 sessions");
     expect(note.endsWith(".")).toBe(true);
+  });
+
+  it("says what the folders' log files brought in, and what they could not", () => {
+    const logs = {
+      files: 3,
+      unreadable: 1,
+      sessions: 2,
+      notes: 5,
+      logs: 1,
+      weighIns: 0,
+      unknownAnimals: ["HM07"],
+    };
+    const note = describeRescan(result({ adopted: 6, logs }));
+    expect(note).toContain(
+      "read in 2 sessions another machine ran, 5 notes and who ran and summed up 1 session from the session folders' log files",
+    );
+    expect(note).toContain("HM07 is named in those files and not in this cohort");
+    expect(note).toContain("1 log file couldn't be read and was left as it is");
+  });
+
+  it("says nothing about log files that brought nothing", () => {
+    const logs = { ...result().logs, files: 12 };
+    expect(describeRescan(result({ logs }))).toBe(
+      "Scanned 12 files — everything on disk is already indexed.",
+    );
   });
 });

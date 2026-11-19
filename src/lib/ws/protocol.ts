@@ -1670,6 +1670,33 @@ export interface RescanPruned {
   adopted: number;
 }
 
+/**
+ * What a rescan took in from the session folders' log files (`DATA.md#the-log-file`). All zero
+ * for folders that have none.
+ */
+export interface RescanLogs {
+  /** Session folders that had a `log.json`. */
+  files: number;
+  /**
+   * Of those, the ones that could not be read: damaged, or written by a newer build. Left exactly
+   * as they are.
+   */
+  unreadable: number;
+  /** Session records made, for sessions another machine ran and this database had no record of. */
+  sessions: number;
+  /** Notes added, brought up to date or deleted. */
+  notes: number;
+  /** Sessions whose operator and summary were taken. */
+  logs: number;
+  /** Weigh-ins added or brought up to date. */
+  weighIns: number;
+  /**
+   * Animals a note or a weigh-in names that this cohort does not have. Their notes are kept,
+   * their weigh-ins are not.
+   */
+  unknownAnimals: string[];
+}
+
 export interface RescanResult {
   scanned: number;
   /**
@@ -1695,6 +1722,11 @@ export interface RescanResult {
    */
   duplicates: number;
   orphans: RescanOrphan[];
+  /**
+   * What the session folders' log files brought in: sessions another machine ran, with their
+   * notes and weigh-ins.
+   */
+  logs: RescanLogs;
   cohortId: string;
   dataFolder: string;
   /**

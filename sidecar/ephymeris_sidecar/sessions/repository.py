@@ -226,6 +226,62 @@ class SessionRepository:
             )
         return session
 
+    def import_session(
+        self,
+        *,
+        session_id: str,
+        cohort_id: str,
+        prefix_name: str,
+        session_number: str,
+        date: str,
+        started_at: str,
+        ended_at: str | None,
+        status: SessionStatus,
+        folder_path: str,
+        rounds: list[Round],
+        duration_minutes: int | None,
+        tx: Tx | None = None,
+    ) -> Session:
+        """Record a session another machine ran, from its folder's log file
+        (`DATA.md#the-log-file`): its own id, times and rounds, the folder as
+        it lies here, and no recording, whose paths were that machine's.
+
+        Its prefix is this machine's of that name, made if there is none, so
+        the next number offered for it follows the sessions just read.
+        """
+        clean = prefix_name.strip()
+        with self._db.write(tx) as unit:
+            row = unit.execute(
+                "SELECT id, name FROM prefixes WHERE name = ? COLLATE NOCASE", (clean,)
+            ).fetchone()
+            if row is None:
+                prefix = Prefix(id=_new_id(), name=clean)
+                unit.execute("INSERT INTO prefixes (id, name) VALUES (?, ?)", (prefix.id, prefix.name))
+            else:
+                prefix = Prefix(id=row["id"], name=row["name"])
+            unit.execute(
+                "INSERT INTO sessions"
+                " (id, cohort_id, prefix_id, prefix_name, session_number, date,"
+                "  started_at, ended_at, status, folder_path, rounds,"
+                "  duration_minutes, recording_json)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+                (
+                    session_id,
+                    cohort_id,
+                    prefix.id,
+                    clean,
+                    session_number.strip(),
+                    date,
+                    started_at,
+                    ended_at,
+                    status,
+                    folder_path,
+                    json.dumps([r.to_json() for r in rounds]),
+                    duration_minutes,
+                ),
+            )
+        return self.get_session(session_id)
+
     def get_session(self, session_id: str) -> Session:
         with self._db.read() as q:
             row = q.execute(

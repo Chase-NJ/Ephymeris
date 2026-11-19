@@ -6,7 +6,7 @@ only what the code does now and link here.
 
 **How to keep it.**
 
-- **Number entries in sequence and never reuse a number.** The next is **0011**. Code and docs cite an
+- **Number entries in sequence and never reuse a number.** The next is **0012**. Code and docs cite an
   entry as `DECISIONS.md#<heading-slug>`; `test_doc_links.py` checks every citation.
 - **A proposal gets its own file** in this folder (`NNNN-slug.md`, `status: proposed`) while it is
   argued and built. When it is accepted and done, fold it in here as an entry and delete the file.
@@ -31,6 +31,7 @@ only what the code does now and link here.
 | [0008](#0008-rounds-replace-groups) | Rounds replace groups | accepted | 2026-11-18 |
 | [0009](0009-run-document-v2-and-the-analysis-file.md) | A run's document is nested and versioned, and a recorded run gets one analysis file | **proposed** | — |
 | [0010](#0010-the-log-is-a-paper-notebook) | The Log is a paper notebook | accepted | 2026-11-19 |
+| [0011](#0011-the-log-travels-in-the-session-folder) | The log travels in the session folder | accepted | 2026-11-19 |
 
 ## 0001: A hypothetical rig definition is context-local
 
@@ -344,3 +345,42 @@ unit-like signal, measured after the recording stops in the pass that already re
 - **The estimate is unvalidated against sorted data.** It counts sites, not neurons, and a site with two
   good units counts once. It ranks days; it is not a yield figure for a paper.
 - **Schema v19**: two new tables and no migration ([DATA.md](../DATA.md#changing-the-schema)).
+
+## 0011: The log travels in the session folder
+
+A session's notes, operator, summary and weigh-ins lived only in the database of the machine that
+recorded it. Its folder got `notes.md`, which no code reads. So a session copied to the other lab
+machine arrived as a recovered one: its runs, no notes, and no way to add any, since a recovered
+session has no record to hang a note on. **We kept the database as the place the log is kept and
+worked on, and made the folder carry a complete copy a machine can read**: `log.json`, written with
+every change and read back by a Rescan and before every rewrite
+([DATA.md](../DATA.md#the-log-file)). A session another machine ran is recorded from it, so the day
+is a session like any other on both machines.
+
+**Rejected.**
+
+- **The folder's file as the only home**, the database dropping its log tables or keeping them as a
+  cache. One home for the fact, and nothing to merge. But a note is taken mid-session, and today it
+  is one database write that never waits on the data folder; with the file as the truth, a slow or
+  unplugged drive fails the note or needs a queue, and the Log needs a cache to open at all with the
+  drive away. A queue and a cache in front of a file are this decision with the conflict rule
+  hidden.
+- **Read `notes.md` back.** It is prose for a person: no ids, no stamps, no deletions.
+- **Replace the database's log with the file's on a rescan.** The older of two copies would erase
+  what was written since it was made. Reading is a merge, per note.
+- **Carry no deletions.** Without a marker, a note deleted here returns from the other machine's copy
+  at the next read. So a deleted note and a removed weigh-in stay in the file as markers, and a
+  removed weigh-in stays in the database as one (schema v20).
+
+**Costs.**
+
+- **Two copies, and a rule for when they disagree**: the newer wins, by the machines' own clocks. A
+  machine with a wrong clock wins or loses edits it should not.
+- **A session record can now come from a file.** It is recorded as ended, with no recording, and is
+  never updated from the file again; one this machine ran is never touched.
+- **Animals are matched by name.** A cohort on the second machine needs the same names, and a rename
+  on one machine alone splits an animal's notes from it until the other is renamed.
+- **Some things do not travel**: a reopened flag (it has no time of its own), and what was measured
+  of a recording, which stays with the run records of the machine that recorded it.
+- **Every session folder gains a file**, written at the session's end and at a rescan, and backed up
+  with the rest.

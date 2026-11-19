@@ -216,7 +216,7 @@ A **carry forward** note stays open until resolved and shows in Step 1 and Missi
 `animal_health`: one row per **animal and calendar day**, a body weight in grams and whether it is marked as the animal's **baseline** (`logbook.setHealth`, `LogbookCohort.health`). Never per session: an animal is weighed once a day however often the cohort runs, so two sessions on one day show the same weight, and a day's weight is entered from any session's page of that day.
 
 - **Keyed by the animal's id with no foreign key**, as [implants](#implants) are, because a roster save deletes and re-inserts every `animals` row. It stays with a [former member](#former-members) and follows a [moved](#moving-animals-between-cohorts) animal; [Tidy records](#tidy-records) and [pruning](#pruning) never touch it, since no session owns it.
-- **A weight is 1 to 2000 g.** Writing `null` removes the day's row, its baseline mark with it.
+- **A weight is 1 to 2000 g.** Writing `null` removes the day's weigh-in, its baseline mark with it. The row stays, marked `removed_at`, as a deleted note's does: a removal has to reach the copies other machines hold ([The log file](#the-log-file)). A removed weigh-in is in no reading and never on the wire.
 - **A percentage is only ever of a marked baseline**: a weigh-in is read against the latest one marked at or before its day (`lib/logbook/health.ts`'s `readWeight`). With none marked the page shows the change since the weigh-in before and no share, since the first weight on record is not assumed to be a free-feeding one. Under 85% of baseline (`LOW_WEIGHT_FRACTION`) the row is marked low: a prompt to look, not a rule the app enforces.
 - Other health observations are [notes](#notes) tagged `animal-health` about that animal; the weights table starts one.
 
@@ -226,7 +226,41 @@ A **carry forward** note stays open until resolved and shows in Step 1 and Missi
 
 ### The notes.md mirror
 
-Each folder with a log (a note, a free field, or a weigh-in on its day) gets a derived `notes.md`, the day's weights included, rewritten whole about a second after a change (via `.part`, per-folder lock, off every command path) and queued for [backup](#session-files). Never read back, never creates a missing prefix folder, invisible to the archive walk.
+Each folder with a log (a note, a free field, or a weigh-in on its day) gets a derived `notes.md` for a person to read, the day's weights included, beside the [log file](#the-log-file) a machine reads, rewritten whole about a second after a change (via `.part`, per-folder lock, off every command path) and queued for [backup](#session-files). Never read back, never creates a missing prefix folder, invisible to the archive walk.
+
+### The log file
+
+`log.json`, beside `notes.md`: the same log for a machine to read back, so a session's notes go where its folder goes ([ADR 0011](adr/DECISIONS.md#0011-the-log-travels-in-the-session-folder)). **The database is still where the log is kept and worked on**; the file is how it reaches another machine. Written by the mirror step that writes `notes.md` (`logbook/logfile.py`), and also for a session nobody wrote in, whose record alone goes into a folder that is already there.
+
+| In the file | |
+|---|---|
+| Each record sharing the folder | Its id, prefix, number, date, start, end, status and rounds; operator, summary and when they were set |
+| Each note | Id, every stamp, tag, scope, words, flag state. **An animal by name**, the writing machine's id beside it: ids are each machine's own |
+| A deleted note, a removed weigh-in | A marker only: which one and when, never its content |
+| The weigh-ins of the folder's days | Animal by name, grams, baseline mark, when recorded |
+
+Nothing in it changes unless the log did (it carries no "written at"), so an unchanged session costs no write and no backup copy.
+
+**Read in two places** (`logbook/intake.py`), always as a merge:
+
+- **By a Rescan**, for every session folder the walk finds a run in and every folder a record points at (`RescanResult.logs`). A session this database has no record of is **recorded** from the file, under its own id; the [recovered runs](../GLOSSARY.md#recovered-run) of that folder then count under it ([Orphan adoption](#orphan-adoption)), so the day is a session like any other and can be written in.
+- **Before every rewrite of the file**, since a folder copied in may hold notes this database has never seen. This read never records a session.
+
+| | Rule |
+|---|---|
+| A note | Known by id. Added if absent here; replaced only by a **newer** one (the latest of its created, edited, resolved and deleted stamps). A marker deletes a note it is newer than |
+| Operator and summary | Together, the newer `updated_at` winning; a newer blank clears |
+| A weigh-in | Known by animal and day, the newer `recorded_at` winning; a marker removes one it is newer than |
+| An animal | Matched by name, roster before [former members](#former-members). A note about one this cohort lacks is kept, under the id it came with, and re-pointed once the animal is added; a weigh-in for one is left in the file. Both are named in the rescan's note |
+| A session record | Never changed once here. Recorded from a file as **ended**, whatever the file says, with the folder as it lies on this machine, no recording, and its prefix made if this machine has none of that name |
+
+> [!CAUTION]
+> **Absence is never a deletion.** A note the file does not mention is left alone; otherwise the older of two copies would erase everything written since it was made. Only a marker deletes.
+
+> [!CAUTION]
+> **A file from a newer build is neither read nor written over** (`log_version`): rewriting it from here would drop what the newer format added. A damaged one is counted unreadable and replaced at the folder's next write.
+
+Limits: "newer" trusts the two machines' clocks; a reopened flag has no time of its own, so a reopening does not travel; and what was measured of a recording ([RECORDING.md](RECORDING.md#unit-like-sites)) stays with the machine that recorded it.
 
 ### Exporting a log
 
@@ -586,6 +620,7 @@ erDiagram
         REAL weight_g
         INTEGER baseline
         TEXT recorded_at
+        TEXT removed_at
     }
     session_notes {
         TEXT id PK

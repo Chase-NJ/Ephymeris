@@ -156,18 +156,25 @@ async def test_a_note_writes_the_mirror_and_queues_it_for_backup(rig: Rig) -> No
     await logbook.drain()
     target = Path(rig.sessions.get_session(sid).folder_path) / "notes.md"
     assert "Quiet session" in target.read_text(encoding="utf-8")
-    assert queued == [target]
+    # The log file a machine reads back goes with it (`DATA.md#the-log-file`).
+    assert queued == [target.with_name("log.json"), target]
 
 
-async def test_an_unannotated_session_gets_no_file(rig: Rig) -> None:
+async def test_an_unannotated_session_gets_no_notes_md(rig: Rig) -> None:
+    """Nobody wrote anything, so there is nothing for a person to read. Its
+    record still goes into the folder that is there (`DATA.md#the-log-file`),
+    and a session with no folder gets no folder made for it."""
     queued: list = []
     logbook = _service(rig, queued)
     sid = rig.add_session("1", DAY)
     rig.add_run(sid, "a1", HIT_1 * 3)
-    await logbook.refresh(rig.cohort.id, [sid])
+    empty = rig.add_session("2", DAY)
+    await logbook.refresh(rig.cohort.id, [sid, empty])
     await logbook.drain()
-    assert not (Path(rig.sessions.get_session(sid).folder_path) / "notes.md").exists()
-    assert queued == []
+    folder = Path(rig.sessions.get_session(sid).folder_path)
+    assert not (folder / "notes.md").exists()
+    assert queued == [folder / "log.json"]
+    assert not Path(rig.sessions.get_session(empty).folder_path).exists()
 
 
 async def test_folder_mates_share_one_file(rig: Rig) -> None:

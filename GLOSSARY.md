@@ -89,3 +89,8 @@ _Avoid_: unit (a sorter's word for one neuron), good channel, active site (a sit
 The weigh-in an operator marks as an animal's reference weight; later weigh-ins are read as a share of the latest one marked.
 _Avoid_: starting weight, first weight (the first on record is not assumed to be a baseline)
 
+<a id="log-file"></a>
+**Log file**:
+The copy of a session's record and log kept in its session folder for another machine to read: what lets a session's notes go where its files go.
+_Avoid_: notes file (`notes.md`, which is for a person and is never read back), sidecar file
+

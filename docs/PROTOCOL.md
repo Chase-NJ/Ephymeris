@@ -349,9 +349,10 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="shape-rederivedrun"></a>RederivedRun | `jsonPath`, `status`, `reason`, `matError` | One run Re-derive rewrote or could not (`DATA.md#re-derive`). |
 | <a id="shape-rederiveresult"></a>RederiveResult | `scanned`, `rewritten`, `current`, `skipped`, `failed`, `entries`, `cohortId`, `dataFolder`, `folderMissing` | What `sessions.rederive` did to a cohort's runs (`DATA.md#re-derive`). |
 | <a id="shape-replaytrial"></a>ReplayTrial | `index`, `atMs`, `block`, `row`, `rowName`, `level`, `phaseEntries`, `response`, `responseEdge`, `responseMs`, `latencyMs`, `outcome`, `outcomeMs`, `correct`, `rewarded`, `rewardLine`, `rewardMs`, `correction`, `inputCounts`, `counterN`, `complete`, `presented`, `scores` | One trial of a run, read off its strobes (`ANALYTICS.md#the-trial-table`). |
+| <a id="shape-rescanlogs"></a>RescanLogs | `files`, `unreadable`, `sessions`, `notes`, `logs`, `weighIns`, `unknownAnimals` | What a rescan took in from the session folders' log files (`DATA.md#the-log-file`). |
 | <a id="shape-rescanorphan"></a>RescanOrphan | `path`, `animalId`, `animalName`, `animalSource`, `date`, `status`, `reason` |  |
 | <a id="shape-rescanpruned"></a>RescanPruned | `runs`, `sessions`, `adopted` | What the rescan removed because the disk no longer has it (`DATA.md#reading-the-archive`). |
-| <a id="shape-rescanresult"></a>RescanResult | `scanned`, `adopted`, `pruned`, `rehomed`, `duplicates`, `orphans`, `cohortId`, `dataFolder`, `folderMissing` |  |
+| <a id="shape-rescanresult"></a>RescanResult | `scanned`, `adopted`, `pruned`, `rehomed`, `duplicates`, `orphans`, `logs`, `cohortId`, `dataFolder`, `folderMissing` |  |
 | <a id="shape-retiredstrobe"></a>RetiredStrobe | `name`, `code`, `rationale?`, `seenIn?`, `retiredAt?` | A code a recorded session contains and nothing may emit any more. |
 | <a id="shape-rigallocation"></a>RigAllocation | `channel`, `edge`, `name`, `code` | One strobe code a channel-set save issues (`TASKS.md#edge-codes`). |
 | <a id="shape-rigdocument"></a>RigDocument | `document`, `status`, `problems`, `reservedPins` | The draft, plus everything wrong with it. |

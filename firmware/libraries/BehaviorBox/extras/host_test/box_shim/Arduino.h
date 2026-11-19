@@ -43,6 +43,8 @@
 #include <iostream>
 #include <string>
 #include <deque>
+#include <utility>
+#include <vector> // test_trial_stream.cpp
 // strcasecmp/strncasecmp: avr-libc puts them in <string.h>, POSIX hosts in
 // <strings.h>. The sketch uses them, so the shim has to supply them too.
 #ifndef _WIN32

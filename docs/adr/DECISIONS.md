@@ -6,11 +6,12 @@ only what the code does now and link here.
 
 **How to keep it.**
 
-- **Number entries in sequence and never reuse a number.** The next is **0009**. Code and docs cite an
+- **Number entries in sequence and never reuse a number.** The next is **0010**. Code and docs cite an
   entry as `DECISIONS.md#<heading-slug>`; `test_doc_links.py` checks every citation.
 - **A proposal gets its own file** in this folder (`NNNN-slug.md`, `status: proposed`) while it is
   argued and built. When it is accepted and done, fold it in here as an entry and delete the file.
-  [0003](0003-phase-spine-task-model.md) is the one open proposal.
+  [0003](0003-phase-spine-task-model.md) and [0009](0009-run-document-v2-and-the-analysis-file.md) are the
+  open proposals.
 - **Amend in place.** Add a dated **Amendment** to the entry rather than a new entry, unless the decision
   itself reverses.
 - **Supersede, don't delete.** A reversed decision keeps a short entry saying what replaced it and what
@@ -28,6 +29,7 @@ only what the code does now and link here.
 | [0006](#0006-the-shell-is-electron-not-tauri) | The shell is Electron, not Tauri | accepted, Tauri removed | 2026-11-13 |
 | [0007](#0007-rhxs-own-windows-replace-the-recording-pop-ups) | RHX's own windows replace the recording pop-ups | accepted | 2026-11-15 |
 | [0008](#0008-rounds-replace-groups) | Rounds replace groups | accepted | 2026-11-18 |
+| [0009](0009-run-document-v2-and-the-analysis-file.md) | A run's document is nested and versioned, and a recorded run gets one analysis file | **proposed** | — |
 
 ## 0001: A hypothetical rig definition is context-local
 

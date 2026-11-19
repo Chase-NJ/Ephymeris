@@ -510,8 +510,8 @@ the last ended; **~** when read from files) and **session folder**, which opens 
 **Summary** are typed in place and kept when you leave the field.
 
 **Rescan**, above the notebook, is the one in [Analytics](#exporting-and-maintenance): it looks for session
-files this machine has no record of, such as a folder copied in from the other machine, and adds them
-to the notebook.
+files this machine has no record of, such as a folder [copied in from the other
+machine](#taking-sessions-to-another-machine), and adds them to the notebook.
 
 ### Writing notes
 
@@ -552,6 +552,20 @@ settings that differ from its previous session.
 turns the count into advice: **Sort first** (half the sites or more), **Worth sorting** (a quarter),
 **Low yield**. The title page lists the cohort's best recordings in order. It is an estimate made
 without sorting anything, to help you decide which day to open in Offline Sorter first.
+
+### Taking sessions to another machine
+
+A session's notes, who ran it, its summary and that day's weights go with its folder, in a file
+called `log.json`.
+
+1. Copy the session folders (or the whole cohort folder) into the cohort's data folder on the other
+   machine. The cohort there needs animals of the same names.
+2. Open the cohort's **Log** there and press **Rescan**. The line under the toolbar says what it read in.
+
+The sessions open like any others, and you can write in them. If the same note was changed on both
+machines, the later change is kept; a note deleted on one is deleted on the other; nothing is removed
+just because one copy does not have it. A note about an animal the cohort does not have is kept and
+named in the rescan's line: add the animal and rescan to attach it.
 
 ### Saving the log as a PDF
 

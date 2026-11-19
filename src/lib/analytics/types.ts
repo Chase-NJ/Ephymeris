@@ -31,6 +31,7 @@ export type {
   RunSeries,
   SeriesResult,
   RescanOrphan,
+  RescanLogs,
   RescanPruned,
   RescanResult,
   RecoveredTsv,

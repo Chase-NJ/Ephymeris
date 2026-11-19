@@ -1713,6 +1713,35 @@ SHAPES = (
         "Bookkeeping only — the rescan never deletes a file.",
     ),
     Shape(
+        "RescanLogs",
+        obj(
+            f("files", INT, doc="Session folders that had a `log.json`."),
+            f(
+                "unreadable",
+                INT,
+                doc="Of those, the ones that could not be read: damaged, or "
+                "written by a newer build. Left exactly as they are.",
+            ),
+            f(
+                "sessions",
+                INT,
+                doc="Session records made, for sessions another machine ran and "
+                "this database had no record of.",
+            ),
+            f("notes", INT, doc="Notes added, brought up to date or deleted."),
+            f("logs", INT, doc="Sessions whose operator and summary were taken."),
+            f("weighIns", INT, doc="Weigh-ins added or brought up to date."),
+            f(
+                "unknownAnimals",
+                ListOf(STR),
+                doc="Animals a note or a weigh-in names that this cohort does not "
+                "have. Their notes are kept, their weigh-ins are not.",
+            ),
+        ),
+        doc="What a rescan took in from the session folders' log files "
+        "(`DATA.md#the-log-file`). All zero for folders that have none.",
+    ),
+    Shape(
         "RescanResult",
         obj(
             f("scanned", INT),
@@ -1747,6 +1776,12 @@ SHAPES = (
                 "originals; adopting both would double every animal.",
             ),
             f("orphans", ListOf(Ref("RescanOrphan"))),
+            f(
+                "logs",
+                Ref("RescanLogs"),
+                doc="What the session folders' log files brought in: sessions "
+                "another machine ran, with their notes and weigh-ins.",
+            ),
             f("cohortId", STR),
             f("dataFolder", STR),
             f(
@@ -4325,12 +4360,13 @@ COMMANDS = (
         "effect of opening a view. Reconciles **both ways**: files no record "
         "points at are adopted, and records pointing at files the disk no "
         "longer has are pruned — after records an earlier relocate left at "
-        "the old folder are re-pointed (`rehomed`). Publishes "
+        "the old folder are re-pointed (`rehomed`). Then each session folder's "
+        "`log.json` is read into the log (`logs`, `DATA.md#the-log-file`). Publishes "
         "`analytics.progress`. `ARCHIVE_BUSY` while another archive write "
         "runs; `RIG_IN_USE` while any box is running, since a run finishing "
         "during the walk would be found twice. Broadcasts `cohorts.updated`, "
-        "`session.lifecycle` and `logbook.updated` when it adopted, pruned or "
-        "re-pointed anything. Long-running; the client raises its reply "
+        "`session.lifecycle` and `logbook.updated` when it adopted, pruned, "
+        "re-pointed or read in anything. Long-running; the client raises its reply "
         "timeout.",
     ),
     Command(

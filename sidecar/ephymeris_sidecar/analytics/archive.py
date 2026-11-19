@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from ..cohorts import relocate
+from ..logbook.intake import Intake, LogIntake
 from ..logbook.repository import LogbookRepository
 from ..sessions import tidy as session_tidy
 from ..sessions.models import Session, SessionAnimalRun
@@ -223,6 +224,9 @@ class CohortArchive:
         #: Read only for which sessions carry notes — those are never empty
         #: and never pruned (`DATA.md#the-session-log`).
         self._logbook = LogbookRepository(db)
+        #: Reads each session folder's `log.json` into the log on a rescan
+        #: (`DATA.md#the-log-file`).
+        self._intake = LogIntake(db=db, cohorts=cohorts, sessions=sessions)
         #: Resolve a document's `sketch` *name* to a sketch in this install's
         #: library when a rescan adopts an orphan (`DATA.md#orphan-adoption`).
         self._sketch_lookup = sketch_lookup
@@ -623,8 +627,16 @@ class CohortArchive:
                     len(found) - len(carried),
                 )
 
+            # Last, once every file found has its run: the log each session
+            # folder carries (`DATA.md#the-log-file`). A session this database
+            # has no record of is recorded from it, and the runs just adopted
+            # from that folder are then that session's (`_adoption_owners`).
+            logs = Intake()
+            if adopt_orphans and folder_exists:
+                logs = await asyncio.to_thread(self._read_logs, cohort_id, found)
+
             await self._progress(cohort_id, "walking", len(found), len(found))
-            if adopted or rehomed or any(pruned.values()):
+            if adopted or rehomed or any(pruned.values()) or logs.changed:
                 write.changed(cohort_ids=[cohort_id])
 
         return {
@@ -634,10 +646,21 @@ class CohortArchive:
             "rehomed": rehomed,
             "duplicates": duplicates,
             "orphans": orphans,
+            "logs": logs.to_json(),
             "cohortId": cohort_id,
             "dataFolder": cohort.data_folder,
             "folderMissing": not folder_exists,
         }
+
+    def _read_logs(self, cohort_id: str, found: list[Path]) -> Intake:
+        """Take in the log file of every session folder the walk found a run
+        in, and of every folder a record here points at: a folder may come
+        back from the other machine with notes added to a session this one ran."""
+        folders = {reader.session_folder_of(path) for path in found}
+        for session in self._sessions.list_sessions(cohort_id, include_aborted=True):
+            if session.folder_path:
+                folders.add(Path(session.folder_path).expanduser())
+        return self._intake.read_cohort(cohort_id, folders)
 
     # --- pruning (DATA.md#pruning) -----------------------------------------
 

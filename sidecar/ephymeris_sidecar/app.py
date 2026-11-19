@@ -1417,9 +1417,15 @@ class Application:
         """The explicit archive walk (`DATA.md#database-first`) — never a side
         effect of opening a view."""
         cohort_id = _str_arg(args, "cohortId")
-        return await self._require_archive().rescan(
-            cohort_id, adopt_orphans=args.get("adoptOrphans") is not False
-        )
+        adopting = args.get("adoptOrphans") is not False
+        result = await self._require_archive().rescan(cohort_id, adopt_orphans=adopting)
+        # What was just read in is written back out, and every session folder
+        # that had no log file gets one (`DATA.md#the-log-file`): after the
+        # reply, off its path, like every other mirror write. A scan that only
+        # looks writes nothing.
+        if self.logbook is not None and adopting and not result["folderMissing"]:
+            await self.logbook.mirror_cohort(cohort_id)
+        return result
 
     async def _sessions_tidy(self, args: Args) -> dict[str, Any]:
         """Merge a day's split session records and drop empty ones

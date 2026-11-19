@@ -3,7 +3,7 @@
  * every screen that offers one: Analytics and the Log.
  */
 
-import type { RescanPruned, RescanResult } from "./types";
+import type { RescanLogs, RescanPruned, RescanResult } from "./types";
 
 /**
  * What the archive walk found, in the order that matters to the reader.
@@ -57,6 +57,8 @@ export function describeRescan(result: RescanResult): string {
       `${byName} named an animal the roster doesn't have and ${byName === 1 ? "was" : "were"} matched on ${byName === 1 ? "its" : "their"} filename instead`,
     );
   }
+  // What the session folders' own log files brought with them.
+  parts.push(...logClauses(result.logs));
   if (parts.length === 1)
     return `${parts[0]} — everything on disk is already indexed.`;
   return `${parts.join("; ")}.`;
@@ -81,6 +83,44 @@ function prunedRecords(pruned: RescanPruned): string | null {
   }
   if (parts.length === 0) return null;
   return `dropped the records of ${joinList(parts)} whose files are no longer on disk`;
+}
+
+/**
+ * What a rescan took in from the session folders' log files
+ * (`DATA.md#the-log-file`): the sessions another machine ran, and what was
+ * written about them there. Nothing is said when nothing came in, which is
+ * every rescan of an archive that has not travelled.
+ *
+ * What was **not** taken is said as plainly as what was. A weigh-in for an
+ * animal this cohort does not have has nowhere to be kept, and the operator
+ * can fix that only if told which animal.
+ */
+function logClauses(logs: RescanLogs): string[] {
+  const took = [
+    logs.sessions > 0
+      ? `${logs.sessions} session${plural(logs.sessions)} another machine ran`
+      : null,
+    logs.notes > 0 ? `${logs.notes} note${plural(logs.notes)}` : null,
+    logs.logs > 0 ? `who ran and summed up ${logs.logs} session${plural(logs.logs)}` : null,
+    logs.weighIns > 0 ? `${logs.weighIns} weigh-in${plural(logs.weighIns)}` : null,
+  ].filter((part): part is string => part !== null);
+  const clauses: string[] = [];
+  if (took.length > 0) {
+    clauses.push(`read in ${joinList(took)} from the session folders' log files`);
+  }
+  if (logs.unknownAnimals.length > 0) {
+    const one = logs.unknownAnimals.length === 1;
+    clauses.push(
+      `${joinList(logs.unknownAnimals)} ${one ? "is" : "are"} named in those files and not in this cohort: ${one ? "its" : "their"} notes are kept, ${one ? "its" : "their"} weigh-ins left out`,
+    );
+  }
+  if (logs.unreadable > 0) {
+    const one = logs.unreadable === 1;
+    clauses.push(
+      `${logs.unreadable} log file${plural(logs.unreadable)} couldn't be read and ${one ? "was" : "were"} left as ${one ? "it is" : "they are"}`,
+    );
+  }
+  return clauses;
 }
 
 function plural(n: number): string {

@@ -104,6 +104,9 @@ class HealthEntry:
     weight_g: float
     baseline: bool = False
     recorded_at: str = ""
+    #: When the operator removed it. A removed weigh-in is in no reading and
+    #: never on the wire; it is kept so the removal travels (`DATA.md#the-log-file`).
+    removed_at: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {

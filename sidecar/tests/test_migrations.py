@@ -423,6 +423,36 @@ def test_v18_gains_the_weigh_in_and_site_quality_tables(tmp_path: Path) -> None:
     assert user_version(path) == SCHEMA_VERSION
 
 
+def test_v19_gains_the_weigh_in_removal_marker(tmp_path: Path) -> None:
+    """v20 (`DATA.md#weigh-ins`): a column on a table v19 made, so a v19
+    database needs the migration, and its weigh-ins come through it live."""
+    path = tmp_path / "ephymeris.db"
+    write_shipped_database(path, 19)
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute(
+            "INSERT INTO animal_health (animal_id, date, weight_g, baseline, recorded_at)"
+            " VALUES ('a1', '2026-11-19', 312.4, 1, '2026-11-19T14:00:00.000+00:00')"
+        )
+        conn.commit()
+        assert "removed_at" not in table_columns(conn, "animal_health")
+    finally:
+        conn.close()
+
+    db = Database(path)
+    db.connect()
+    try:
+        assert "removed_at" in table_columns(statements(db), "animal_health")
+        row = statements(db).execute(
+            "SELECT weight_g, baseline, removed_at FROM animal_health"
+        ).fetchone()
+        assert (row[0], row[1], row[2]) == (312.4, 1, None)
+    finally:
+        db.close()
+
+    assert user_version(path) == SCHEMA_VERSION
+
+
 def test_upgrading_from_v2_preserves_existing_runs(tmp_path: Path) -> None:
     path = tmp_path / "ephymeris.db"
     write_v2_database(path)
@@ -1308,7 +1338,7 @@ def _shipped(version: int):  # noqa: ANN202
     [
         write_v1_database, write_v2_database, write_v3_database, write_v5_database,
         write_v6_database, write_v7_database, write_v8_database, write_v9_database,
-        *(_shipped(v) for v in (4, 10, 11, 12, 13, 14, 15, 16, 17, 18)),
+        *(_shipped(v) for v in (4, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19)),
     ],
     ids=lambda writer: writer.__name__.removeprefix("write_").removesuffix("_database"),
 )

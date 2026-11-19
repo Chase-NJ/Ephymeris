@@ -47,7 +47,8 @@ def referenced_animal_ids(conn: sqlite3.Connection, cohort_id: str) -> Counter[s
     # alone (`DATA.md#weigh-ins`): only this cohort's own animals are asked
     # about, so it can keep one as a former member but never name a stranger.
     for (animal_id,) in conn.execute(
-        "SELECT DISTINCT animal_id FROM animal_health WHERE animal_id IN"
+        "SELECT DISTINCT animal_id FROM animal_health WHERE removed_at IS NULL"
+        " AND animal_id IN"
         " (SELECT id FROM animals WHERE cohort_id = ?"
         "  UNION SELECT id FROM former_animals WHERE cohort_id = ?)",
         (cohort_id, cohort_id),

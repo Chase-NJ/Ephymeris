@@ -4,7 +4,8 @@ A plain-text copy of the session log written next to the data it describes, so
 the notes travel with the folder: to the backup mirror, to a colleague's
 machine, to whoever opens the archive in ten years without Ephymeris. The
 database stays the source of truth; this file is derived from it, rewritten
-whole on every change, and never read back.
+whole on every change, and never read back. The copy a machine does read back
+is `log.json`, written beside it (`logfile.py`, `DATA.md#the-log-file`).
 
 `render_markdown` is pure. `write_mirror` is the only part that touches disk,
 and it never raises: a failure is logged and costs only a stale copy.

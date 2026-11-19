@@ -23,6 +23,7 @@ table: a spine run's by replay, a legacy run's by the legacy decoder.
 | `false_starts` | Which restarted runs to set aside |
 | `live` | A spine run replayed as it runs: where its board is, and its numbers so far |
 | `stats`, `document`, `metric_summary` | The Wilson interval; reading `ts_data` out of a file's document; the metric shape |
+| `odors` | A run's odors table, from its snapshot and parameters |
 
 Cached summaries are versioned by `scoring.current_version`, which moves by
 itself when anything here changes what a summary holds — the maths or the

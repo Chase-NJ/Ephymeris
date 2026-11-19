@@ -902,6 +902,13 @@ export interface TaskProfile {
    * hashed.
    */
   exposed?: string[];
+  /**
+   * A generated task's trial types, one per row of the table the board runs
+   * (`TASKS.md#trial-types-in-the-profile`): `slot`, `name`, `onset` (a strobe name), `side`
+   * (`left`, `right` or `no_go`), `weightKey` and, on a go row, `rewardKey`. What a run's odors
+   * table is built from. Absent on a hand-written profile. Never hashed.
+   */
+  trialTypes?: Array<Record<string, unknown>>;
 }
 
 /** One box's session-local mapping + task config (`ARCHITECTURE.md#session-lifecycle`). */

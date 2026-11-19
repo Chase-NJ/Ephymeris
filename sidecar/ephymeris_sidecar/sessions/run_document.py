@@ -8,8 +8,8 @@ document's shape is a change to this file alone;
 `analytics/stream/` and `tasks/profile.py` may both import it.
 
 A document has one of two shapes. **Version 2** is nested: `schema_version`,
-then its facts under `run`, `task`, `params`, `recording` and `trials`, with
-`ts_data` and `task_profile` beside them. **Version 1** is flat and has no
+then its facts under `run`, `task`, `params`, `odors`, `recording` and `trials`,
+with `ts_data` and `task_profile` beside them. **Version 1** is flat and has no
 `schema_version`. Every function here takes either; `lifted` turns the first
 into the second, and `analytics/reader.py` does that to every file it opens.
 
@@ -105,8 +105,12 @@ PARAMS_KEY = "params"
 #: The version-2 blocks that hold plain values, in the order they are written.
 VALUE_BLOCKS = ("run", "task", PARAMS_KEY, "recording")
 
+#: The key a version-2 document keeps its odors table under (`DATA.md#the-odors-table`).
+ODORS_KEY = "odors"
+
 #: A version-2 document's top-level keys, in the order they are written.
-_ORDER = (VERSION_KEY, *VALUE_BLOCKS, TRIALS_KEY, _STROBES, SNAPSHOT_KEY)
+_ORDER = (VERSION_KEY, "run", "task", PARAMS_KEY, ODORS_KEY, "recording", TRIALS_KEY, _STROBES,
+          SNAPSHOT_KEY)
 
 
 # --- which shape ------------------------------------------------------------ #
@@ -371,6 +375,17 @@ def _params(document: Document) -> Document:
 def params_of(document: Document) -> Document:
     """A version-2 document's parameters, by `metadataKey`."""
     return dict(_block(document, PARAMS_KEY))
+
+
+def odors_of(document: Document) -> Any:
+    """A version-2 document's odors table (`DATA.md#the-odors-table`); None for
+    one that has none, and for a version-1 document, which never does."""
+    return document.get(ODORS_KEY) if is_version_2(document) else None
+
+
+def with_odors(document: Document, rows: Any) -> Document:
+    """`document`, in the version-2 shape, with `rows` as its odors table."""
+    return _ordered({**lifted(document), ODORS_KEY: rows})
 
 
 def has_param(document: Document, metadata_key: Any) -> bool:

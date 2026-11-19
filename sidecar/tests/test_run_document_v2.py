@@ -166,7 +166,8 @@ def test_the_reader_hands_back_version_2_whichever_shape_the_file_has(tmp_path: 
         path.write_text(json.dumps(document), encoding="utf-8")
         result = reader.read_run(path)
         assert result.ok, result.detail
-        assert result.document == version_2(recorded_document()), name
+        # ... with the odors table its snapshot gives: a spine tracer has none.
+        assert result.document == rd.with_odors(version_2(recorded_document()), []), name
 
 
 async def test_analytics_shows_a_version_2_run_as_it_shows_its_twin(rig) -> None:  # noqa: ANN001, F811

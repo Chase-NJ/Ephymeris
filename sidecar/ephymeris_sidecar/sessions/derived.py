@@ -46,7 +46,7 @@ from pathlib import Path
 from typing import Any
 
 from ..analytics import reader
-from ..analytics.stream import grammar2, spine
+from ..analytics.stream import grammar2, odors, spine
 from ..analytics.stream import trial_table as tt
 from ..analytics.stream.legacy import infer
 from ..rig import registry
@@ -218,6 +218,17 @@ def to_matlab(block: dict[str, Any]) -> dict[str, Any]:
         # exact fields it always had.
         out["grammar"] = _mat(_Kind("number"), block.get("grammar"))
     return out
+
+
+#: The odors table's columns and their `.mat` kinds (`analytics/stream/odors.py`'s `COLUMNS`).
+_ODOR_KINDS = tuple((name, _Kind("text" if name in ("name", "side") else "number"))
+                    for name in odors.COLUMNS)
+
+
+def odors_to_matlab(rows: list[Any]) -> Any:
+    """The odors table as `savemat` should write it: an N×1 struct array
+    (0×1 when empty), a null `NaN` or `''` as in the trial table."""
+    return _mat(_Kind("records", _ODOR_KINDS), rows)
 
 
 def _bmp(text: str) -> str:

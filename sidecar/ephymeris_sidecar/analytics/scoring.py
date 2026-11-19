@@ -86,10 +86,13 @@ INDEX_CHUNK = 32
 #: Version 12: the reader hands every document on in the version-2 shape and
 #: refuses one from a newer build (`DATA.md#the-json-document`).
 #:
+#: Version 13: the reader gives a file with no odors table the one its
+#: snapshot and parameters give (`DATA.md#the-odors-table`).
+#:
 #: **"The numbers didn't move" is not an exemption.** A cached row is served
 #: verbatim, so a field added to the payload without a version change goes
 #: missing from every warm row.
-SCORE_VERSION = 12
+SCORE_VERSION = 13
 
 
 @dataclass

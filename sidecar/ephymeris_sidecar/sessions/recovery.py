@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import Any
 
 from ..analytics import reader
+from ..analytics.stream import odors
 from ..tasks.profile import SNAPSHOT_KEY
 from . import derived, matwriter, run_document
 from .writer import write_atomic
@@ -177,7 +178,8 @@ def recovered_document(parsed: ParsedTsv) -> dict[str, Any]:
     )
     document = run_document.from_header(parsed.metadata)
     document = run_document.replaced(document, stop_reason=stop_reason, n_events=len(parsed.events))
-    return derived.with_derived(run_document.with_strobes(document, parsed.events))
+    document = odors.with_odor_table(run_document.with_strobes(document, parsed.events))
+    return derived.with_derived(document)
 
 
 def _is_version_2(metadata: dict[str, Any]) -> bool:

@@ -312,6 +312,15 @@ class TaskProfile:
     #: field. Written by `to_json` and left out of `profile_hash`: what is
     #: shown is presentation, and exposing a field must split no history.
     exposed: list[str] | None = None
+    #: A generated task's trial types, one per row of the table the board runs
+    #: (`TASKS.md#trial-types-in-the-profile`): its slot, the operator's name,
+    #: its onset strobe by name, the side it rewards (`left`, `right`,
+    #: `no_go`), and which parameters carry its pool weight and reward. It is
+    #: what a run's odors table is built from (`DATA.md#the-odors-table`).
+    #: None on a profile that declares none. Passed through verbatim, written
+    #: by `to_json`, and left out of `profile_hash` as `exposed` is: it says
+    #: again what the task already was, and must split no history.
+    trial_types: list[dict[str, Any]] | None = None
 
     def to_json(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -333,6 +342,8 @@ class TaskProfile:
             out["spine"] = self.spine
         if self.exposed is not None:
             out["exposed"] = list(self.exposed)
+        if self.trial_types is not None:
+            out["trialTypes"] = [dict(row) for row in self.trial_types]
         return out
 
     @property
@@ -375,6 +386,7 @@ def profile_hash(profile: TaskProfile) -> str:
     declaration = profile.to_json()
     declaration.pop("strobes", None)
     declaration.pop("exposed", None)
+    declaration.pop("trialTypes", None)
     if profile.spine is not None:
         declaration = behaviour_of(declaration)
     canonical = json.dumps(declaration, sort_keys=True, separators=(",", ":"))
@@ -566,7 +578,28 @@ def parse_profile(raw: Any, vocabulary: Vocabulary | None = None) -> TaskProfile
         legacy_names=_parse_legacy_names(raw.get("legacyNames")),
         spine=_parse_spine(raw.get("spine")),
         exposed=_parse_exposed(raw.get("exposed")),
+        trial_types=_parse_trial_types(raw.get("trialTypes")),
     )
+
+
+#: The sides a trial type can reward, in the trial header's own words
+#: (`TASKS.md#stream-grammar`).
+TRIAL_SIDES = ("left", "right", "no_go")
+
+
+def _parse_trial_types(raw: Any) -> list[dict[str, Any]] | None:
+    """`trialTypes` verbatim, None when the profile has none. Only what the
+    odors table reads is checked: each row's onset strobe name and its side."""
+    if raw is None:
+        return None
+    if not isinstance(raw, list) or any(not isinstance(row, dict) for row in raw):
+        raise TaskProfileError("trialTypes must be a list of objects")
+    for row in raw:
+        if not isinstance(row.get("onset"), str) or row.get("side") not in TRIAL_SIDES:
+            raise TaskProfileError(
+                f"each trialTypes row needs an onset strobe name and a side of {', '.join(TRIAL_SIDES)}"
+            )
+    return [dict(row) for row in raw]
 
 
 def _parse_exposed(raw: Any) -> list[str] | None:

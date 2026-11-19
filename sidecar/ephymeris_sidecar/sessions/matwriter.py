@@ -100,6 +100,11 @@ def _to_matlab(data: dict[str, Any], *, nulls: bool) -> dict[str, Any]:
             # a struct, each field by the same rules as a top-level one.
             out[name] = _to_matlab(value, nulls=True)
             continue
+        if name == run_document.ODORS_KEY and blocks and isinstance(value, list):
+            # The odors table (`DATA.md#the-odors-table`): an N×1 struct array,
+            # one field per column, so `struct2table(S.odors)` is the table.
+            out[name] = derived.odors_to_matlab(value)
+            continue
         if value is None and nulls:
             out[name] = "" if name in _TEXT_FIELDS else math.nan
         elif isinstance(value, bool):

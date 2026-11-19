@@ -386,7 +386,7 @@ def test_the_score_version_pins_every_input() -> None:
     the canary is blind to it: add a case to `scoring._canary_runs` that shows
     it (or, failing that, bump `SCORE_VERSION`).
     """
-    assert scoring.SCORE_VERSION == 12
+    assert scoring.SCORE_VERSION == 13
     assert scoring.canary_fingerprint() == CANARY, (
         "scoring's answers changed: every cache re-reads once (DATA.md#caching)"
     )

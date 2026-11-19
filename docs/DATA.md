@@ -220,6 +220,7 @@ A run is written as **version 2**: `"schema_version": 2`, then its facts in bloc
 | `run` | `animal`, `cohort`, `box`; `session_id` (`<prefix>_<sessionNumber>`); `date` (the session's); `run_of_day`; `started_at` (ISO 8601 with its UTC offset); `serial_port` (the OS port); `stop_reason`; `n_events` |
 | `task` | `sketch`; `stream`, `interp`, `free_ram`, `sync` as announced before `READY` ([TASKS.md](TASKS.md#confirming-the-parameters), [stream](TASKS.md#stream-grammar), [sync](RECORDING.md#firmware-pulse)); `trial_seed` (the board's `SEED` line) and `host_seed` (the app's `START` line); `channel_set_hash`, `channel_set_hash_version` ([TASKS.md](TASKS.md#registry-rules)) |
 | `params` | The merged parameters, one key per `metadataKey` |
+| `odors` | The [odors table](#the-odors-table); `[]` for a task with none |
 | `recording` | `path`, `name`, `port`, `channels`, `digital_in`, `sample_rate`; recordings only ([RECORDING.md](RECORDING.md#what-is-written)) |
 | `trials` | The [trial table](#the-derived-trial-table) |
 | `ts_data` | `[code, timestamp_ms]` as sent, ms from **that animal's** start |
@@ -257,7 +258,7 @@ A header with no `schema_version` line is from before version 2: each parameter 
 
 ### The mat mirror
 
-`sessions/matwriter.py` writes the same document with `scipy.io.savemat`. `run`, `task`, `params` and `recording` are structs (`S.run.box`, `S.params.reward_time_5`) whose numbers are `double`, bools `logical` and strings `char`; `ts_data` is `N×2` (`0×2` empty), `task_profile` a JSON char array and `trials` a struct. A `null` run fact is `NaN` (`box`, `run_of_day`) or `''`. A version-1 document's fields are top-level variables by the same rules. `tests/test_matwriter.py` pins it.
+`sessions/matwriter.py` writes the same document with `scipy.io.savemat`. `run`, `task`, `params` and `recording` are structs (`S.run.box`, `S.params.reward_time_5`) whose numbers are `double`, bools `logical` and strings `char`; `ts_data` is `N×2` (`0×2` empty), `task_profile` a JSON char array, `odors` a struct array and `trials` a struct. A `null` run fact is `NaN` (`box`, `run_of_day`) or `''`. A version-1 document's fields are top-level variables by the same rules. `tests/test_matwriter.py` pins it.
 
 > [!CAUTION]
 > **scipy is preloaded on the main thread before any other thread starts** (`matwriter.preload`): importing numpy while a thread blocks on stdin deadlocks the frozen sidecar. **A `.mat` that would be wrong is refused** (non-BMP characters, `_` names) and logged; `.tsv` and `.json` carry the run.
@@ -265,6 +266,21 @@ A header with no `schema_version` line is from before version 2: each parameter 
 ### The embedded task profile
 
 The snapshot makes a copied run decode anywhere with **the same `profile_hash`**, which requires `TaskProfile.to_json` to round-trip byte-for-byte through `parse_profile` (tested). It names which keys are parameters, so `params_hash` recomputes; its `strobes` map is the machine's whole [vocabulary](TASKS.md#strobe-vocabulary) at run start, outside the hash. Profile-less sketches write none.
+
+### The odors table
+
+One row per odor line a [trial type](TASKS.md#trial-types) presents: which odor, which well, how much (`analytics/stream/odors.py`).
+
+```jsonc
+"odors": [{"line": 1, "name": "GR-Sandalwood", "onset_code": 101, "side": "right",
+           "reward_ms": 100, "pool_weight": 1}]
+```
+
+- Built from the run's own snapshot (its [`trialTypes`](TASKS.md#trial-types-in-the-profile)) and `params`, never from the stream, so a recovered or copied file has the same table.
+- `line` is the number in the odor's onset strobe name, the trial table's `odor_line`; `side` is `left`, `right` or `no_go`; `reward_ms` is 0 for a no-go odor.
+- A snapshot without `trialTypes` gives the rows its live metrics' success codes prove (`WATER_POKE_L`, `_R`, `_NONE`), with `reward_ms` and `pool_weight` null; one that proves none gives `[]`.
+- `analytics/reader.py` adds the table, in memory, to a file that has none.
+- In the `.mat`, `odors` is an **N×1 struct array** (`struct2table(S.odors)`, 0×1 when empty), nulls `NaN` or `''`.
 
 ### The derived trial table
 

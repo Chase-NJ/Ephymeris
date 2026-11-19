@@ -105,7 +105,7 @@ The library is rescanned on `settings.push`, `sketches.refresh`, task saves and 
 
 ### Top level keys
 
-`taskName` (required), `kind` (`"behavior"` or `"utility"`), [`config`](#config-fields), [`liveMetrics`](#live-metric-entries), [`controls` and `telemetry`](#utility-controls-and-telemetry), [`identify`](#identify), [`legacyNames`](#legacy-names) and a spine task's [`spine`](#the-snapshot). [`strobes`](#strobes) is filled at load. Unknown keys are ignored.
+`taskName` (required), `kind` (`"behavior"` or `"utility"`), [`config`](#config-fields), [`liveMetrics`](#live-metric-entries), [`controls` and `telemetry`](#utility-controls-and-telemetry), [`identify`](#identify), [`legacyNames`](#legacy-names), a generated task's [`trialTypes`](#trial-types-in-the-profile) and a spine task's [`spine`](#the-snapshot). [`strobes`](#strobes) is filled at load. Unknown keys are ignored.
 
 > [!CAUTION]
 > **Never add a `states` or `graph` key**: it moves `profile_hash` and splits the sketch's history.
@@ -156,6 +156,21 @@ A `"kind": "utility"` profile gives a priming, cleaning or self-test sketch Debu
 
 > [!CAUTION]
 > **Declared, never inferred**: a guessed match decodes real data with the wrong map. Removing a sketch or an entry stops its archived runs decoding with only a warning; `tests/test_bundled_library_covers_archives.py` pins the lab's names.
+
+### Trial types in the profile
+
+`trialTypes` is a generated task's [trial types](#trial-types) in words, one entry per row of the table the board runs (`generate._trial_types`):
+
+```jsonc
+{"slot": 1, "name": "GR-Sandalwood", "onset": "ODOR_1_ON", "side": "right",
+ "weightKey": "pool_weight_1", "rewardKey": "reward_time_1"}
+```
+
+- `slot` is the row's `TRIAL_TYPE_<n>` ([stream grammar](#stream-grammar)), so a row the generator drops has no entry.
+- `side` is `left`, `right` or `no_go`, the trial header's words. A no-go row has no `rewardKey`.
+- `weightKey` and `rewardKey` are the `metadataKey`s of the row's pool weight and reward.
+- A run's [odors table](DATA.md#the-odors-table) is built from it, because the live metrics score `CORRECT` and so name no well.
+- **Left out of `profile_hash`**, as `exposed` is: it restates the task and must split no history. A profile without it still parses.
 
 ## Task definitions
 

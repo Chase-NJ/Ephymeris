@@ -69,7 +69,8 @@ def finalized_document() -> dict:
     writes them."""
     fields = {**{name: None for name in run_document.RUN_FACTS}, **CORE,
               "stop_reason": recovery.RECOVERED_STOP_REASON, "n_events": len(STROBES)}
-    return run_document.build(fields, CONFIG, PROFILE, [[code, ts] for code, ts in STROBES])
+    document = run_document.build(fields, CONFIG, PROFILE, [[code, ts] for code, ts in STROBES])
+    return run_document.with_odors(document, [])  # this profile names no odor's side
 
 
 def test_recovery_rebuilds_exactly_what_finalize_would_have(tmp_path: Path) -> None:

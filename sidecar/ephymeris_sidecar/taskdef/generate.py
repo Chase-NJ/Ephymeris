@@ -92,6 +92,9 @@ def profile_json(definition: TaskDefinition) -> dict[str, Any]:
         "config": config,
         "liveMetrics": _live_metrics(definition, channels, vocab),
         "legacyNames": list(definition.legacy_names),
+        # Each row of the table the board runs, in words (`TASKS.md#trial-types-in-the-profile`):
+        # what a run's odors table is built from. Left out of `profile_hash`.
+        "trialTypes": _trial_types(definition, channels, vocab),
         # Which parameters the Start dialog offers (`TASKS.md#parameters`). Left
         # out of `profile_hash`, so exposing one splits no history; a key the
         # catalogue no longer declares is dropped here, not carried.
@@ -270,6 +273,33 @@ _STAGE_ATTR = {
 GO_ERROR_OUTCOMES = ("WATER_POKE_ERROR_L", "WATER_POKE_ERROR_R", "WATER_UNPOKE_EARLY_L",
                      "WATER_UNPOKE_EARLY_R", "RESP_OMIT")
 NO_GO_ERROR_OUTCOMES = ("WATER_POKE_ERROR_L", "WATER_POKE_ERROR_R")
+
+
+def _trial_types(definition, channels, vocab) -> list[dict[str, Any]]:
+    """One entry per row `task_trials_h` emits, in table order.
+
+    `slot` is the row's place in `kTrials[]`, the `TRIAL_TYPE_<n>` its trials
+    are headed with, so a dropped row has no entry and the rows after it move
+    up. The parameter keys are the definition's (`_pool_fields`,
+    `_reward_fields`), which do not move. The side is the well `task_trials_h`
+    compiles into the row; a no-go row answers at none and has no reward key.
+    """
+    out: list[dict[str, Any]] = []
+    for i, trial in enumerate(definition.trials):
+        row = rows.resolve_row(trial, channels, vocab)
+        if row is None:
+            continue
+        entry: dict[str, Any] = {
+            "slot": len(out) + 1,
+            "name": trial.label.strip() or trial.odor_channel.replace("_", " "),
+            "onset": trial.onset_strobe,
+            "side": "no_go" if not trial.is_go else "right" if row.port.name == "right_well" else "left",
+            "weightKey": f"pool_weight_{i + 1}",
+        }
+        if trial.is_go:
+            entry["rewardKey"] = f"reward_time_{i + 1}"
+        out.append(entry)
+    return out
 
 
 def _live_metrics(definition, channels, vocab) -> list[dict[str, Any]]:

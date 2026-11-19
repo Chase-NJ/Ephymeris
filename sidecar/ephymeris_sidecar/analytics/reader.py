@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from ..sessions import run_document
+from .stream import odors
 
 log = logging.getLogger(__name__)
 
@@ -250,9 +251,14 @@ def parse_run(path: str | Path, stat: StatResult) -> ReadResult:
     # the lab's own scripts. Analytics never reads it: every number is a replay,
     # so the copy is dropped here, at the one door a file comes in by. A flat
     # (version-1) file is regrouped into the version-2 shape at the same door.
+    document = run_document.lifted(run_document.without_trial_table(raw))
+    if run_document.odors_of(document) is None:
+        # A file from before the odors table (`DATA.md#the-odors-table`) gets the
+        # one its own snapshot and parameters give.
+        document = odors.with_odor_table(document)
     return ReadResult(
         status="ok",
-        document=run_document.lifted(run_document.without_trial_table(raw)),
+        document=document,
         mtime_ns=stat.mtime_ns,
         size=stat.size,
     )

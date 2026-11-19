@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from ..tasks.profile import SNAPSHOT_KEY
+from ..analytics.stream import odors
 from . import derived, matwriter, run_document
 
 log = logging.getLogger(__name__)
@@ -324,13 +325,13 @@ class AnimalWriter:
         """The document as it stands before its first strobe: its fields, its
         parameters and the profile snapshot. What a live replay is started
         from (`sessions/live_replay.py`)."""
-        return run_document.build(self._core, self._config, self._profile)
+        return _with_odors(run_document.build(self._core, self._config, self._profile))
 
     def _document(self, stop_reason: str) -> dict[str, Any]:
         """The full per-animal document (`DATA.md#the-json-document`)."""
         fields = {**self._core, "stop_reason": stop_reason, "n_events": len(self._events)}
-        return run_document.build(fields, self._config, self._profile,
-                                  [list(pair) for pair in self._events])
+        return _with_odors(run_document.build(fields, self._config, self._profile,
+                                              [list(pair) for pair in self._events]))
 
     def _flush(self) -> None:
         assert self._tsv is not None
@@ -340,6 +341,16 @@ class AnimalWriter:
     @property
     def event_count(self) -> int:
         return len(self._events)
+
+
+def _with_odors(document: dict[str, Any]) -> dict[str, Any]:
+    """`document` with its odors table (`DATA.md#the-odors-table`), or with an
+    empty one if the table cannot be built: never at the cost of the run."""
+    try:
+        return odors.with_odor_table(document)
+    except Exception:  # noqa: BLE001 - a table never costs the run its files
+        log.exception("couldn't build the odors table of %s", run_document.animal_of(document))
+        return run_document.with_odors(document, [])
 
 
 def _render(value: Any) -> str:

@@ -41,6 +41,7 @@ from ...rig.registry import Vocabulary
 from ...sessions.run_document import stream_of
 from ...tasks.profile import LiveMetric, TaskProfile
 from .document import _pairs_of, codes_of
+from .odors import ONSET as _ONSET
 from .engagement import TrialEngagement
 from .legacy import infer
 from .legacy import strobes as legacy_strobes
@@ -60,7 +61,6 @@ END = "END_TRIAL"
 REPEAT = "INVALID_TRIAL"
 TERMINATORS_1 = ("END_CORRECT_ITI", "END_INCORRECT_ITI")
 _TYPE = re.compile(r"^TRIAL_TYPE_(\d+)$")
-_ONSET = re.compile(r"^ODOR_(\d+)_ON$")
 LIGHTS_ON, ODOR_POKE, ODOR_OFF, ODOR_UNPOKE, LIGHTS_OFF = (
     "LIGHTS_ON", "ODOR_POKE", "ODOR_OFF", "ODOR_UNPOKE", "LIGHTS_OFF")
 POKES = {"WATER_POKE_L": "left", "WATER_POKE_R": "right"}

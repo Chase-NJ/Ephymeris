@@ -35,6 +35,7 @@ number. This file is the specification: its numbers are what a paper would repor
 | [`trial_table.py`](stream/trial_table.py), [`table_metrics.py`](stream/table_metrics.py) | [The trial table](#the-trial-table); its [metrics](#metrics-from-the-trial-table) |
 | [`live.py`](stream/live.py), [`rates.py`](stream/rates.py) | [Live scoring](#live-scoring) of a spine run; [phase-window rates](#phase-window-rates) |
 | [`stats.py`](stream/stats.py), [`document.py`](stream/document.py), [`metric_summary.py`](stream/metric_summary.py) | Wilson and t intervals; reading `ts_data`; the shared metric shape |
+| [`odors.py`](stream/odors.py) | A run's [odors table](../../../docs/DATA.md#the-odors-table) |
 
 **The plumbing**: [`reader.py`](reader.py) opens run files or says `missing`/`unreadable`;
 [`scoring.py`](scoring.py) picks each run's profile ([the ladder](#which-profile-decodes-a-run)), scores and

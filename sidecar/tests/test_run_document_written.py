@@ -50,6 +50,7 @@ WRITTEN = {
              "trial_seed": 1987552345, "host_seed": 1987552345,
              "channel_set_hash": "0123", "channel_set_hash_version": 2},
     "params": {"num_trials": 1000, "lazy_escalation": True},
+    "odors": [],  # this snapshot declares no trial types (`tests/test_odors.py` has one that does)
     "recording": {"path": "D:/rhx", "name": "0423_7", "port": "A", "channels": "A-016:A-031",
                   "digital_in": 1, "sample_rate": 30000},
     "ts_data": [[221, 0], [222, 1001]],
@@ -67,8 +68,8 @@ def keys(document: dict) -> list:
 
 def test_a_document_is_built_block_by_block_in_the_adrs_order() -> None:
     shuffled = dict(reversed(list(FIELDS.items())))
-    built = rd.build({**shuffled, "stop_reason": "BF_END_SESSION received", "n_events": 2},
-                     PARAMS, SNAPSHOT, STROBES)
+    built = rd.with_odors(rd.build({**shuffled, "stop_reason": "BF_END_SESSION received", "n_events": 2},
+                                   PARAMS, SNAPSHOT, STROBES), [])
     assert built == WRITTEN
     assert keys(built) == keys(WRITTEN), "the order is the module's, never the caller's"
 
@@ -78,6 +79,7 @@ def test_a_behavior_only_run_has_no_recording_block_and_no_field_it_was_not_give
     assert built == {"schema_version": 2, "run": {"animal": "remy1"}, "task": {"sketch": "T"},
                      "params": {}, "ts_data": []}
     assert "ts_data" not in rd.build({"rat": "remy1"}, {})
+    assert "odors" not in built, "the table is the writer's to add (`odors.with_odor_table`)"
 
 
 def test_a_parameter_named_like_a_core_field_sits_beside_it() -> None:
@@ -215,6 +217,7 @@ def test_a_tsv_from_before_version_2_recovers_with_the_missing_facts_null(tmp_pa
         "task": {"sketch": "GRGL 8-Odor EZ", "interp": 1, "trial_seed": 77},
         # Its flat `box` line was a parameter: that header had no run facts.
         "params": {"num_trials": 1000, "box": 9},
+        "odors": [],
         "ts_data": [[221, 0], [222, 1001]],
         "task_profile": {"taskName": "GRGL 8-Odor EZ"},
     }
@@ -250,7 +253,7 @@ async def test_a_run_on_a_box_writes_the_adrs_blocks(tmp_path: Path, bench: Benc
     await wait_until(lambda: bool(ended))
 
     document = json.loads(next((tmp_path / "behavior.json").glob("*.json")).read_text(encoding="utf-8"))
-    assert list(document) == ["schema_version", "run", "task", "params", "ts_data", "task_profile"]
+    assert list(document) == ["schema_version", "run", "task", "params", "odors", "ts_data", "task_profile"]
     run = document["run"]
     assert list(run) == ["animal", "cohort", "box", "session_id", "date", "run_of_day", "started_at",
                          "serial_port", "stop_reason", "n_events"]

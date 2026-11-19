@@ -52,6 +52,7 @@ from typing import Any, Awaitable, Callable
 
 from ..settings import IntanEndpoints, SidecarSettings
 from . import probemap
+from .rhx_names import recording_folder_name
 from .impedance import ImpedanceFile, parse_csv
 from .yield_store import RunSpikes
 from .analysis import (
@@ -1105,6 +1106,12 @@ class IntanService:
 
     # --- what the runner tells us ----------------------------------------
 
+    @property
+    def stop_owed(self) -> bool:
+        """RHX has not confirmed the last recording's stop (`_send_owed_stop`),
+        so its files may still be open and growing."""
+        return self._stop_owed is not None
+
     def recording_positions(self, box: int) -> dict[str, tuple[float, float]]:
         """Each of this box's sites' position by native channel, from the probe
         map it records with (`RECORDING.md#what-is-written`); empty without one."""
@@ -1120,9 +1127,7 @@ class IntanService:
         if recording is None or box not in recording.boxes or not self.is_recording:
             return {}
         plan = recording.boxes[box]
-        name = recording.base_filename
-        if recording.file_timestamp:
-            name = f"{name}_{recording.file_timestamp}"
+        name = recording_folder_name(recording.base_filename, recording.file_timestamp)
         return {
             "intan_recording": name,
             "intan_path": recording.path,

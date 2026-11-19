@@ -10,6 +10,7 @@ write to one ordered log, so the ordering rules are what the tests read.
 from __future__ import annotations
 
 import asyncio
+import threading
 from contextlib import nullcontext
 from dataclasses import replace
 from datetime import date
@@ -125,6 +126,10 @@ class FakeIntan:
         self.is_recording = False
         self.force_stop = asyncio.Event()
         self.gate: asyncio.Event | None = None
+        #: RHX has not confirmed the last stop (`IntanService.stop_owed`).
+        self.stop_owed = False
+        #: What `stop_recording` hands back as the run's record.
+        self.run_record: dict[str, Any] = {"file": "run1.rhd"}
 
     def set_up(self, session_id: str, confirmation: int) -> None:
         """What the Record step's `intan.configure` leaves behind."""
@@ -156,7 +161,7 @@ class FakeIntan:
         self.log.append("rhx stop")
         self.is_recording = False
         self.set_up_for = None
-        return {"file": "run1.rhd"}
+        return dict(self.run_record)
 
     def release(self) -> None:
         self.log.append("rhx release")
@@ -727,6 +732,61 @@ async def test_ending_stops_the_boxes_then_rhx_then_lets_go(recording_rig) -> No
     assert ended.status == "completed"
     assert ended.rounds[0].ended_at is not None
     assert rig.sessions.get_session(session.id).recording["runs"] == [{"file": "run1.rhd"}]
+
+
+async def test_a_stopped_recording_starts_its_spike_export_off_the_sessions_path(recording_rig) -> None:
+    """`RECORDING.md#the-sort-export`: the recording's runs, by its folder's
+    name, once RHX has stopped; the end does not wait for it."""
+    rig = recording_rig
+    rig.intan.run_record = {"baseFilename": "rec", "fileTimestamp": "260417_095743"}
+    asked: list[tuple[list[str], str]] = []
+    gate = threading.Event()
+
+    def slow_export(files: list[str], recording: str) -> None:
+        gate.wait(5)
+        asked.append((files, recording))
+
+    rig.lifecycle.export_spikes = slow_export
+    session = rig.session(recording=True)
+    await rig.run_round(session)
+
+    ended = await rig.lifecycle.end(session.id)
+    assert ended.status == "completed" and asked == [], "the session ended while the export still ran"
+    gate.set()
+    await rig.lifecycle.exports_settled()
+    [(files, recording)] = asked
+    assert recording == "rec_260417_095743"
+    assert files == [r.file_path for r in rig.sessions.runs_for(session.id) if r.file_path]
+
+
+async def test_an_export_that_fails_costs_the_session_nothing(recording_rig) -> None:
+    rig = recording_rig
+    rig.intan.run_record = {"baseFilename": "rec", "fileTimestamp": "260417_095743"}
+
+    def broken(_files: list[str], _recording: str) -> None:
+        raise RuntimeError("disk on fire")
+
+    rig.lifecycle.export_spikes = broken
+    session = rig.session(recording=True)
+    await rig.run_round(session)
+    ended = await rig.lifecycle.end(session.id)
+    await rig.lifecycle.exports_settled()
+    assert ended.status == "completed"
+    assert rig.sessions.get_session(session.id).recording["runs"] == [rig.intan.run_record]
+
+
+async def test_no_export_starts_while_rhx_has_not_confirmed_its_stop(recording_rig) -> None:
+    """Its files may still be growing: an export now could be cut short and look whole."""
+    rig = recording_rig
+    rig.intan.run_record = {"baseFilename": "rec", "fileTimestamp": "260417_095743"}
+    rig.intan.stop_owed = True
+    asked: list[str] = []
+    rig.lifecycle.export_spikes = lambda _files, recording: asked.append(recording)
+    session = rig.session(recording=True)
+    await rig.run_round(session)
+    await rig.lifecycle.end(session.id)
+    await rig.lifecycle.exports_settled()
+    assert asked == []
 
 
 async def test_a_second_transition_waits_for_a_recording_start(recording_rig) -> None:

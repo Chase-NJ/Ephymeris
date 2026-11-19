@@ -534,6 +534,21 @@ a relocate of that folder.
 > whether or not one was recorded ([TASKS.md](TASKS.md#profile-and-params-hashes)). The string ones are in
 > `sessions/recovery.py`'s `_STRING_FIELDS` (so `0423_7` does not come back as a number).
 
+<a id="the-sort-export"></a>
+**`sort/<run>.spikes.mat`**, one per recorded animal, in the session folder beside `behavior.json/`: what Plexon Offline Sorter imports (`intan/sort_export.py`). It holds the three variables the lab's own `save_extracted_spikes.m` writes per port, restricted to the animal's channels:
+
+| Variable | |
+|---|---|
+| `spiketimes` | K×1 cell, each n×1 double: spike times, seconds on RHX's clock |
+| `spikewaves` | K×1 cell, each n×30 double: waveforms in µV, rows are spikes |
+| `unique_ch` | K×1 cell, each one whole native channel name (`A-016`) |
+
+- K is the animal's channels with at least one spike, in RHX's channel order; a silent channel is left out.
+- µV is `0.195 × (count − 32768)`. The 30 samples run from 6 before the crossing to 24 after: samples 25:54 of a snapshot with 30 pre-detect samples, counted from the crossing for any other lead-in. Spikes RHX flagged as artifacts (id 128) are kept.
+- Written once RHX has confirmed its stop, in the background (`SessionLifecycle._export_spikes_later`): it never holds up an end, and a failure costs only the export. The file is written whole or not at all. While RHX's stop is still owed nothing is exported, since `spike.dat` may still be growing.
+- **No file, with the reason logged**, when the recording saved no snapshots, keeps fewer than 6 samples before or 24 after a detection, or the animal's channels never fired.
+- `tests/test_sort_export.py` compares it with the lab's `ExtractIntanSpikes.py`, value for value, on a real recording named by `EPHYMERIS_RHX_SAMPLE` and `EPHYMERIS_LAB_EXPORTS`.
+
 The durable record is RHX's files plus the `.tsv`; nothing the sync check or the firing map computes is
 persisted.
 

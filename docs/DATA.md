@@ -30,6 +30,7 @@ What lands on disk and in the database, and how it is read back. Metric definiti
     behavior.tsv/<animal>_<prefix>_<number>_<date>_<HHMMSS>.tsv     ← written live
     behavior.json/….json  behavior.mat/….mat                         ← built at run end
     events/….events.json  ….events.mat           ← a recorded run's events on RHX's clock, when first viewed
+    sort/….spikes.mat                            ← a recorded run's spikes for Offline Sorter ([RECORDING.md](RECORDING.md#the-sort-export))
 ```
 
 Built by `sessions/paths.py` (`resolve_session_folder`, `resolve_animal_files`). Reusing a prefix and number on one day is allowed (`sessions.suggestNumber` warns via `sameDayNumbers`); the files land side by side.

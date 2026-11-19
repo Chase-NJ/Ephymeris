@@ -58,6 +58,9 @@ class SpikeFileHeader:
     snapshot_samples: int
     #: Where the first record starts.
     data_offset: int
+    #: How many of a snapshot's samples come before the detection; the rest
+    #: come after it.
+    samples_before: int = 0
 
     @property
     def record_bytes(self) -> int:
@@ -87,7 +90,7 @@ def parse_spike_header(data: bytes) -> SpikeFileHeader:
     if not 1.0 <= rate <= MAX_SAMPLE_RATE or before + after > MAX_SNAPSHOT_SAMPLES:
         raise RhxFileError("spike.dat's header does not read as a sample rate and a snapshot length")
     names = tuple(n.strip().upper() for n in natives.split(",") if n.strip())
-    return SpikeFileHeader(rate, names, before + after, at + _HEADER_TAIL.size)
+    return SpikeFileHeader(rate, names, before + after, at + _HEADER_TAIL.size, before)
 
 
 def read_spikes(path: Path, channels: set[str] | None = None) -> tuple[SpikeFileHeader, dict[str, array]]:

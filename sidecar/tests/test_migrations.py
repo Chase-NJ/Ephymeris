@@ -1293,7 +1293,7 @@ def _shipped(version: int):  # noqa: ANN202
     [
         write_v1_database, write_v2_database, write_v3_database, write_v5_database,
         write_v6_database, write_v7_database, write_v8_database, write_v9_database,
-        *(_shipped(v) for v in (4, 10, 11, 12, 13, 14, 15, 16)),
+        *(_shipped(v) for v in (4, 10, 11, 12, 13, 14, 15, 16, 17)),
     ],
     ids=lambda writer: writer.__name__.removeprefix("write_").removesuffix("_database"),
 )

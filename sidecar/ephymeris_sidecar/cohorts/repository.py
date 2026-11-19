@@ -15,9 +15,11 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from . import implants
 from .db import Database, Query, Tx
 from .members import former_members, referenced_animal_ids
 from .models import (
+    IMPLANT_UNSAID,
     MAX_BOX,
     MIN_BOX,
     Animal,
@@ -102,6 +104,7 @@ class CohortRepository:
                 )
                 for animal in parsed_animals:
                     _insert_animal(conn, cohort_id, animal)
+                _save_implants(conn, parsed_animals)
                 cohort = self._load_one(conn, cohort_id)
         except sqlite3.IntegrityError as exc:  # pragma: no cover - raced insert
             raise NameTaken(clean) from exc
@@ -165,6 +168,7 @@ class CohortRepository:
                     conn.execute("DELETE FROM animals WHERE cohort_id = ?", (cohort_id,))
                     for animal in animals:
                         _insert_animal(conn, cohort_id, animal)
+                    _save_implants(conn, animals)
                 cohort = self._load_one(conn, cohort_id)
         except sqlite3.IntegrityError as exc:
             raise ValidationError({"_": f"Couldn't save the cohort: {exc}"}) from exc
@@ -281,6 +285,9 @@ class CohortRepository:
                 "SELECT * FROM animals WHERE cohort_id = ? ORDER BY name", (row["id"],)
             )
         ]
+        stored = implants.load(conn, [a.id for a in animals])
+        for animal in animals:
+            animal.implant = stored.get(animal.id)
         return Cohort(
             id=row["id"],
             name=row["name"],
@@ -331,7 +338,12 @@ def _keep_former(
     history = referenced_animal_ids(conn, cohort_id)
     now = _now()
     for animal in existing.animals:
-        if animal.id in posted_ids or animal.id not in history:
+        if animal.id in posted_ids:
+            continue
+        if animal.id not in history:
+            # Deleted outright, so its implant goes too; a former member's stays
+            # under its id (`DATA.md#implants`).
+            implants.save(conn, animal.id, None)
             continue
         conn.execute(
             "INSERT OR REPLACE INTO former_animals"
@@ -408,9 +420,19 @@ def _parse_animals(raw: Any) -> list[Animal]:
                 sex=sex if sex in VALID_SEX else None,
                 id_number=_opt_text(item.get("idNumber")),
                 notes=_opt_text(item.get("notes")),
+                # Kept raw until `_validate`, which reports it against the animal.
+                implant=item["implant"] if "implant" in item else IMPLANT_UNSAID,
             )
         )
     return animals
+
+
+def _save_implants(conn: Query, animals: list[Animal]) -> None:
+    """Store each posted animal's implant, already validated: an explicit null
+    removes it, and an animal whose entry named none keeps what it has."""
+    for animal in animals:
+        if animal.implant is not IMPLANT_UNSAID:
+            implants.save(conn, animal.id, animal.implant)
 
 
 def _opt_text(value: Any) -> str | None:
@@ -445,6 +467,12 @@ def _validate(animals: list[Animal]) -> None:
         # (`DATA.md#validation`).
         if animal.box_number is not None and not MIN_BOX <= animal.box_number <= MAX_BOX:
             errors[field] = f"Box must be between {MIN_BOX} and {MAX_BOX}."
+
+        if animal.implant is not IMPLANT_UNSAID and animal.implant is not None:
+            try:
+                animal.implant = implants.parse_implant(animal.implant)
+            except implants.ImplantError as exc:
+                errors[field] = f"Implant: {exc}."
 
     if errors:
         raise ValidationError(errors)

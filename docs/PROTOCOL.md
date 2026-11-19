@@ -266,7 +266,7 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="shape-analyticsprogress"></a>AnalyticsProgress | `cohortId`, `phase`, `done`, `total` |  |
 | <a id="shape-analyticssummary"></a>AnalyticsSummary | `cohortId`, `dataFolder`, `sessions`, `animals`, `runs`, `falseStarts`, `profileGroups`, `counts`, `warnings`, `minCountedTrials` | The whole cohort table in one call; selections filter it client-side. |
 | <a id="shape-analyticswarning"></a>AnalyticsWarning | `code`, `runId`, `message` |  |
-| <a id="shape-animal"></a>Animal | `id`, `name`, `boxNumber`, `cage`, `sex`, `idNumber`, `notes` |  |
+| <a id="shape-animal"></a>Animal | `id`, `name`, `boxNumber`, `cage`, `sex`, `idNumber`, `notes`, `implant?` |  |
 | <a id="shape-animalended"></a>AnimalEnded | `box`, `animalId`, `stopReason`, `filePath` |  |
 | <a id="shape-animalmoveanimal"></a>AnimalMoveAnimal | `animalId`, `name`, `status`, `outcome`, `destinationAnimalId`, `runs`, `files` |  |
 | <a id="shape-animalmovefiles"></a>AnimalMoveFiles | `count`, `bytes`, `alreadyThere`, `missing` |  |
@@ -307,11 +307,14 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="shape-flashorigin"></a>FlashOrigin | "baseline" \| "session" \| "debug" | Who asked for a flash, which fixes how it runs: `baseline` is a utility … |
 | <a id="shape-flashprogressdata"></a>FlashProgressData | `box`, `phase`, `stream`, `text` |  |
 | <a id="shape-flashqueuestatus"></a>FlashQueueStatus | `boxes` | The whole flash queue, every box — one snapshot, shared by the commands and … |
-| <a id="shape-formeranimal"></a>FormerAnimal | `id`, `name`, `source`, `removedAt`, `runCount`, `sex`, `idNumber`, `cage`, `notes` | An animal with history in a cohort but no place on its roster (`DATA.md#former-members`). |
+| <a id="shape-formeranimal"></a>FormerAnimal | `id`, `name`, `source`, `removedAt`, `runCount`, `sex`, `idNumber`, `cage`, `notes`, `implant?` | An animal with history in a cohort but no place on its roster (`DATA.md#former-members`). |
 | <a id="shape-identifyspec"></a>IdentifySpec | `on`, `off` | The two commands that make a box announce itself — a trial light, a … |
 | <a id="shape-impedancecomparison"></a>ImpedanceComparison | `current`, `previous` |  |
 | <a id="shape-impedancemeasurement"></a>ImpedanceMeasurement | `animalId`, `measuredAt`, `box`, `sessionId`, `frequencyHz`, `file`, `sites` | One animal's sites, measured once (`RECORDING.md#impedance-tracking`). |
 | <a id="shape-impedancesite"></a>ImpedanceSite | `ohms`, `phaseDeg` | One electrode site's impedance at the measurement's frequency. |
+| <a id="shape-implant"></a>Implant | `device`, `surgeryDate`, `probeMapPath`, `targets`, `lowerings` | An animal's implant, entered once on the animal (`DATA.md#implants`). |
+| <a id="shape-implantlowering"></a>ImplantLowering | `date`, `mm` | One turn of an implant's drive (`DATA.md#implants`). |
+| <a id="shape-implanttarget"></a>ImplantTarget | `name`, `region`, `hemisphere`, `apMm`, `mlMm`, `dvMm`, `channels` | A group of a device's channels at one place in the brain (`GLOSSARY.md#target`). |
 | <a id="shape-inputcount"></a>InputCount | `phase`, `channel`, `count` | Watched rises of one input channel during one phase of a trial. |
 | <a id="shape-intansettings"></a>IntanSettings | `commandPort`, `waveformPort`, `spikePort` | Where Intan RHX's three TCP servers listen. |
 | <a id="shape-intanspikes"></a>IntanSpikes | `box`, `counts`, `lagMs`, `sentAt` |  |

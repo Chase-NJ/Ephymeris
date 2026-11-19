@@ -87,7 +87,9 @@ DB_FILENAME = "ephymeris.db"
 #: animals.group_id and former_animals.group_name are gone, and
 #: sessions.group_runs became sessions.rounds. The first change that is not
 #: additive, so a build older than this cannot open a v17 file.
-SCHEMA_VERSION = 17
+#: v18 added implants (`DATA.md#implants`) -- a new table only, so no
+#: migration, v11's pattern.
+SCHEMA_VERSION = 18
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS cohorts (
@@ -126,6 +128,16 @@ CREATE TABLE IF NOT EXISTS former_animals (
     id_number   TEXT,
     notes       TEXT,
     removed_at  TEXT NOT NULL
+);
+
+-- An animal's implant (DATA.md#implants): its device, targets and lowerings,
+-- as the wire's JSON. Keyed by the animal's id with NO foreign key: every
+-- roster edit deletes and re-inserts the `animals` rows, so a cascade would
+-- wipe the implant on a rename. A cohort move re-keys it (`move_apply.py`).
+CREATE TABLE IF NOT EXISTS implants (
+    animal_id     TEXT PRIMARY KEY,
+    implant_json  TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
 );
 
 -- The journal of a move of animals between cohorts
@@ -493,6 +505,7 @@ OTHER_PATHS: dict[tuple[str, str], str] = {
     ("task_profiles", "profile_json"): "no paths",
     ("run_spike_counts", "threshold_json"): "no paths",
     ("run_spike_counts", "counts_json"): "no paths",
+    ("implants", "implant_json"): "a probe-map file's path, chosen by hand; not under a data folder",
 }
 
 

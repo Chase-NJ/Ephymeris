@@ -69,6 +69,11 @@ class Appearance:
         return Appearance(type=kind, hue=hue, ring=bool(raw.get("ring", False)), seed=seed)
 
 
+#: A posted animal's `implant` when its roster entry had no such key: not
+#: "remove it" (that is an explicit null) but "say nothing about it".
+IMPLANT_UNSAID: Any = object()
+
+
 @dataclass
 class Animal:
     id: str
@@ -84,6 +89,10 @@ class Animal:
     sex: Sex | None = None
     id_number: str | None = None
     notes: str | None = None
+    #: The animal's implant as the wire carries it (`DATA.md#implants`), None
+    #: for none. On a POSTED animal, `IMPLANT_UNSAID` when the roster named no
+    #: implant at all, which leaves the stored one alone.
+    implant: Any = None
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -94,6 +103,7 @@ class Animal:
             "sex": self.sex,
             "idNumber": self.id_number,
             "notes": self.notes,
+            "implant": None if self.implant is IMPLANT_UNSAID else self.implant,
         }
 
 
@@ -121,6 +131,8 @@ class FormerAnimal:
     id_number: str | None = None
     cage: int | None = None
     notes: str | None = None
+    #: Its implant, kept under its id while it is off the roster (`DATA.md#implants`).
+    implant: dict[str, Any] | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -133,6 +145,7 @@ class FormerAnimal:
             "idNumber": self.id_number,
             "cage": self.cage,
             "notes": self.notes,
+            "implant": self.implant,
         }
 
 

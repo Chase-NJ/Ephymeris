@@ -54,6 +54,11 @@ _Avoid_: standing box, assigned box
 One kind of trial a spine task presents: a row of its definition, with a name, the channel that plays each role, and what each answer means. A trial-table task's equivalent is a condition.
 _Avoid_: row (in anything a user reads), condition (for a spine task)
 
+<a id="target"></a>
+**Target**:
+A group of an implanted device's channels that sit at one place in the brain, with a region, a hemisphere and coordinates. A device has one or more; the lab's custom 32-channel electrode has two, one per bundle of 16.
+_Avoid_: site (Intan's word for one contact), bundle (the wires, not where they are)
+
 <a id="role"></a>
 **Role**:
 A part a channel plays in a spine task's trial (the port the animal pokes, the sample, the left well, the line that pays): a slot of the definition that each trial type binds to a channel of this rig.

@@ -38,7 +38,7 @@ from typing import Any, Callable
 from ..sessions.models import Round
 from ..sessions.repository import SessionRepository
 from ..sessions.tidy import Merge, merged_fields
-from . import freshness, relocate, transfer
+from . import freshness, implants, relocate, transfer
 from .db import Database, Query, Tx
 from .move import (
     MovePlan,
@@ -260,6 +260,9 @@ def _apply_records(conn: Tx, plan: MovePlan, sessions: SessionRepository) -> Non
                 "UPDATE OR IGNORE electrode_impedances SET animal_id = ? WHERE animal_id = ?",
                 (new, old),
             )
+            # The implant itself too (`DATA.md#implants`); a carried animal
+            # keeps its id, so its implant needs nothing.
+            implants.follow(conn, old, new)
 
     for entry in plan.sessions:
         _apply_session(conn, plan, entry, mapped, now, sessions)

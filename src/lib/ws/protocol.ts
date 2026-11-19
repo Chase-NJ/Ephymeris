@@ -526,6 +526,58 @@ export interface SyncResult {
 
 export type Sex = "M" | "F" | "unknown";
 
+/** A group of a device's channels at one place in the brain (`GLOSSARY.md#target`). */
+export interface ImplantTarget {
+  /** The lab's short name for the target, such as `OFC`; unique in the implant. */
+  name: string;
+  /** The brain region in words; may be empty. */
+  region: string;
+  /** Which side of the brain it is in. */
+  hemisphere: "left" | "right" | "midline";
+  /** Anterior-posterior coordinate, mm. */
+  apMm: number;
+  /** Medial-lateral coordinate, mm. */
+  mlMm: number;
+  /**
+   * Depth at surgery, mm. The depth on a later date adds every lowering by then
+   * (`DATA.md#implants`).
+   */
+  dvMm: number;
+  /**
+   * Its channels **on the device**, never RHX's native names: a range (`0-15`), a list (`0,2,4`)
+   * or both. No two targets of one implant may claim the same channel.
+   */
+  channels: string;
+}
+
+/** One turn of an implant's drive (`DATA.md#implants`). */
+export interface ImplantLowering {
+  /** The day the drive was turned, `YYYY-MM-DD`; never before the surgery. */
+  date: string;
+  /**
+   * How far, mm: positive is deeper. One drive carries the whole electrode, so it moves every
+   * target.
+   */
+  mm: number;
+}
+
+/** An animal's implant, entered once on the animal (`DATA.md#implants`). */
+export interface Implant {
+  /** What was implanted, such as `custom 32-channel electrode`. */
+  device: string;
+  /** The day it went in, `YYYY-MM-DD`. */
+  surgeryDate: string;
+  /**
+   * The device's probe-map file, when it has one; null for a device without one, such as the
+   * lab's custom electrode.
+   */
+  probeMapPath: string | null;
+  /** At least one. */
+  targets: ImplantTarget[];
+  /** The drive's history, in date order. */
+  lowerings: ImplantLowering[];
+}
+
 export interface Animal {
   id: string;
   name: string;
@@ -542,6 +594,11 @@ export interface Animal {
   sex: Sex | null;
   idNumber: string | null;
   notes: string | null;
+  /**
+   * The animal's implant (`DATA.md#implants`); null for none. When posting a roster, null removes
+   * it and leaving the key out keeps whatever is stored.
+   */
+  implant?: Implant | null;
 }
 
 /**
@@ -611,6 +668,8 @@ export interface FormerAnimal {
   idNumber: string | null;
   cage: number | null;
   notes: string | null;
+  /** Its implant, kept while it is off the roster (`DATA.md#implants`). */
+  implant?: Implant | null;
 }
 
 /** Enough for the cohort browser and the dashboard tile, no per-animal detail. */

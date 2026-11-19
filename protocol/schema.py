@@ -406,6 +406,59 @@ SHAPES = (
     # Cohorts (DATA.md#cohorts-and-animals)
     Shape("Sex", lit("M", "F", "unknown")),
     Shape(
+        "ImplantTarget",
+        obj(
+            f("name", STR, doc="The lab's short name for the target, such as `OFC`; unique in the implant."),
+            f("region", STR, doc="The brain region in words; may be empty."),
+            f("hemisphere", lit("left", "right", "midline"), doc="Which side of the brain it is in."),
+            f("apMm", NUMBER, doc="Anterior-posterior coordinate, mm."),
+            f("mlMm", NUMBER, doc="Medial-lateral coordinate, mm."),
+            f(
+                "dvMm",
+                NUMBER,
+                doc="Depth at surgery, mm. The depth on a later date adds every "
+                "lowering by then (`DATA.md#implants`).",
+            ),
+            f(
+                "channels",
+                STR,
+                doc="Its channels **on the device**, never RHX's native names: a "
+                "range (`0-15`), a list (`0,2,4`) or both. No two targets of one "
+                "implant may claim the same channel.",
+            ),
+        ),
+        doc="A group of a device's channels at one place in the brain (`GLOSSARY.md#target`).",
+    ),
+    Shape(
+        "ImplantLowering",
+        obj(
+            f("date", STR, doc="The day the drive was turned, `YYYY-MM-DD`; never before the surgery."),
+            f(
+                "mm",
+                NUMBER,
+                doc="How far, mm: positive is deeper. One drive carries the whole "
+                "electrode, so it moves every target.",
+            ),
+        ),
+        doc="One turn of an implant's drive (`DATA.md#implants`).",
+    ),
+    Shape(
+        "Implant",
+        obj(
+            f("device", STR, doc="What was implanted, such as `custom 32-channel electrode`."),
+            f("surgeryDate", STR, doc="The day it went in, `YYYY-MM-DD`."),
+            f(
+                "probeMapPath",
+                nullable(STR),
+                doc="The device's probe-map file, when it has one; null for a "
+                "device without one, such as the lab's custom electrode.",
+            ),
+            f("targets", ListOf(Ref("ImplantTarget")), doc="At least one."),
+            f("lowerings", ListOf(Ref("ImplantLowering")), doc="The drive's history, in date order."),
+        ),
+        doc="An animal's implant, entered once on the animal (`DATA.md#implants`).",
+    ),
+    Shape(
         "Animal",
         obj(
             f("id", STR),
@@ -426,6 +479,14 @@ SHAPES = (
             f("sex", nullable(Ref("Sex"))),
             f("idNumber", nullable(STR)),
             f("notes", nullable(STR)),
+            f(
+                "implant",
+                nullable(Ref("Implant")),
+                optional=True,
+                doc="The animal's implant (`DATA.md#implants`); null for none. When "
+                "posting a roster, null removes it and leaving the key out keeps "
+                "whatever is stored.",
+            ),
         ),
     ),
     Shape(
@@ -507,6 +568,12 @@ SHAPES = (
             f("idNumber", nullable(STR)),
             f("cage", nullable(INT)),
             f("notes", nullable(STR)),
+            f(
+                "implant",
+                nullable(Ref("Implant")),
+                optional=True,
+                doc="Its implant, kept while it is off the roster (`DATA.md#implants`).",
+            ),
         ),
         doc="An animal with history in a cohort but no place on its roster "
         "(`DATA.md#former-members`).",

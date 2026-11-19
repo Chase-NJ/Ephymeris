@@ -1,9 +1,11 @@
 import { motion } from "framer-motion";
-import { ArrowRightLeft, Minus, Plus } from "lucide-react";
+import { ArrowRightLeft, CircuitBoard, Minus, Plus } from "lucide-react";
 import { useState } from "react";
 
 import { Button, Select, TextInput } from "@/components/common/controls";
+import { ImplantEditor } from "@/components/cohorts/ImplantEditor";
 import { boxLabel, useBoxAvailability } from "@/lib/cohorts/boxAvailability";
+import { summarizeImplant } from "@/lib/cohorts/implant";
 import { parseRoster, rosterPreview } from "@/lib/cohorts/roster";
 import type { Animal } from "@/lib/cohorts/types";
 import { springSnappy } from "@/lib/motion";
@@ -11,7 +13,8 @@ import { springSnappy } from "@/lib/motion";
 /**
  * The editable animal roster — `DATA.md#data-model`.
  *
- * Name, sex, ID number, notes, and the **usual box**: the box session set-up
+ * Name, sex, ID number, notes, the animal's **implant** (`ImplantEditor`,
+ * `DATA.md#implants`) and the **usual box**: the box session set-up
  * offers first for the animal, and nothing more (`DATA.md#data-model`). Which
  * animals run together, and in which boxes, is chosen per round at set-up, so
  * animals may share a usual box and none is required. Only boxes this machine
@@ -51,6 +54,7 @@ function blankAnimal(name: string): Animal {
     sex: null,
     idNumber: null,
     notes: null,
+    implant: null,
   };
 }
 
@@ -75,6 +79,9 @@ export function AnimalTable({
   onMove?: ((animal: Animal) => void) | null | undefined;
 }) {
   const [bulk, setBulk] = useState("");
+  /** The animal whose implant dialog is open, by id. */
+  const [implantFor, setImplantFor] = useState<string | null>(null);
+  const implanting = animals.find((a) => a.id === implantFor) ?? null;
   const { offers, statusOf } = useBoxAvailability();
 
   /** "—", every box this machine has, and the animal's own box if it is not one of them. */
@@ -116,8 +123,8 @@ export function AnimalTable({
   );
   const columns =
     onMove === undefined
-      ? "grid-cols-[1.3fr_72px_132px_1fr_1.4fr_28px]"
-      : "grid-cols-[1.3fr_72px_132px_1fr_1.4fr_28px_28px]";
+      ? "grid-cols-[1.3fr_72px_132px_1fr_1.4fr_28px_28px]"
+      : "grid-cols-[1.3fr_72px_132px_1fr_1.4fr_28px_28px_28px]";
 
   return (
     <div className="px-4 py-3.5">
@@ -159,6 +166,7 @@ export function AnimalTable({
           </span>
           <span>ID number</span>
           <span>Notes</span>
+          <span />
           <span />
           {onMove !== undefined && <span />}
         </div>
@@ -212,6 +220,16 @@ export function AnimalTable({
                   className="w-full"
                 />
                 <Button
+                  variant={animal.implant ? "primary" : "outline"}
+                  shape="icon"
+                  onClick={() => setImplantFor(animal.id)}
+                  title={`${summarizeImplant(animal.implant)} — ${animal.implant ? "edit" : "add"} ${
+                    animal.name || "this animal"
+                  }'s implant`}
+                >
+                  <CircuitBoard size={13} strokeWidth={1.75} />
+                </Button>
+                <Button
                   variant="outline"
                   shape="icon"
                   onClick={() => onChange(animals.filter((a) => a.id !== animal.id))}
@@ -264,6 +282,16 @@ export function AnimalTable({
           Add a blank row
         </Button>
       </div>
+
+      <ImplantEditor
+        open={implanting !== null}
+        animalName={implanting?.name ?? ""}
+        implant={implanting?.implant ?? null}
+        onSave={(implant) => {
+          if (implantFor !== null) patch(implantFor, { implant });
+        }}
+        onClose={() => setImplantFor(null)}
+      />
     </div>
   );
 }

@@ -92,6 +92,20 @@ History keeps `animal_id` with no foreign key ([Indexes](#indexes)), so a **form
 
 On the wire as `Cohort.formerAnimals` (single-cohort loads only); `Cohort.animals` stays the roster. Restoring is posting the id in `animals` again. Analytics lists former members after the roster (`AnalyticsAnimal.former`), so no colour shifts. `former_animals` is its own table because `animals` rows are deleted and re-inserted on every roster save.
 
+### Implants
+
+An animal's **implant** (`cohorts/implants.py`, `Animal.implant` on the wire) is entered once, in the cohort editor's roster: a device, its surgery date, an optional probe-map file, one or more [targets](../GLOSSARY.md#target) and the lowerings of its drive.
+
+| Part | Holds |
+|---|---|
+| Target | `name`, `region`, `hemisphere` (`left`, `right`, `midline`), `apMm`, `mlMm`, `dvMm` (depth at surgery) and `channels` |
+| Lowering | `date` and `mm` (deeper is positive), never before the surgery |
+
+- **Channels are numbered on the device**, never by RHX's native name: a range (`0-15`), a list (`0,2,4`) or both (`parse_channels`). No two targets of one implant may claim a channel. On the lab's custom 32-channel electrode the number is the one printed beside the hole on the EIB.
+- **Depth is a dated history.** One drive carries the whole electrode, so a lowering moves every target. `depth_on(implant, target, date)` gives the surgery `dvMm` plus every lowering on or before the date, with the date of the last one (the surgery date when there is none).
+- **Its own table, `implants`, keyed by the animal's id with no foreign key**, because a roster save deletes and re-inserts every `animals` row ([Indexes](#indexes)). So it survives a rename and a roster re-save, stays with a [former member](#former-members), and a [move](#moving-animals-between-cohorts) re-keys it to the animal it joins unless that animal has its own. An animal deleted outright takes its implant with it.
+- **Posting a roster**: `implant: null` removes it; an animal posted without the key keeps what is stored.
+
 ### Data folder
 
 `cohorts/folders.py` sets `dataFolder = <dataDirectory>/<sanitized name>` (suffixed `-2`, `-3`, … if taken) and stores it verbatim: **renaming a cohort never moves its folder.**
@@ -388,6 +402,7 @@ erDiagram
     animals |o..o{ session_animal_runs : "animal_id"
     animals |o..o{ adopted_runs : "animal_id"
     animals |o..o{ electrode_impedances : "animal_id"
+    animals |o..o| implants : "animal_id"
     session_animal_runs |o..o| run_spike_counts : "run_id"
     task_profiles |o..o{ session_animal_runs : "profile_hash"
     session_animal_runs |o..o| run_metrics_cache : "run_id"
@@ -529,6 +544,11 @@ erDiagram
         REAL ohms
         REAL phase_deg
         TEXT csv_file
+    }
+    implants {
+        TEXT animal_id PK
+        TEXT implant_json
+        TEXT updated_at
     }
     run_spike_counts {
         TEXT run_id PK

@@ -43,7 +43,10 @@ WHOLE = ("ts_data", "task_profile", "derived")
 
 
 def version_2(flat: dict) -> dict:
-    """The version-2 twin of a flat document, block by block as the ADR lays them out."""
+    """The version-2 twin of a flat document, block by block as the ADR lays
+    them out; a document the writer already wrote as version 2, as it is."""
+    if flat.get("schema_version") == 2:
+        return flat
     out: dict = {
         "schema_version": 2,
         "run": {new: flat[old] for old, new in RUN.items() if old in flat},

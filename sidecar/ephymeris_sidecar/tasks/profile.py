@@ -49,49 +49,6 @@ CONTROL_TYPES = {"button", "select", "grid"}
 #: so a profile claiming this key would collide and silently lose one of the two.
 RESERVED_WIRE_KEYS = {"SEED"}
 
-#: The core session-file fields (`DATA.md#the-json-document`). Config is merged into the session file FLAT at the top
-#: level, so a `metadataKey` matching one of these would overwrite it rather than
-#: sit beside it — and nothing downstream would report the loss.
-CORE_METADATA_KEYS = frozenset(
-    {
-        "rat",
-        "serial_port",
-        "session_id",
-        "sketch",
-        "stop_reason",
-        "n_events",
-        "ts_data",
-        "trial_seed",
-        "host_seed",
-        # Which firmware interpreter ran the session, announced before READY
-        # (`TASKS.md#the-start-line`): a property of the build, not the tuning.
-        "interp",
-        # Which channel set the run's sketch was generated against
-        # (`DATA.md#the-json-document`): a property of the rig, not the tuning.
-        "channel_set_hash",
-        "channel_set_hash_version",
-        # The board's free RAM with its tables loaded, announced beside `interp`.
-        "free_ram",
-        # The strobe-stream grammar the board announced as `STREAM=<n>`
-        # (`TASKS.md#stream-grammar`): a property of the build, not the tuning.
-        "stream",
-        # The run's own profile snapshot, written after the task fields — a
-        # field of this name would be silently replaced by it.
-        "task_profile",
-        # `RECORDING.md#what-is-written` -- written beside the core fields when a run is
-        # inside an Intan recording.
-        "intan_recording",
-        "intan_path",
-        "intan_digital_in",
-        "intan_port",
-        "intan_channels",
-        "intan_sample_rate",
-        # A spine run's derived trial table (`DATA.md#the-derived-trial-table`), written
-        # after the data at finalization: a field of this name would be replaced by it.
-        "derived",
-    }
-)
-
 #: Python types a declared `default` may have, per the field's `type` (`TASKS.md#config-fields`).
 #: `bool` is checked before `int` everywhere below: in Python `bool` IS an `int`,
 #: so an unguarded isinstance would accept `true` as a valid int default.
@@ -447,8 +404,8 @@ def params_hash(config: dict[str, Any] | None) -> str | None:
 # The snapshot a session file carries (`DATA.md#the-embedded-task-profile`)
 # --------------------------------------------------------------------------- #
 
-# `SNAPSHOT_KEY` and `DERIVED_KEY`, the two nested values in an otherwise flat
-# document, are defined with the rest of its layout in `sessions/run_document.py`.
+# `SNAPSHOT_KEY` and `DERIVED_KEY` are defined with the rest of the document's
+# layout in `sessions/run_document.py`.
 
 
 def embedded_profile(document: dict[str, Any]) -> TaskProfile | None:
@@ -482,8 +439,8 @@ def recorded_config(
 ) -> dict[str, Any] | None:
     """The parameter values this run actually ran on, out of its own file.
 
-    The document already carries every one of them — `finalize` writes the
-    config flat at the top level (`DATA.md#the-json-document`) — but *which* of its keys are parameters
+    The document already carries every one of them (`DATA.md#the-json-document`),
+    and a version-1 one has them flat beside its core fields — so *which* of its keys are parameters
     is a question only the profile answers. With the snapshot beside them, a
     copied run can be given the same `params_hash` its own rig computed, which
     is what completes the comparability pair (`TASKS.md#profile-and-params-hashes`) for data this machine never
@@ -708,18 +665,13 @@ def _parse_config(raw: Any) -> list[ConfigField]:
                 f"config entry {metadata_key} has unknown type {field_type!r}"
             )
 
-        # Four ways a profile can be wrong that all fail SILENTLY downstream —
+        # Three ways a profile can be wrong that all fail SILENTLY downstream —
         # a lost value or an overwritten one, with nothing raised at the point
         # the data goes bad. Cheaper to reject the profile here.
         if wire_key in RESERVED_WIRE_KEYS:
             raise TaskProfileError(
                 f"config entry {metadata_key} claims the reserved wire key "
                 f"{wire_key!r} (TASKS.md#seed) — the app supplies it"
-            )
-        if metadata_key in CORE_METADATA_KEYS:
-            raise TaskProfileError(
-                f"config entry {metadata_key} collides with a core session-file "
-                f"field (DATA.md#the-json-document); config is merged in flat and would overwrite it"
             )
         if metadata_key in seen_metadata:
             raise TaskProfileError(f"config declares metadataKey {metadata_key!r} twice")

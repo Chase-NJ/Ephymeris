@@ -1093,7 +1093,8 @@ class IntanService:
     # --- what the runner tells us ----------------------------------------
 
     def recording_fields(self, box: int) -> dict[str, Any]:
-        """Flat `intan_*` fields for one animal's session document."""
+        """One animal's recording fields, by name, for its session document
+        (`run_document.build` puts them in its `recording` block)."""
         recording = self._recording
         if recording is None or box not in recording.boxes or not self.is_recording:
             return {}

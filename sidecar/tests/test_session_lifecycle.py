@@ -33,7 +33,7 @@ from ephymeris_sidecar.sessions.lifecycle import (
     StopRefused,
     WiringNotLoaded,
 )
-from ephymeris_sidecar.sessions.models import Round, PrefixNameTaken
+from ephymeris_sidecar.sessions.models import Round, PrefixNameTaken, SessionAnimalRun
 from ephymeris_sidecar.sessions.repository import SessionRepository
 from ephymeris_sidecar.sessions.runner import ActiveRun, BoxConfig
 from ephymeris_sidecar.tasks.profile import parse_profile, profile_hash
@@ -56,7 +56,9 @@ class FakeRunner:
         #: The keywords `end_all` was last called with.
         self.ended_with: dict[str, Any] = {}
 
-    def configure(self, _folder, _label, box_configs, duration_s=None, *, session_id):  # noqa: ANN001
+    def configure(self, _folder, _label, box_configs, duration_s=None, *, session_id, **facts):  # noqa: ANN001, ANN003
+        #: What the lifecycle said of the run's cohort, date and earlier runs.
+        self.facts = facts
         self.session_id = session_id
         self.configs = {c.box: c for c in box_configs}
 
@@ -368,6 +370,20 @@ async def test_confirming_a_mapping_holds_the_session_and_the_rig(rig) -> None:
     assert rig.log == ["hold"]
     assert rig.runner.session_id == session.id
     assert rig.events[-1]["evt"] == "session.lifecycle"
+
+
+async def test_the_runner_is_told_the_cohort_the_date_and_how_to_count_earlier_runs(rig) -> None:
+    """What a run's document says of itself beyond its box (`DATA.md#the-json-document`)."""
+    session = rig.session()
+    await rig.confirm(session)
+
+    facts = rig.runner.facts
+    assert (facts["cohort_name"], facts["session_date"]) == ("C1", session.date)
+    assert facts["earlier_runs"]("C1-1") == 0, "no run yet today: the next is run 1"
+    rig.sessions.record_animal_run(SessionAnimalRun(
+        id="r1", session_id=session.id, animal_id="C1-1", box_number=1, sketch_path="/sk",
+        started_at=f"{session.date}T10:00:00+00:00"))
+    assert facts["earlier_runs"]("C1-1") == 1 and facts["earlier_runs"]("C1-2") == 0
 
 
 async def test_each_box_records_the_channel_set_its_sketch_was_generated_against(

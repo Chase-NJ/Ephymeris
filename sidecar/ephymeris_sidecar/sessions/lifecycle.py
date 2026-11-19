@@ -358,6 +358,11 @@ class SessionLifecycle:
                         else None
                     ),
                     session_id=session_id,
+                    cohort_name=cohort.name,
+                    session_date=session.date,
+                    earlier_runs=lambda animal_id: self._sessions.earlier_runs_of_day(
+                        session.cohort_id, animal_id, session.date
+                    ),
                 )
                 self._held = session_id
                 # Said on the wire, because nothing else in the payload has to

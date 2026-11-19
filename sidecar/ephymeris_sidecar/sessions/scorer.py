@@ -364,7 +364,7 @@ def serve(requests: Any, results: Any, parent: int) -> None:
                 continue
             _, key, header, strobes, count = message
             if header is not None:
-                streams[key] = {**header, "ts_data": []}
+                streams[key] = run_document.with_strobes(header, [])
             stream = streams.get(key)
             if stream is None:
                 continue
@@ -376,7 +376,7 @@ def serve(requests: Any, results: Any, parent: int) -> None:
             stream = streams[key]
             began = time.monotonic()
             try:
-                fields = live.fields(live.scored({**stream, "ts_data": run_document.strobes_of(stream)[:count]}))
+                fields = live.fields(live.scored(run_document.with_strobes(stream, run_document.strobes_of(stream)[:count])))
             except Exception as exc:  # noqa: BLE001 - one run's failure is that run's
                 fields = {"status": "unavailable", "detail": f"the live scorer failed: {exc!r}"}
             took = time.monotonic() - began

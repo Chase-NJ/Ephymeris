@@ -15,7 +15,7 @@ three places:
   a char array whose dimensions disagree with its data. Both raise here
   instead, for a top-level string such as an animal name. The fields that
   carry operator-written labels can't trip the second: the task profile is
-  ASCII-escaped JSON, and `derived` escapes each such character the same way
+  ASCII-escaped JSON, and the trial table escapes each such character the same way
   (`derived._bmp`).
 
 scipy is imported on first use, never at module scope, so a broken install
@@ -70,8 +70,25 @@ def _values(data: dict[str, Any]) -> list[tuple[str, Any]]:
     return out
 
 
+#: The fields of a version-2 block that are text, so one with no value is `''`
+#: where a number's is `NaN` (`DATA.md#the-mat-mirror`): never `[]`, and never
+#: a class that changes from one run's file to the next.
+_TEXT_FIELDS = frozenset({
+    "animal", "cohort", "session_id", "date", "started_at", "serial_port", "stop_reason",
+    "sketch", "sync", "channel_set_hash", "path", "name", "port", "channels",
+})
+
+
 def to_matlab(data: dict[str, Any]) -> dict[str, Any]:
     """The document with every value converted to what `savemat` should write."""
+    return _to_matlab(data, nulls=False)
+
+
+def _to_matlab(data: dict[str, Any], *, nulls: bool) -> dict[str, Any]:
+    """`to_matlab`; with `nulls`, for a version-2 block, where None is a value
+    the run does not have."""
+    import math
+
     import numpy as np
 
     table_key = run_document.trial_table_key(data)
@@ -81,9 +98,11 @@ def to_matlab(data: dict[str, Any]) -> dict[str, Any]:
         if isinstance(value, dict) and name in blocks:
             # A version-2 block of plain values (`S.run.animal`, `S.params.<key>`):
             # a struct, each field by the same rules as a top-level one.
-            out[name] = to_matlab(value)
+            out[name] = _to_matlab(value, nulls=True)
             continue
-        if isinstance(value, bool):
+        if value is None and nulls:
+            out[name] = "" if name in _TEXT_FIELDS else math.nan
+        elif isinstance(value, bool):
             out[name] = value  # bool before int: a MATLAB `logical`
         elif isinstance(value, (int, float)):
             out[name] = float(value)
@@ -119,4 +138,6 @@ def savemat(path: str, data: dict[str, Any]) -> None:
     converted = to_matlab(data)
     with warnings.catch_warnings():
         warnings.simplefilter("error", MatWriteWarning)
-        scipy.io.savemat(path, converted, appendmat=False)
+        # Long field names: a parameter's key is a struct field in version 2,
+        # and savemat's default caps those at 31 characters where MATLAB allows 63.
+        scipy.io.savemat(path, converted, appendmat=False, long_field_names=True)

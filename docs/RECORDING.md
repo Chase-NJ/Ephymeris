@@ -488,21 +488,21 @@ folder. Probe-map XMLs are copied beside them as `box<n>_<name>.xml`.
 channels and probe-map file). `NULL` means behavior only. A save location inside a cohort folder follows
 a relocate of that folder.
 
-**Each animal's document** ([DATA.md](DATA.md#per-animal-files)) gains flat `intan_*` fields, also in the
-`.tsv` header so a crash-recovered file keeps them:
+**Each animal's document** ([DATA.md](DATA.md#the-json-document)) gains a `recording` block. The same
+fields are in the `.tsv` header, as the `intan_*` line named beside each, so a crash-recovered file keeps
+them; a version-1 document has them flat under those names:
 
-| Field | |
-|---|---|
-| `intan_recording` | base filename + RHX's timestamp: the name to look for |
-| `intan_path` | where RHX was told to save |
-| `intan_digital_in`, `intan_port`, `intan_channels` | this box's input, port and `A-016:A-031` range |
-| `intan_sample_rate` | for converting sample numbers |
+| Field | `.tsv` line | |
+|---|---|---|
+| `name` | `intan_recording` | base filename + RHX's timestamp: the name to look for |
+| `path` | `intan_path` | where RHX was told to save |
+| `digital_in`, `port`, `channels` | `intan_digital_in`, `intan_port`, `intan_channels` | this box's input, port and `A-016:A-031` range |
+| `sample_rate` | `intan_sample_rate` | for converting sample numbers |
 
 > [!IMPORTANT]
-> **Core, not config, so they stay out of `params_hash`**: two runs of one tuning must compare in Analytics
-> whether or not one was recorded ([TASKS.md](TASKS.md#profile-and-params-hashes)). They are in
-> `tasks/profile.py`'s `CORE_METADATA_KEYS`, and the string ones in `sessions/recovery.py`'s
-> `_STRING_FIELDS` (so `0423_7` does not come back as a number).
+> **Never parameters, so they stay out of `params_hash`**: two runs of one tuning must compare in Analytics
+> whether or not one was recorded ([TASKS.md](TASKS.md#profile-and-params-hashes)). The string ones are in
+> `sessions/recovery.py`'s `_STRING_FIELDS` (so `0423_7` does not come back as a number).
 
 The durable record is RHX's files plus the `.tsv`; nothing the sync check or the firing map computes is
 persisted.
@@ -600,9 +600,9 @@ data is complete: every spike and edge at full rate, every strobe, every trial's
 
 `intan/offline.py`'s `load_run`, from one run's `.json`:
 
-1. **Find the recording**: `intan_path` / `intan_recording`, RHX's per-run folder.
+1. **Find the recording**: the document's `recording.path` / `recording.name`, RHX's per-run folder.
 2. **Read RHX's files** (`intan/rhx_files.py`, layouts from RHX's `FilePerSignalTypeSaveManager`):
-   `spike.dat` for the box's channels, and the rising edges of its `intan_digital_in` in
+   `spike.dat` for the box's channels, and the rising edges of its `recording.digital_in` in
    `digitalin.dat`, timed by `time.dat`. A one-hour `digitalin.dat` is about 108 million words; they
    are never looped over in Python: each chunk's byte holding the bit is sliced out, mapped to 0/1 with
    `bytes.translate` and searched with `bytes.find`, so only the edges are.

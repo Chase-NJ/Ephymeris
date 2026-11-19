@@ -23,6 +23,7 @@ import pytest
 from ephymeris_sidecar.tasks.start_command import build_start_command
 from ephymeris_sidecar.ports import handler as handler_module
 from ephymeris_sidecar.ports.states import IllegalTransition, PortState
+from ephymeris_sidecar.sessions import run_document as rd
 from ephymeris_sidecar.sessions.runner import CLEAN_STOP_REASON, BoxConfig, SessionRunner
 from ephymeris_sidecar.tasks.profile import parse_profile
 from tests.scripted_board import Bench, ScriptedBoard, until
@@ -244,8 +245,8 @@ async def test_the_channel_set_hash_the_sketch_was_generated_against_is_in_the_h
     assert text.index("# channel_set_hash:") < text.index("101\t0")
     await wait_until(lambda: any((tmp_path / "behavior.json").glob("*.json")))
     document = json.loads(next((tmp_path / "behavior.json").glob("*.json")).read_text())
-    assert document["channel_set_hash"] == "c0ffee0123456789"
-    assert document["channel_set_hash_version"] == 2
+    assert rd.channel_set_hash_of(document) == "c0ffee0123456789"
+    assert rd.channel_set_hash_version_of(document) == 2
 
 
 async def test_the_stream_grammar_the_board_announced_is_recorded(tmp_path: Path, bench: Bench) -> None:
@@ -261,7 +262,7 @@ async def test_the_stream_grammar_the_board_announced_is_recorded(tmp_path: Path
     assert "# stream: 2\n" in text and text.index("# stream: 2") < text.index("101\t0")
     await wait_until(lambda: any((tmp_path / "behavior.json").glob("*.json")))
     document = json.loads(next((tmp_path / "behavior.json").glob("*.json")).read_text(encoding="utf-8"))
-    assert document["stream"] == 2
+    assert rd.stream_of(document) == 2
     await wait_until(lambda: len(ended) == 1)
     run, _reason = ended[0]
     assert run.stream == 2 and "stream" not in run.config.config_metadata
@@ -294,7 +295,7 @@ async def test_the_free_ram_the_board_measured_is_recorded_in_the_header_and_the
     # The run leaves `running_boxes()` before its `.json` is written: wait for the file.
     await wait_until(lambda: any((tmp_path / "behavior.json").glob("*.json")))
     document = json.loads(next((tmp_path / "behavior.json").glob("*.json")).read_text(encoding="utf-8"))
-    assert document["free_ram"] == 4321
+    assert rd.free_ram_of(document) == 4321
 
 
 async def test_a_tick_pulsed_board_is_recorded_and_its_recording_told(tmp_path: Path, bench: Bench) -> None:
@@ -313,7 +314,7 @@ async def test_a_tick_pulsed_board_is_recorded_and_its_recording_told(tmp_path: 
     assert started == [True]
     await wait_until(lambda: any((tmp_path / "behavior.json").glob("*.json")))
     document = json.loads(next((tmp_path / "behavior.json").glob("*.json")).read_text(encoding="utf-8"))
-    assert document["sync"] == "tick"
+    assert rd.sync_of(document) == "tick"
     await wait_until(lambda: len(ended) == 1)
     run, _reason = ended[0]
     assert "sync" not in run.config.config_metadata  # a fact about the build, never hashed
@@ -401,9 +402,9 @@ async def test_the_end_code_finalizes_the_run_cleanly(tmp_path: Path, bench: Ben
 
     # `DATA.md#built-once-at-the-end` — .json and .mat built once at the end, from the same in-memory list.
     doc = json.loads(next((tmp_path / "behavior.json").glob("*.json")).read_text(encoding="utf-8"))
-    assert doc["rat"] == "remy1"
-    assert doc["stop_reason"] == CLEAN_STOP_REASON
-    assert doc["n_events"] == 3
+    assert rd.animal_of(doc) == "remy1"
+    assert rd.stop_reason_of(doc) == CLEAN_STOP_REASON
+    assert rd.n_events_of(doc) == 3
     assert doc["ts_data"] == [[101, 0], [249, 100], [246, 3523555]]
     assert next((tmp_path / "behavior.mat").glob("*.mat")).is_file()
 
@@ -526,7 +527,7 @@ async def test_a_board_drop_finalizes_with_whatever_was_captured(tmp_path: Path,
     assert bench.state(1) is PortState.ERROR and released(bench, 1) == []
 
     doc = json.loads(next((tmp_path / "behavior.json").glob("*.json")).read_text(encoding="utf-8"))
-    assert doc["stop_reason"] == "board disconnected"
+    assert rd.stop_reason_of(doc) == "board disconnected"
     assert doc["ts_data"] == [[101, 0], [249, 100]]
 
 
@@ -704,7 +705,7 @@ async def test_a_graceful_end_waits_for_the_board_to_close_its_own_trial(tmp_pat
     assert [reason for _, reason in ended] == [CLEAN_STOP_REASON]  # ...the board did the ending
     assert waiting == [[1], []]
     document = json.loads(next((tmp_path / "behavior.json").glob("*.json")).read_text())
-    assert document["n_events"] == 3  # the trial's outcome made it in
+    assert rd.n_events_of(document) == 3  # the trial's outcome made it in
 
 
 async def test_the_operator_can_stop_waiting(tmp_path: Path, bench: Bench) -> None:
@@ -776,8 +777,9 @@ async def test_recording_fields_ride_the_document_and_stay_out_of_the_parameters
     await wait_until(lambda: len(ended) == 1)
 
     document = json.loads(next((tmp_path / "behavior.json").glob("*.json")).read_text())
-    assert document["intan_recording"] == "base_260920_101500"
-    assert document["intan_digital_in"] == 5
+    assert rd.recording_name_of(document) == "base_260920_101500"
+    assert rd.recording_digital_in_of(document) == 5
+    assert not any(key.startswith("intan_") for key in document["params"])
     run, _reason = ended[0]
     assert not any(key.startswith("intan_") for key in run.config.config_metadata)
     assert started == [(1, "remy1", False)]  # announced nothing: one pulse per strobe
@@ -804,4 +806,4 @@ async def test_a_recording_tap_that_throws_costs_the_run_nothing(tmp_path: Path,
     await wait_until(lambda: len(ended) == 1)
 
     document = json.loads(next((tmp_path / "behavior.json").glob("*.json")).read_text())
-    assert document["n_events"] == 2 and document["stop_reason"] == CLEAN_STOP_REASON
+    assert rd.n_events_of(document) == 2 and rd.stop_reason_of(document) == CLEAN_STOP_REASON

@@ -16,11 +16,16 @@ into the second, and `analytics/reader.py` does that to every file it opens.
 Each `*_of` returns the value exactly as stored, or None when the document has
 none. Nothing is coerced or checked: a hand-edited file can hold anything, and
 what a wrong type means is the caller's call.
+
+Writing goes through here too. A field is named by its version-1 key (`rat`,
+`sketch`, `intan_path`) or, for the run facts version 2 added, by its own
+(`box`, `cohort`, `date`, `run_of_day`, `started_at`); `build` puts each where
+it belongs, and `replaced`, `without_field` and `with_strobes` edit a copy.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Mapping
 
 Document = dict[str, Any]
 
@@ -55,32 +60,53 @@ FIELDS = frozenset({
 })
 
 
-#: Where each version-1 core field sits in version 2: `flat key -> (block, key)`.
-_WHERE = {
-    "rat": ("run", "animal"),
-    "serial_port": ("run", "serial_port"),
-    "session_id": ("run", "session_id"),
-    "stop_reason": ("run", "stop_reason"),
-    "n_events": ("run", "n_events"),
-    "sketch": ("task", "sketch"),
-    "stream": ("task", "stream"),
-    "interp": ("task", "interp"),
-    "free_ram": ("task", "free_ram"),
-    "sync": ("task", "sync"),
-    "trial_seed": ("task", "trial_seed"),
-    "host_seed": ("task", "host_seed"),
-    "channel_set_hash": ("task", "channel_set_hash"),
-    "channel_set_hash_version": ("task", "channel_set_hash_version"),
-    "intan_recording": ("recording", "name"),
-    "intan_path": ("recording", "path"),
-    "intan_digital_in": ("recording", "digital_in"),
-    "intan_port": ("recording", "port"),
-    "intan_channels": ("recording", "channels"),
-    "intan_sample_rate": ("recording", "sample_rate"),
-}
+#: Every field `build` places, in the order version 2 writes it:
+#: `(field, block, key in the block)`.
+_PLACES = (
+    ("rat", "run", "animal"),
+    ("cohort", "run", "cohort"),
+    ("box", "run", "box"),
+    ("session_id", "run", "session_id"),
+    ("date", "run", "date"),
+    ("run_of_day", "run", "run_of_day"),
+    ("started_at", "run", "started_at"),
+    ("serial_port", "run", "serial_port"),
+    ("stop_reason", "run", "stop_reason"),
+    ("n_events", "run", "n_events"),
+    ("sketch", "task", "sketch"),
+    ("stream", "task", "stream"),
+    ("interp", "task", "interp"),
+    ("free_ram", "task", "free_ram"),
+    ("sync", "task", "sync"),
+    ("trial_seed", "task", "trial_seed"),
+    ("host_seed", "task", "host_seed"),
+    ("channel_set_hash", "task", "channel_set_hash"),
+    ("channel_set_hash_version", "task", "channel_set_hash_version"),
+    ("intan_path", "recording", "path"),
+    ("intan_recording", "recording", "name"),
+    ("intan_port", "recording", "port"),
+    ("intan_channels", "recording", "channels"),
+    ("intan_digital_in", "recording", "digital_in"),
+    ("intan_sample_rate", "recording", "sample_rate"),
+)
+_WHERE = {field: (block, key) for field, block, key in _PLACES}
+
+#: The facts about a run that version 2 added. They have no version-1 key, so a
+#: flat document's key of the same name is one of its parameters.
+RUN_FACTS = ("cohort", "box", "date", "run_of_day", "started_at")
+
+#: The two fields known only when a run ends: the `.tsv`'s footer, never its header.
+FOOTER_FIELDS = ("stop_reason", "n_events")
+
+#: The block a version-2 document keeps its parameters in, and the `.tsv`
+#: header line that carries them.
+PARAMS_KEY = "params"
 
 #: The version-2 blocks that hold plain values, in the order they are written.
-VALUE_BLOCKS = ("run", "task", "params", "recording")
+VALUE_BLOCKS = ("run", "task", PARAMS_KEY, "recording")
+
+#: A version-2 document's top-level keys, in the order they are written.
+_ORDER = (VERSION_KEY, *VALUE_BLOCKS, TRIALS_KEY, _STROBES, SNAPSHOT_KEY)
 
 
 # --- which shape ------------------------------------------------------------ #
@@ -115,20 +141,114 @@ def lifted(document: Document) -> Document:
     """
     if is_version_2(document):
         return document
-    blocks: dict[str, Document] = {name: {} for name in VALUE_BLOCKS}
-    for key, value in document.items():
-        if key in _WHERE:
-            block, name = _WHERE[key]
-            blocks[block][name] = value
-        elif key not in FIELDS:
-            blocks["params"][key] = value
-    out: Document = {VERSION_KEY: SCHEMA_VERSION}
-    out.update({name: blocks[name] for name in VALUE_BLOCKS if blocks[name] or name != "recording"})
+    out = build(
+        {key: value for key, value in document.items() if key in FIELDS and key in _WHERE},
+        {key: value for key, value in document.items() if key not in FIELDS},
+    )
     if DERIVED_KEY in document:
         out[TRIALS_KEY] = _renamed(document[DERIVED_KEY], _ROWS[1], _ROWS[2])
     for key in (_STROBES, SNAPSHOT_KEY):
         if key in document:
             out[key] = document[key]
+    return out
+
+
+def build(fields: Mapping[str, Any], params: Mapping[str, Any], snapshot: Any = None,
+          strobes: Any = None) -> Document:
+    """A version-2 document from its fields (by name, see the module docstring),
+    its parameters, its profile snapshot and its strobes.
+
+    A field is written only when it is given, None included; `snapshot` and
+    `strobes` only when not None. A key of `fields` that names no field is a
+    parameter, as it is in a flat document. The order is version 2's own.
+    """
+    blocks: dict[str, Document] = {name: {} for name in VALUE_BLOCKS}
+    for field, block, key in _PLACES:
+        if field in fields:
+            blocks[block][key] = fields[field]
+    blocks[PARAMS_KEY].update({key: value for key, value in fields.items() if key not in _WHERE})
+    blocks[PARAMS_KEY].update(params)
+    out: Document = {VERSION_KEY: SCHEMA_VERSION}
+    out.update({name: blocks[name] for name in VALUE_BLOCKS if blocks[name] or name != "recording"})
+    if strobes is not None:
+        out[_STROBES] = strobes
+    if snapshot is not None:
+        out[SNAPSHOT_KEY] = snapshot
+    return out
+
+
+def from_header(header: Mapping[str, Any]) -> Document:
+    """The version-2 document a `.tsv` header describes (`DATA.md#the-tsv-log`),
+    with every run fact the header does not state null.
+
+    A header that opens with this build's `schema_version` names each field,
+    and carries the parameters and the snapshot as one JSON line each. One
+    from before version 2 is flat and names no run fact: every line that is
+    not a core field is a parameter, whatever it is called.
+    """
+    unknown = {name: None for name in RUN_FACTS}
+    if not is_version_2(header):
+        return replaced(lifted(dict(header)), **unknown)
+    params = header.get(PARAMS_KEY)
+    fields = {key: value for key, value in header.items()
+              if key not in (VERSION_KEY, PARAMS_KEY, SNAPSHOT_KEY)}
+    return build({**unknown, **fields}, params if isinstance(params, dict) else {},
+                 header.get(SNAPSHOT_KEY))
+
+
+def _ordered(document: Document) -> Document:
+    """A version-2 document with its top-level keys and its blocks' fields in
+    the order they are written; anything else it holds follows, as it was."""
+    out: Document = {}
+    for name in _ORDER:
+        if name not in document:
+            continue
+        value = document[name]
+        if name in ("run", "task", "recording") and isinstance(value, dict):
+            first = [key for _, block, key in _PLACES if block == name and key in value]
+            value = {key: value[key] for key in [*first, *(k for k in value if k not in first)]}
+        out[name] = value
+    out.update({key: value for key, value in document.items() if key not in out})
+    return out
+
+
+def replaced(document: Document, **fields: Any) -> Document:
+    """A copy of `document` with each named field set. Raises KeyError for a
+    name that is not a field: a parameter is not edited here."""
+    if not is_version_2(document):
+        for field in fields:
+            _WHERE[field]
+        return {**document, **fields}
+    out = dict(document)
+    for field, value in fields.items():
+        block, key = _WHERE[field]
+        out[block] = {**_block(out, block), key: value}
+    return _ordered(out)
+
+
+def without_field(document: Document, field: str) -> Document:
+    """A copy of `document` that records nothing for one field."""
+    if not is_version_2(document):
+        return {key: value for key, value in document.items() if key != field}
+    block, name = _WHERE[field]
+    return {**document, block: {key: value for key, value in _block(document, block).items()
+                                if key != name}}
+
+
+def with_strobes(document: Document, strobes: Any) -> Document:
+    """A copy of `document` with `strobes` as its `ts_data`."""
+    out = {**document, _STROBES: strobes}
+    return _ordered(out) if is_version_2(document) else out
+
+
+def header_fields(document: Document) -> Document:
+    """A version-2 document's fields by name, for the `.tsv` header: every one
+    it holds a value for, but the footer's two."""
+    out: Document = {}
+    for field, block, key in _PLACES:
+        value = _block(document, block).get(key)
+        if value is not None and field not in FOOTER_FIELDS:
+            out[field] = value
     return out
 
 
@@ -245,7 +365,12 @@ def recording_sample_rate_of(document: Document) -> Any:
 # --- the parameters the run ran on ------------------------------------------ #
 
 def _params(document: Document) -> Document:
-    return _block(document, "params") if is_version_2(document) else document
+    return _block(document, PARAMS_KEY) if is_version_2(document) else document
+
+
+def params_of(document: Document) -> Document:
+    """A version-2 document's parameters, by `metadataKey`."""
+    return dict(_block(document, PARAMS_KEY))
 
 
 def has_param(document: Document, metadata_key: Any) -> bool:

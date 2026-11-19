@@ -239,7 +239,7 @@ async def test_a_saved_spine_task_runs_a_session_and_its_tsv_alone_replays(tmp_p
     # Everything replay needs is in the header, before the first strobe.
     assert "# interp: 8\n" in header and f"# free_ram: {FREE_RAM}\n" in header
     assert "# sync: tick\n" in header  # one sync pulse per tick that strobes
-    assert f"# trial_seed: {SEED}\n" in header and "# block_b1_trials: 3\n" in header
+    assert f"# trial_seed: {SEED}\n" in header and '"block_b1_trials":3' in header
     assert '"spine":' in header
 
     document = json.loads(json_of(tsv).read_text(encoding="utf-8"))
@@ -251,7 +251,7 @@ async def test_a_saved_spine_task_runs_a_session_and_its_tsv_alone_replays(tmp_p
     assert names >= {"ODOR_PORT_ENTER", "TRIAL_LIGHT_ON", "ODOR_LINE_1_ON", "END_SESSION"}
     assert [n for c, _ in document["ts_data"] for n in [vocab.name_of(c)]].count("TRIAL_START") == 3
     assert [vocab.name_of(c) for c, _ in document["ts_data"]][1] == "BLOCK_START", "the one block starts at once"
-    assert document["stop_reason"] == runner_module.CLEAN_STOP_REASON
+    assert document["run"]["stop_reason"] == runner_module.CLEAN_STOP_REASON
 
     record = spine_stream.decode(document)
     assert spine_stream.expected_stream(record) == [tuple(s) for s in document["ts_data"]], \
@@ -274,10 +274,10 @@ async def test_a_saved_spine_task_runs_a_session_and_its_tsv_alone_replays(tmp_p
     assert summary.replay.rewarded.n == sum(t["rewarded"] for t in table["trials"])
     # The real session path wrote the same table into the file as derived
     # (`DATA.md#the-derived-trial-table`), under the file's own field names.
-    derived = document["derived"]
+    derived = document["trials"]
     assert derived["status"] == "ok" and derived["interp"] == rp.INTERP_VERSION
-    assert [t["outcome"] for t in derived["trials"]] == ["correct", "abort_during_sampling", "correct"]
-    assert [t["phase_entries"][1] for t in derived["trials"]] == [200, 5000, 8500]
+    assert [t["outcome"] for t in derived["rows"]] == ["correct", "abort_during_sampling", "correct"]
+    assert [t["phase_entries"][1] for t in derived["rows"]] == [200, 5000, 8500]
 
 
 async def test_a_crashed_runs_tsv_alone_replays_as_far_as_it_goes(tmp_path, monkeypatch):
@@ -460,7 +460,7 @@ async def run_task(tmp_path, monkeypatch, raw: dict, overrides: dict, ticks: int
     assert not any(line.startswith("CLAMPED") for line in transcript)
     tsv = await run_session(tmp_path, folder, transcript, monkeypatch, overrides)
     document = json.loads(json_of(tsv).read_text(encoding="utf-8"))
-    assert document["stop_reason"] == runner_module.CLEAN_STOP_REASON
+    assert document["run"]["stop_reason"] == runner_module.CLEAN_STOP_REASON
     record = spine_stream.decode(document)
     assert spine_stream.expected_stream(record) == [tuple(s) for s in document["ts_data"]], \
         "replay predicts every strobe the board sent, at its tick"
@@ -534,7 +534,7 @@ async def test_pwm_tone_and_a_train_drive_their_pins_and_replay_to_every_pulse(t
 
     tsv = await run_session(tmp_path, folder, transcript, monkeypatch, overrides)
     document = json.loads(json_of(tsv).read_text(encoding="utf-8"))
-    assert document["stop_reason"] == runner_module.CLEAN_STOP_REASON
+    assert document["run"]["stop_reason"] == runner_module.CLEAN_STOP_REASON
     record = spine_stream.decode(document)
     assert spine_stream.expected_stream(record) == [tuple(s) for s in document["ts_data"]], \
         "replay predicts every strobe, a train running out on its own included"
@@ -575,7 +575,7 @@ async def test_pwm_tone_and_a_train_drive_their_pins_and_replay_to_every_pulse(t
     shifted = diverged(shift)
     assert shifted is not None and shifted.index == dim_off and "LASER_TRAIN_OFF" in shifted.expected
     assert diverged(lambda d: d["ts_data"].pop(dim_off)) is not None
-    assert diverged(lambda d: d.update(train_ms_dim_laser=301)) is not None
+    assert diverged(lambda d: d["params"].update(train_ms_dim_laser=301)) is not None
     assert spine_stream.trial_table(document) is not None
 
 

@@ -94,6 +94,9 @@ class ActiveRun:
     #: different number, and that difference is the only signal a box is still
     #: carrying an old sketch.
     host_seed: int | None = None
+    #: Which of this animal's runs of the session's date this is, from 1
+    #: (`DATA.md#the-json-document`); None when the runner was not told.
+    run_of_day: int | None = None
     #: What the board announced as `INTERP=<n>` before `READY`, recorded on the
     #: run record at finalization (`DATA.md#run-records`). `None` when it
     #: announced none.
@@ -161,6 +164,9 @@ class SessionRunner:
         self._session_folder: Path | None = None
         self._session_id_label: str = ""
         self._session_id: str = ""
+        self._cohort_name: str | None = None
+        self._session_date: str | None = None
+        self._earlier_runs: Callable[[str], int] | None = None
         self._duration_s: float | None = None
         # The recording subsystem's three taps (`intan/service.py`), all
         # optional and all called ON THE SESSION THREAD, so whatever is hung
@@ -168,7 +174,7 @@ class SessionRunner:
         # arriving and that strobe being fsync'd. None of them can fail a run
         # -- each call site swallows, because a behavior session never pays for
         # the recording's problems.
-        #   recording_fields(box) -> flat `intan_*` fields for the document
+        #   recording_fields(box) -> the recording's fields, by name, for the document
         #   on_box_started(box, animal, tick_pulsed): tick_pulsed when the board
         #     announced its sync line pulses once per tick (`SYNC=TICK`)
         #   on_strobe_tap(box, code, ms)
@@ -186,6 +192,9 @@ class SessionRunner:
         duration_s: float | None = None,
         *,
         session_id: str,
+        cohort_name: str | None = None,
+        session_date: str | None = None,
+        earlier_runs: Callable[[str], int] | None = None,
     ) -> None:
         """Store the confirmed mapping for the round about to run
         (`ARCHITECTURE.md#mapping-and-the-placement-walk`).
@@ -194,7 +203,14 @@ class SessionRunner:
         auto-STOP scheduled from *its own* start, not from Start All — boxes
         are started individually, and each animal's run should be the same
         length.
+
+        `cohort_name` and `session_date` go into each run's document, and
+        `earlier_runs(animal_id)` says how many runs that animal has already
+        recorded on that date, for its `run_of_day` (`DATA.md#the-json-document`).
         """
+        self._cohort_name = cohort_name
+        self._session_date = session_date
+        self._earlier_runs = earlier_runs
         self._session_folder = session_folder
         self._session_id_label = session_id_label
         self._session_id = session_id
@@ -216,6 +232,9 @@ class SessionRunner:
         self._session_folder = None
         self._session_id_label = ""
         self._session_id = ""
+        self._cohort_name = None
+        self._session_date = None
+        self._earlier_runs = None
         self._duration_s = None
 
     def snapshot(self) -> list[dict[str, Any]]:
@@ -255,6 +274,17 @@ class SessionRunner:
 
     # --- start ------------------------------------------------------------
 
+    def _run_of_day(self, config: BoxConfig) -> int | None:
+        """This animal's run number on the session's date, from 1; None when
+        nobody can say. Never able to stop a box from starting."""
+        if self._earlier_runs is None:
+            return None
+        try:
+            return self._earlier_runs(config.animal_id) + 1
+        except Exception:  # noqa: BLE001
+            log.exception("box %d: couldn't count the animal's earlier runs of the day", config.box)
+            return None
+
     def start_box(self, box: int) -> None:
         """Begin one box's `IN_SESSION` run (`ARCHITECTURE.md#entering-in_session`). Idempotent per box."""
         if box in self._active:
@@ -279,6 +309,7 @@ class SessionRunner:
             session_id=self._session_id,
             end_code=config.profile.end_code if config.profile else None,
             host_seed=host_seed,
+            run_of_day=self._run_of_day(config),
         )
         # The port first: it raises before anything here is registered, so a
         # box whose port refused leaves no run, no time limit and nothing for
@@ -339,11 +370,18 @@ class SessionRunner:
         )
         run.files = files
 
-        # Core fields (`DATA.md#the-json-document`), then flat task-profile config, then the seeds.
+        # The run's fields by name (`DATA.md#the-json-document`); the writer has
+        # `run_document` put each in its block. `started_at` is the moment the
+        # files are named for, with this machine's UTC offset.
         core: dict[str, Any] = {
             "rat": run.config.animal_name,
-            "serial_port": run.address,
+            "cohort": self._cohort_name,
+            "box": box,
             "session_id": run.session_id_label,
+            "date": self._session_date,
+            "run_of_day": run.run_of_day,
+            "started_at": when.astimezone().isoformat(timespec="seconds"),
+            "serial_port": run.address,
             "sketch": run.config.sketch_name,
         }
         if announced.interp is not None:
@@ -388,9 +426,9 @@ class SessionRunner:
             # `TASKS.md#seed`: what the firmware reports it is *running on*. Recorded
             # unchanged even when it disagrees with what we sent — the point of
             # this field is to describe the session that happened.
-            config_meta["trial_seed"] = seed
+            core["trial_seed"] = seed
         if run.host_seed is not None:
-            config_meta["host_seed"] = run.host_seed
+            core["host_seed"] = run.host_seed
         if seed is not None and run.host_seed is not None and seed != run.host_seed:
             # Not an error, but it means this box's trial
             # sequence came from the board's own weak entropy, which is worth

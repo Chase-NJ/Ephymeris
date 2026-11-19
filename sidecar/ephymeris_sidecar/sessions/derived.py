@@ -1,8 +1,10 @@
 """A run's derived trial table, written into its `.json` and `.mat`
 (`DATA.md#the-derived-trial-table`).
 
-Finalization and recovery derive it once and write what it gives into the
-document as one block, last. A spine run's is its replay
+Finalization and recovery derive it once and `run_document.with_trial_table`
+writes what it gives into the document as one block: `trials`, its rows under
+`rows`, in a version-2 document; `derived`, its rows under `trials`, in a
+version-1 one. The block is shown here as it is derived. A spine run's is its replay
 (`analytics/stream/spine.py`'s `replayed`):
 
     "derived": {"status": "ok", "detail": null, "interp": 6, "replay_version": 3,

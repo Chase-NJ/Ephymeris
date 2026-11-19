@@ -2,7 +2,8 @@
 
 `sessions/run_document.py` is the only module that knows where a core field
 sits in a run's document, so a change of shape is a change in one file. That
-holds only while nothing else indexes a document by a core key, so this walks
+holds only while nothing else indexes a document by a core key, to read it or
+to write it, so this walks
 every module's syntax tree and fails on any that does, as
 `test_analytics_stream_is_pure.py` does for purity.
 """
@@ -15,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from ephymeris_sidecar.sessions import run_document as rd
-from ephymeris_sidecar.tasks.profile import CORE_METADATA_KEYS, DERIVED_KEY, SNAPSHOT_KEY
+from ephymeris_sidecar.tasks.profile import DERIVED_KEY, SNAPSHOT_KEY
 
 PACKAGE = Path(__file__).resolve().parents[1] / "ephymeris_sidecar"
 ACCESSOR = PACKAGE / "sessions" / "run_document.py"
@@ -52,8 +53,7 @@ def test_an_accessor_returns_the_field_as_stored_and_none_when_absent(accessor, 
     assert accessor({}) is None
 
 
-def test_every_core_field_has_an_accessor() -> None:
-    assert CORE_METADATA_KEYS <= rd.FIELDS
+def test_the_snapshot_and_the_trial_table_are_core_fields() -> None:
     assert {SNAPSHOT_KEY, DERIVED_KEY} <= rd.FIELDS
 
 
@@ -110,6 +110,7 @@ NOT_A_DOCUMENT: dict[str, dict[str, str]] = {
     "rig/transfer.py": {"other": "a rig export file"},
     "sessions/derived.py": {"block": "the derived block itself"},
     "sessions/repository.py": {"row": "a database row"},
+    "sessions/runner.py": {"core": "a run's fields by name, handed to run_document.build"},
     "taskdef/transfer.py": {"file": "a task export file"},
     "tasks/start_command.py": {"config": "the merged parameters, before any document exists"},
 }
@@ -127,11 +128,12 @@ def _key(node: ast.AST) -> str | None:
 
 
 def keyed_reads(source: str) -> list[tuple[int, str, str]]:
-    """`(line, receiver, key)` for every `x[key]`, `x.get(key)`, `x.pop(key)` and `key in x`."""
+    """`(line, receiver, key)` for every `x[key]` (read, written or deleted),
+    `x.get(key)`, `x.pop(key)` and `key in x`."""
     out = []
     for node in ast.walk(ast.parse(source)):
         key = receiver = None
-        if isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load):
+        if isinstance(node, ast.Subscript):
             key, receiver = _key(node.slice), node.value
         elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
               and node.func.attr in {"get", "pop"} and node.args):
@@ -151,11 +153,13 @@ def test_the_walk_sees_each_way_of_reading_a_key() -> None:
         "c = 'stream' in document\n"
         "d = document.pop(DERIVED_KEY, None)\n"
         "e = document[field.metadata_key]\n"
-        "document['ts_data'] = []\n"      # a write, not a read
+        "document['ts_data'] = []\n"
+        "del document['trial_seed']\n"
         "f = document['num_trials']\n"    # not a core key
     )
     assert [(line, key) for line, _, key in keyed_reads(source)] == [
         (1, "rat"), (2, "sketch"), (3, "stream"), (4, "DERIVED_KEY"), (5, "metadata_key"),
+        (6, "ts_data"), (7, "trial_seed"),
     ]
 
 
@@ -164,7 +168,7 @@ MODULES = sorted(p for p in PACKAGE.rglob("*.py") if p != ACCESSOR and p.name !=
 
 
 @pytest.mark.parametrize("path", MODULES, ids=lambda p: p.relative_to(PACKAGE).as_posix())
-def test_no_module_reads_a_core_field_by_key(path: Path) -> None:
+def test_no_module_reads_or_writes_a_core_field_by_key(path: Path) -> None:
     allowed = NOT_A_DOCUMENT.get(path.relative_to(PACKAGE).as_posix(), {})
     found = [
         f"line {line}: {receiver} read by {key!r}"
@@ -172,8 +176,8 @@ def test_no_module_reads_a_core_field_by_key(path: Path) -> None:
         if receiver not in allowed
     ]
     assert not found, (
-        f"{path.name} reads a run document's core field by key; ask sessions/run_document.py "
-        f"instead, or name the dict in NOT_A_DOCUMENT if it is not a run's document: {found}"
+        f"{path.name} reads or writes a run document's core field by key; go through "
+        f"sessions/run_document.py instead, or name the dict in NOT_A_DOCUMENT if it is not a run's document: {found}"
     )
 
 

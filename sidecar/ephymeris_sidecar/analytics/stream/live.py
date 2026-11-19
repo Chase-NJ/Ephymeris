@@ -39,6 +39,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from ...sessions.run_document import with_strobes
 from . import replay as rp
 from . import spine
 from . import table_metrics
@@ -93,8 +94,8 @@ class LiveReplay:
 
         Raises `spine.SpineDecodeError` for a run replay cannot start on, as
         Analytics would call it `unreplayable`."""
-        self._header = {k: v for k, v in header.items() if k != "ts_data"}
-        record = spine.decode({**self._header, "ts_data": []})
+        self._header = with_strobes(header, [])
+        record = spine.decode(self._header)
         self._record = record
         self._edge = {code: (bit, _RISE) for bit, code in enumerate(record.rise)}
         self._edge.update({code: (bit, _FALL) for bit, code in enumerate(record.fall)})
@@ -184,7 +185,7 @@ class LiveReplay:
 
     def document(self) -> dict[str, Any]:
         """The run's document so far: the header and every strobe received."""
-        return {**self._header, "ts_data": [list(s) for s in self._strobes]}
+        return with_strobes(self._header, [list(s) for s in self._strobes])
 
 
 def _due(core: rp.Core, now: int) -> int | None:

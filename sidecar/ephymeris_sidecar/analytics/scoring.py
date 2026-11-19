@@ -790,7 +790,7 @@ def _canary_runs(
 
     def document(codes: list[int], **extra: Any) -> dict[str, Any]:
         strobes = [code("START_SESSION"), *codes, code("END_SESSION")]
-        return {
+        return run_document.lifted({
             "rat": "canary",
             "sketch": "Score canary",
             "stop_reason": stream.CLEAN_STOP_REASON,
@@ -799,7 +799,7 @@ def _canary_runs(
             "n_events": len(strobes),
             "ts_data": [[c, i * 250] for i, c in enumerate(strobes)],
             **extra,
-        }
+        })
 
     declared: dict[str, Any] = {
         "taskName": "Score canary",
@@ -871,7 +871,7 @@ def _canary_runs(
     damaged_slot = Vocabulary(damaged_doc)
 
     unclean = document(session[: len(session) // 2], stop_reason="host stopped")
-    del unclean["trial_seed"]
+    unclean = run_document.without_field(unclean, "trial_seed")
 
     # A stream-grammar-2 run (`ANALYTICS.md#stream-grammar-2`): every outcome
     # once, read off the headers and outcome codes by a generated-style profile.
@@ -1027,12 +1027,12 @@ def _spine_canary(*, diverge: bool = False) -> dict[str, Any]:
         },
     }
     pokes = [(200, "PORT_ENTER"), (5000, "PORT_ENTER"), (5300, "PORT_EXIT"), (8500, "PORT_ENTER")]
-    doc: dict[str, Any] = {
+    doc = run_document.lifted({
         "rat": "canary", "sketch": "Score canary spine", "stop_reason": stream.CLEAN_STOP_REASON,
         "interp": spine_stream.rp.INTERP_VERSION, "trial_seed": 11, **recorded,
         task_profile.SNAPSHOT_KEY: snapshot,
         "ts_data": [[code[n], t] for t, n in pokes] + [[code["END_SESSION"], 20000]],
-    }
+    })
     return _predicted(doc, code["REWARD_ON"] if diverge else None)
 
 
@@ -1090,7 +1090,7 @@ def _afc_canary() -> dict[str, Any]:
         },
     }
     doc = simulate.simulate(snapshot, simulate.Animal("random"), 167).document
-    return {**doc, "rat": "canary"}
+    return run_document.replaced(doc, rat="canary")
 
 
 def _trace_canary(*, split: bool = False) -> dict[str, Any]:
@@ -1151,7 +1151,7 @@ def _trace_canary(*, split: bool = False) -> dict[str, Any]:
     # A lick every 250 ms through the session, and every 100 ms in its second
     # half: more licks in some windows than others, whichever row they fall in.
     licks = sorted({t for t in range(50, 22000, 250)} | {t for t in range(11010, 22000, 100)})
-    doc: dict[str, Any] = {
+    doc = run_document.lifted({
         "rat": "canary", "sketch": "Score canary trace", "stop_reason": stream.CLEAN_STOP_REASON,
         "interp": spine_stream.rp.INTERP_VERSION, "trial_seed": 116,
         **{f["metadataKey"]: values[f["wireKey"]] for f in config},
@@ -1159,7 +1159,7 @@ def _trace_canary(*, split: bool = False) -> dict[str, Any]:
         "ts_data": [e for t in licks for i in inputs
                     for e in ([code[i["rise"]], t], [code[i["fall"]], t + 20])]
         + [[code["END_SESSION"], 30000]],
-    }
+    })
     return _predicted(doc, None)
 
 
@@ -1172,6 +1172,5 @@ def _predicted(doc: dict[str, Any], diverge: int | None) -> dict[str, Any]:
     if diverge is not None:
         first = next(s for s in strobes if s[0] == diverge)
         first[1] += 1
-    doc["ts_data"] = strobes
-    doc["n_events"] = len(strobes)
+    doc = run_document.replaced(run_document.with_strobes(doc, strobes), n_events=len(strobes))
     return doc

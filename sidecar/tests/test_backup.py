@@ -805,7 +805,7 @@ async def test_a_hung_backup_target_never_holds_up_a_run(
 
         assert share.stuck, "the run finished only once the share let go"
         document = next((data / "behavior.json").glob("*.json"))
-        assert json.loads(document.read_text(encoding="utf-8"))["n_events"] == 3
+        assert json.loads(document.read_text(encoding="utf-8"))["run"]["n_events"] == 3
     finally:
         share.release()
         bench.shutdown()

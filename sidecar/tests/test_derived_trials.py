@@ -19,13 +19,15 @@ import pytest
 
 from ephymeris_sidecar.analytics import scoring
 from ephymeris_sidecar.analytics.stream import spine as spine_stream
-from ephymeris_sidecar.sessions import recovery
+from ephymeris_sidecar.sessions import recovery, run_document
 from ephymeris_sidecar.sessions.writer import AnimalWriter
 from ephymeris_sidecar.tasks import profile as task_profile
 from tests.fixtures import spine as fixture
 from tests.test_spine_analytics import recorded_document, rig, write_document  # noqa: F401 - rig is a fixture
 
-DERIVED = task_profile.DERIVED_KEY
+#: The trial-table block's key in a written (version-2) file, and its rows' key there.
+DERIVED = "trials"
+ROWS = "rows"
 #: The footer-less stop reason a recovered crash records.
 CRASHED = recovery.RECOVERED_STOP_REASON
 
@@ -93,14 +95,14 @@ def test_a_finalized_spine_run_carries_its_trial_table_in_the_json(tmp_path: Pat
     written = read_json(json_path)
 
     block = written[DERIVED]
-    assert list(written)[-1] == DERIVED, "the derived block comes after the data it is derived from"
+    assert list(written)[-3:] == [DERIVED, "ts_data", "task_profile"], "the table sits before the strobes it is read from"
     assert block["status"] == "ok" and block["detail"] is None
     assert block["interp"] == document["interp"]
     assert block["replay_version"] == spine_stream.REPLAY_VERSION
     assert block["phases"] == ["wait", "present", "delay", "outcome", "iti"]
-    assert block["trials"] == table_of(document)
-    assert len(block["trials"]) == 3
-    first = block["trials"][0]
+    assert block[ROWS] == table_of(document)
+    assert len(block[ROWS]) == 3
+    first = block[ROWS][0]
     assert (first["outcome"], first["rewarded"], first["reward_line"], first["reward_ms"]) == \
         ("correct", True, "fluid_2", 100)
     assert first["input_counts"] == [{"phase": 0, "channel": "odor_port", "count": 1}]
@@ -114,7 +116,7 @@ def load_mat(path: Path) -> dict:
 
 def mat_trials(path: Path):  # noqa: ANN201
     """`S.derived.trials` as loadmat gives it: an N×1 struct array."""
-    return load_mat(path)[DERIVED][0, 0]["trials"]
+    return load_mat(path)[DERIVED][0, 0][ROWS]
 
 
 def mat_value(cell):  # noqa: ANN001, ANN201
@@ -144,7 +146,7 @@ def test_a_finalized_spine_run_carries_its_trial_table_in_the_mat(tmp_path: Path
     assert str(block["status"][0]) == "ok"
     assert float(block["replay_version"][0, 0]) == spine_stream.REPLAY_VERSION
     assert [str(c[0]) for c in block["phases"][0]] == ["wait", "present", "delay", "outcome", "iti"]
-    trials = block["trials"]
+    trials = block[ROWS]
     assert trials.shape == (len(expected), 1), "one struct per trial, N×1, for struct2table"
     for i, row in enumerate(expected):
         got = trials[i, 0]
@@ -173,12 +175,12 @@ def test_a_crashed_spine_run_recovers_with_its_trial_table_through_its_last_stro
     assert entry["status"] == "recovered" and entry["stopReason"] == CRASHED
     block = read_json(json_path)[DERIVED]
     assert block["status"] == "ok"
-    assert block["trials"] == table_of(recovery.recovered_document(recovery.parse_tsv(tsv)))
-    assert block["trials"][-1]["complete"] is False, "the trial the crash cut off"
+    assert block[ROWS] == table_of(recovery.recovered_document(recovery.parse_tsv(tsv)))
+    assert block[ROWS][-1]["complete"] is False, "the trial the crash cut off"
     trials = mat_trials(mat)
-    assert trials.shape == (len(block["trials"]), 1)
+    assert trials.shape == (len(block[ROWS]), 1)
     assert [(mat_value(t["index"]), mat_value(t["outcome"]), mat_value(t["complete"])) for t in trials[:, 0]] \
-        == [(r["index"], r["outcome"] or "", r["complete"]) for r in block["trials"]]
+        == [(r["index"], r["outcome"] or "", r["complete"]) for r in block[ROWS]]
 
 
 def test_a_legacy_run_gets_no_derived_table(tmp_path: Path) -> None:
@@ -211,7 +213,7 @@ def test_a_diverged_run_is_marked_and_carries_no_trials(tmp_path: Path) -> None:
 
     block = read_json(json_path)[DERIVED]
     assert block["status"] == "diverged" and "diverged at strobe" in block["detail"]
-    assert block["trials"] == []
+    assert block[ROWS] == []
     trials = mat_trials(mat)
     assert trials.shape == (0, 1) and "outcome" in trials.dtype.names, \
         "an empty struct array that keeps its fields, so struct2table gives 0 rows"
@@ -225,7 +227,7 @@ def test_an_unreplayable_run_is_marked(tmp_path: Path) -> None:
     _, json_path, _ = run_through_writer(tmp_path, document)
     block = read_json(json_path)[DERIVED]
     assert block["status"] == "unreplayable" and "INTERP" in block["detail"]
-    assert block["interp"] == document["interp"] and block["trials"] == []
+    assert block["interp"] == document["interp"] and block[ROWS] == []
 
 
 def test_a_derivation_that_fails_never_costs_the_json(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
@@ -267,9 +269,10 @@ def test_the_footer_is_durable_before_the_replay_starts(tmp_path: Path, monkeypa
 
 def wrong_block(block: dict) -> dict:
     """A derived block that disagrees with the run on every count."""
+    rows = ROWS if ROWS in block else "trials"  # as a file stores it, or as `derive` returns it
     trials = [{**t, "outcome": "false_alarm", "rewarded": not t["rewarded"], "row": "nonsense"}
-              for t in block["trials"]]
-    return {**block, "trials": trials + trials, "phases": ["x"]}
+              for t in block[rows]]
+    return {**block, rows: trials + trials, "phases": ["x"]}
 
 
 async def test_analytics_replays_and_never_reads_the_stored_table(rig) -> None:  # noqa: ANN001, F811
@@ -279,7 +282,7 @@ async def test_analytics_replays_and_never_reads_the_stored_table(rig) -> None: 
     [series_before] = (await rig.service.series([honest]))["series"]
 
     path = Path(rig.sessions.runs_for(before["sessionId"])[0].file_path)
-    tampered = {**document, DERIVED: wrong_block(spine_stream_block(document))}
+    tampered = run_document.with_trial_table(document, wrong_block(spine_stream_block(document)))
     path.write_text(json.dumps(tampered), encoding="utf-8")
     after = (await rig.service.summary(rig.cohort.id))["runs"][0]
     [series_after] = (await rig.service.series([honest]))["series"]
@@ -360,7 +363,7 @@ async def test_rederive_fills_in_a_spine_run_with_no_table_and_skips_a_legacy_ru
 
     result = await rig.archive.rederive(rig.cohort.id)
     assert (result["scanned"], result["rewritten"]) == (1, 1), "the legacy run is not a spine run"
-    assert read_json(json_path)[DERIVED]["trials"] == table_of(bare)
+    assert read_json(json_path)[DERIVED][ROWS] == table_of(bare)
     assert legacy.read_bytes() == legacy_bytes
 
 
@@ -462,12 +465,12 @@ def test_a_name_outside_the_bmp_is_escaped_never_costing_the_mat(tmp_path: Path)
     block["trials"][0]["row_name"] = f"Odor 1 {EMOJI}"
     block["trials"][0]["input_counts"][0]["channel"] = f"port {EMOJI}"
     path = tmp_path / "run.mat"
-    matwriter.savemat(str(path), {"rat": "remy1", DERIVED: block})
+    matwriter.savemat(str(path), run_document.with_trial_table(run_document.build({"rat": "remy1"}, {}), block))
 
     got = scipy.io.loadmat(str(path))[DERIVED][0, 0]
     escaped = json.dumps(EMOJI)[1:-1]  # 🐭
     assert str(got["phases"][0][1][0]) == f"present {escaped}"
-    first = got["trials"][0, 0]
+    first = got[ROWS][0, 0]
     assert mat_value(first["row_name"]) == f"Odor 1 {escaped}"
     assert mat_value(first["input_counts"][0, 0]["channel"]) == f"port {escaped}"
     assert json.loads(f'"{mat_value(first["row_name"])}"') == f"Odor 1 {EMOJI}", "jsondecode gives it back"
@@ -579,7 +582,7 @@ def test_a_column_added_to_the_trial_row_is_written_with_no_change_here(tmp_path
     monkeypatch.setattr(spine_stream, "replayed", widened)
     _, json_path, mat = run_through_writer(tmp_path, recorded_document())
 
-    rows = read_json(json_path)[DERIVED]["trials"]
+    rows = read_json(json_path)[DERIVED][ROWS]
     assert [(r["lick_rate"], r["tags"]) for r in rows[:2]] == [(2.5, [0, None]), (None, [1, None])]
     trials = mat_trials(mat)
     assert mat_value(trials[0, 0]["lick_rate"]) == 2.5 and mat_value(trials[1, 0]["lick_rate"]) is None
@@ -624,7 +627,7 @@ def test_the_legacy_adapters_columns_are_written_to_both_files(tmp_path: Path, m
     monkeypatch.setattr(spine_stream, "replayed", scored)
     _, json_path, mat = run_through_writer(tmp_path, recorded_document())
 
-    rows = read_json(json_path)[DERIVED]["trials"]
+    rows = read_json(json_path)[DERIVED][ROWS]
     assert rows[0]["scores"] == [{"condition": "r1", "correct": True}, {"condition": "l1", "correct": None}]
     assert rows[1]["correct"] is None and rows[1]["scores"] == []
     assert {"outcome_ms", "presented"} <= set(rows[0])

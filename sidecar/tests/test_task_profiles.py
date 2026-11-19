@@ -686,15 +686,6 @@ def test_a_profile_cannot_claim_the_reserved_seed_key() -> None:
         parse_profile({"taskName": "T", "config": [_field(wireKey="SEED")]})
 
 
-@pytest.mark.parametrize("core", ["rat", "sketch", "session_id", "trial_seed", "n_events"])
-def test_a_metadata_key_cannot_collide_with_a_core_field(core: str) -> None:
-    """`DATA.md#the-json-document` — config is merged into the session file FLAT at the top level, so a
-    collision overwrites the core field instead of sitting beside it. A run
-    whose `rat` field held a poke-hold duration would be unrecoverable."""
-    with pytest.raises(TaskProfileError, match="collides with a core"):
-        parse_profile({"taskName": "T", "config": [_field(metadataKey=core)]})
-
-
 def test_duplicate_keys_are_rejected() -> None:
     """Two entries sharing a key means one silently wins -- on the wire for a
     duplicate wireKey, in the file for a duplicate metadataKey."""

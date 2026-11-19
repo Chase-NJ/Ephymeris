@@ -336,13 +336,13 @@ def test_the_writer_puts_the_table_in_both_files(tmp_path: Path, profile: TaskPr
     writer.finalize(stream.CLEAN_STOP_REASON)
 
     written = json.loads(json_path.read_text(encoding="utf-8"))
-    assert list(written)[-1] == task_profile.DERIVED_KEY
-    assert written[task_profile.DERIVED_KEY]["grammar"] == 2
-    assert written[task_profile.DERIVED_KEY]["trials"][EVERY.index(LAZY)]["outcome"] == "LAZY_RAT"
+    assert list(written)[-3:] == ["trials", "ts_data", "task_profile"]
+    assert written["trials"]["grammar"] == 2
+    assert written["trials"]["rows"][EVERY.index(LAZY)]["outcome"] == "LAZY_RAT"
 
-    loaded = scipy.io.loadmat(str(mat))[task_profile.DERIVED_KEY][0, 0]
+    loaded = scipy.io.loadmat(str(mat))["trials"][0, 0]
     assert float(loaded["grammar"].ravel()[0]) == 2
-    trials = loaded["trials"]
+    trials = loaded["rows"]
     assert trials.shape == (len(EVERY), 1)
     assert str(trials["outcome"][0, 0][0]) == "CORRECT"
     assert float(trials["type_slot"][1, 0].ravel()[0]) == 2

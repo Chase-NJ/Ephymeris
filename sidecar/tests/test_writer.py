@@ -68,8 +68,10 @@ def test_the_header_is_written_before_any_strobe(tmp_path: Path) -> None:
     lines = (tmp_path / "behavior.tsv" / "remy1.tsv").read_text(encoding="utf-8").splitlines()
     # All comment lines, no data yet, and the two footer-only fields absent.
     assert all(line.startswith("#") for line in lines)
+    assert lines[0] == "# schema_version: 2"
     assert any(line == "# rat: remy1" for line in lines)
-    assert any(line == "# lazy_escalation: true" for line in lines)
+    # The parameters ride on one JSON line, so none can pass for a field.
+    assert '# params: {"correction_left":0,"correction_right":0,"lazy_escalation":true}' in lines
     assert not any("stop_reason" in line for line in lines)
     assert not any("n_events" in line for line in lines)
 
@@ -101,12 +103,12 @@ def test_finalize_writes_the_footer_and_builds_json_and_mat(tmp_path: Path) -> N
     assert "# stop_reason: BF_END_SESSION received" in tsv
     assert "# n_events: 2" in tsv
 
-    # `DATA.md#the-json-document` — core + flat config + data, in one document, matching the sample shape.
-    assert document["rat"] == "remy1"
-    assert document["correction_left"] == 0
-    assert document["lazy_escalation"] is True
-    assert document["stop_reason"] == "BF_END_SESSION received"
-    assert document["n_events"] == 2
+    # `DATA.md#the-json-document` — the run, the task, the parameters and the data, each in its block.
+    assert document["schema_version"] == 2
+    assert document["run"] == {"animal": "remy1", "session_id": "2O-Bdisc_25", "serial_port": "COM6",
+                               "stop_reason": "BF_END_SESSION received", "n_events": 2}
+    assert document["task"] == {"sketch": "GRGL_2-Odor"}
+    assert document["params"] == CONFIG
     assert document["ts_data"] == [[221, 0], [246, 3523555]]
 
     assert (tmp_path / "behavior.json" / "remy1.json").is_file()
@@ -118,13 +120,13 @@ def test_finalize_writes_the_footer_and_builds_json_and_mat(tmp_path: Path) -> N
     assert on_disk == document
 
 
-def test_config_fields_are_flat_at_the_top_level_not_nested(tmp_path: Path) -> None:
-    """`DATA.md#the-json-document` — matches the sample exactly: no `config` wrapper key."""
+def test_the_parameters_sit_in_their_own_block_never_at_the_top_level(tmp_path: Path) -> None:
+    """`DATA.md#the-json-document` — so a parameter can never overwrite a field of the run."""
     writer = make_writer(tmp_path)
     writer.open_files()
     document = writer.finalize("operator stop")
-    assert "config" not in document
-    assert document["correction_right"] == 0
+    assert "correction_right" not in document
+    assert document["params"]["correction_right"] == 0
 
 
 def test_the_document_carries_its_task_profile(tmp_path: Path) -> None:
@@ -188,8 +190,8 @@ def test_finalize_is_idempotent(tmp_path: Path) -> None:
     first = writer.finalize("operator stop")
     second = writer.finalize("something else")
     # A second finalize neither re-runs nor changes the recorded reason.
-    assert first["stop_reason"] == "operator stop"
-    assert second["stop_reason"] == "operator stop"
+    assert first["run"]["stop_reason"] == "operator stop"
+    assert second["run"]["stop_reason"] == "operator stop"
 
 
 def test_records_after_finalize_are_ignored(tmp_path: Path) -> None:

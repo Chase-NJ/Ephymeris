@@ -197,7 +197,7 @@ def test_another_seed_simulates_another_session():
 
 
 def test_the_seed_is_the_run_s_trial_seed():
-    assert run(fixture.two_afc(), CORRECT, seed=4242).document["trial_seed"] == 4242
+    assert run(fixture.two_afc(), CORRECT, seed=4242).document["task"]["trial_seed"] == 4242
 
 
 @pytest.mark.parametrize("seed_id", [s["id"] for s in seeds.SEEDS])

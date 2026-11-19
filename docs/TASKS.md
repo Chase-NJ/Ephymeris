@@ -112,10 +112,10 @@ The library is rescanned on `settings.push`, `sketches.refresh`, task saves and 
 
 ### Config fields
 
-Each field needs `metadataKey` (written **flat** into the session file), `wireKey` (a `SET` token `TASK_PARAM_LIST` parses) and `type` (`int`, `float`, `bool` or `string`), and may give `default`, `label`, `group` (its section, and what diagram nodes are `governedBy`), `unit`, `help`, `min` and `max` (clamped, never rejected), `step` and `advanced`. Every operator-tunable parameter is a field.
+Each field needs `metadataKey` (its key in the run document's `params`, [DATA.md](DATA.md#the-json-document)), `wireKey` (a `SET` token `TASK_PARAM_LIST` parses) and `type` (`int`, `float`, `bool` or `string`), and may give `default`, `label`, `group` (its section, and what diagram nodes are `governedBy`), `unit`, `help`, `min` and `max` (clamped, never rejected), `step` and `advanced`. Every operator-tunable parameter is a field.
 
 > [!CAUTION]
-> **Parse-time guards:** no `wireKey` `SEED`, no `metadataKey` colliding with a core session field (`CORE_METADATA_KEYS`), and no duplicate of either; each would write wrong data silently.
+> **Parse-time guards:** no `wireKey` `SEED`, and no duplicate `wireKey` or `metadataKey`; each would write wrong data silently.
 
 > [!CAUTION]
 > **A ramped value is declared per stage, never once**: the firmware rewrites ramped values from `stage[]` every trial, overwriting a single field at the first stage boundary.

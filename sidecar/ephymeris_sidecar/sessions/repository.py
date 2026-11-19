@@ -365,6 +365,19 @@ class SessionRepository:
             ).fetchall()
         return [_hydrate_run(r) for r in rows]
 
+    def earlier_runs_of_day(self, cohort_id: str, animal_id: str, date: str) -> int:
+        """How many runs this animal has recorded in sessions of `date` in this
+        cohort: one less than the `run_of_day` of its next
+        (`DATA.md#the-json-document`)."""
+        with self._db.read() as q:
+            row = q.execute(
+                "SELECT COUNT(*) FROM session_animal_runs r"
+                " JOIN sessions s ON s.id = r.session_id"
+                " WHERE s.cohort_id = ? AND s.date = ? AND r.animal_id = ?",
+                (cohort_id, date, animal_id),
+            ).fetchone()
+        return int(row[0])
+
     def runs_for_cohort(self, cohort_id: str) -> list[SessionAnimalRun]:
         """Every run across every session of one cohort (`PROTOCOL.md#analytics`).
 

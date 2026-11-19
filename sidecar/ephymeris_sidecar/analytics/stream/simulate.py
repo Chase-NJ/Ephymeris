@@ -24,8 +24,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from ...taskdef.lowering import HIT_CLASSES, OUTCOME_CLASSES
-from ...sessions.run_document import strobes_of
-from ...tasks.profile import SNAPSHOT_KEY
+from ...sessions.run_document import build, replaced, with_strobes
 from . import replay as rp
 from . import spine
 
@@ -75,28 +74,27 @@ def simulate(snapshot: dict[str, Any], animal: Animal, seed: int, *,
     walk = _Animal(record.table, animal, _favoured(shot, animal), random.Random(f"animal-{seed}"))
     edges, end, ended_by = _session(record, walk, limit_ms)
     if end is None:
-        document["ts_data"] = _cut(record, edges, limit_ms + GRACE_MS)
-        document["stop_reason"] = "simulated session cut off past its time limit"
+        strobes = _cut(record, edges, limit_ms + GRACE_MS)
+        document = replaced(document, stop_reason="simulated session cut off past its time limit")
     else:
         # The input strobes and END_SESSION are all the board's file needs for
         # replay to predict the rest; the stream it would have sent is that prediction.
-        document["ts_data"] = _strobes(record, edges) + [[record.session_end, end]]
-        document["ts_data"] = [list(s) for s in spine.expected_stream(spine.decode(document))]
-    document["n_events"] = len(strobes_of(document))
+        inputs = with_strobes(document, _strobes(record, edges) + [[record.session_end, end]])
+        strobes = [list(s) for s in spine.expected_stream(spine.decode(inputs))]
+    document = replaced(with_strobes(document, strobes), n_events=len(strobes))
     return Simulated(document, ended_by)
 
 
 def _header(shot: dict[str, Any], seed: int) -> dict[str, Any]:
     """The run document before its first strobe, as the runner writes it."""
-    return {
+    fields = {
         "sketch": shot.get("taskName"),
         "stop_reason": "BF_END_SESSION received",
         "interp": shot["spine"]["interp"],
         "trial_seed": seed,
-        SNAPSHOT_KEY: shot,
-        **{f["metadataKey"]: f["default"] for f in shot.get("config", [])},
-        "ts_data": [],
     }
+    params = {f["metadataKey"]: f["default"] for f in shot.get("config", [])}
+    return build(fields, params, shot, [])
 
 
 def _favoured(shot: dict[str, Any], animal: Animal) -> int:

@@ -30,8 +30,7 @@ import logging
 import warnings
 from typing import Any
 
-from ..tasks.profile import DERIVED_KEY
-from . import derived
+from . import derived, run_document
 
 log = logging.getLogger(__name__)
 
@@ -44,28 +43,46 @@ def preload() -> None:
         log.exception("scipy.io failed to import; .mat files will not be written")
 
 
-#: How `refusal` names a top-level field to the operator.
-_FIELD_NAMES = {"rat": "the animal name"}
+#: How `refusal` names a field to the operator.
+_FIELD_NAMES = {"rat": "the animal name", "animal": "the animal name"}
 
 
 def refusal(data: dict[str, Any]) -> str | None:
     """Why `data` can never be written to a `.mat`, on any build, or None.
 
-    A top-level string with a character outside the BMP, such as an animal
-    name with an emoji: `to_matlab` refuses it rather than mis-size it.
+    A string with a character outside the BMP, such as an animal name with an
+    emoji: `to_matlab` refuses it rather than mis-size it. Top-level strings,
+    and those in a version-2 document's value blocks.
     """
-    for name, value in data.items():
+    for name, value in _values(data):
         if isinstance(value, str) and any(ord(c) > 0xFFFF for c in value):
             return f"{_FIELD_NAMES.get(name, repr(name))} can't be written to a .mat"
     return None
+
+
+def _values(data: dict[str, Any]) -> list[tuple[str, Any]]:
+    """Every `(name, value)` `to_matlab` writes as a scalar or a string."""
+    out = list(data.items())
+    if run_document.is_version_2(data):
+        for block in run_document.VALUE_BLOCKS:
+            if isinstance(data.get(block), dict):
+                out.extend(data[block].items())
+    return out
 
 
 def to_matlab(data: dict[str, Any]) -> dict[str, Any]:
     """The document with every value converted to what `savemat` should write."""
     import numpy as np
 
+    table_key = run_document.trial_table_key(data)
+    blocks = run_document.VALUE_BLOCKS if run_document.is_version_2(data) else ()
     out: dict[str, Any] = {}
     for name, value in data.items():
+        if isinstance(value, dict) and name in blocks:
+            # A version-2 block of plain values (`S.run.animal`, `S.params.<key>`):
+            # a struct, each field by the same rules as a top-level one.
+            out[name] = to_matlab(value)
+            continue
         if isinstance(value, bool):
             out[name] = value  # bool before int: a MATLAB `logical`
         elif isinstance(value, (int, float)):
@@ -73,7 +90,7 @@ def to_matlab(data: dict[str, Any]) -> dict[str, Any]:
         elif isinstance(value, (list, tuple)):
             # The only array in the schema is ts_data: [[code, ts], …] → N×2.
             out[name] = np.asarray(value, dtype=np.float64).reshape(-1, 2)
-        elif isinstance(value, dict) and name == DERIVED_KEY:
+        elif isinstance(value, dict) and name == table_key:
             # A spine run's trial table (`DATA.md#the-derived-trial-table`): a
             # struct whose `trials` is an N×1 struct array, since this one is
             # read as a table.

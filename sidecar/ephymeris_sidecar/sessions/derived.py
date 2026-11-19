@@ -49,7 +49,6 @@ from ..analytics.stream import trial_table as tt
 from ..analytics.stream.legacy import infer
 from ..rig import registry
 from ..tasks import profile as task_profile
-from ..tasks.profile import DERIVED_KEY
 from . import run_document
 
 log = logging.getLogger(__name__)
@@ -195,9 +194,11 @@ def fields_of(cls: type) -> tuple[tuple[str, _Kind], ...]:
 
 def to_matlab(block: dict[str, Any]) -> dict[str, Any]:
     """The derived block as `savemat` should write it: a scalar struct whose
-    `trials` is an N×1 struct array (`struct2table(S.derived.trials)`)."""
+    rows are an N×1 struct array (`struct2table(S.derived.trials)`; a
+    version-2 block has them under `rows`, `struct2table(S.trials.rows)`)."""
     import numpy as np
 
+    rows = "rows" if "rows" in block else "trials"
     phases = block.get("phases") or []
     cells = np.empty((1, len(phases)), dtype=object)
     for i, phase in enumerate(phases):
@@ -208,7 +209,7 @@ def to_matlab(block: dict[str, Any]) -> dict[str, Any]:
         "interp": _mat(_Kind("number"), block.get("interp")),
         "replay_version": _mat(_Kind("number"), block.get("replay_version")),
         "phases": cells,
-        "trials": _mat(_Kind("records", fields_of(row_class(block))), block.get("trials") or []),
+        rows: _mat(_Kind("records", fields_of(row_class(block))), block.get(rows) or []),
     }
     if "grammar" in block:
         # Only a grammar-2 block carries it, so a spine run's struct keeps the
@@ -263,6 +264,8 @@ def rederive_file(json_path: Path) -> dict[str, Any] | None:
     entry plus `written`, the files it wrote; or None for a file that is not
     a spine run (or does not parse). The `.tsv` is never opened.
 
+    - A document from a newer build (`run_document.unreadable_reason`) is
+      `skipped` whole.
     - A block this build may not replace is `skipped`: one a newer replay
       derived, or a replayed (`ok`) one this build cannot replay.
     - A block that differs from what this build derives is written into the
@@ -286,6 +289,10 @@ def rederive_file(json_path: Path) -> dict[str, Any] | None:
         return None
     entry: dict[str, Any] = {"jsonPath": str(json_path), "status": "failed", "reason": None,
                              "matError": None, "written": []}
+    refused = run_document.unreadable_reason(document)
+    if refused is not None:
+        entry.update(status="skipped", reason=f"{json_path.name} {refused}")
+        return entry
     rest = run_document.without_trial_table(document)
     try:
         block = derive(rest)
@@ -312,7 +319,8 @@ def rederive_file(json_path: Path) -> dict[str, Any] | None:
         entry["written"].append(str(json_path))
         entry["status"] = "rewritten"
     else:
-        held = _mat_kept(mat_path, block)
+        held = _mat_kept(mat_path, run_document.trial_table_key(document),
+                         run_document.stored_trial_table(document, block))
         if held == "current":
             entry["status"] = "current"
             return entry
@@ -358,20 +366,21 @@ def _kept(stored: Any, block: dict[str, Any]) -> str | None:
     return None
 
 
-def _mat_kept(mat_path: Path, block: dict[str, Any]) -> str | None:
+def _mat_kept(mat_path: Path, key: str, block: dict[str, Any]) -> str | None:
     """Whether a run whose `.json` is current may keep its `.mat`: "current"
     when the `.mat`'s derived block is what this build would write, a reason
-    when a newer replay wrote it, or None when it must be written.
+    when a newer replay wrote it, or None when it must be written. `key` and
+    `block` are the block's name and shape in this run's files.
 
     Judged by content, as the `.json` is, never by mtime: a copy made without
-    keeping mtimes can give an old table a new one. Only `derived` is read.
+    keeping mtimes can give an old table a new one. Only the block is read.
     """
     import io
 
     try:
         import scipy.io
 
-        on_disk = scipy.io.loadmat(str(mat_path), variable_names=[DERIVED_KEY]).get(DERIVED_KEY)
+        on_disk = scipy.io.loadmat(str(mat_path), variable_names=[key]).get(key)
         version = float(on_disk[0, 0]["replay_version"].ravel()[0])
     except Exception:  # noqa: BLE001 - missing, unreadable, or no block: write it
         return None
@@ -379,9 +388,9 @@ def _mat_kept(mat_path: Path, block: dict[str, Any]) -> str | None:
         return (f"its .mat's table was derived by a newer replay (version {version:g}; this "
                 f"build's is {spine.REPLAY_VERSION})")
     buffer = io.BytesIO()
-    scipy.io.savemat(buffer, {DERIVED_KEY: to_matlab(block)})
+    scipy.io.savemat(buffer, {key: to_matlab(block)})
     buffer.seek(0)
-    wanted = scipy.io.loadmat(buffer)[DERIVED_KEY]
+    wanted = scipy.io.loadmat(buffer)[key]
     return "current" if _same(on_disk, wanted) else None
 
 

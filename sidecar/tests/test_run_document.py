@@ -108,11 +108,7 @@ NOT_A_DOCUMENT: dict[str, dict[str, str]] = {
     "intan/yield_store.py": {"row": "a database row"},
     "logbook/repository.py": {"row": "a database row"},
     "rig/transfer.py": {"other": "a rig export file"},
-    "sessions/derived.py": {
-        "block": "the derived block itself",
-        "scipy.io.loadmat(str(mat_path), variable_names=[DERIVED_KEY])": "a .mat file's variables",
-        "scipy.io.loadmat(buffer)": "a .mat file's variables",
-    },
+    "sessions/derived.py": {"block": "the derived block itself"},
     "sessions/repository.py": {"row": "a database row"},
     "taskdef/transfer.py": {"file": "a task export file"},
     "tasks/start_command.py": {"config": "the merged parameters, before any document exists"},

@@ -83,10 +83,13 @@ INDEX_CHUNK = 32
 #: hand-set half this is. Adding an outcome class moves it by itself: the
 #: canary hashes `OUTCOME_CLASSES`.
 #:
+#: Version 12: the reader hands every document on in the version-2 shape and
+#: refuses one from a newer build (`DATA.md#the-json-document`).
+#:
 #: **"The numbers didn't move" is not an exemption.** A cached row is served
 #: verbatim, so a field added to the payload without a version change goes
 #: missing from every warm row.
-SCORE_VERSION = 11
+SCORE_VERSION = 12
 
 
 @dataclass

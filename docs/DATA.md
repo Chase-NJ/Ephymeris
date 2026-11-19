@@ -213,6 +213,8 @@ Each folder with a log gets a derived `notes.md`, rewritten whole about a second
 
 ### The JSON document
 
+A document has one of two shapes, and `sessions/run_document.py` reads both. **Version 1**, flat, is what every run so far is written as:
+
 | Field | Source |
 |---|---|
 | `rat`, `sketch` | `Animal.name`; the sketch chosen at mapping |
@@ -229,7 +231,20 @@ Each folder with a log gets a derived `notes.md`, rewritten whole about a second
 | `n_events`, `ts_data` | `[code, timestamp_ms]` as sent, ms from **that animal's** start |
 | `derived` | The [trial table](#the-derived-trial-table), last |
 
-**Code reads a field through `sessions/run_document.py`, never by key**: it alone knows where each field sits, and `test_run_document.py` enforces it.
+**Version 2** (ADR 0009) is nested: `"schema_version": 2`, then the same facts in blocks. Nothing writes it yet.
+
+| Block | Holds (version-1 name where it differs) |
+|---|---|
+| `run` | `animal` (`rat`), `serial_port`, `session_id`, `stop_reason`, `n_events` |
+| `task` | `sketch`, `stream`, `interp`, `free_ram`, `sync`, `trial_seed`, `host_seed`, `channel_set_hash`, `channel_set_hash_version` |
+| `params` | The task fields, one key per `metadataKey` |
+| `recording` | `name`, `path`, `digital_in`, `port`, `channels`, `sample_rate` (the six `intan_*` fields); recordings only |
+| `trials` | The [trial table](#the-derived-trial-table) (`derived`), its rows under `rows` |
+| `ts_data`, `task_profile` | As in version 1 |
+
+- **Code reads a field through `sessions/run_document.py`, never by key**: it alone knows where each field sits, and `test_run_document.py` enforces it.
+- **`analytics/reader.py` regroups a version-1 file into version 2 in memory** (`run_document.lifted`), so both score alike and keep their [hashes](TASKS.md#profile-and-params-hashes). No file is rewritten.
+- **A `schema_version` above this build's is `unreadable`, with the reason**, never half-read; [Re-derive](#re-derive) skips it and Recover leaves it.
 
 > [!CAUTION]
 > **Task fields share the top level with core fields**, so `parse_profile` rejects any `metadataKey` in `tasks/profile.py`'s `CORE_METADATA_KEYS`; add each new core field there and to `run_document.FIELDS`.
@@ -250,7 +265,7 @@ Written by `AnimalWriter.open_files` after the handshake and `SEED`. **A `.tsv` 
 
 ### The mat mirror
 
-`sessions/matwriter.py` writes the same dict with `scipy.io.savemat`: numbers `double`, bools `logical`, `ts_data` `N×2` (`0×2` empty), `task_profile` a JSON char array, `derived` a struct. `tests/test_matwriter.py` pins it.
+`sessions/matwriter.py` writes the same dict with `scipy.io.savemat`: numbers `double`, bools `logical`, `ts_data` `N×2` (`0×2` empty), `task_profile` a JSON char array, `derived` a struct. A version-2 document's `run`, `task`, `params` and `recording` are structs by the same rules (`S.run.animal`), and its table is `S.trials.rows`. `tests/test_matwriter.py` pins it.
 
 > [!CAUTION]
 > **scipy is preloaded on the main thread before any other thread starts** (`matwriter.preload`): importing numpy while a thread blocks on stdin deadlocks the frozen sidecar. **A `.mat` that would be wrong is refused** (non-BMP characters, `_` names) and logged; `.tsv` and `.json` carry the run.
@@ -322,7 +337,7 @@ After a power loss, every strobe through the last complete line is in the `.tsv`
 
 ## Re-derive
 
-`sessions.rederive` replays every spine run in a cohort's folder and rewrites only the [derived table](#the-derived-trial-table), in `.json` then `.mat`, where it differs from this build's; current files are not touched. Every other key is kept and the `.tsv` never opened. A block from a newer `replay_version`, or an `ok` block of an unknown `INTERP`, is `skipped`, so an older build never undoes a newer one. A `.mat` is judged by content, not mtime, and its failure is reported apart (`matError`). Refused while a box runs.
+`sessions.rederive` replays every spine run in a cohort's folder and rewrites only the [derived table](#the-derived-trial-table) (in the file's own version), in `.json` then `.mat`, where it differs from this build's; current files are not touched. Every other key is kept and the `.tsv` never opened. A block from a newer `replay_version`, an `ok` block of an unknown `INTERP`, or a document of a newer `schema_version` is `skipped`, so an older build never undoes a newer one. A `.mat` is judged by content, not mtime, and its failure is reported apart (`matError`). Refused while a box runs.
 
 ## SQLite database
 

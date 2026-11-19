@@ -242,12 +242,17 @@ def parse_run(path: str | Path, stat: StatResult) -> ReadResult:
             status="unreadable", detail=f"{target.name} is not a JSON object"
         )
 
+    refused = run_document.unreadable_reason(raw)
+    if refused is not None:
+        return ReadResult(status="unreadable", detail=f"{target.name} {refused}")
+
     # A spine run's derived trial table (`DATA.md#the-derived-trial-table`) is for
     # the lab's own scripts. Analytics never reads it: every number is a replay,
-    # so the copy is dropped here, at the one door a file comes in by.
+    # so the copy is dropped here, at the one door a file comes in by. A flat
+    # (version-1) file is regrouped into the version-2 shape at the same door.
     return ReadResult(
         status="ok",
-        document=run_document.without_trial_table(raw),
+        document=run_document.lifted(run_document.without_trial_table(raw)),
         mtime_ns=stat.mtime_ns,
         size=stat.size,
     )

@@ -39,8 +39,8 @@ import {
  *
  * The two figures are the same question asked of the *choice* and of the
  * *drop*: response accuracy is legacy P(hit), the correct well answered
- * first, held or not, over the trials answered at all, on a legacy and a spine
- * run alike (`ANALYTICS.md#rewarded-and-response-accuracy`); rewarded
+ * first, held or not, over the trials answered at all
+ * (`ANALYTICS.md#rewarded-and-response-accuracy`); rewarded
  * accuracy counts only the earned drop, over every trial administered. The
  * response line is always the higher of the pair, and **the shaded gap
  * between them is what the choice did not turn into fluid**: a broken hold, a

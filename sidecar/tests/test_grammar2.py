@@ -117,8 +117,8 @@ def test_without_a_token_the_codes_decide(profile: TaskProfile) -> None:
     assert grammar2.grammar_of(document([CORRECT_R, GRAMMAR_1]), profile) == 1
     assert grammar2.grammar_of(document([]), profile) == 1
     assert grammar2.grammar_of(document(EVERY), None) == 1
-    # The header alone is not the grammar: a phase-spine stream opens its
-    # trials with TRIAL_START too, and never closes one with END_TRIAL.
+    # The header alone is not the grammar: a stream that never closes a
+    # trial with END_TRIAL is not grammar 2.
     assert grammar2.grammar_of(document(["TRIAL_START LIGHTS_ON ODOR_POKE ODOR_1_ON"] * 3), profile) == 1
 
 

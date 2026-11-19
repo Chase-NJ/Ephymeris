@@ -55,7 +55,8 @@ FREE_RAM_RE = re.compile(r"^FREE_RAM=(\d+)$")
 #: says nothing emits grammar 1.
 STREAM_RE = re.compile(r"^STREAM=(\d+)$")
 #: Announced before `READY` by a sketch whose sync line pulses once per tick
-#: that strobes, not once per strobe: the spine's runner (`RECORDING.md#firmware-pulse`).
+#: that strobes, not once per strobe (`RECORDING.md#firmware-pulse`). No
+#: bundled sketch does.
 SYNC_RE = re.compile(r"^SYNC=([A-Z]+)$")
 READY_TOKEN = "READY"
 
@@ -70,7 +71,7 @@ class Announced:
     #: said nothing and so pulses once per strobe.
     sync: str | None = None
     #: Which stream grammar the trial runner emits (`STREAM=<n>`), or None for
-    #: a board that said nothing: grammar 1, or a spine board.
+    #: a board that said nothing: grammar 1.
     stream: int | None = None
 
     @property

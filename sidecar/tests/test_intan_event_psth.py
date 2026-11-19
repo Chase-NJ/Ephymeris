@@ -207,23 +207,6 @@ def test_split_by_outcome_puts_each_event_under_its_trial(tmp_path):
     assert view["groups"] == [{"label": "correct", "trials": 20}, {"label": "wrong", "trials": 10}]
 
 
-def test_a_spine_run_s_trials_are_on_the_strobes_own_clock():
-    """The board's clock restarts at START, and a replay's trial times are
-    that clock: a trial opens at the ms of a strobe of the run, never shifted."""
-    from tests.fixtures import spine as fixture
-
-    fixture.install()
-    try:
-        from tests.test_spine_analytics import recorded_document
-
-        document = recorded_document()
-        strobes = offline._strobes(document)
-        starts = offline._trial_starts(document, strobes)
-        assert starts and {s.ms for s in starts} <= {ms for _, ms in strobes}
-    finally:
-        fixture.uninstall()
-
-
 def test_a_run_that_cannot_be_read_says_why(tmp_path):
     run_path, _ = odor_session(tmp_path)
     (tmp_path / "ephys" / "rec_260901_090000" / "spike.dat").unlink()  # as a Traditional .rhd would leave it

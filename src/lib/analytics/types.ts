@@ -26,8 +26,6 @@ export type {
   MetricSeries,
   StrategyPoint,
   TrialRecord,
-  OutcomeTally,
-  ReplayScore,
   ReplayTrial,
   TrialTable,
   RunSeries,

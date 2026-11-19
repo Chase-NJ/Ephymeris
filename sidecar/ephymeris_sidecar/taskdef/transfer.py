@@ -33,7 +33,6 @@ from typing import Any, Callable
 
 from ..rig import registry
 from .model import TaskDefinition, TaskDefinitionError, folder_key
-from .spine import OUTCOME_CODES, STRUCTURAL
 from .store import MAX_DEFINITION_BYTES
 from .validate import validate
 
@@ -167,16 +166,13 @@ def export_document(
 
 def named_channels(definition: TaskDefinition) -> set[str]:
     """Every channel the definition names: a trial row's odor, response and
-    reward channels, and each value of a spine row's binding. A field that
-    names a channel joins here, or the import never checks that channel."""
-    if definition.spine is not None:
-        names = {c for row in definition.spine.rows for c in row.bind.values()}
-    else:
-        names = {
-            c
-            for t in definition.trials
-            for c in (t.odor_channel, t.response_channel, t.reward_channel)
-        }
+    reward channels. A field that names a channel joins here, or the import
+    never checks that channel."""
+    names = {
+        c
+        for t in definition.trials
+        for c in (t.odor_channel, t.response_channel, t.reward_channel)
+    }
     return {n for n in names if n}
 
 
@@ -185,22 +181,19 @@ def codes_used(
 ) -> set[str]:
     """The name of every code the task strobes because of what it names:
     each named channel's edge codes and declared onset (`entries`, as the file
-    carries them), a trial row's onset code and its response port's slot
-    codes, and a spine's structural codes. A field that makes a task strobe
-    another code joins here, or the import never checks its number."""
+    carries them), and a trial row's onset code and its response port's slot
+    codes. A field that makes a task strobe another code joins here, or the
+    import never checks its number."""
     names: set[Any] = set()
     for entry in entries.values():
         edges = entry.get("edges")
         names |= set(edges.values()) if isinstance(edges, dict) else set()
         names.add(entry.get("onset_strobe"))
-    if definition.spine is not None:
-        names |= set(STRUCTURAL.values()) | set(OUTCOME_CODES)
-    else:
-        for trial in definition.trials:
-            names.add(trial.onset_strobe)
-            slot = (entries.get(trial.response_channel or "") or {}).get("port_slot")
-            if isinstance(slot, int) and not isinstance(slot, bool):
-                names |= set((vocabulary.port_slot(slot) or {}).values())
+    for trial in definition.trials:
+        names.add(trial.onset_strobe)
+        slot = (entries.get(trial.response_channel or "") or {}).get("port_slot")
+        if isinstance(slot, int) and not isinstance(slot, bool):
+            names |= set((vocabulary.port_slot(slot) or {}).values())
     return {n for n in names if isinstance(n, str) and n}
 
 

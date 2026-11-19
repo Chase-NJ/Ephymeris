@@ -7,22 +7,21 @@ reading anything outside this folder. `tests/test_analytics_stream_is_pure.py`
 keeps it that way.
 
 Every run is read into its **trial table**, and every number is read off the
-table: a spine run's by replay, a legacy run's by the legacy decoder.
+table: a stream-grammar-2 run's by its headers and outcome codes, a
+grammar-1 run's by the legacy decoder.
 
 | Module | Answers |
 |---|---|
 | `legacy/` | A legacy run's trial table, read from its strobe names; the live runner's scorer (`MetricSet`); inference |
 | `grammar2` | A stream-grammar-2 run's trial table, read off its headers and outcome codes; which grammar a run speaks; its per-trial rows for its files |
-| `replay`, `spine` | A spine run replayed from its own file, and checked against what it recorded |
-| `trial_table` | One row per trial, for both kinds of run |
-| `table_metrics` | P(correct \\| row) and P(hit) per condition, the pooled figure, a spine run's class tallies |
+| `trial_table` | One row per trial, for both kinds of run; the outcome classes |
+| `table_metrics` | P(hit) per condition and the pooled figure |
 | `outcomes` | Was it rewarded, a hold failure, the wrong well, unanswered, or aborted? |
 | `engagement` | How many trials were offered, poked, and given odor? |
 | `summary` | One run's whole result (`summarize`), and its trial table for the wire |
 | `curves` | The run trial by trial: learning curves and the strategy walk |
 | `false_starts` | Which restarted runs to set aside |
-| `live` | A spine run replayed as it runs: where its board is, and its numbers so far |
-| `stats`, `document`, `metric_summary` | The Wilson interval; reading `ts_data` out of a file's document; the metric shape |
+| `stats`, `document`, `metric_summary` | The Wilson interval; reading `ts_data` out of a file's document, and whether the trial runner recorded it; the metric shape |
 | `odors` | A run's odors table, from its snapshot and parameters |
 
 Cached summaries are versioned by `scoring.current_version`, which moves by

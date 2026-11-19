@@ -180,7 +180,7 @@ One `sessions` row per session flow (`sessions/models.py`'s `Session`). `session
 
 ### Run records
 
-One `session_animal_runs` row per animal per session (`SessionAnimalRun`), the unit Analytics scores. Beyond ids, box, timings and `stopReason`, it stores `filePath` (the `.json`), `profileHash`, `config_json` (merged parameters), `paramsHash`, and, from finalization, `interp` and `channel_set_hash` (as in the [`.tsv` header](#the-tsv-log)). `diverged` is written by Analytics: 1 when replay could not predict the run, 0 when it scored it, null otherwise ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#how-a-spine-run-is-scored)).
+One `session_animal_runs` row per animal per session (`SessionAnimalRun`), the unit Analytics scores. Beyond ids, box, timings and `stopReason`, it stores `filePath` (the `.json`), `profileHash`, `config_json` (merged parameters), `paramsHash`, and, from finalization, `interp` and `channel_set_hash` (as in the [`.tsv` header](#the-tsv-log)). Nothing reads or writes the `diverged` column.
 
 > [!IMPORTANT]
 > **`profileHash` records the Task Profile the run used**, since `task.json` can change later; null marks a run from before snapshots ([TASKS.md](TASKS.md#profile-and-params-hashes)).
@@ -271,7 +271,7 @@ A run is written as **version 2**: `"schema_version": 2`, then its facts in bloc
 # n_events: 2392
 ```
 
-Written by `AnimalWriter.open_files` after the handshake and `SEED`. A field's line is named as version 1 named it (`rat`, `intan_path`), and a field with no value has no line. **A `.tsv` cut off mid-session lacks only the footer**, and its header makes a [recovered](#crash-recovery) run the document finalization would have written; a [spine](TASKS.md#spine-tasks) run's snapshot carries all replay needs ([TASKS.md](TASKS.md#the-snapshot)).
+Written by `AnimalWriter.open_files` after the handshake and `SEED`. A field's line is named as version 1 named it (`rat`, `intan_path`), and a field with no value has no line. **A `.tsv` cut off mid-session lacks only the footer**, and its header makes a [recovered](#crash-recovery) run the document finalization would have written.
 
 A header with no `schema_version` line is from before version 2: each parameter is a line of its own, and any line that is not a version-1 field is a parameter.
 
@@ -304,7 +304,7 @@ One row per odor line a [trial type](TASKS.md#trial-types) presents: which odor,
 <a id="the-derived-trial-table"></a>
 ### The trial table
 
-[Stream-grammar-2](TASKS.md#stream-grammar) runs carry their trial table under `trials` (`grammar2.rows_of`, marked `"grammar": 2`), and [spine runs](TASKS.md#spine-tasks) theirs ([the replay's](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#the-trial-table), `sessions/derived.py`). It is what people and the lab's scripts read:
+[Stream-grammar-2](TASKS.md#stream-grammar) runs carry their trial table under `trials` (`grammar2.rows_of`, marked `"grammar": 2`; `sessions/derived.py`). It is what people and the lab's scripts read:
 
 ```jsonc
 "trials": {"status": "ok", "detail": null, "interp": 1, "replay_version": 5, "grammar": 2, "phases": [],
@@ -328,10 +328,10 @@ A grammar-2 row (`grammar2.TrialRow`) is one trial:
 > [!CAUTION]
 > **The `*_s` columns are null until a recorded run is aligned**, which happens when its recording ends ([RECORDING.md](RECORDING.md#alignment-at-session-end)). All null means "not aligned", never "nothing happened".
 
-- Columns are the dataclass fields (`grammar2.TrialRow`, `ReplayTrial`), checked as MATLAB identifiers by `test_derived_trials.py`.
-- `diverged` or `unreplayable` blocks have no rows and must not be analysed; a grammar-1 run has no block.
-- `replay_version` (`spine.REPLAY_VERSION`) moves with any table change, pinned by `test_the_replay_version_pins_the_trial_table`.
-- Written at finalization and recovery (last trial `complete: false` in a spine run); rewritten only by [Re-derive](#re-derive), which keeps the `*_s` columns, and by alignment, which fills them.
+- Columns are the dataclass fields (`grammar2.TrialRow`; `ReplayTrial` for a block with no `grammar`), checked as MATLAB identifiers by `test_derived_trials.py`.
+- A grammar-1 run has no block, and neither does a run [another firmware interpreter recorded](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#why-a-run-has-no-numbers).
+- `replay_version` (`trial_table.REPLAY_VERSION`) moves with any table change, pinned by `test_the_replay_version_pins_the_trial_table`.
+- Written at finalization and recovery; rewritten only by [Re-derive](#re-derive), which keeps the `*_s` columns, and by alignment, which fills them.
 - A version-1 file has the same block as `derived`, its rows under `trials`; Re-derive reads and rewrites it there.
 - In the `.mat`, `rows` is an **N×1 struct array** (`struct2table(S.trials.rows)`; `S.derived.trials` in version 1).
 
@@ -363,7 +363,7 @@ flowchart TD
 
 ### Built once at the end
 
-`AnimalWriter.finalize` writes the footer, replays a spine run's table, then builds `.json` and `.mat`. It is idempotent (first `stop_reason` wins), and the structured writes are best-effort: an `OSError` is logged, not raised. Each is atomic (`write_atomic`: a per-process, per-thread `.part`, fsync, rename), so a power cut leaves a `.part`, never a torn document.
+`AnimalWriter.finalize` writes the footer, derives a grammar-2 run's [trial table](#the-trial-table), then builds `.json` and `.mat`. It is idempotent (first `stop_reason` wins), and the structured writes are best-effort: an `OSError` is logged, not raised. Each is atomic (`write_atomic`: a per-process, per-thread `.part`, fsync, rename), so a power cut leaves a `.part`, never a torn document.
 
 `sweep_parts` removes stale parts once per process, at the first `settings.push`: only `<name>.<pid>-<thread>.part` files from another pid, older (mtime and ctime) than `PART_GRACE_S` before start, outside the backup directory.
 
@@ -376,14 +376,14 @@ After a power loss, every strobe through the last complete line is in the `.tsv`
 `sessions.recover` (`sessions/recovery.py`, the **Recover** button) rebuilds `.json` and `.mat` for each `.tsv` without a parseable `.json` (an unreadable one counts as present). It never talks to a board.
 
 - It uses the archive walker (`walk_orphaned_tsvs`), so it reads every layout [adoption](#orphan-adoption) does and writes into the same one.
-- It writes [version 2](#the-json-document) from any `.tsv`. A footer's `stop_reason` wins; otherwise `"recovered after crash"`. `n_events` is recounted; spine runs get their [table](#the-trial-table).
+- It writes [version 2](#the-json-document) from any `.tsv`. A footer's `stop_reason` wins; otherwise `"recovered after crash"`. `n_events` is recounted; grammar-2 runs get their [table](#the-trial-table).
 - Strobe lines must match `^\d{1,3}\t\d+$`, and **an unterminated last line is dropped**, so a torn line never reads as real. A torn `task_profile` line is dropped.
 - **Pre-Ephymeris logs** (first line `LEGACY_HEADER`) allow a third name column and an unterminated last line, and record `"recovered from a legacy log"`; header-only ones are refused.
 - Refused while a box runs; an [archive write](#the-cohort-archive). Recover then runs a rescan to adopt what it wrote.
 
 ## Re-derive
 
-`sessions.rederive` re-derives every spine and grammar-2 run in a cohort's folder and rewrites only the [trial table](#the-trial-table) (in the file's own version), in `.json` then `.mat`, where it differs from this build's; current files are not touched. Every other key is kept and the `.tsv` never opened. A block from a newer `replay_version`, an `ok` block of an unknown `INTERP`, or a document of a newer `schema_version` is `skipped`, so an older build never undoes a newer one. A `.mat` is judged by content, not mtime, and its failure is reported apart (`matError`). Refused while a box runs.
+`sessions.rederive` re-derives every grammar-2 run in a cohort's folder and rewrites only the [trial table](#the-trial-table) (in the file's own version), in `.json` then `.mat`, where it differs from this build's; current files are not touched. Every other key is kept and the `.tsv` never opened. A block from a newer `replay_version` or a document of a newer `schema_version` is `skipped`, so an older build never undoes a newer one. A `.mat` is judged by content, not mtime, and its failure is reported apart (`matError`). Refused while a box runs.
 
 ## SQLite database
 
@@ -757,7 +757,7 @@ A rescan skips a file (`_carry_over`) when its adopted row names **the same path
 
 ### Pooling across tasks
 
-No task filter: outcome tallies mean the same on every task, so trends pool every run and **disclose** the task in the task strip. Accuracy draws response and rewarded accuracy pooled by **summed trials** ([spine runs](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#a-spine-run-on-the-cross-session-panels)). The session summary lists every animal that ran; an unscorable run shows its reason, never zeroes.
+No task filter: outcome tallies mean the same on every task, so trends pool every run and **disclose** the task in the task strip. Accuracy draws response and rewarded accuracy pooled by **summed trials**. The session summary lists every animal that ran; an unscorable run shows its reason, never zeroes.
 
 > [!CAUTION]
 > **The effort total is the trial light (`presented`)**, not odor onset, so an ignored session reads hollow, not short.

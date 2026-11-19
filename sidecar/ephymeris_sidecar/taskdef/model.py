@@ -188,336 +188,6 @@ class StageRow:
 
 
 @dataclass(frozen=True)
-class SpineSlot:
-    """A role in the spine (`port`, `sample`), bound to a channel by each row.
-
-    Its type and mode are a channel's (`TASKS.md#driven-outputs`): a slot binds
-    only a channel of the same type and mode.
-    """
-
-    id: str
-    type: str  # digital_in | digital_out | pwm_out | tone_out
-    mode: str | None = None  # a digital_out's "train"; None is a level line
-
-    def to_json(self) -> dict[str, Any]:
-        out = {"id": self.id, "type": self.type}
-        if self.mode is not None:
-            out["mode"] = self.mode
-        return out
-
-
-@dataclass(frozen=True)
-class SpinePhase:
-    """One phase from the palette. Fields a phase does not use stay None.
-
-    `ms` is the default of the phase's timer parameter (`T<i>` on the wire);
-    a Wait and a Counter have one only when they declare `timeout_ms`. A
-    Response window's `hold_ms` is the default of its `H<i>`, and a Counter's
-    `count` and `count_max` of its `N<i>` and `NX<i>`.
-    """
-
-    phase: str
-    on: str | None = None              # wait, hold, counter: the input slot it watches
-    outputs: tuple[str, ...] = ()      # output slots HIGH while in the phase
-    ms: int | None = None              # hold, present, delay, response (the window), outcome (class timeout), iti
-    timeout_ms: int | None = None      # wait, counter: optional, out to an end
-    edge: str | None = None            # wait: `enter` (the default) or `exit`
-    abort_on_release: str | None = None  # present, delay: an input slot whose release aborts
-    abort_on_enter: str | None = None  # present, delay: an input slot whose entry aborts
-    line: str | None = None            # outcome with no window before it: the reward line's slot
-    responses: tuple[str, ...] = ()    # response: the input slots it watches
-    hold_ms: int | None = None         # response: how long an entry that holds must be held
-    count: int | None = None           # counter: N, or the low end of a drawn N
-    count_max: int | None = None       # counter: the high end of a drawn N
-    ratios: tuple[int, ...] = ()       # counter: a progressive N, one per completion
-    ends_session: bool = False         # counter: its time limit is the session's last trial
-    watch: tuple[str, ...] = ()        # any phase: input slots counted while in it, which move nothing
-    penalty_ms: int | None = None      # wait, hold, present, delay, counter: the early exit's penalty, in place of the ITI
-    escalate_ms: int | None = None     # wait: its penalty grows by this per lazy trial since the last hit
-    escalate_max_ms: int | None = None  # wait: up to this
-    broken_penalty_ms: int | None = None  # response: a broken hold's penalty, in place of the ITI
-    await_exit: bool = False           # outcome: after a paid response, wait for its well's release
-
-    def to_json(self) -> dict[str, Any]:
-        out: dict[str, Any] = {"phase": self.phase}
-        for key, value in (("on", self.on), ("outputs", list(self.outputs) or None),
-                           ("ms", self.ms), ("timeoutMs", self.timeout_ms), ("edge", self.edge),
-                           ("abortOnRelease", self.abort_on_release), ("abortOnEnter", self.abort_on_enter),
-                           ("line", self.line),
-                           ("responses", list(self.responses) or None), ("holdMs", self.hold_ms),
-                           ("count", self.count), ("countMax", self.count_max),
-                           ("ratios", list(self.ratios) or None), ("endsSession", self.ends_session or None),
-                           ("watch", list(self.watch) or None), ("penaltyMs", self.penalty_ms),
-                           ("escalateMs", self.escalate_ms), ("escalateMaxMs", self.escalate_max_ms),
-                           ("brokenPenaltyMs", self.broken_penalty_ms), ("awaitExit", self.await_exit or None)):
-            if value is not None:
-                out[key] = value
-        return out
-
-
-@dataclass(frozen=True)
-class MapEntry:
-    """Where one watched response, or the window's timeout, takes a trial.
-
-    `line` is an output slot the row binds to a reward channel; the reward is
-    drawn with `reward_permille`, which goes only with a line. `hold` asks for
-    the response to be held for the window's `holdMs`, and letting go early is
-    `hold_broken`.
-    """
-
-    outcome: str
-    line: str | None = None
-    reward_permille: int = 1000
-    hold: bool = False
-    #: The penalty that runs in place of the ITI after this entry, None for the ITI.
-    penalty_ms: int | None = None
-
-    def to_json(self) -> dict[str, Any]:
-        out: dict[str, Any] = {"outcome": self.outcome}
-        if self.line is not None:
-            out["line"] = self.line
-        if self.line is not None or self.reward_permille != 1000:
-            out["rewardPermille"] = self.reward_permille
-        if self.hold:
-            out["hold"] = True
-        if self.penalty_ms is not None:
-            out["penaltyMs"] = self.penalty_ms
-        return out
-
-
-@dataclass(frozen=True)
-class SpineRow:
-    """A trial type: a stable id, the operator's name, a channel per slot, and
-    its contingency map: each of the window's responses, and `timeout`, to an
-    outcome class (`MapEntry`).
-
-    `reward_permille` is read only by an Outcome with no Response window before
-    it; after a window each map entry carries its own.
-
-    `drive` gives the row's values for each driven output slot
-    (`TASKS.md#driven-outputs`): `{"duty": n}` for a PWM slot, `{"hz": n}` for
-    a tone, `{"hz": n, "widthMs": n, "ms": n}` for a pulse train.
-    """
-
-    id: str
-    name: str
-    bind: dict[str, str]
-    reward_ms: int = 100
-    reward_permille: int = 1000
-    map: dict[str, MapEntry] = field(default_factory=dict)
-    drive: dict[str, dict[str, int]] = field(default_factory=dict)
-
-    def to_json(self) -> dict[str, Any]:
-        out: dict[str, Any] = {"id": self.id, "name": self.name, "bind": dict(self.bind),
-                               "rewardMs": self.reward_ms, "rewardPermille": self.reward_permille}
-        if self.map:
-            out["map"] = {key: entry.to_json() for key, entry in self.map.items()}
-        if self.drive:
-            out["drive"] = {slot: dict(values) for slot, values in self.drive.items()}
-        return out
-
-
-@dataclass(frozen=True)
-class SpineBlock:
-    """Rows drawn by a selection until an end rule says the block is over, then
-    the next block, or the end of the session after the last one
-    (`TASKS.md#blocks`).
-
-    `weights` line up with `rows` (empty: 1 each). The end rule is `trials` (N),
-    with `trials_max` N drawn from [trials, trials_max] at each start, and/or
-    `criterion` (k correct of the last n); none of them: the block never ends.
-    `next` is a block id, None for the following block. `correction` is how many
-    times in a row an error repeats its row; `correction_after` the outcome
-    classes that count as an error, empty for `lowering.ERROR_CLASSES`. `phase_ms` overrides a timed
-    phase's duration, by phase index, while the block runs.
-    """
-
-    id: str
-    rows: tuple[str, ...]
-    trials: int | None = None
-    trials_max: int | None = None
-    criterion: tuple[int, int] | None = None
-    select: str = "uniform"
-    weights: tuple[int, ...] = ()
-    next: str | None = None
-    correction: int | None = None
-    correction_after: tuple[str, ...] = ()
-    bias_window: int | None = None
-    phase_ms: dict[str, int] = field(default_factory=dict)
-    #: A Response window's hold while the block runs, by phase index.
-    hold_ms: dict[str, int] = field(default_factory=dict)
-    #: Anti-bias as GRGL's: its strength and clamp in permille, and the
-    #: same-side run cap (`TASKS.md#grgls-rules-on-the-spine`).
-    bias_strength: int | None = None
-    bias_min: int | None = None
-    bias_max: int | None = None
-    max_run: int | None = None
-
-    def weight(self, e: int) -> int:
-        return self.weights[e] if e < len(self.weights) else 1
-
-    def to_json(self) -> dict[str, Any]:
-        out: dict[str, Any] = {"id": self.id, "rows": list(self.rows)}
-        if self.select != "uniform":
-            out["select"] = self.select
-        for key, value in (("weights", list(self.weights) or None), ("trials", self.trials),
-                           ("trialsMax", self.trials_max),
-                           ("criterion", {"correct": self.criterion[0], "of": self.criterion[1]}
-                            if self.criterion is not None else None),
-                           ("next", self.next), ("correction", self.correction),
-                           ("correctionAfter", list(self.correction_after) or None),
-                           ("biasWindow", self.bias_window), ("phaseMs", dict(self.phase_ms) or None),
-                           ("holdMs", dict(self.hold_ms) or None), ("biasStrength", self.bias_strength),
-                           ("biasMin", self.bias_min), ("biasMax", self.bias_max), ("maxRun", self.max_run)):
-            if value is not None:
-                out[key] = value
-        return out
-
-
-@dataclass(frozen=True)
-class Spine:
-    """A phase-spine task's own fields (`0003-phase-spine-task-model.md#task-definition`).
-
-    Parsed leniently, like a trial row: only a value of the wrong JSON type is
-    refused here. A phase this palette lacks, a slot no row binds, a channel
-    this rig lacks are diagnostics (`taskdef/spine.py`), so a half-built spine
-    still saves and previews.
-    """
-
-    slots: tuple[SpineSlot, ...]
-    phases: tuple[SpinePhase, ...]
-    rows: tuple[SpineRow, ...]
-    blocks: tuple[SpineBlock, ...]
-    #: The session's trial cap (`NT`), None for none: the blocks end the session.
-    trials: int | None = None
-    #: An aborted trial repeats its row and counts toward neither a block's N
-    #: nor the trial cap, as GRGL's invalid trial (`TASKS.md#grgls-rules-on-the-spine`).
-    repeat_aborts: bool = False
-
-    def to_json(self) -> dict[str, Any]:
-        out: dict[str, Any] = {
-            "slots": [s.to_json() for s in self.slots],
-            "spine": [p.to_json() for p in self.phases],
-            "rows": [r.to_json() for r in self.rows],
-            "blocks": [b.to_json() for b in self.blocks],
-        }
-        if self.trials is not None:
-            out["sessionTrials"] = self.trials
-        if self.repeat_aborts:
-            out["repeatAborts"] = True
-        return out
-
-    @staticmethod
-    def from_json(raw: dict) -> "Spine":
-        def objects(key: str) -> list[dict]:
-            value = raw.get(key, [])
-            if not isinstance(value, list) or any(not isinstance(v, dict) for v in value):
-                raise TaskDefinitionError(f"{key} must be a list of objects")
-            return value
-
-        def strings(value: Any, what: str) -> tuple[str, ...]:
-            if value is None:
-                return ()
-            if not isinstance(value, list) or any(not isinstance(v, str) for v in value):
-                raise TaskDefinitionError(f"{what} must be a list of strings")
-            return tuple(value)
-
-        def opt_int(value: Any, what: str) -> int | None:
-            return None if value is None else _int(value, what)
-
-        def ints(value: Any, what: str) -> tuple[int, ...]:
-            if value is None:
-                return ()
-            if not isinstance(value, list):
-                raise TaskDefinitionError(f"{what} must be a list of whole numbers")
-            return tuple(_int(v, what) for v in value)
-
-        phases = tuple(
-            SpinePhase(
-                phase=str(p.get("phase", "")),
-                on=_opt_str(p.get("on")),
-                outputs=strings(p.get("outputs"), "a phase's outputs"),
-                ms=opt_int(p.get("ms"), "ms"),
-                timeout_ms=opt_int(p.get("timeoutMs"), "timeoutMs"),
-                edge=_opt_str(p.get("edge")),
-                abort_on_release=_opt_str(p.get("abortOnRelease")),
-                abort_on_enter=_opt_str(p.get("abortOnEnter")),
-                line=_opt_str(p.get("line")),
-                responses=strings(p.get("responses"), "a window's responses"),
-                hold_ms=opt_int(p.get("holdMs"), "holdMs"),
-                count=opt_int(p.get("count"), "count"),
-                count_max=opt_int(p.get("countMax"), "countMax"),
-                ratios=ints(p.get("ratios"), "a counter's ratios"),
-                ends_session=_bool(p.get("endsSession", False), "endsSession"),
-                watch=strings(p.get("watch"), "a phase's watch"),
-                penalty_ms=opt_int(p.get("penaltyMs"), "penaltyMs"),
-                escalate_ms=opt_int(p.get("escalateMs"), "escalateMs"),
-                escalate_max_ms=opt_int(p.get("escalateMaxMs"), "escalateMaxMs"),
-                broken_penalty_ms=opt_int(p.get("brokenPenaltyMs"), "brokenPenaltyMs"),
-                await_exit=_bool(p.get("awaitExit", False), "awaitExit"),
-            )
-            for p in objects("spine")
-        )
-        rows = []
-        for r in objects("rows"):
-            bind = r.get("bind", {})
-            if not isinstance(bind, dict) or any(not isinstance(v, str) for v in bind.values()):
-                raise TaskDefinitionError("a row's bind maps each slot to a channel name")
-            rows.append(SpineRow(
-                id=str(r.get("id", "")),
-                name=str(r.get("name", "")),
-                bind={str(k): v for k, v in bind.items()},
-                reward_ms=_int(r.get("rewardMs", 100), "rewardMs"),
-                reward_permille=_int(r.get("rewardPermille", 1000), "rewardPermille"),
-                map=_contingency_map(r.get("map")),
-                drive=_drive(r.get("drive")),
-            ))
-        return Spine(
-            slots=tuple(SpineSlot(id=str(s.get("id", "")), type=str(s.get("type", "")),
-                                  mode=_opt_str(s.get("mode")))
-                        for s in objects("slots")),
-            phases=phases,
-            rows=tuple(rows),
-            blocks=tuple(_block(b, strings, opt_int, ints) for b in objects("blocks")),
-            trials=opt_int(raw.get("sessionTrials"), "sessionTrials"),
-            repeat_aborts=_bool(raw.get("repeatAborts", False), "repeatAborts"),
-        )
-
-
-def _block(b: dict, strings, opt_int, ints) -> SpineBlock:  # noqa: ANN001
-    """One block, refused only for a value of the wrong JSON type."""
-    criterion = b.get("criterion")
-    if criterion is not None and not isinstance(criterion, dict):
-        raise TaskDefinitionError("a block's criterion is {correct, of}")
-    phase_ms = b.get("phaseMs") or {}
-    if not isinstance(phase_ms, dict):
-        raise TaskDefinitionError("a block's phaseMs maps a phase index to ms")
-    hold_ms = b.get("holdMs") or {}
-    if not isinstance(hold_ms, dict):
-        raise TaskDefinitionError("a block's holdMs maps a phase index to ms")
-    return SpineBlock(
-        id=str(b.get("id", "")),
-        rows=strings(b.get("rows"), "a block's rows"),
-        trials=opt_int(b.get("trials"), "trials"),
-        trials_max=opt_int(b.get("trialsMax"), "trialsMax"),
-        criterion=((_int(criterion.get("correct"), "a criterion's correct"), _int(criterion.get("of"), "its of"))
-                   if criterion is not None else None),
-        select=str(b.get("select", "uniform")),
-        weights=ints(b.get("weights"), "a block's weights"),
-        next=_opt_str(b.get("next")),
-        correction=opt_int(b.get("correction"), "correction"),
-        correction_after=strings(b.get("correctionAfter"), "a block's correctionAfter"),
-        bias_window=opt_int(b.get("biasWindow"), "biasWindow"),
-        phase_ms={str(k): _int(v, "a phase's ms") for k, v in phase_ms.items()},
-        hold_ms={str(k): _int(v, "a hold's ms") for k, v in hold_ms.items()},
-        bias_strength=opt_int(b.get("biasStrength"), "biasStrength"),
-        bias_min=opt_int(b.get("biasMin"), "biasMin"),
-        bias_max=opt_int(b.get("biasMax"), "biasMax"),
-        max_run=opt_int(b.get("maxRun"), "maxRun"),
-    )
-
-
-@dataclass(frozen=True)
 class TaskDefinition:
     id: str
     name: str
@@ -541,11 +211,6 @@ class TaskDefinition:
     #: profile is treated as data.
     legacy_names: list[str] = field(default_factory=list)
     notes: str = ""
-    #: A phase-spine task (ADR 0003) when set: the generator lowers it to a
-    #: state table and ignores `trials`, `stages` and `selection_mode`. None for
-    #: every definition saved before spines existed, whose document and
-    #: generated folder are then exactly what they were.
-    spine: Spine | None = None
 
     @property
     def stage_count(self) -> int:
@@ -553,22 +218,10 @@ class TaskDefinition:
 
     @property
     def trial_count(self) -> int:
-        """Rows in the trial table, or a spine task's rows."""
-        return len(self.spine.rows) if self.spine is not None else len(self.trials)
+        """Rows in the trial table."""
+        return len(self.trials)
 
     def to_json(self) -> dict[str, Any]:
-        if self.spine is not None:
-            # A spine task stores only what it is: no trial table, ramp or
-            # selection mode it would never read.
-            return {
-                "id": self.id,
-                "name": self.name,
-                "category": self.category,
-                **self.spine.to_json(),
-                "params": dict(self.params),
-                "legacyNames": list(self.legacy_names),
-                "notes": self.notes,
-            }
         return {
             "id": self.id,
             "name": self.name,
@@ -594,6 +247,10 @@ class TaskDefinition:
         """
         if not isinstance(raw, dict):
             raise TaskDefinitionError("a task definition must be an object")
+        if "spine" in raw:
+            # Never read as a trial-table task with no trials: it is another
+            # kind of task, which this build cannot generate or run.
+            raise TaskDefinitionError("a phase-spine task, which this build does not run")
 
         task_id = _req_str(raw, "id")
         if not ID_RE.match(task_id):
@@ -641,7 +298,6 @@ class TaskDefinition:
             raise TaskDefinitionError("exposed must be a list of parameter keys")
 
         stages = [StageRow.from_json(s) for s in stages_raw] or [StageRow()]
-        spine = Spine.from_json(raw) if "spine" in raw else None
         return TaskDefinition(
             id=task_id,
             name=name,
@@ -649,90 +305,16 @@ class TaskDefinition:
             selection_mode=mode,
             trials=[TrialTypeDef.from_json(t) for t in trials_raw],
             stages=stages,
-            params=_one_block_trials_key(_one_row_reward_keys(dict(params), spine), spine),
+            params=dict(params),
             exposed=list(dict.fromkeys(exposed)),
             legacy_names=[n for n in legacy],
             notes=str(raw.get("notes", "")),
-            # The `spine` key is what makes a definition a spine task.
-            spine=spine,
         )
 
 
 # --------------------------------------------------------------------------- #
 # Parsing helpers
 # --------------------------------------------------------------------------- #
-
-
-#: The reward keys a one-row spine stored before rewards were keyed by row id.
-_ONE_ROW_REWARD_KEYS = ("reward_ms", "reward_permille")
-
-
-def _one_row_reward_keys(params: dict[str, Any], spine: Spine | None) -> dict[str, Any]:
-    """Carry a one-row spine's `reward_ms` and `reward_permille` over to its row's keys.
-
-    A spine of one row stored them unkeyed; its row's parameters are now
-    `reward_ms_<row id>` and `reward_permille_<row id>`
-    (`TASKS.md#lowering`). Read as the row's, never dropped for its default.
-    A key the row already holds wins, and the old one is left for SPN110 to name.
-    """
-    if spine is None or len(spine.rows) != 1:
-        return params
-    row = spine.rows[0].id
-    for old in _ONE_ROW_REWARD_KEYS:
-        new = f"{old}_{row}"
-        if old in params and new not in params:
-            params[new] = params.pop(old)
-    return params
-
-
-def _one_block_trials_key(params: dict[str, Any], spine: Spine | None) -> dict[str, Any]:
-    """Carry a one-block spine's stored `block_trials` over to its block's key.
-
-    Its one block's trial count was the session's (`NT`); it is now that
-    block's N, `block_<id>_trials` (`TASKS.md#blocks`). As with the reward keys,
-    a key the block already holds wins, and the old one is left for SPN110.
-    """
-    if spine is None or len(spine.blocks) != 1 or "block_trials" not in params:
-        return params
-    new = f"block_{spine.blocks[0].id}_trials"
-    if new not in params:
-        params[new] = params.pop("block_trials")
-    return params
-
-
-def _contingency_map(raw: Any) -> dict[str, MapEntry]:
-    """A row's `map`, refused only for a value of the wrong JSON type."""
-    if raw is None:
-        return {}
-    if not isinstance(raw, dict) or any(not isinstance(v, dict) for v in raw.values()):
-        raise TaskDefinitionError("a row's map takes each response, and timeout, to an object")
-    out: dict[str, MapEntry] = {}
-    for key, entry in raw.items():
-        hold = entry.get("hold", False)
-        if not isinstance(hold, bool):
-            raise TaskDefinitionError(f"map entry {key!r}: hold is true or false, not {hold!r}")
-        outcome = entry.get("outcome", "")
-        if not isinstance(outcome, str):
-            raise TaskDefinitionError(f"map entry {key!r}: outcome is a class name, not {outcome!r}")
-        out[str(key)] = MapEntry(
-            outcome=outcome,
-            line=_opt_str(entry.get("line")),
-            reward_permille=_int(entry.get("rewardPermille", 1000), "rewardPermille"),
-            hold=hold,
-            penalty_ms=None if entry.get("penaltyMs") is None else _int(entry["penaltyMs"], "penaltyMs"),
-        )
-    return out
-
-
-def _drive(raw: Any) -> dict[str, dict[str, int]]:
-    """A row's `drive`, refused only for a value of the wrong JSON type: which
-    keys a slot needs, and their ranges, are SPN111's."""
-    if raw is None:
-        return {}
-    if not isinstance(raw, dict) or any(not isinstance(v, dict) for v in raw.values()):
-        raise TaskDefinitionError("a row's drive takes each driven slot to an object of values")
-    return {str(slot): {str(k): _int(v, f"drive.{slot}.{k}") for k, v in values.items()}
-            for slot, values in raw.items()}
 
 
 def _req_str(raw: dict, key: str) -> str:
@@ -754,10 +336,4 @@ def _int(value: Any, what: str) -> int:
     # bool before int: `True` is an int in Python and would silently become 1.
     if isinstance(value, bool) or not isinstance(value, int):
         raise TaskDefinitionError(f"{what} must be a whole number, not {value!r}")
-    return value
-
-
-def _bool(value: Any, what: str) -> bool:
-    if not isinstance(value, bool):
-        raise TaskDefinitionError(f"{what} is true or false, not {value!r}")
     return value

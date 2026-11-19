@@ -126,7 +126,7 @@ def test_an_unconnected_sync_line_does_not_queue_strobes_forever():
     assert all(e.sample is None for e in got)
 
 
-# A spine run's stream, as BoxSpine.h strobes it: every strobe of a tick carries
+# A tick-pulsed board's stream: every strobe of a tick carries
 # that tick's ms, and a tick-pulsed board pulses once per tick that strobes.
 TICKS = [
     (0, [17, 48, 29, 42]), (10, [40, 44]), (110, [43, 45, 46]), (140, [47]), (191, [48, 29, 42]),

@@ -9,7 +9,6 @@ How a task gets from firmware that emits strobes to the app's trial-flow diagram
 - [Sketch library](#sketch-library)
 - [Task profile](#task-profile)
 - [Task definitions](#task-definitions)
-- [Spine tasks](#spine-tasks)
 - [Rig wiring](#rig-wiring)
 - [Strobe vocabulary](#strobe-vocabulary)
 - [The START line](#the-start-line)
@@ -46,7 +45,7 @@ flowchart LR
 
 ## Firmware
 
-Firmware lives only in `firmware/` ([its README](../firmware/README.md)). `libraries/BehaviorBox/BehaviorBox.h` is the trial runner: serial helpers, `TaskParams` with its wire-key list `TASK_PARAM_LIST`, the selectors and one `runTrial()` loop. A [spine task](#spine-tasks) runs `BoxSpine.h` around the pure core `BoxInterp.h` instead. Pins in `BoxPins.h` are overridable defaults; strobe codes have none, so a sketch builds only with the generated `TaskPins.h`, included before `<BehaviorBox.h>`.
+Firmware lives only in `firmware/` ([its README](../firmware/README.md)). `libraries/BehaviorBox/BehaviorBox.h` is the trial runner: serial helpers, `TaskParams` with its wire-key list `TASK_PARAM_LIST`, the selectors and one `runTrial()` loop. Pins in `BoxPins.h` are overridable defaults; strobe codes have none, so a sketch builds only with the generated `TaskPins.h`, included before `<BehaviorBox.h>`.
 
 > [!CAUTION]
 > **Each count moves with its key list** (`NUM_STAGES` with `BOX_STAGE_KEY_LIST`; `BOX_MAX_TRIAL_TYPES` with `BOX_POOL_KEY_LIST` and `BOX_REWARD_KEY_LIST`), or a `SET` token writes past an array.
@@ -71,7 +70,7 @@ The trial runner frames every trial the same way, so a reader splits rather than
 > [!CAUTION]
 > **`arduino-cli compile` hides type errors** (`-fpermissive -w`). After a shared-signature change, compile every sketch with `--warnings all` and run the host tests.
 
-The host tests (`extras/host_test/`, against an `Arduino.h` shim) are `run.sh`, `run_box.sh`, `run_stream.sh`, `run_interp.sh`, `run_spine.sh` and `run_diff.sh`, the **differential test**: it runs `BoxInterp.h` and its Python port `analytics/stream/replay.py` on generated tables and fails at the first tick they differ. Change those two together. `sidecar/tests/test_spine_run.py` runs a generated spine task through the real session path.
+The host tests (`extras/host_test/`, against an `Arduino.h` shim) are `run.sh` (the library), `run_box.sh` (the box utility) and `run_stream.sh` (every outcome's [strobe sequence](#stream-grammar)).
 
 ## Sketch library
 
@@ -105,7 +104,7 @@ The library is rescanned on `settings.push`, `sketches.refresh`, task saves and 
 
 ### Top level keys
 
-`taskName` (required), `kind` (`"behavior"` or `"utility"`), [`config`](#config-fields), [`liveMetrics`](#live-metric-entries), [`controls` and `telemetry`](#utility-controls-and-telemetry), [`identify`](#identify), [`legacyNames`](#legacy-names), a generated task's [`trialTypes`](#trial-types-in-the-profile) and a spine task's [`spine`](#the-snapshot). [`strobes`](#strobes) is filled at load. Unknown keys are ignored.
+`taskName` (required), `kind` (`"behavior"` or `"utility"`), [`config`](#config-fields), [`liveMetrics`](#live-metric-entries), [`controls` and `telemetry`](#utility-controls-and-telemetry), [`identify`](#identify), [`legacyNames`](#legacy-names) and a generated task's [`trialTypes`](#trial-types-in-the-profile). [`strobes`](#strobes) is filled at load. Unknown keys are ignored.
 
 > [!CAUTION]
 > **Never add a `states` or `graph` key**: it moves `profile_hash` and splits the sketch's history.
@@ -178,7 +177,7 @@ A **definition** is the operator's document, `<data_dir>/tasks/<id>.json`. From 
 
 ### What a definition holds
 
-`taskdef/model.py`: `trials[]` (each row's odor, response and reward channels, onset strobe from its [line](#onset-codes), `rewardTime`, `weight` and required `label`), `selectionMode`, `stages[]` (the ramp), `params{}`, `exposed[]`, and `id`, `name`, `category`, `legacyNames`, `notes`. It stores **channel and code names, never pins or numbers**; `category` and `name` must be Windows-safe folder names. Reward volume and weight live on the row only.
+`taskdef/model.py`: `trials[]` (each row's odor, response and reward channels, onset strobe from its [line](#onset-codes), `rewardTime`, `weight` and required `label`), `selectionMode`, `stages[]` (the ramp), `params{}`, `exposed[]`, and `id`, `name`, `category`, `legacyNames`, `notes`. It stores **channel and code names, never pins or numbers**; `category` and `name` must be Windows-safe folder names. Reward volume and weight live on the row only. A stored definition with a `spine` key does not parse: it is listed as unreadable, and an [export](#moving-a-task-between-machines) carrying one is refused on import.
 
 > [!CAUTION]
 > **`params` holds only divergences from `taskdef/fields.py`'s defaults**, so catalogue fixes reach saved tasks. `fields.py` mirrors `TASK_PARAM_LIST` unenforced: a key the firmware does not parse is silently ignored.
@@ -258,83 +257,6 @@ Each output but the sync line becomes a grid row named by its channel (`PULSE fl
 
 **Export** a task from its Task landing row and **Import task** on the other machine (`taskdef/transfer.py`). The file carries the definition verbatim, the channels it names and the numbers of the codes it strobes. **The import judges only those, never changes the channel set or vocabulary, and refuses whole on any conflict**: a channel missing, different or reordered, a code numbered otherwise, or a taken name. Replacing a same-id task needs `confirm`.
 
-## Spine tasks
-
-A **spine task** ([ADR 0003](adr/0003-phase-spine-task-model.md)) is an ordered spine of phases, lowered to a state table one interpreter walks. It needs no firmware of its own; Mission Control and Analytics score it by replay ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#live-scoring)). So far it has run on a Mega only with nothing wired.
-
-### What a spine task holds
-
-A definition with a `spine` key (`taskdef/model.py`):
-
-- `slots[]`: roles, each binding channels of its own type and mode.
-- `spine[]`: the phases. `wait` waits for an input edge; `hold` needs the input held for `ms`; `present` and `delay` last `ms`, optionally aborting on a release or entry; `counter` waits for the N-th rise (fixed, drawn or progressive); `response` is the window; `outcome` opens a reward `line`; `iti` comes last. Any phase may hold `outputs` HIGH and `watch` inputs, which are strobed but move nothing.
-- `rows[]`: trial types with a stable `id`, a required `name`, `bind` (slot → channel), reward fields, and a **contingency map** giving each response and the timeout an outcome class and, optionally, a reward `line`.
-- `blocks[]`, an optional `sessionTrials`, and `params{}` divergences.
-
-```json
-"go":    {"resp": {"outcome": "correct", "line": "reward"}, "timeout": {"outcome": "omission"}}
-"no_go": {"resp": {"outcome": "false_alarm"}, "timeout": {"outcome": "withheld"}}
-```
-
-### Blocks
-
-A session runs its blocks in order, each drawing from its `rows` by `select` (`uniform`, `weighted`, a shuffle `bag`, or `antibias`) until its end rule: `trials` (fixed or drawn), or a `criterion` of k hits in the last n non-aborted trials, hits being `correct` and `withheld` as the scorer counts them. Then it goes to `next`. `correction` repeats a row after an error. The session ends at the first of: the last block ending, `sessionTrials`, `STOP`, or a Counter's `endsSession`.
-
-**Counts are compiled; values are parameters.** Block structure is in `TaskSpine.h` and moves `profile_hash`; N, k, weights and timings are `SET` parameters the board clamps.
-
-### GRGL's rules on the spine
-
-The trial-runner rules the odor 2AFC needs, each a parameter: `penaltyMs` (served **in place of the ITI**), `escalateMs` and `escalateMaxMs` (a growing lazy penalty), `brokenPenaltyMs`, `awaitExit`, `repeatAborts`, and an `antibias` block's `biasStrength`, `biasMin`, `biasMax` and `maxRun`. Per-side `CL`/`CR` budgets have no equivalent ([ADR 0003](adr/0003-phase-spine-task-model.md#migration)).
-
-### Lowering
-
-`taskdef/lowering.py` (pure, standard library only) writes each phase as states:
-
-- **Channels are bits**, never pins: at most 32 inputs, 32 outputs and 254 states.
-- **Every duration and probability is a parameter slot** (keys listed in `lowering.py`), so one table serves every tuning and pin map.
-- With several rows, state 0 **picks** the trial's row by the running block's selection.
-- An early exit goes to a shared **end** marking its class: a broken Hold `hold_broken`; an abort or Wait timeout before the first Present `abort_before_stimulus`; an abort from it on `abort_during_sampling`; a later Wait timeout or a Counter's limit `omission`.
-- **One mark per trial**. Class numbers are append-only.
-
-`TaskSpine.h` names edge codes as `BF_<NAME>` macros, so no code number is written; a folder that cannot run carries an `#error`.
-
-### The runner
-
-`BoxSpine.h` steps the core every millisecond, skipped `millis()` values included, pulses the sync line once per strobing tick ([RECORDING.md](RECORDING.md#firmware-pulse)), and queues strobes so `loop()` never blocks. It announces `INTERP=8` and `SYNC=TICK`. Within a tick it strobes `START_SESSION`, watched input edges, `BLOCK_START` and `TRIAL_START`, output `off`s then `on`s, then the trial's **outcome code** ([ADR 0005](adr/DECISIONS.md#0005-a-spine-run-strobes-each-trials-outcome-class)).
-
-> [!CAUTION]
-> **The session end rule is part of what replay reproduces**: the run ends at the trial start after the cap, the last block, `STOP` or a last-trial state, strobing that tick's edges, `off`s and outcome before `END_SESSION`. Change `BoxSpine.h` and `analytics/stream/spine.py` together.
-
-### Driven outputs
-
-A `cue`-kind channel can be a `pwm_out` (each row's `drive` gives `duty`), a `tone_out` (`hz`) or a `digital_out` with `mode: "train"` (`hz`, `widthMs`, `ms`; strobed as `train_on` and `train_off`). RIG107 keeps it off the trial runner's pins; RIG109 needs a timer pin for PWM and allows one `tone_out`, on Timer2.
-
-> [!CAUTION]
-> **A train width not shorter than its period holds the line HIGH**; it is refused at save (SPN112) and on the board (`CLAMPED`).
-
-> [!CAUTION]
-> **A train's own end is part of what replay reproduces**; change `BoxSpine.h` and `analytics/stream/spine.py` together.
-
-### Pavlovian conditioning
-
-`taskdef/pavlovian.py`: Baseline `delay`, CS `present`, Trace `delay`, US `outcome`, `iti`, all watching `lick` ([ADR 0003](adr/0003-phase-spine-task-model.md#worked-examples)). `cs_plus` pays and `cs_minus` does not; with no response gate, learning is read from licks ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#phase-window-rates)). The shipped rig lacks `lick_spout` and `tone` (`SPN101` until added).
-
-### The snapshot
-
-The profile's `spine` key holds the definition, the lowered table and each bit's channel and code names: everything replay needs. It rides in every `.tsv`'s header ([DATA.md](DATA.md#the-tsv-log)), so a crashed run replays from its `.tsv`. Its hash covers [behaviour only](#a-spine-tasks-hash-covers-behaviour-only).
-
-### Spine diagnostics
-
-`taskdef/spine.py` replaces the `TSK` rules; a task with problems still saves. Four need care:
-
-- **`SPN103`**, an edge with no live code: the rig's first wiring save issues them ([Edge codes](#edge-codes)).
-- `SPN104`, a missing structural or outcome code: the shipped vocabulary omits `BLOCK_START` and the outcome codes while the spine is in development; add them on Task > Strobes.
-- `SPN110`, a stored `params` value nothing reads: the tuned value silently reverts.
-- `SPN111`, a Hold on an input that may not be held: it completes with the animal elsewhere.
-
-> [!CAUTION]
-> **A task's RAM budget is 5000 B** (`spine.task_ram_bytes`, enforced as `SPN105`). Past it a board runs short of stack mid-session with no error.
-
 ## Rig wiring
 
 The rig's description of itself (`rig/`, `hardware/`; [PROTOCOL.md](PROTOCOL.md#rig-wiring)). Box↔board bindings are separate ([ARCHITECTURE.md](ARCHITECTURE.md#boxes-and-boards)).
@@ -378,6 +300,10 @@ flowchart TD
 ### Wiring rules
 
 A well-formed document describing an impossible box returns located problems; `RIG_INVALID` is for a non-document. `RIG101`: the halves disagree. `RIG102`: a missing pin, or serial pin 0 or 1. `RIG103`: a shared pin. `RIG104`: a port with no slot. `RIG105`: two sync channels. `RIG106`: a bad [onset code](#onset-codes). `RIG107`: a contradictory type, mode or edge code. `RIG108`: unconfirmed held pins. `RIG109`: a [driven output](#driven-outputs) the board cannot run. `BOX_PIN_SYNC_OUT` is always emitted, `-1` without a sync channel, so no default pin pulses unannounced.
+
+### Driven outputs
+
+A channel's `type` is `digital_in`, `digital_out`, `pwm_out` or `tone_out`; a `digital_out` is a level line, or a pulse train with `mode: "train"`, whose edges are `train_on` and `train_off`. A PWM line, a tone and a train are **driven outputs**, allowed on a `cue`-kind channel only. RIG107 keeps one off every pin the trial runner switches as a level line (`registry.LEVEL_LINES`), where it would hold a train's laser on or put DC on a speaker; RIG109 needs a timer pin for PWM, allows one `tone_out`, and keeps PWM off Timer2 beside it. [BOX_Utility](#the-box-utility) tests each: `DUTY` sets a PWM line's duty, `HZ` a tone's pitch or a test train's rate (5 ms pulses).
 
 ### Moving the channel set between machines
 
@@ -451,10 +377,9 @@ flowchart LR
 sequenceDiagram
     participant Host as Sidecar
     participant Board as Mega2560
-    Board-->>Host: INTERP=1 (a spine task: INTERP=8)
+    Board-->>Host: INTERP=1
     Board-->>Host: FREE_RAM=n
-    Board-->>Host: STREAM=2 (the trial runner only)
-    Board-->>Host: SYNC=TICK (a spine task only)
+    Board-->>Host: STREAM=2
     Board-->>Host: READY
     Host->>Board: BEGIN
     loop each SET line, one at a time
@@ -492,16 +417,9 @@ Both are truncated SHA-256 over canonical JSON (`tasks/profile.py`). `profile_ha
 
 **Anything in `to_json` moves `profile_hash`** and permanently splits a task's runs: hence the derived diagram and no casual re-filing of `group` in `fields.py`. `to_json` must round-trip through `parse_profile` byte for byte ([DATA.md](DATA.md#per-animal-files)).
 
-### A spine task's hash covers behaviour only
-
-A spine profile is hashed by `tasks/behaviour.py` ([ADR 0003](adr/0003-phase-spine-task-model.md#hashes-and-data)) without the names and help text `behaviour.UNHASHED` lists, so renaming keeps one history. A new field is hashed until listed.
-
-> [!CAUTION]
-> **A spine run with no snapshot in its file decodes by its `task_profiles` row, which may carry another declaration's names.** Read names from the run's own file.
-
 ## Derived state machine
 
-The Task tab and Mission Control draw a trial-table task's state machine **derived from its profile** (`src/lib/tasks/topology.ts`); a spine task draws its spine ([ARCHITECTURE.md](ARCHITECTURE.md#live-session-views)). Every sketch shares `runTrial()`, so only which branches exist differs, and the declared names say which.
+The Task tab and Mission Control draw a task's state machine **derived from its profile** (`src/lib/tasks/topology.ts`; [ARCHITECTURE.md](ARCHITECTURE.md#live-session-views)). Every sketch shares `runTrial()`, so only which branches exist differs, and the declared names say which.
 
 > [!IMPORTANT]
 > **A declared code is not a presented condition.** Conditions and the Withheld outcome are drawn only when a `liveMetrics` entry **scores** them.
@@ -587,21 +505,6 @@ Shows the ramp and only the parameters the task **exposes**; the Start dialog of
 
 > [!IMPORTANT]
 > **Exposure and grouping are presentation**: hidden parameters are still sent at their defaults, and neither changes `profile_hash`.
-
-### The spine editor
-
-A spine task opens in `components/task/spine/` and draws only `tasks.preview`'s answer (`SpineView`). Its panels are **Trial** (the steps), **RAM**, **Trial types** (bindings and contingency maps as editable sentences), **Session** (the blocks) and **Simulate**; each problem shows where it applies. New spine tasks start from a seed (`taskdef/seeds.py`), behind the development flag `localStorage["ephymeris:spineEditor"] = "1"`.
-
-> [!CAUTION]
-> **A value stored in `params` wins over the field it tunes**, so editing the field changes nothing. The editor offers **Use the value here**.
-
-#### The guide
-
-`SpineGuide.tsx` builds a first spine task step by step over one unsaved document, behind the same flag.
-
-### Simulating a spine task
-
-**Simulate** (`tasks.simulate`) runs the unsaved definition against a simulated animal by stepping replay's own core, and scores it with Analytics' own calls, so a simulated run failing the [replay check](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#how-a-spine-run-is-scored) is a simulator bug. It is refused while the definition has any diagnostic.
 
 ## Writing a new sketch
 

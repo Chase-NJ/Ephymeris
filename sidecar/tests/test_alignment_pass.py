@@ -21,8 +21,8 @@ from ephymeris_sidecar.intan import alignment, offline
 from ephymeris_sidecar.sessions import run_document as rd
 from ephymeris_sidecar.sessions.writer import AnimalWriter
 from tests import test_grammar2 as g2
+from tests.fixtures.recorded import rig  # noqa: F401 - a fixture
 from tests.test_intan_event_psth import FS, recording
-from tests.test_spine_analytics import recorded_document, rig  # noqa: F401 - rig is a fixture
 
 RECORDING = "rec_260901_090000"
 ORIGIN = 2 * FS   # where the board's ms 0 lands on the recording
@@ -48,8 +48,20 @@ def record(tmp_path: Path, *, drop: set[int] = frozenset(), twitch: bool = True)
     recording(tmp_path / "ephys" / RECORDING, seconds, high, [])
 
 
-def fields(tmp_path: Path, recorded: bool = True) -> dict:
-    core = {"rat": "remy1", "sketch": "GRGL", "stream": 2, "interp": 1}
+def ticked() -> list[tuple[int, int]]:
+    """The same run from a board that sends a tick's strobes together: each
+    trial's three header codes share one millisecond."""
+    out: list[tuple[int, int]] = []
+    ms = 1000 - STEP_MS
+    for name in g2.names_of(g2.EVERY):
+        if not name.startswith(("TRIAL_GO_", "TRIAL_NO_GO", "TRIAL_TYPE_")):
+            ms += STEP_MS
+        out.append((g2.code(name), ms))
+    return out
+
+
+def fields(tmp_path: Path, recorded: bool = True, **more) -> dict:  # noqa: ANN003
+    core = {"rat": "remy1", "sketch": "GRGL", "stream": 2, "interp": 1, **more}
     if recorded:
         core |= {"intan_recording": RECORDING, "intan_path": str(tmp_path / "ephys"), "intan_digital_in": 5,
                  "intan_port": "A", "intan_channels": "A-016:A-017", "intan_sample_rate": FS,
@@ -59,15 +71,17 @@ def fields(tmp_path: Path, recorded: bool = True) -> dict:
     return core
 
 
-def finalized(tmp_path: Path, *, recorded: bool = True, stem: str = "remy1_P_1_2026-09-01_090001") -> Path:
-    """The run as a session leaves it: written through the real writer."""
+def finalized(tmp_path: Path, *, recorded: bool = True, stem: str = "remy1_P_1_2026-09-01_090001",
+              sent: list[tuple[int, int]] | None = None, **more) -> Path:  # noqa: ANN003
+    """The run as a session leaves it: written through the real writer. `sent`
+    is what the board sent (`strobes()` by default), `more` further header fields."""
     session = tmp_path / "data" / "P" / "P_1_2026-09-01"
     json_path = session / "behavior.json" / f"{stem}.json"
     writer = AnimalWriter(session / "behavior.tsv" / f"{stem}.tsv", json_path,
-                          session / "behavior.mat" / f"{stem}.mat", fields(tmp_path, recorded), {},
+                          session / "behavior.mat" / f"{stem}.mat", fields(tmp_path, recorded, **more), {},
                           profile_snapshot=g2.generated_profile().to_json())
     writer.open_files()
-    for code, ms in strobes():
+    for code, ms in strobes() if sent is None else sent:
         writer.record(code, ms)
     writer.finalize("BF_END_SESSION received")
     return json_path
@@ -312,35 +326,47 @@ async def test_the_archive_refuses_while_a_box_is_running(rig, tmp_path: Path) -
     assert json_path.read_bytes() == before
 
 
-async def test_a_spine_runs_counts_are_written_and_its_table_left_as_it_was(rig, tmp_path: Path) -> None:  # noqa: ANN001, F811
-    """A replayed table has no recording-clock columns; the counts still land."""
-    from tests.fixtures import spine as fixture
+def test_a_run_pulsed_once_per_tick_places_every_strobe_of_the_tick(tmp_path: Path) -> None:
+    """A board that announced `SYNC=TICK` pulses once per tick that strobes:
+    every strobe of a tick takes that tick's pulse."""
+    sent = ticked()
+    ticks = sorted({ms for _, ms in sent})
+    assert len(ticks) == len(sent) - 2 * len(g2.EVERY), "three header codes a tick"
+    recording(tmp_path / "ephys" / RECORDING, ticks[-1] // 1000 + 4, {sample_of(ms): 1 << 4 for ms in ticks}, [])
+    json_path = finalized(tmp_path, sent=sent, sync="tick")
+    assert rd.sync_of(read(json_path)) == "tick"
 
-    fixture.install()
-    try:
-        flat = recorded_document()
-        high = {sample_of(ms): 1 << 4 for _, ms in flat["ts_data"]}
-        recording(tmp_path / "ephys" / RECORDING, 30, high, [])
-        document = rd.build(
-            # A spine board pulses once per tick that strobes, and says so.
-            {"rat": "remy1", "sketch": flat["sketch"], "interp": flat["interp"], "trial_seed": flat["trial_seed"],
-             "sync": "tick", "stop_reason": flat["stop_reason"], **{k: v for k, v in fields(tmp_path).items()
-                                                    if k.startswith("intan_") or k in ("implant", "channels")}},
-            {k: v for k, v in flat.items() if k not in rd.FIELDS}, flat["task_profile"], flat["ts_data"])
-        from ephymeris_sidecar.sessions import derived
+    entry = alignment.align_file(json_path)
+    assert entry["status"] == "aligned", entry
+    after = read(json_path)
+    assert after["recording"]["sync"] == {"matched": len(sent), "missed": 0, "stray": 0}
+    rows = after["trials"]["rows"]
+    assert len(rows) == len(g2.EVERY)
+    for row in rows:
+        for column in time_columns(row):
+            ms = row[column[:-2] + "_ms"]
+            assert row[column] == (None if ms is None else sample_of(1000 + ms) / FS), column
+    assert rows[0]["start_s"] is not None and rows[0]["odor_on_s"] is not None
 
-        document = derived.with_derived(document)
-        path = tmp_path / "data" / "P" / "P_1_2026-09-01" / "behavior.json" / "spine.json"
-        path.parent.mkdir(parents=True)
-        path.write_text(json.dumps(document, indent=2), encoding="utf-8")
 
-        entry = alignment.align_file(path)
-        assert entry["status"] == "aligned", entry
-        after = read(path)
-        assert after["recording"]["sync"]["matched"] == len(flat["ts_data"])
-        assert after["trials"] == document["trials"]
-    finally:
-        fixture.uninstall()
+def test_a_run_another_interpreter_recorded_gets_its_counts_and_keeps_its_table(tmp_path: Path) -> None:
+    """This build derives no table for it, so the one it holds is left as it
+    was; the counts still land."""
+    from ephymeris_sidecar.sessions import derived
+
+    record(tmp_path)
+    ours = read(finalized(tmp_path, stem="remy2_P_1_2026-09-01_090002"))
+    json_path = finalized(tmp_path, interp=8)
+    written = read(json_path)
+    assert "trials" not in written and derived.derive(written) is None
+    theirs = {**ours["trials"], "interp": 8}
+    json_path.write_text(json.dumps(rd.with_trial_table(written, theirs), indent=2), encoding="utf-8")
+
+    entry = alignment.align_file(json_path)
+    assert entry["status"] == "aligned", entry
+    after = read(json_path)
+    assert after["recording"]["sync"] == {"matched": len(strobes()), "missed": 0, "stray": 1}
+    assert after["trials"] == theirs
 
 
 # --- a run the pass did not reach ----------------------------------------------- #

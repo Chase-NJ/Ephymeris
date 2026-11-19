@@ -248,11 +248,8 @@ def test_the_generated_profile_loads_as_it_was_written(tmp_path):
 
 
 def test_every_setting_offered_is_one_the_board_takes():
-    """The options are the generator's, the limits the board's and a spine
-    row's (`taskdef/spine.py`'s DRIVE_VALUES): an option outside them would be
-    a control that silently does nothing."""
-    from ephymeris_sidecar.taskdef.spine import DRIVE_VALUES
-
+    """The options are the generator's and the limits the board's: an option
+    outside them would be a control that silently does nothing."""
     board = _box_utility_defines()
     limits = {  # drive -> (the board's min, max, default) for its one setting
         "pwm": (0, board["BOX_UTIL_PWM_DUTY_MAX"], board["BOX_UTIL_PWM_DUTY"]),
@@ -261,9 +258,6 @@ def test_every_setting_offered_is_one_the_board_takes():
     }
     for drive, (lo, hi, default) in limits.items():
         setting = utility.DRIVES[drive].setting
-        # The STATUS suffix is the row value's own key: `duty` or `hz`.
-        assert (lo, hi) == next((lo, hi) for k, *_, lo, hi in DRIVE_VALUES[drive] if k == setting.suffix), \
-            f"the board's {drive} limits are a spine row's"
         offered = [n for _, n in setting.values]
         assert all(lo <= n <= hi for n in offered) and default in offered, drive
     width = board["BOX_UTIL_TRAIN_WIDTH_MS"]

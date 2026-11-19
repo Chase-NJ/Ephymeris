@@ -550,10 +550,7 @@ int main() {
   { assert(BOX_INTERP == 1 && BOX_STREAM == 2);
     _serialOutLen = 0; _serialOut[0] = '\0';
     announceReady();
-    assert(strcmp(_serialOut, "INTERP=1\r\nFREE_RAM=0\r\nSTREAM=2\r\nREADY\r\n") == 0);
-    _serialOutLen = 0; _serialOut[0] = '\0';
-    announceReadyAs(7);                                                // a spine board: no STREAM line
-    assert(strcmp(_serialOut, "INTERP=7\r\nFREE_RAM=0\r\nREADY\r\n") == 0); }
+    assert(strcmp(_serialOut, "INTERP=1\r\nFREE_RAM=0\r\nSTREAM=2\r\nREADY\r\n") == 0); }
 
   // --- readLineInto: what a sketch's char cmd[SET_LINE_MAX] keeps whole ---
   //

@@ -101,8 +101,6 @@ KEY_CONSTANTS = {"SNAPSHOT_KEY", "DERIVED_KEY"}
 #: The walk sees `x["session_id"]` and cannot see what `x` is, so each dict
 #: that shares a key name with the document is named here once.
 NOT_A_DOCUMENT: dict[str, dict[str, str]] = {
-    "analytics/stream/simulate.py": {"shot['spine']": "the snapshot's spine block"},
-    "analytics/stream/spine.py": {"spine": "the snapshot's spine block"},
     "cohorts/move.py": {"run": "a database row"},
     "intan/impedance_store.py": {"first": "a database row"},
     "intan/yield_store.py": {"row": "a database row"},

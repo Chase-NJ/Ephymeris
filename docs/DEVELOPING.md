@@ -57,8 +57,8 @@ run reads the sketch library from `firmware/` in place ([its README](../firmware
 | `npm run test` / `test:watch` | Vitest over `src/lib/**` and `electron/**` |
 | `npm run gen:protocol` | Regenerate `protocol.py`, `protocol.ts` and `PROTOCOL.md` from `protocol/schema.py` |
 | `npm run package:electron` | Stage resources and build the Electron installer into `release/` ([below](#building-the-installer)) |
-| `pytest` in `sidecar/` | The sidecar suite; CI adds `-n auto --dist worksteal`, then runs `-m load` alone |
-| `firmware/libraries/BehaviorBox/extras/host_test/run.sh` | Firmware host tests; `run_box.sh`, `run_interp.sh`, `run_spine.sh`, `run_diff.sh` for the utility, the interpreter, the spine runner and core-vs-replay |
+| `pytest` in `sidecar/` | The sidecar suite; CI adds `-n 4 --dist worksteal` |
+| `firmware/libraries/BehaviorBox/extras/host_test/run.sh` | Firmware host tests; `run_box.sh` for the box utility, `run_stream.sh` for the stream grammar |
 
 ## Tests
 
@@ -132,7 +132,7 @@ npm run package:electron
 asyncio clock makes short waits end early). The installer is unsigned.
 
 The same command on an Apple silicon Mac writes `release/Ephymeris-<version>-arm64.dmg`, for reading
-data, the logbook and simulations away from the rigs. Everything it bundles is the build machine's own
+data and the logbook away from the rigs. Everything it bundles is the build machine's own
 architecture, so build it on Apple silicon. It differs from the Windows installer in three ways:
 
 - **Ad-hoc signed, not notarized** (`identity: "-"`). Apple silicon runs no unsigned code, and there is
@@ -170,14 +170,9 @@ Frontend packages are bundled at build time; `@react-pdf/renderer` still loads o
 
 ### Not yet done
 
-- **The live scorer in the frozen Windows sidecar** has not started on a lab machine
-  ([ARCHITECTURE.md](ARCHITECTURE.md#the-live-scorer)). If it fails, live numbers read unavailable and
-  nothing else changes.
 - **A full-length recording from a real animal** ([RECORDING.md](RECORDING.md#not-yet-verified)). Rigs
   with a saved wiring document have no sync channel until one is added.
-- **A spine task with an animal or catch vessel** on a real box, and its trial table in Analytics
-  ([TASKS.md](TASKS.md#spine-tasks)).
-- **PWM, tone and pulse trains** and **Pavlovian conditioning** measured on a real box
+- **PWM, tone and pulse trains** measured on a real box
   ([TASKS.md](TASKS.md#driven-outputs)).
 
 ### Known bugs

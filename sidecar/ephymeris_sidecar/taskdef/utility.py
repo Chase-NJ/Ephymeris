@@ -107,7 +107,7 @@ class Drive(NamedTuple):
 
 
 #: Each drive, by `Channel.drive`. The board refuses a value outside its own
-#: limits (`BoxUtility.h`, the same as a spine row's); a train's width stays
+#: limits (`BoxUtility.h`); a train's width stays
 #: 5 ms, shorter than the period of every rate it takes.
 DRIVES: dict[str | None, Drive] = {
     None: Drive("BOX_UTIL_LEVEL", None, None),

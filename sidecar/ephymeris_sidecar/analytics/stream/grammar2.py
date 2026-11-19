@@ -20,7 +20,7 @@ Names come out of the profile's `strobes` map, never from numbers
 profile whose map lacks them decodes nothing here.
 
 What differs from a legacy row (`ANALYTICS.md#how-a-legacy-run-becomes-a-trial-table`):
-`outcome` is the trial's one outcome code, in the spine's classes; `correct` is
+`outcome` is the trial's one outcome code, as its class (`trial_table.OUTCOME_CLASSES`); `correct` is
 read from it (a hold failure is wrong, an abort is excluded), while `scores`
 still carries the profile's metric verdicts, as Mission Control showed them;
 `latencyMs` is the reaction time, `ODOR_UNPOKE` to the first well poke;
@@ -67,7 +67,7 @@ LIGHTS_ON, ODOR_POKE, ODOR_OFF, ODOR_UNPOKE, LIGHTS_OFF = (
 POKES = {"WATER_POKE_L": "left", "WATER_POKE_R": "right"}
 FLUIDS = {"FLUID_L": "STOP_FLUID_G_L", "FLUID_R": "STOP_FLUID_G_R"}
 
-#: Each outcome code's class (`taskdef/lowering.py`'s `OUTCOME_CLASSES`). A
+#: Each outcome code's class (`trial_table.OUTCOME_CLASSES`). A
 #: `WATER_POKE_ERROR_*` inside a no-go trial is a false alarm, not a wrong well.
 OUTCOME_CLASS = {
     "CORRECT": "correct",
@@ -81,8 +81,8 @@ OUTCOME_CLASS = {
     "ODOR_UNPOKE_EARLY": "abort_before_stimulus",
     "ODOR_UNPOKE_EARLY_SAMPLING": "abort_during_sampling",
 }
-#: The legacy bucket of each class (`outcomes.TrialOutcomes`), as the spine's
-#: crossover files them; an abort before the stimulus is on the engagement
+#: The legacy bucket of each class (`outcomes.TrialOutcomes`); an abort
+#: before the stimulus is on the engagement
 #: ladder and in no tally, as a lazy trial never was.
 _BUCKET = {"correct": "rewarded", "hold_broken": "hold_failed", "wrong_response": "wrong_well",
            "omission": "no_response", "withheld": "withheld", "false_alarm": "false_alarm",
@@ -195,9 +195,9 @@ def grammar_of(document: dict[str, Any], profile: TaskProfile | None) -> int:
     a board that announced it. Without one, the codes decide: a stream closed
     by grammar 1's terminators is grammar 1, whatever else it carries, and one
     with the grammar-2 header AND footer is grammar 2. Anything else is
-    grammar 1, which every recorded run before the header existed is; so is a
-    phase-spine stream with no snapshot, which opens its trials with the same
-    `TRIAL_START` but never closes one with `END_TRIAL`.
+    grammar 1, which every recorded run before the header existed is; so is
+    any stream that opens trials with `TRIAL_START` but never closes one with
+    `END_TRIAL`.
     """
     stream = stream_of(document)
     if isinstance(stream, int) and not isinstance(stream, bool):
@@ -503,7 +503,7 @@ def _tally(buckets: list[str | None]) -> TrialOutcomes:
     counts = Counter(b for b in buckets if b is not None)
     return TrialOutcomes(
         trials=sum(counts.values()),
-        # As the legacy tally and the spine's crossover: every answered or
+        # As the legacy tally: every answered or
         # unanswered trial; an abort during sampling is not among them.
         administered=sum(n for b, n in counts.items() if b != "aborted"),
         rewarded=counts["rewarded"],

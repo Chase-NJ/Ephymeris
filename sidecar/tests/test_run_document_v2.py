@@ -13,23 +13,16 @@ from pathlib import Path
 import pytest
 
 from ephymeris_sidecar.analytics import reader, stream
+from ephymeris_sidecar.analytics.stream import odors
 from ephymeris_sidecar.sessions import derived, matwriter
 from ephymeris_sidecar.sessions import run_document as rd
 from ephymeris_sidecar.tasks import profile as task_profile
-from tests.fixtures import spine as fixture
 from tests.test_analytics_adoption import LegacyRig
 from tests.test_analytics_adoption import db as adoption_db  # noqa: F401 - a fixture
 from tests.test_cohort_move import Lab
 from tests.test_derived_trials import load_mat, read_json, run_through_writer
 from tests.test_run_document import DOCUMENT
-from tests.test_spine_analytics import recorded_document, rig, write_document  # noqa: F401 - rig is a fixture
-
-
-@pytest.fixture(autouse=True)
-def _issued_rig():
-    fixture.install()
-    yield
-    fixture.uninstall()
+from tests.fixtures.recorded import recorded_document, rig, write_document  # noqa: F401 - rig is a fixture
 
 
 # Where each flat field sits in version 2, written out by hand from the ADR.
@@ -166,8 +159,9 @@ def test_the_reader_hands_back_version_2_whichever_shape_the_file_has(tmp_path: 
         path.write_text(json.dumps(document), encoding="utf-8")
         result = reader.read_run(path)
         assert result.ok, result.detail
-        # ... with the odors table its snapshot gives: a spine tracer has none.
-        assert result.document == rd.with_odors(version_2(recorded_document()), []), name
+        # ... with the odors table its snapshot and parameters give.
+        table = odors.odor_table(task_profile.embedded_profile(flat), flat)
+        assert table and result.document == rd.with_odors(version_2(recorded_document()), table), name
 
 
 async def test_analytics_shows_a_version_2_run_as_it_shows_its_twin(rig) -> None:  # noqa: ANN001, F811
@@ -228,7 +222,7 @@ async def test_rederive_rewrites_a_version_2_runs_trials_block_in_place(rig) -> 
 
 async def test_rederive_reads_and_rewrites_an_old_files_derived_block_where_it_is(rig) -> None:  # noqa: ANN001, F811
     """A version-1 file keeps its shape: the same block, as `derived`, its rows
-    under `trials`. A newer replay's block there is still left alone."""
+    under `trials`. A newer build's block there is still left alone."""
     _, json_path, _ = run_through_writer(rig.root, recorded_document())
     flat = recorded_document()
     current = derived.derive(flat)
@@ -248,7 +242,7 @@ async def test_rederive_reads_and_rewrites_an_old_files_derived_block_where_it_i
     newer = {**flat, "derived": {**current, "trials": [], "replay_version": current["replay_version"] + 1}}
     json_path.write_text(json.dumps(newer, indent=2), encoding="utf-8")
     [entry] = (await rig.archive.rederive(rig.cohort.id))["entries"]
-    assert entry["status"] == "skipped" and "newer replay" in entry["reason"]
+    assert entry["status"] == "skipped" and "newer build" in entry["reason"]
     assert read_json(json_path) == newer
 
 

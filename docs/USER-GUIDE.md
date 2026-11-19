@@ -78,34 +78,10 @@ unreadable one is listed in red with the reason. Saving builds the sketch a box 
 **Import task** there. The import writes nothing if a channel the task uses is missing, different or in
 another order, a code has a different number, or the name is taken; the dialog lists every difference.
 
-**A new task.** **+ New task** starts from a **seed** (2AFC, go/no-go, DNMS, trace, FR/PR):
+**A new task.** **+ New task** opens the editor on an empty trial table; **Duplicate** on a task's row
+starts from a copy.
 
-1. Name each trial type.
-2. Pick the channel for each **role** (port, sample, wells, reward line…); **Bind like …** copies the
-   previous trial type's choices.
-3. Change whatever else differs from the seed.
-
-**New to this? Build a first task step by step** walks through it in eight parts.
-
-**The spine editor** (a task built from a seed):
-
-| Part | What you set |
-|---|---|
-| **Trial** | The steps, left to right. Click one for **what it does**, **what ends it early**, and the **penalty** after an early end (a wait in place of the ITI). **Add…** / × add and remove settings; **+** / **Remove step** add and remove steps. Inputs are recorded only in steps that list them under **Recorded here** |
-| **RAM** | The task's share of the box's 5000 bytes. Red: the box cannot run it |
-| **Trial types** | **Wiring** sets each shared role once (**differs here** makes it per row). Each row has a name, reward time, and every answer as an editable sentence |
-| **Session** | **One block**, **Reversal**, **Two blocks that alternate** or **Custom**; click a block for its trial types, draw and end. Also **Session cap** and **aborted trials repeat, uncounted** |
-| **Simulate** | A whole session against a pretend animal; nothing saved or flashed. The **Seed** reruns it |
-
-Where an outcome is not what it sounds like, its sentence says so: **withheld** counts as a hit, an
-**abort** is left out of the share correct, and a trial type that asks nothing (a CS−) is correct on
-every trial. Problems show where they are, with a one-click fix where there is one; **Problems** at the
-top lists them.
-A **Stored** value from an older copy wins until **Use the value here**.
-
-![The spine editor for a 2AFC task: the trial's steps across the top with the Wait step open and the RAM line under it, the Wiring line binding the shared roles once, two trial types each with its sample and every answer as a sentence, and the Session set to one block](images/spine-editor.webp)
-
-**The odor-table editor** (older tasks): one row per condition with its **odor line**; **Trial generation**
+**The editor**: one row per condition with its **odor line**; **Trial generation**
 is **Anti-bias**, **Weighted** or **Pool** (the only one with no-go trials); **Add parameter** offers a
 setting at session start. It saves even with problems.
 
@@ -323,8 +299,6 @@ Beside each tile, a tab shows how far the run has got. **Hide graphs** in the le
 - **The bar** divides the trials offered into correct, wrong and no answer.
 
 Click a tile or star for the box's panel (trial flow, outcome mix, recent strobes); Esc returns.
-**Diverged** means the box did something its task does not do: everything is recorded but the run will not
-be scored. Tell whoever looks after the rig.
 
 ![A box's full panel for remy1: Back to overview at the top left, Start/Stop/Reset and Rolling accuracy 0.70 at the top right, the Trial flow diagram with the current state lit, the P(right | odor) chart, the Outcome mix, Live metrics and Recent strobes](images/box-panel.webp)
 
@@ -470,10 +444,7 @@ Each run gives an animal a `.tsv` (written live), a `.json` and a `.mat`, in the
 3. Hover an animal to highlight it everywhere; click to keep it.
 4. Click a session for its **Session summary**: a row per animal with the share rewarded and trials
    sampled, overall and per condition, then each animal's card. A purple line on a card's **Tape** is a
-   [log note](#keeping-the-log). A spine task's card lists every trial under **Trials** and, for a task
-   that counts licks, each row's lick rate per phase (grey under 30 trials). A spine run that does not
-   replay as the box ran it reads **not scored** and names the first differing strobe; it is still
-   recorded in full.
+   [log note](#keeping-the-log).
    For a recorded session, **Spikes around an event** shows each animal's sites around a named event
    (pick the event, split by condition or outcome, click a site for its raster). The first look reads the
    whole recording, which can take a minute. Check its header first: missed or stray sync pulses mean the

@@ -24,7 +24,6 @@ from ephymeris_sidecar.sessions.writer import AnimalWriter
 from ephymeris_sidecar.taskdef import generate, store
 from ephymeris_sidecar.taskdef.model import TaskDefinition, TrialTypeDef
 from ephymeris_sidecar.tasks.profile import TaskProfile, parse_profile, profile_hash
-from tests.fixtures import spine as spine_fixture
 from tests.fixtures import task_definitions as presets
 from tests.test_grammar2 import grammar1_profile
 from tests.test_taskdef import library  # noqa: F401 - a fixture
@@ -185,15 +184,6 @@ def test_a_no_go_odor_pays_nothing_and_a_missing_value_is_null() -> None:
 def test_a_task_with_no_odor_conditions_has_an_empty_table() -> None:
     assert odors.odor_table(None, {}) == []
     assert odors.odor_table(parse_profile({"taskName": "T"}), {"x": 1}) == []
-    spine_fixture.install()
-    try:
-        from tests.test_spine_analytics import recorded_document
-        from ephymeris_sidecar.tasks.profile import embedded_profile
-
-        tracer = recorded_document()
-        assert odors.odor_table(embedded_profile(tracer), tracer) == []
-    finally:
-        spine_fixture.uninstall()
 
 
 def test_a_snapshot_without_trial_types_gives_what_its_success_codes_prove() -> None:

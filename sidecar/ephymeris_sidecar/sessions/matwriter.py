@@ -127,7 +127,7 @@ def _to_matlab(data: dict[str, Any], *, nulls: bool) -> dict[str, Any]:
             # The only array in the schema is ts_data: [[code, ts], …] → N×2.
             out[name] = np.asarray(value, dtype=np.float64).reshape(-1, 2)
         elif isinstance(value, dict) and name == table_key:
-            # A spine run's trial table (`DATA.md#the-trial-table`): a
+            # The run's trial table (`DATA.md#the-trial-table`): a
             # struct whose `trials` is an N×1 struct array, since this one is
             # read as a table.
             out[name] = derived.to_matlab(value)

@@ -46,6 +46,7 @@ RETIRED = (
     # ADRs folded into adr/DECISIONS.md.
     "0001-rig-definition-hypotheticals-are-context-local.md",
     "0002-restores-upload-side-by-side.md",
+    "0003-phase-spine-task-model.md",
     "0004-restores-upload-one-at-a-time.md",
     "0005-spine-runs-strobe-each-trials-outcome.md",
     "0006-electron-shell.md",

@@ -20,7 +20,7 @@ The design in a dozen lines. Each is a decision the rest of the code leans on.
 
 1. **The sidecar owns all state.** It refuses an illegal operation with a typed error code; a disabled
    button is only a courtesy, and the UI never predicts ([ARCHITECTURE.md](ARCHITECTURE.md#overview)).
-2. **Nothing slow or optional may stall a session.** Backup, RHX and the live scorer may each be slow or
+2. **Nothing slow or optional may stall a session.** Backup and RHX may each be slow or
    dead, and the session goes on ([ARCHITECTURE.md](ARCHITECTURE.md#overview),
    [RECORDING.md](RECORDING.md#the-rule)).
 3. **The `.tsv` is the record.** Every strobe is fsync'd to it live; the `.json` and `.mat` are built once,
@@ -100,13 +100,8 @@ rather than an error, which is the worst kind of failure here.
   clamped ([TASKS.md](TASKS.md#confirming-the-parameters)). Keep `SET_LINE_MAX` equal on both sides, or
   lines truncate silently ([TASKS.md](TASKS.md#the-length-cap)).
 - **A firmware count moves with its key list**, or a buffer overruns ([TASKS.md](TASKS.md#firmware)).
-- **Change `BoxInterp.h` with `replay.py`, and `BoxSpine.h` with `analytics/stream/spine.py`**, in one
-  change. The differential test holds the first pair equal
-  ([TASKS.md](TASKS.md#compiling-and-the-host-tests)).
 - **Compile firmware with `--warnings all` and run the host tests.** The Arduino build hides warnings
   (`-fpermissive`) that are real bugs on AVR ([TASKS.md](TASKS.md#compiling-and-the-host-tests)).
-- **A spine task's RAM is capped**, because running past it overflows the stack silently
-  ([TASKS.md](TASKS.md#spine-diagnostics)).
 
 ### Ports, flashing and sessions
 
@@ -181,8 +176,8 @@ tests could not see them.
 
 - **Import scipy and numpy on the main thread before any thread starts**, or the frozen sidecar
   deadlocks at launch ([DATA.md](DATA.md#the-mat-mirror)).
-- **Call `freeze_support()` first in the entry point**, or every spawned child starts a copy of the app
-  ([ARCHITECTURE.md](ARCHITECTURE.md#the-live-scorer)).
+- **A frozen build that spawns a `multiprocessing` child must call `freeze_support()` first in the entry
+  point**, or the child starts a copy of the app.
 - **Collect what analysis can't see.** Code inside an `--add-data` tree is opaque to it; protobuf went
   uncollected and every packaged build quietly ran the slow backend.
 - **Ask the interpreter where the package is before freezing.** A stale non-editable install in the
@@ -218,9 +213,8 @@ tests could not see them.
 - **Reader threads never block on the handler lock**; they take it in slices.
 - **When a session ends, wait only on finalizations not yet done.** Gathering finished tasks spun and
   froze the event loop.
-- **Keep the live scorer out of the sidecar process.** On a thread it held the GIL the session threads
-  need to fsync, and a strobe write's p99 reached about 200 s under load
-  ([ARCHITECTURE.md](ARCHITECTURE.md#the-live-scorer)).
+- **Keep heavy computation off the sidecar's threads while boxes run.** A scorer on a thread held the GIL
+  the session threads need to fsync, and a strobe write's p99 reached about 200 s under load.
 
 ### State and data
 
@@ -264,8 +258,7 @@ Tried, then abandoned. Don't retry one without reading why.
 
 - **A free-form task graph compiler ("Task-Graph").** Vendored, folded in as a package, then removed with
   its spec designer and ~900 tests: invalid machines were expressible and analytics would have had to
-  read any graph. The phase spine replaces it
-  ([0003](adr/0003-phase-spine-task-model.md#considered-options)).
+  read any graph.
 - **Bundled task specs** with a shadow/baseline store: removed a day later. Nothing ships as a spec;
   saved tasks extend the bundled library.
 - **A user-chosen Arduino directory, then staging sketches from sibling repos.** Sketches ship with the
@@ -277,7 +270,7 @@ Tried, then abandoned. Don't retry one without reading why.
   because order is meaning.
 - **One capped `START` line carrying every parameter.** Replaced by `SET` lines each confirmed by CRC.
   Durations over 32767 ms were first refused, then widened to `unsigned long`.
-- **Scoring on a sidecar thread** (see the live scorer above).
+- **Scoring a whole run's stream on a sidecar thread** ([above](#serial-ports-and-flashing)).
 - **Flashing `GRGL_Sim`.** It is decode-only.
 - **A Task selector that hid other tasks' sessions** in Analytics: the task is disclosed instead
   ([DATA.md](DATA.md#pooling-across-tasks)).

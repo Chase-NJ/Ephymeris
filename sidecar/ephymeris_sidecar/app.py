@@ -9,7 +9,6 @@ lets through are answered by `wire_errors.py` (`ARCHITECTURE.md#dispatch`), so
 from __future__ import annotations
 
 import asyncio
-import copy
 import json
 import logging
 import threading
@@ -18,7 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .analytics import AnalyticsService, CohortArchive, simulation
+from .analytics import AnalyticsService, CohortArchive
 from .analytics import reader as analytics_reader
 from .analytics.archive import ArchiveChange
 from .analytics.repository import AnalyticsRepository
@@ -49,15 +48,11 @@ from .strobes import store as strobe_store
 from .strobes.editor import VocabularyEditor
 from .strobes.usage import ArchiveScanner
 from .taskdef import bundled as bundled_sketches
-from .taskdef import lowering as task_lowering
-from .taskdef import seeds as task_seeds
-from .taskdef import spine as spine_task
 from .taskdef import store as taskdef_store
 from .taskdef import transfer as task_transfer
 from .taskdef.model import TaskDefinition, folder_key
 from .taskdef.validate import validate as validate_task
 from .tasks import profile as task_profile
-from .tasks import seed as task_seed
 from .tasks.start_command import build_start_command
 from .debug_run import DebugRuns
 from .ports.flashing import FlashJob, FlashQueue, Origin
@@ -73,8 +68,6 @@ from .wire_errors import ERRORS
 
 log = logging.getLogger(__name__)
 
-#: The longest session `tasks.simulate` runs (`TASKS.md#simulating-a-spine-task`).
-_SIMULATE_LIMIT_MAX_MS = 24 * 60 * 60_000
 
 
 class _LifecycleRig:
@@ -248,9 +241,7 @@ class Application:
         self.server.register(Cmd.TASKS_LIST, self._tasks_list)
         self.server.register(Cmd.TASKS_GET, self._tasks_get)
         self.server.register(Cmd.TASKS_PREVIEW, self._tasks_preview)
-        self.server.register(Cmd.TASKS_SIMULATE, self._tasks_simulate)
         self.server.register(Cmd.TASKS_SAVE, self._tasks_save)
-        self.server.register(Cmd.TASKS_SPINE_PALETTE, self._tasks_spine_palette)
         self.server.register(Cmd.TASKS_DELETE, self._tasks_delete)
         self.server.register(Cmd.TASKS_EXPORT, self._tasks_export)
         self.server.register(Cmd.TASKS_IMPORT, self._tasks_import)
@@ -342,11 +333,6 @@ class Application:
         )
         self.server.register_snapshot(
             Evt.INTAN_STATUS, lambda: self.intan.status_json() if self.intan else None
-        )
-        # Each box's spine-run replay, so a reloaded Mission Control lands on
-        # the phase the board is in (`ARCHITECTURE.md#replay-on-connect`).
-        self.server.register_snapshot(
-            Evt.SESSION_REPLAY, lambda: self.runner.replay_snapshot() if self.runner else []
         )
 
     def start(self) -> None:
@@ -498,9 +484,6 @@ class Application:
             await self.utility.stop()
         if self.ports is not None:
             await self.ports.stop()
-        # The live scorer is killed, never waited on (`ARCHITECTURE.md#the-live-scorer`).
-        if self.runner is not None:
-            self.runner.close()
         # After ports: nothing may be mid-flash once the manager has stopped,
         # so the daemon child (if the gRPC backend is active) can go too.
         await self.tool.close()
@@ -1074,56 +1057,6 @@ class Application:
             "diagnostics": [d.to_json() for d in diagnostics],
             "profile": profile.to_json(),
             "catalogueDefaults": {f.metadata_key: f.default for f in bare.config},
-            # What the spine editor draws beside the profile (TASKS.md#the-spine-editor).
-            "spine": spine_task.editor_view(definition) if definition.spine is not None else None,
-        }
-
-    async def _tasks_simulate(self, args: Args) -> dict[str, Any]:
-        """One simulated session of an unsaved spine task (`TASKS.md#simulating-a-spine-task`).
-
-        Refused while the definition has any diagnostic, the bar a flash holds
-        it to: a simulation of a task that cannot run says nothing true about it.
-        """
-        definition = self._definition_arg(args)
-        if definition.spine is None:
-            raise CommandError(ErrCode.TASK_INVALID, "Only a spine task can be simulated.")
-        seed = args.get("seed")
-        if seed is not None and not task_seed.SEED_MIN <= seed <= task_seed.SEED_MAX:
-            raise CommandError(ErrCode.TASK_INVALID,
-                               f"A seed is {task_seed.SEED_MIN} to {task_seed.SEED_MAX}, not {seed}.")
-        limit_ms = args.get("limitMs", simulation.DEFAULT_LIMIT_MS)
-        if not 1 <= limit_ms <= _SIMULATE_LIMIT_MAX_MS:
-            raise CommandError(ErrCode.TASK_INVALID, "A simulated session's time limit is 1 ms to 24 h.")
-        raw = args["animal"]
-        animal = simulation.Animal(raw["kind"], raw.get("response"),
-                                   **({"permille": raw["permille"]} if "permille" in raw else {}))
-        chosen = seed if seed is not None else task_seed.new_trial_seed()
-
-        def run() -> dict[str, Any]:
-            problems = validate_task(definition)
-            if problems:
-                raise CommandError(
-                    ErrCode.TASK_INVALID,
-                    f"Fix the task's {len(problems)} problem{'s' if len(problems) != 1 else ''} first.",
-                    {"diagnostics": [d.to_json() for d in problems]},
-                )
-            try:
-                return simulation.payload(definition, animal, chosen, limit_ms=limit_ms)
-            except ValueError as exc:  # an animal it cannot be
-                raise CommandError(ErrCode.TASK_INVALID, str(exc)) from exc
-
-        async with self._preview_gate:
-            return await asyncio.to_thread(run)
-
-    async def _tasks_spine_palette(self, _args: Args) -> dict[str, Any]:
-        """The seeds and the palette's lists, from the model's own (TASKS.md#the-spine-editor)."""
-        return {
-            "seeds": copy.deepcopy(task_seeds.SEEDS),
-            "phases": list(task_lowering.PHASES),
-            "outcomeClasses": list(task_lowering.OUTCOME_CLASSES),
-            "selections": list(task_lowering.SELECTIONS),
-            "timedPhases": list(task_lowering.TIMED),
-            "weightedSelections": list(task_lowering.WEIGHTED),
         }
 
     async def _tasks_save(self, args: Args) -> dict[str, Any]:
@@ -1512,7 +1445,7 @@ class Application:
         return await self._require_archive().recover(_str_arg(args, "cohortId"))
 
     async def _sessions_rederive(self, args: Args) -> dict[str, Any]:
-        """Re-derive spine runs' trial tables (`DATA.md#re-derive`), through the
+        """Re-derive a cohort's runs' trial tables (`DATA.md#re-derive`), through the
         archive (`CohortArchive.rederive`)."""
         return await self._require_archive().rederive(_str_arg(args, "cohortId"))
 

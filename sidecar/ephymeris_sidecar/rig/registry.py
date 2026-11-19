@@ -473,7 +473,7 @@ class Channel:
     pin_source: str = ""           # the BehaviorBox.h line the number came from
     # -- the channel set (TASKS.md#the-channel-set-and-the-pin-map). Beside the
     # fields above, never instead of them. The trial-runner generator reads none
-    # of these; a spine task and BOX_Utility do (TASKS.md#driven-outputs).
+    # of these; BOX_Utility does (TASKS.md#driven-outputs).
     type: str = ""                 # digital_in | digital_out | pwm_out | tone_out
     #: A `digital_out`'s mode: "train", or None for a level line. A stored
     #: "level" reads as None, so the two spellings are one channel.

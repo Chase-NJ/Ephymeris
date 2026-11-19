@@ -28,8 +28,8 @@ Nothing recorded so far has neural data, so this is the last cheap moment to cha
 reading version 1 forever.
 
 **Out:** rewriting the 732 recorded version-1 runs; the `.tsv` log's format, which stays the board's own
-lines under a `# key: value` header ([DATA.md](../DATA.md#the-tsv-log)); moving GRGL to the spine
-([ADR 0003](0003-phase-spine-task-model.md)), which has not run on a wired box; spike sorting itself.
+lines under a `# key: value` header ([DATA.md](../DATA.md#the-tsv-log)); moving GRGL to the phase spine
+([decision 0003](DECISIONS.md#0003-a-task-is-a-phase-spine-lowered-and-replayed), since withdrawn); spike sorting itself.
 
 **Done means:** with one animal's analysis file loaded, "mean firing on correct against error trials, per
 odor and per reward size" is a table filter, in MATLAB or Python, with no event code and no file path
@@ -199,7 +199,7 @@ A run that was never sorted has no analysis file. The run document is never rewr
 | Sort with Kilosort from the wideband | The PI sorts in Offline Sorter; the wideband is kept so this stays possible later |
 | Put sorted units into the run's `.json` | The run document is built once at the end of behavior; units arrive days later and can be re-sorted |
 | NWB as the analysis file | The standard answer, but it needs a heavy dependency ([policy](../DEVELOPING.md#dependency-policy)) and a reader the PI has never used |
-| Move GRGL to the spine first | Its replayed table is richer, but it has only run with nothing wired and has no per-side correction budgets |
+| Move GRGL to the phase spine first | Its replayed table was richer, but it had only run with nothing wired and had no per-side correction budgets; [since withdrawn](DECISIONS.md#0003-a-task-is-a-phase-spine-lowered-and-replayed) |
 
 ## Consequences
 

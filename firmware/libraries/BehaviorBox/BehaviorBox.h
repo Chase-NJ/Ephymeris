@@ -294,9 +294,7 @@ inline void syncFall(unsigned long rose)
 #endif
 }
 
-/*  The strobe line alone, with no pulse: what emitStrobe prints, and what the
-    phase interpreter's runner (BoxSpine.h) prints, which pulses once per tick
-    rather than once per strobe (RECORDING.md#firmware-pulse). */
+/*  The strobe line alone, with no pulse: what emitStrobe prints. */
 inline void printStrobe(int eventCode, unsigned long timestamp)
 {
   char buf[16];
@@ -446,9 +444,7 @@ inline void emitStatus(const char *body)
     timestamp here would be meaningless -- and from the utility sketches, which
     have no session at all. The trial light's own edges are reported from
     runTrial(), where a trial is actually in progress. */
-/*  Every output but the sync line: the end of a spine run, whose last pulse is
-    still HIGH and falls on a later loop() pass (BoxSpine.h, THE SYNC PULSE). */
-inline void shutdownOutputs()
+inline void shutdownHardware()
 {
   for (int i = 0; i < NUM_ODORS; i++)
     digitalWrite(Odors[i], LOW);
@@ -456,11 +452,6 @@ inline void shutdownOutputs()
     digitalWrite(Fluids[i], LOW);
   digitalWrite(trialLight, LOW);
   digitalWrite(vac, LOW);
-}
-
-inline void shutdownHardware()
-{
-  shutdownOutputs();
 #if BOX_PIN_SYNC_OUT >= 0
   // Held LOW rather than left alone: a floating line on a recording
   // controller's digital input reads as noise, i.e. as events.
@@ -845,9 +836,9 @@ inline bool escalationArmed(const TaskParams &p, int completedTrials)
 /*  Which firmware interpreter this build is, announced as `INTERP=<n>` before
     READY and recorded in the run's file, so a recorded session says what ran it
     (docs/TASKS.md#the-start-line). The trial runner in this header is
-    interpreter 1, and stays 1 for as long as it runs. The phase interpreter
-    (BoxInterp.h) numbers itself from 2 in the same space, so the two can never
-    be confused in a recorded run. */
+    interpreter 1, and stays 1 for as long as it runs: any other runner takes
+    another number in the same space, so the two can never be confused in a
+    recorded run. */
 #define BOX_INTERP 1
 
 /*  Which strobe-stream grammar this trial runner emits, announced as
@@ -1163,10 +1154,9 @@ inline void awaitStart(TaskParams &p)
 
 /*  int boxFreeRam() ->
     Bytes of RAM free between the top of the heap and the stack, now. The
-    board's static data -- a generated state table, the channel rows, the
-    parameter block, the serial buffers -- is resident from reset, so measured
-    in setup() this is what the task leaves for the stack to grow into
-    (0003-phase-spine-task-model.md#open-questions, the RAM budget). Announced
+    board's static data -- the trial table, the parameter block, the serial
+    buffers -- is resident from reset, so measured in setup() this is what the
+    task leaves for the stack to grow into. Announced
     as FREE_RAM=<n> and recorded with the run. Off the board there is no such
     number: a host build reports BOX_HOST_FREE_RAM, 0 unless a test sets it. */
 #if defined(__AVR__)
@@ -1184,38 +1174,24 @@ inline int boxFreeRam()
 inline int boxFreeRam() { return BOX_HOST_FREE_RAM; }
 #endif
 
-/*  void announceReadyAs(int interp, bool tickPulse, int stream) ->
-    The handshake's opening lines: `INTERP=<n>`, `FREE_RAM=<n>`, `STREAM=<n>`
-    when `stream` is set, `SYNC=TICK` when `tickPulse`, then `READY`. In this
-    order so the host has them all before it is told it may send anything.
-    `interp` names what runs the task: BOX_INTERP for the trial runner here,
-    the state-table core's INTERP_VERSION for a spine task (BoxSpine.h).
-    `tickPulse` says the sync line pulses once per tick that strobes rather
-    than once per strobe, as the spine's runner does; a board that says nothing
-    pulses per strobe, as every board flashed before the spine pulsed per tick
-    does (RECORDING.md#firmware-pulse). `stream` names the strobe-stream
-    grammar the trial runner emits (BOX_STREAM); a board that says nothing
-    emits grammar 1, as every board flashed before the header existed does. */
-inline void announceReadyAs(int interp, bool tickPulse = false, int stream = 0)
+/*  void announceReady() ->
+    The handshake's opening lines: `INTERP=<n>`, `FREE_RAM=<n>`, `STREAM=<n>`,
+    then `READY`. In this order so the host has them all before it is told it
+    may send anything. BOX_INTERP names the trial runner here, and BOX_STREAM
+    the strobe-stream grammar it emits; a board that says no `STREAM` emits
+    grammar 1, as every board flashed before the header existed does. The sync
+    line pulses once per strobe (RECORDING.md#firmware-pulse). */
+inline void announceReady()
 {
   char buf[24];
-  snprintf(buf, sizeof(buf), "INTERP=%d", interp);
+  snprintf(buf, sizeof(buf), "INTERP=%d", BOX_INTERP);
   Serial.println(buf);
   snprintf(buf, sizeof(buf), "FREE_RAM=%d", boxFreeRam());
   Serial.println(buf);
-  if (stream > 0)
-  {
-    snprintf(buf, sizeof(buf), "STREAM=%d", stream);
-    Serial.println(buf);
-  }
-  if (tickPulse)
-    Serial.println("SYNC=TICK");
+  snprintf(buf, sizeof(buf), "STREAM=%d", BOX_STREAM);
+  Serial.println(buf);
   Serial.println("READY");
 }
-
-/*  void announceReady() -> announceReadyAs(BOX_INTERP, false, BOX_STREAM), for
-    the trial runner, which speaks stream grammar BOX_STREAM. */
-inline void announceReady() { announceReadyAs(BOX_INTERP, false, BOX_STREAM); }
 
 /*  void applyRewardTimes(const TaskParams&, TrialType*, int) ->
     Copy every reward volume the host sent (RW<i+1> >= 0) onto slot i of the

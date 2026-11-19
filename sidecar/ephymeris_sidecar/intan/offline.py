@@ -79,14 +79,14 @@ def _strobes(document: dict[str, Any]) -> list[tuple[int, int]]:
 
 
 def _trial_starts(document: dict[str, Any], strobes: list[tuple[int, int]]) -> list[ev.TrialStart]:
-    """Each trial's start on the run's own ms clock. A replayed (spine) run's
-    trials are timed on the board's clock already; a decoded one's from the
-    run's earliest timestamp (`legacy/decode.py`), so that is added back."""
+    """Each trial's start on the run's own ms clock. A trial table times its
+    trials from the run's earliest timestamp (`legacy/decode.py`), so that is
+    added back."""
     profile = embedded_profile(document)
     table = trial_table_of(document, profile)
     if not table:
         return []
-    origin = 0 if table.get("kind") == "replay" else min((ms for _, ms in strobes), default=0)
+    origin = min((ms for _, ms in strobes), default=0)
     starts = []
     for row in table.get("trials") or []:
         at = row.get("atMs")

@@ -1098,17 +1098,7 @@ def test_everything_the_firmware_emits_is_in_the_default_vocabulary():
     if names is None:
         pytest.skip("no firmware/ beside the sidecar (a packaged build)")
     vocab = registry.Vocabulary(registry.default_vocabulary_document())
-    # BoxSpine.h names the spine's own codes, withdrawn from the default while
-    # the spine is in development
-    # (`DECISIONS.md#0005-a-spine-run-strobes-each-trials-outcome-class`); a
-    # machine running a spine task adds them on the Strobes page, and the spine
-    # fixture adds them.
-    from ephymeris_sidecar.taskdef import lowering
-    from tests.fixtures.spine import SPINE_CODES
-
-    assert set(SPINE_CODES) == {"BLOCK_START", *lowering.OUTCOME_CODES}
-    assert names - set(SPINE_CODES) <= vocab.names(), \
-        f"named in firmware, not in the vocabulary: {sorted(names - set(SPINE_CODES) - vocab.names())}"
+    assert names <= vocab.names(), f"named in firmware, not in the vocabulary: {sorted(names - vocab.names())}"
 
 
 def test_every_default_code_has_a_mechanism_that_emits_it():

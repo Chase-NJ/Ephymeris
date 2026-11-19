@@ -7,7 +7,7 @@ tasks and firmware: [TASKS.md](TASKS.md); files, database and analytics: [DATA.m
 ## Contents
 
 - [Overview](#overview)
-- [Process lifecycle](#process-lifecycle): [Startup handshake](#startup-handshake), [The live scorer](#the-live-scorer), [Which sidecar runs](#which-sidecar-runs), [The Electron shell](#the-electron-shell), [Updates](#updates)
+- [Process lifecycle](#process-lifecycle): [Startup handshake](#startup-handshake), [Which sidecar runs](#which-sidecar-runs), [The Electron shell](#the-electron-shell), [Updates](#updates)
 - [Wire protocol](#wire-protocol): [Dispatch](#dispatch), [Replay on connect](#replay-on-connect), [Invariants](#invariants)
 - [Settings](#settings): [Settings keys](#settings-keys)
 - [Boxes and boards](#boxes-and-boards): [Box bindings](#box-bindings), [Board discovery](#board-discovery), [Handshake test](#handshake-test)
@@ -29,9 +29,7 @@ flowchart LR
     boards["Up to 6 × Mega2560"]
     store[("ephymeris.db<br/>session files")]
     rhx["Intan RHX<br/>(recordings only)"]
-    scorer["Live scorer<br/>(Python child, spine runs only)"]
     shell -->|"spawns, holds stdin open,<br/>kills on exit"| sidecar
-    sidecar -->|"spawns on the first spine run,<br/>pipes, kills on exit"| scorer
     shell -->|"serves"| webview
     webview <-->|"WebSocket on 127.0.0.1<br/>commands, replies, events"| sidecar
     sidecar -->|"serial, arduino-cli"| boards
@@ -42,14 +40,14 @@ flowchart LR
 The **sidecar** (`sidecar/ephymeris_sidecar/`) owns all state: serial ports, `arduino-cli`, SQLite, session
 files, RHX and the port state machine. The **shell** spawns it, persists settings and owns OS dialogs and
 windows. The **webview** (`src/`) renders what the sidecar reports and edits settings; it never touches a
-port or predicts a transition. The **live scorer** scores spine runs and touches no port, file or database.
+port or predicts a transition.
 
 1. **The sidecar owns all state** and refuses an illegal operation with a typed error code; a disabled button
    is a courtesy.
 2. **A serial port has exactly one owner** ([Port state machine](#port-state-machine)).
 3. **Box number 1–6 is the key, never a COM address**, which Windows renumbers ([Box bindings](#box-bindings)).
-4. **Nothing slow or optional may stall a session**: the backup mirror ([DATA.md](DATA.md#backup-mirroring)),
-   RHX ([RECORDING.md](RECORDING.md#the-rule)) and the live scorer may be slow or dead.
+4. **Nothing slow or optional may stall a session**: the backup mirror ([DATA.md](DATA.md#backup-mirroring))
+   and RHX ([RECORDING.md](RECORDING.md#the-rule)) may be slow or dead.
 5. **Every strobe is fsync'd to the `.tsv` on arrival** ([DATA.md](DATA.md#crash-safety)).
 
 ## Process lifecycle
@@ -90,23 +88,6 @@ With no shell (a browser dev preview), `src/lib/ws/client.ts` reads the endpoint
 > **Orphan protection is load-bearing.** The shell holds the sidecar's stdin open, the sidecar exits on EOF,
 > and the shell kills it on exit; an orphan would hold the serial ports. **Nothing auto-respawns**: a new
 > sidecar would lack the old one's ports and session state, so the operator restarts the app.
-
-### The live scorer
-
-A spine run's live numbers replay its whole stream so far
-([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#live-scoring)). On a sidecar thread that
-would hold the GIL the session threads need to fsync strobes, so one child, `sessions/scorer.py`, scores
-every box.
-
-> [!IMPORTANT]
-> **The scorer dies with the sidecar, is never respawned and is never waited on.** It is a `multiprocessing`
-> `spawn` child started when a mapping with a spine run is confirmed. It runs at lower priority, rests as long
-> as each score took, and exits when its pipe closes; `Application.stop` kills it unjoined. The frozen build
-> needs `multiprocessing.freeze_support()` first in `packaging/entry.py`, or the sidecar starts a copy of
-> itself. If it dies, live numbers read `unavailable`; strobes and files are untouched.
-
-Requests carry only new strobes, one per run in flight, merged while waiting, and are written and read on
-their own threads, so the session path never waits on the child.
 
 ### Which sidecar runs
 
@@ -197,7 +178,7 @@ narrowly: `OSError` only on a command naming a box (never a socket error), `KeyE
 ### Replay on connect
 
 After `auth`, every registered snapshot goes to the new client: `port.state` per box, `boards.presence`,
-`flash.queue`, `utility.updated`, `session.replay` and the rest. `server.publish` broadcasts the same
+`flash.queue`, `utility.updated` and the rest. `server.publish` broadcasts the same
 provider, so a reconnecting client hears what the others heard; a snapshot that raises is skipped. State
 belongs in a snapshot, a change (`port.output`, a transition) in a broadcast. **Live session state is not replayed**: a
 client asks `sessions.active` or `sessions.status`, and `SessionStore` keeps a `session.lifecycle` broadcast
@@ -727,19 +708,15 @@ Mission Control's star panel and Debug Mode's live tile share `MetricStrip` and 
 
 Beside each box's tile, `BoxInsightTab` shows the run in counts: trials offered, completed and correct, as
 three figures, a cumulative record and an outcome bar. The counts are the sidecar's whole-run totals, summed
-by `lib/sessions/boxProgress.ts`: a legacy run's ride each `TelemetryMetric` (`triggered`, `counted`, `hits`),
-a spine run's are its replay's pooled figure. The store keeps the totals each time they move, since only the
+by `lib/sessions/boxProgress.ts` from each `TelemetryMetric` (`triggered`, `counted`, `hits`). The store keeps the totals each time they move, since only the
 latest is ever sent; a page reloaded mid-run draws from the origin to the first totals it sees.
 
 > [!IMPORTANT]
-> **Legacy live panels read one derived record** (`lib/sessions/liveTrials.ts`), decoded by **strobe name,
+> **The live panels read one derived record** (`lib/sessions/liveTrials.ts`), decoded by **strobe name,
 > never code**, from the store's own per-box strobe log, never the capped console ring.
 
-**A spine task's panel is the sidecar's live replay and only that** (`session.replay`): the board's state and
-phase, trial rows and P(correct | row), drawn by `LiveSpine`. A state left without a strobe is shown
-`provisional` until a strobe confirms it. With the scorer down the numbers read `unavailable`, never wrong;
-a `diverged` run shows no numbers. The store forgets a run only when the sidecar reports the next one
-began, never on a click, so a refused start leaves the last run on screen. `test_live_replay_load.py` bounds what scoring costs six boxes' fsyncs.
+The store forgets a run only when the sidecar reports the next one began, never on a click, so a refused
+start leaves the last run on screen.
 
 > [!CAUTION]
 > **A new round is detected by the `confirmations` counter, never by comparing payloads**: re-confirming a
@@ -788,7 +765,7 @@ The dependency policy lives in [DEVELOPING.md](DEVELOPING.md#dependency-policy).
 |---|---|
 | `sidecar/ephymeris_sidecar/` | `server.py` (socket, auth, dispatch), `app.py` (registers every handler: start here), `utility.py`, `debug_run.py`, `discovery.py`, `settings.py` |
 | `…/ports/`, `…/boards/` | State machine, per-port handler, manager, flash queue; `arduino-cli` backends |
-| `…/sessions/` | Lifecycle, runner, writers, scorer, recovery ([DATA.md](DATA.md#per-animal-files)) |
+| `…/sessions/` | Lifecycle, runner, writers, recovery ([DATA.md](DATA.md#per-animal-files)) |
 | `…/cohorts/`, `…/analytics/`, `…/backup/`, `…/logbook/` | [DATA.md](DATA.md#cohorts-and-animals), [ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#the-folder-at-a-glance) |
 | `…/tasks/`, `…/taskdef/`, `…/rig/`, `…/strobes/`, `…/hardware/` | [TASKS.md](TASKS.md#the-rig-definition) |
 | `…/intan/` | [RECORDING.md](RECORDING.md) |

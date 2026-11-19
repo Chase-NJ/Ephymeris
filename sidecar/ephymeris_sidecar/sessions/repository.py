@@ -46,7 +46,6 @@ def _hydrate_run(row: sqlite3.Row) -> SessionAnimalRun:
         params_hash=row["params_hash"],
         interp=row["interp"],
         channel_set_hash=row["channel_set_hash"],
-        diverged=None if row["diverged"] is None else bool(row["diverged"]),
     )
 
 
@@ -278,8 +277,8 @@ class SessionRepository:
                 "INSERT OR REPLACE INTO session_animal_runs"
                 " (id, session_id, animal_id, box_number, sketch_path, file_path,"
                 "  started_at, ended_at, stop_reason, profile_hash, config_json,"
-                "  params_hash, interp, channel_set_hash, diverged)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "  params_hash, interp, channel_set_hash)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     run.id,
                     run.session_id,
@@ -295,7 +294,6 @@ class SessionRepository:
                     run.params_hash,
                     run.interp,
                     run.channel_set_hash,
-                    None if run.diverged is None else int(run.diverged),
                 ),
             )
 

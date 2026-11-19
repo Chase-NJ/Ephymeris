@@ -4,15 +4,14 @@
  * (`ARCHITECTURE.md#live-session-views`).
  *
  * The sidecar counts; this only adds up what it sent and keeps the totals it
- * has seen, in order, so Mission Control can draw the run's shape. A legacy
- * run's totals ride each live metric (`session.telemetry`), one per condition;
- * a spine run's are its replay's pooled figure (`session.replay`). Nothing
- * here reads a strobe.
+ * has seen, in order, so Mission Control can draw the run's shape. A run's
+ * totals ride each live metric (`session.telemetry`), one per condition.
+ * Nothing here reads a strobe.
  *
  * Pure.
  */
 
-import type { LiveReplay, TelemetryMetric } from "@/lib/ws/protocol";
+import type { TelemetryMetric } from "@/lib/ws/protocol";
 
 export interface Tally {
   /** Trials offered: every trial that began, the open one included. */
@@ -26,7 +25,7 @@ export interface Tally {
 /** Enough points to draw any session at a tab's width. */
 export const PROGRESS_LIMIT = 600;
 
-/** A legacy run's totals, summed over its conditions; null when it has none. */
+/** A run's totals, summed over its conditions; null when it has none. */
 export function telemetryTally(metrics: readonly TelemetryMetric[]): Tally | null {
   if (metrics.length === 0) return null;
   const tally = { offered: 0, completed: 0, correct: 0 };
@@ -38,23 +37,13 @@ export function telemetryTally(metrics: readonly TelemetryMetric[]): Tally | nul
   return tally;
 }
 
-/**
- * A spine run's totals, from its replay's pooled figure; null when the replay
- * has no numbers (diverged, unreplayable, or its live scorer is down).
- */
-export function replayTally(replay: LiveReplay | null): Tally | null {
-  const overall = replay && replay.unavailable === null ? replay.overall : null;
-  if (!overall) return null;
-  return { offered: overall.triggered, completed: overall.counted, correct: overall.hits };
-}
-
 function same(a: Tally, b: Tally): boolean {
   return a.offered === b.offered && a.completed === b.completed && a.correct === b.correct;
 }
 
 /**
  * The series with `next` on the end. Totals that repeat the last add nothing
- * (a legacy run reports on every strobe, most of which end no trial), and the
+ * (a run reports on every strobe, most of which end no trial), and the
  * same array comes back so a subscriber does not re-render. Totals that went
  * backwards are a new run's, and start the series over. Past the limit every
  * other point is dropped, the first and the newest kept, so a long session

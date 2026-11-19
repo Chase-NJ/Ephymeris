@@ -692,7 +692,7 @@ async def test_spikes_reach_the_firing_map_batched_by_box(rig, tmp_path):
 
 
 async def test_a_tick_pulsed_box_matches_every_strobe_of_a_tick_to_its_one_edge(rig, tmp_path):
-    """A spine board announces `SYNC=TICK` and pulses once per tick that
+    """A tick-pulsed board announces `SYNC=TICK` and pulses once per tick that
     strobes; the runner says so at START and the box's matcher pairs by tick.
     Matched per strobe, every one, with no edge left over and none missing."""
     h = await rig(params={"synthetic": "False"})

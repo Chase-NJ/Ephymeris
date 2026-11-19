@@ -73,7 +73,7 @@ class EdgeMatcher:
     """Pair a box's serial strobes with the sync edges its pin produced.
 
     Each edge is one STROBING TIME: one strobe, from the trial runner, which
-    pulses once per strobe; or one tick, from a spine run announced as
+    pulses once per strobe; or one tick, from a board that announced itself
     tick-pulsed (`tick_pulsed`), which pulses once per tick that strobes, so
     every strobe of a tick (all sharing its millisecond) takes that tick's
     edge. So the Nth edge is the Nth strobing time -- in principle. Matching

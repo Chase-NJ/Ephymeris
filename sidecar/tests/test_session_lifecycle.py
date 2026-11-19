@@ -782,16 +782,20 @@ async def test_a_stopped_recording_is_aligned_then_exported_in_that_order(record
     rig.intan.run_record = {"baseFilename": "rec", "fileTimestamp": "260417_095743"}
     steps: list[tuple[str, str]] = []
 
+    looked = asyncio.Event()
+
     async def align(files: list[str], recording: str) -> None:
-        await asyncio.sleep(0.02)   # the export must still wait for it
+        await looked.wait()   # held open, so the export must still wait for it
         steps.append(("align", recording))
 
     rig.lifecycle.align_runs = align
     rig.lifecycle.export_spikes = lambda _files, recording: steps.append(("export", recording))
     session = rig.session(recording=True)
     await rig.run_round(session)
-    ended = await rig.lifecycle.end(session.id)
+    # An end that waited for the alignment would never return: it is held open.
+    ended = await asyncio.wait_for(rig.lifecycle.end(session.id), timeout=30)
     assert ended.status == "completed" and steps == [], "the end waited for neither"
+    looked.set()
     await rig.lifecycle.exports_settled()
     assert steps == [("align", "rec_260417_095743"), ("export", "rec_260417_095743")]
 
@@ -893,19 +897,19 @@ async def test_a_run_that_lands_after_the_session_let_go_is_still_recorded(rig) 
 async def test_a_run_record_keeps_the_interpreter_and_channel_set_it_ran_on(rig) -> None:
     """`DATA.md#run-records`: what the board announced (`INTERP=<n>`) and the
     channel set its sketch was generated against go on the record at
-    finalization; whether replay diverged is left for Analytics to say."""
+    finalization."""
     session = rig.session()
     config = BoxConfig(
         box=1, animal_id="C1-1", animal_name="remy1", sketch_path="/sk", sketch_name="sk",
         start_command=build_start_command(None, {}), config_metadata={}, profile=None,
         channel_set_hash="3f0c9a17b2d4e588", channel_set_hash_version=2,
     )
-    run = ActiveRun(box=1, config=config, run_id="r-spine", started_at="2026-10-10T10:00:00+00:00",
+    run = ActiveRun(box=1, config=config, run_id="r-1", started_at="2026-10-10T10:00:00+00:00",
                     address="/dev/fake1", session_id_label="P1_12", session_id=session.id, interp=2)
     await rig.lifecycle.animal_ended(run, "end")
 
     [recorded] = rig.sessions.runs_for(session.id)
-    assert (recorded.interp, recorded.channel_set_hash, recorded.diverged) == (2, "3f0c9a17b2d4e588", None)
+    assert (recorded.interp, recorded.channel_set_hash) == (2, "3f0c9a17b2d4e588")
 
 
 async def test_a_run_never_names_a_profile_another_writers_rollback_threw_away(

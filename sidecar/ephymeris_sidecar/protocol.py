@@ -100,8 +100,6 @@ class Cmd:
     TASKS_LIST: Final = "tasks.list"
     TASKS_GET: Final = "tasks.get"
     TASKS_PREVIEW: Final = "tasks.preview"
-    TASKS_SIMULATE: Final = "tasks.simulate"
-    TASKS_SPINE_PALETTE: Final = "tasks.spinePalette"
     TASKS_SAVE: Final = "tasks.save"
     TASKS_DELETE: Final = "tasks.delete"
     TASKS_EXPORT: Final = "tasks.export"
@@ -165,7 +163,6 @@ class Evt:
     COHORTS_UPDATED: Final = "cohorts.updated"
     PREFIXES_UPDATED: Final = "prefixes.updated"
     SESSION_TELEMETRY: Final = "session.telemetry"
-    SESSION_REPLAY: Final = "session.replay"
     SESSION_ANIMAL_ENDED: Final = "session.animalEnded"
     LOGBOOK_UPDATED: Final = "logbook.updated"
     SESSION_LIFECYCLE: Final = "session.lifecycle"
@@ -302,15 +299,13 @@ SHAPES: Final[dict[str, Any]] = {
     "TelemetryField": ('obj', (('key', 'str', False), ('label', 'str', False))),
     "TelemetrySpec": ('obj', (('match', 'str', False), ('fields', ('list', ('ref', 'TelemetryField')), False))),
     "IdentifySpec": ('obj', (('on', 'str', False), ('off', 'str', False))),
-    "TaskProfile": ('obj', (('taskName', 'str', False), ('kind', ('ref', 'ProfileKind'), False), ('config', ('list', ('ref', 'ConfigField')), False), ('strobes', ('map', 'str'), False), ('liveMetrics', ('list', ('ref', 'LiveMetric')), False), ('controls', ('list', ('ref', 'Control')), False), ('legacyNames', ('list', 'str'), False), ('telemetry', ('ref', 'TelemetrySpec'), True), ('identify', ('ref', 'IdentifySpec'), True), ('spine', ('map', 'any'), True), ('exposed', ('list', 'str'), True), ('trialTypes', ('list', ('map', 'any')), True))),
+    "TaskProfile": ('obj', (('taskName', 'str', False), ('kind', ('ref', 'ProfileKind'), False), ('config', ('list', ('ref', 'ConfigField')), False), ('strobes', ('map', 'str'), False), ('liveMetrics', ('list', ('ref', 'LiveMetric')), False), ('controls', ('list', ('ref', 'Control')), False), ('legacyNames', ('list', 'str'), False), ('telemetry', ('ref', 'TelemetrySpec'), True), ('identify', ('ref', 'IdentifySpec'), True), ('exposed', ('list', 'str'), True), ('trialTypes', ('list', ('map', 'any')), True))),
     "SessionBoxMapping": ('obj', (('box', 'int', False), ('animalId', 'str', False), ('sketchPath', 'str', False), ('config', ('map', 'any'), False))),
     "SessionBox": ('obj', (('box', 'int', False), ('animalId', 'str', False), ('animalName', 'str', False), ('sketchName', 'str', False), ('sketchPath', 'str', False), ('running', 'bool', False), ('startedAt', ('union', ('str', 'null')), False), ('ended', 'bool', False))),
     "TelemetryMetric": ('obj', (('id', 'str', False), ('value', ('union', ('float', 'null')), False), ('n', 'int', False), ('triggered', 'int', False), ('counted', 'int', False), ('hits', 'int', False))),
     "BoxTelemetry": ('obj', (('box', 'int', False), ('animalId', 'str', False), ('metrics', ('list', ('ref', 'TelemetryMetric')), False))),
     "PortTelemetry": ('obj', (('box', 'int', False), ('running', 'bool', False), ('metrics', ('list', ('ref', 'TelemetryMetric')), False))),
     "AnimalEnded": ('obj', (('box', 'int', False), ('animalId', 'str', False), ('stopReason', 'str', False), ('filePath', ('union', ('str', 'null')), False))),
-    "LiveReplayStatus": ('lit', ('replaying', 'diverged', 'unreplayable', 'unavailable', 'ended')),
-    "LiveReplay": ('obj', (('box', 'int', False), ('animalId', 'str', False), ('status', ('ref', 'LiveReplayStatus'), False), ('detail', ('union', ('str', 'null')), False), ('state', ('union', ('int', 'null')), False), ('phase', ('union', ('int', 'null')), False), ('row', ('union', ('str', 'null')), False), ('provisional', 'bool', False), ('unavailable', ('union', ('str', 'null')), False), ('trials', 'int', False), ('current', ('union', (('ref', 'ReplayTrial'), 'null')), False), ('last', ('union', (('ref', 'ReplayTrial'), 'null')), False), ('metrics', ('list', ('ref', 'MetricSummary')), False), ('overall', ('union', (('ref', 'MetricSummary'), 'null')), False), ('replay', ('union', (('ref', 'ReplayScore'), 'null')), False), ('divergence', ('union', (('ref', 'ReplayDivergence'), 'null')), False))),
     "RunnerSession": ('obj', (('session', ('ref', 'Session'), False), ('boxes', ('list', ('ref', 'SessionBox')), False))),
     "ActiveSessions": ('obj', (('running', ('union', (('ref', 'RunnerSession'), 'null')), False), ('configuring', ('list', ('ref', 'Session')), False), ('stale', ('list', ('ref', 'Session')), False), ('confirmations', 'int', False))),
     "SessionListItem": ('obj', (('id', 'str', False), ('cohortId', 'str', False), ('prefixName', 'str', False), ('sessionNumber', 'str', False), ('date', 'str', False), ('startedAt', 'str', False), ('endedAt', ('union', ('str', 'null')), False), ('clockStartedAt', 'str', False), ('clockEndedAt', ('union', ('str', 'null')), False), ('status', ('ref', 'SessionStatus'), False), ('folderPath', 'str', False), ('ordinal', 'int', False), ('runCount', 'int', True), ('rounds', ('list', ('ref', 'Round')), False))),
@@ -319,16 +314,9 @@ SHAPES: Final[dict[str, Any]] = {
     "TrialOutcomes": ('obj', (('trials', 'int', False), ('administered', 'int', False), ('rewarded', 'int', False), ('holdFailed', 'int', False), ('wrongWell', 'int', False), ('noResponse', 'int', False), ('aborted', 'int', False), ('pRewarded', ('union', ('float', 'null')), False), ('pSide', ('union', ('float', 'null')), False), ('rewardedLow', ('union', ('float', 'null')), False), ('rewardedHigh', ('union', ('float', 'null')), False), ('sideLow', ('union', ('float', 'null')), False), ('sideHigh', ('union', ('float', 'null')), False), ('unpaid', 'int', False), ('withheld', 'int', False), ('falseAlarm', 'int', False), ('responded', 'int', False), ('pResponse', ('union', ('float', 'null')), False), ('responseLow', ('union', ('float', 'null')), False), ('responseHigh', ('union', ('float', 'null')), False))),
     "TrialEngagement": ('obj', (('presented', 'int', False), ('poked', 'int', False), ('odorDelivered', 'int', False), ('noPoke', 'int', False), ('pokeAborted', 'int', False), ('pEngaged', ('union', ('float', 'null')), False), ('pDelivered', ('union', ('float', 'null')), False), ('engagedLow', ('union', ('float', 'null')), False), ('engagedHigh', ('union', ('float', 'null')), False))),
     "ConditionOutcomes": ('obj', (('metricId', 'str', False), ('label', 'str', False), ('triggerCode', ('union', ('int', 'null')), False), ('outcomes', ('ref', 'TrialOutcomes'), False), ('answerSide', ('union', ('str', 'null')), False))),
-    "RunStatus": ('lit', ('ok', 'no-metrics', 'diverged', 'unreplayable', 'missing', 'unreadable')),
-    "Proportion": ('obj', (('n', 'int', False), ('of', 'int', False), ('p', ('union', ('float', 'null')), False), ('low', ('union', ('float', 'null')), False), ('high', ('union', ('float', 'null')), False))),
-    "OutcomeTally": ('obj', (('outcomeClass', 'str', False), ('n', 'int', False), ('of', 'int', False), ('p', ('union', ('float', 'null')), False), ('low', ('union', ('float', 'null')), False), ('high', ('union', ('float', 'null')), False))),
-    "RowOutcomes": ('obj', (('rowId', ('union', ('str', 'null')), False), ('name', ('union', ('str', 'null')), False), ('trials', 'int', False), ('unclassified', 'int', False), ('classes', ('list', ('ref', 'OutcomeTally')), False))),
-    "ReplayScore": ('obj', (('interp', 'int', False), ('trials', 'int', False), ('unclassified', 'int', False), ('classes', ('list', ('ref', 'OutcomeTally')), False), ('rows', ('list', ('ref', 'RowOutcomes')), False), ('rewarded', ('ref', 'Proportion'), False), ('rates', ('list', ('ref', 'WindowRate')), False))),
-    "RateEstimate": ('obj', (('n', 'int', False), ('mean', ('union', ('float', 'null')), False), ('low', ('union', ('float', 'null')), False), ('high', ('union', ('float', 'null')), False))),
-    "WindowRate": ('obj', (('rowId', 'str', False), ('name', 'str', False), ('phase', 'int', False), ('label', 'str', False), ('channel', 'str', False), ('rate', ('ref', 'RateEstimate'), False), ('reference', ('union', ('int', 'null')), False), ('versus', ('union', (('ref', 'RateEstimate'), 'null')), False), ('lowConfidence', 'bool', False))),
-    "ReplayDivergence": ('obj', (('detail', 'str', False), ('index', ('union', ('int', 'null')), False), ('atMs', ('union', ('int', 'null')), False), ('expected', ('union', ('str', 'null')), False), ('recorded', ('union', ('str', 'null')), False))),
+    "RunStatus": ('lit', ('ok', 'no-metrics', 'missing', 'unreadable')),
     "ProfileSource": ('lit', ('snapshot', 'sketch-current', 'inferred', 'unavailable')),
-    "RunSummary": ('obj', (('runId', 'str', False), ('sessionId', 'str', False), ('animalId', 'str', False), ('boxNumber', ('union', ('int', 'null')), False), ('startedAt', 'str', False), ('endedAt', ('union', ('str', 'null')), False), ('sketchPath', 'str', False), ('sketchName', 'str', False), ('profileHash', ('union', ('str', 'null')), False), ('paramsHash', ('union', ('str', 'null')), False), ('profileSource', ('ref', 'ProfileSource'), False), ('stale', 'bool', False), ('falseStart', 'bool', False), ('falseStartSource', ('union', (('lit', ('automatic', 'marked', 'restored')), 'null')), False), ('restartedBy', ('union', ('str', 'null')), False), ('status', ('ref', 'RunStatus'), False), ('metrics', ('list', ('ref', 'MetricSummary')), False), ('overall', ('union', (('ref', 'MetricSummary'), 'null')), False), ('outcomes', ('union', (('ref', 'TrialOutcomes'), 'null')), False), ('conditions', ('list', ('ref', 'ConditionOutcomes')), False), ('engagement', ('union', (('ref', 'TrialEngagement'), 'null')), False), ('totalEvents', 'int', False), ('durationMs', ('union', ('float', 'null')), False), ('stopReason', ('union', ('str', 'null')), False), ('clean', 'bool', False), ('seed', ('union', ('int', 'null')), False), ('detail', ('union', ('str', 'null')), False), ('excludedByDefault', 'bool', False), ('replay', ('union', (('ref', 'ReplayScore'), 'null')), False), ('divergence', ('union', (('ref', 'ReplayDivergence'), 'null')), False))),
+    "RunSummary": ('obj', (('runId', 'str', False), ('sessionId', 'str', False), ('animalId', 'str', False), ('boxNumber', ('union', ('int', 'null')), False), ('startedAt', 'str', False), ('endedAt', ('union', ('str', 'null')), False), ('sketchPath', 'str', False), ('sketchName', 'str', False), ('profileHash', ('union', ('str', 'null')), False), ('paramsHash', ('union', ('str', 'null')), False), ('profileSource', ('ref', 'ProfileSource'), False), ('stale', 'bool', False), ('falseStart', 'bool', False), ('falseStartSource', ('union', (('lit', ('automatic', 'marked', 'restored')), 'null')), False), ('restartedBy', ('union', ('str', 'null')), False), ('status', ('ref', 'RunStatus'), False), ('metrics', ('list', ('ref', 'MetricSummary')), False), ('overall', ('union', (('ref', 'MetricSummary'), 'null')), False), ('outcomes', ('union', (('ref', 'TrialOutcomes'), 'null')), False), ('conditions', ('list', ('ref', 'ConditionOutcomes')), False), ('engagement', ('union', (('ref', 'TrialEngagement'), 'null')), False), ('totalEvents', 'int', False), ('durationMs', ('union', ('float', 'null')), False), ('stopReason', ('union', ('str', 'null')), False), ('clean', 'bool', False), ('seed', ('union', ('int', 'null')), False), ('detail', ('union', ('str', 'null')), False), ('excludedByDefault', 'bool', False))),
     "AnalyticsAnimal": ('obj', (('id', 'str', False), ('name', 'str', False), ('boxNumber', ('union', ('int', 'null')), False), ('cage', ('union', ('int', 'null')), False), ('former', 'bool', False))),
     "AnswerSide": ('lit', ('left', 'right', 'withhold', 'port')),
     "ProfileMetricInfo": ('obj', (('id', 'str', False), ('label', 'str', False), ('windowSize', 'int', False), ('answerSide', ('union', (('ref', 'AnswerSide'), 'null')), False))),
@@ -342,7 +330,7 @@ SHAPES: Final[dict[str, Any]] = {
     "InputCount": ('obj', (('phase', 'int', False), ('channel', 'str', False), ('count', 'int', False))),
     "ConditionScore": ('obj', (('condition', 'str', False), ('correct', ('union', ('bool', 'null')), False))),
     "ReplayTrial": ('obj', (('index', 'int', False), ('atMs', ('union', ('int', 'null')), False), ('block', ('union', ('str', 'null')), False), ('row', ('union', ('str', 'null')), False), ('rowName', ('union', ('str', 'null')), False), ('level', ('union', ('float', 'null')), False), ('phaseEntries', ('list', ('union', ('int', 'null'))), False), ('response', ('union', ('str', 'null')), False), ('responseEdge', ('union', (('lit', ('rise', 'fall')), 'null')), False), ('responseMs', ('union', ('int', 'null')), False), ('latencyMs', ('union', ('int', 'null')), False), ('outcome', ('union', ('str', 'null')), False), ('outcomeMs', ('union', ('int', 'null')), False), ('correct', ('union', ('bool', 'null')), False), ('rewarded', 'bool', False), ('rewardLine', ('union', ('str', 'null')), False), ('rewardMs', ('union', ('int', 'null')), False), ('correction', ('union', ('bool', 'null')), False), ('inputCounts', ('list', ('ref', 'InputCount')), False), ('counterN', ('union', ('int', 'null')), False), ('complete', 'bool', False), ('presented', 'bool', False), ('scores', ('list', ('ref', 'ConditionScore')), False))),
-    "TrialTable": ('obj', (('kind', ('lit', ('replay', 'legacy', 'grammar2')), False), ('phases', ('list', 'str'), False), ('gaps', ('list', 'str'), False), ('trials', ('list', ('ref', 'ReplayTrial')), False))),
+    "TrialTable": ('obj', (('kind', ('lit', ('legacy', 'grammar2')), False), ('phases', ('list', 'str'), False), ('gaps', ('list', 'str'), False), ('trials', ('list', ('ref', 'ReplayTrial')), False))),
     "RunSeries": ('obj', (('runId', 'str', False), ('mode', ('lit', ('rolling', 'cumulative')), False), ('metrics', ('list', ('ref', 'MetricSeries')), False), ('trail', ('list', ('ref', 'StrategyPoint')), False), ('trials', ('list', ('ref', 'TrialRecord')), False), ('trialTable', ('union', (('ref', 'TrialTable'), 'null')), False))),
     "SeriesResult": ('obj', (('series', ('list', ('ref', 'RunSeries')), False), ('warnings', ('list', ('ref', 'AnalyticsWarning')), False))),
     "RescanOrphan": ('obj', (('path', 'str', False), ('animalId', ('union', ('str', 'null')), False), ('animalName', ('union', ('str', 'null')), False), ('animalSource', ('union', (('lit', ('document', 'filename')), 'null')), False), ('date', ('union', ('str', 'null')), False), ('status', 'str', False), ('reason', ('union', ('str', 'null')), False))),
@@ -382,23 +370,12 @@ SHAPES: Final[dict[str, Any]] = {
     "ChannelSetNewChannel": ('obj', (('channel', 'str', False), ('kind', ('union', ('str', 'null')), False), ('type', ('union', ('str', 'null')), False), ('pin', ('union', ('int', 'null')), False), ('freePins', ('list', 'int'), False))),
     "ChannelSetImportPlan": ('obj', (('conflicts', ('list', ('ref', 'ChannelSetConflict')), False), ('vocabulary', ('ref', 'StrobeImportPlan'), False), ('changed', ('list', 'str'), False), ('newChannels', ('list', ('ref', 'ChannelSetNewChannel')), False), ('breaks', ('list', ('ref', 'RigImpact')), False), ('hereHash', 'str', False), ('importedHash', 'str', False), ('fileHash', 'str', False), ('fileHashVersion', 'int', False), ('identical', 'bool', False))),
     "TaskDiagnostic": ('obj', (('location', 'str', False), ('message', 'str', False), ('code', 'str', False), ('target', ('ref', 'TaskTarget'), False))),
-    "TaskTarget": ('obj', (('kind', ('lit', ('phase', 'row', 'block', 'slot', 'stage', 'session', 'vocabulary', 'ram', 'task')), False), ('index', ('union', ('int', 'null')), False))),
-    "SpineSlotView": ('obj', (('id', 'str', False), ('type', 'str', False), ('mode', ('union', ('str', 'null')), False), ('channels', ('list', 'str'), False))),
-    "SpineRamPart": ('obj', (('label', 'str', False), ('bytes', 'int', False))),
-    "SpineRam": ('obj', (('bytes', ('union', ('int', 'null')), False), ('budget', 'int', False), ('parts', ('list', ('ref', 'SpineRamPart')), False))),
-    "SpineBlockView": ('obj', (('id', 'str', False), ('next', ('union', ('int', 'null')), False))),
-    "SpineStoredValue": ('obj', (('key', 'str', False), ('value', 'any', False), ('target', ('ref', 'TaskTarget'), False), ('field', ('union', ('str', 'null')), False))),
-    "SpineView": ('obj', (('slots', ('list', ('ref', 'SpineSlotView')), False), ('ram', ('ref', 'SpineRam'), False), ('blocks', ('list', ('ref', 'SpineBlockView')), False), ('sessionEnds', 'bool', False), ('overridable', ('list', 'int'), False), ('stored', ('list', ('ref', 'SpineStoredValue')), False))),
-    "TaskSeed": ('obj', (('id', 'str', False), ('label', 'str', False), ('summary', 'str', False), ('definition', 'any', False))),
+    "TaskTarget": ('obj', (('kind', ('lit', ('row', 'stage', 'session', 'vocabulary', 'task')), False), ('index', ('union', ('int', 'null')), False))),
     "TaskImportConflict": ('obj', (('kind', 'str', False), ('channel', ('union', ('str', 'null')), False), ('message', 'str', False))),
     "TaskImportPlan": ('obj', (('conflicts', ('list', ('ref', 'TaskImportConflict')), False), ('taskId', 'str', False), ('name', 'str', False), ('replaces', 'bool', False), ('replacesName', ('union', ('str', 'null')), False), ('replacesUnreadable', 'bool', False), ('identical', 'bool', False), ('sameChannelSet', 'bool', False), ('hereHash', 'str', False), ('fileHash', 'str', False), ('fileHashVersion', 'int', False), ('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False))),
-    "TaskEntry": ('obj', (('id', 'str', False), ('name', 'str', False), ('unreadable', ('union', ('str', 'null')), False), ('category', 'str', False), ('path', 'str', False), ('label', 'str', False), ('editedAt', ('union', ('str', 'null')), False), ('problems', 'int', False), ('trials', 'int', False), ('stages', 'int', False), ('selectionMode', ('union', (('lit', ('antibias', 'pool', 'weighted')), 'null')), False), ('spine', 'bool', False))),
+    "TaskEntry": ('obj', (('id', 'str', False), ('name', 'str', False), ('unreadable', ('union', ('str', 'null')), False), ('category', 'str', False), ('path', 'str', False), ('label', 'str', False), ('editedAt', ('union', ('str', 'null')), False), ('problems', 'int', False), ('trials', 'int', False), ('stages', 'int', False), ('selectionMode', ('lit', ('antibias', 'pool', 'weighted')), False))),
     "TaskSaved": ('obj', (('entry', ('ref', 'TaskEntry'), False), ('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False), ('sketchPath', ('union', ('str', 'null')), False))),
-    "TaskPreview": ('obj', (('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False), ('profile', ('ref', 'TaskProfile'), False), ('spine', ('union', (('ref', 'SpineView'), 'null')), False), ('catalogueDefaults', ('map', 'any'), False))),
-    "SimulatedAnimal": ('obj', (('kind', ('lit', ('correct', 'random', 'biased', 'silent')), False), ('response', 'str', True), ('permille', 'int', True))),
-    "BlockSwitch": ('obj', (('index', 'int', False), ('block', ('union', ('str', 'null')), False))),
-    "AbsentRow": ('obj', (('rowId', 'str', False), ('name', 'str', False), ('blocks', ('list', 'str'), False))),
-    "TaskSimulation": ('obj', (('seed', 'int', False), ('limitMs', 'int', False), ('endedBy', ('lit', ('trials', 'blocks', 'lastTrial', 'timeLimit')), False), ('status', ('ref', 'RunStatus'), False), ('detail', ('union', ('str', 'null')), False), ('metrics', ('list', ('ref', 'MetricSummary')), False), ('overall', ('union', (('ref', 'MetricSummary'), 'null')), False), ('replay', ('union', (('ref', 'ReplayScore'), 'null')), False), ('series', ('list', ('ref', 'MetricSeries')), False), ('trialTable', ('union', (('ref', 'TrialTable'), 'null')), False), ('switches', ('list', ('ref', 'BlockSwitch')), False), ('absent', ('list', ('ref', 'AbsentRow')), False))),
+    "TaskPreview": ('obj', (('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False), ('profile', ('ref', 'TaskProfile'), False), ('catalogueDefaults', ('map', 'any'), False))),
     "TasksUpdatedData": ('obj', (('tasks', ('list', ('ref', 'TaskEntry')), False),)),
     "StrobeCode": ('obj', (('name', 'str', False), ('code', 'int', False), ('origin', 'str', False), ('emittedOn', 'str', True), ('rationale', 'str', True), ('portSlot', 'int', True))),
     "RetiredStrobe": ('obj', (('name', 'str', False), ('code', 'int', False), ('rationale', 'str', True), ('seenIn', 'str', True), ('retiredAt', 'str', True))),
@@ -496,8 +473,6 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "tasks.list": ('obj', ()),
     "tasks.get": ('obj', (('taskId', 'str', False),)),
     "tasks.preview": ('obj', (('definition', 'any', False),)),
-    "tasks.simulate": ('obj', (('definition', 'any', False), ('animal', ('ref', 'SimulatedAnimal'), False), ('seed', 'int', True), ('limitMs', 'int', True))),
-    "tasks.spinePalette": ('obj', ()),
     "tasks.save": ('obj', (('definition', 'any', False),)),
     "tasks.delete": ('obj', (('taskId', 'str', False),)),
     "tasks.export": ('obj', (('taskId', 'str', False),)),
@@ -593,8 +568,6 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "tasks.list": ('obj', (('tasks', ('list', ('ref', 'TaskEntry')), False),)),
     "tasks.get": ('obj', (('definition', 'any', False), ('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False))),
     "tasks.preview": ('ref', 'TaskPreview'),
-    "tasks.simulate": ('ref', 'TaskSimulation'),
-    "tasks.spinePalette": ('obj', (('seeds', ('list', ('ref', 'TaskSeed')), False), ('phases', ('list', 'str'), False), ('outcomeClasses', ('list', 'str'), False), ('selections', ('list', 'str'), False), ('timedPhases', ('list', 'str'), False), ('weightedSelections', ('list', 'str'), False))),
     "tasks.save": ('ref', 'TaskSaved'),
     "tasks.delete": ('obj', (('deleted', 'bool', False),)),
     "tasks.export": ('obj', (('document', 'any', False), ('filename', 'str', False))),
@@ -643,7 +616,6 @@ EVENT_DATA: Final[dict[str, Any]] = {
     "cohorts.updated": ('ref', 'CohortsUpdatedData'),
     "prefixes.updated": ('ref', 'PrefixesUpdatedData'),
     "session.telemetry": ('ref', 'BoxTelemetry'),
-    "session.replay": ('ref', 'LiveReplay'),
     "session.animalEnded": ('ref', 'AnimalEnded'),
     "logbook.updated": ('ref', 'LogbookUpdated'),
     "session.lifecycle": ('ref', 'ActiveSessions'),

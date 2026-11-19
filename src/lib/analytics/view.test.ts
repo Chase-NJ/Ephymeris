@@ -237,27 +237,12 @@ describe("sideAccuracy", () => {
   });
 });
 
-describe("a spine run on the cross-session panels (#167)", () => {
+describe("response accuracy on the cross-session panels", () => {
   const tally = (over: Partial<Record<string, number>>) =>
     ({
       trials: 0, administered: 0, rewarded: 0, holdFailed: 0, wrongWell: 0, noResponse: 0, aborted: 0,
       unpaid: 0, withheld: 0, falseAlarm: 0, responded: 0, pResponse: null, ...over,
     }) as never;
-  const spine = {
-    metrics: [{ ...OVERALL }],
-    conditions: [
-      { metricId: "replay:r1:correct", label: "Odor 1", triggerCode: null, answerSide: "right",
-        outcomes: tally({ rewarded: 8, holdFailed: 1, unpaid: 1, wrongWell: 2, responded: 12 }) },
-      { metricId: "replay:r2:correct", label: "Odor 2", triggerCode: null, answerSide: "left",
-        outcomes: tally({ rewarded: 3, wrongWell: 1, responded: 4 }) },
-    ],
-  } as unknown as RunSummary;
-
-  it("places a spine run on the strategy plane by its rows' response accuracy", () => {
-    expect(sideAccuracy(spine, "right")).toEqual({ p: 10 / 12, counted: 12 });
-    expect(sideAccuracy(spine, "left")).toEqual({ p: 3 / 4, counted: 4 });
-  });
-
   it("pools response accuracy as legacy P(hit): no response and aborts left out", () => {
     const runs = [
       { outcomes: tally({ trials: 12, administered: 12, rewarded: 6, holdFailed: 2, wrongWell: 2, noResponse: 2,
@@ -271,14 +256,11 @@ describe("a spine run on the cross-session panels (#167)", () => {
     expect(RESPONSE_ACCURACY.value(pooled)).toBe(12 / 15);
   });
 
-  it("gives a spine run's sparkline its response accuracy, and a legacy run its P(hit)", () => {
-    const replay = { rows: [] };
-    expect(responseAccuracyOf({ replay, outcomes: tally({ pResponse: 0.75 }), overall: { pSession: 0.5 } } as never))
-      .toBe(0.75);
-    // A legacy tally cannot see a no-go withhold; its overall P(hit) can, and is the same figure.
-    expect(responseAccuracyOf({ replay: null, outcomes: tally({ pResponse: 0.75 }), overall: { pSession: 0.5 },
+  it("gives a run's sparkline its pooled P(hit)", () => {
+    // A grammar-1 tally cannot see a no-go withhold; the overall P(hit) can, and is the same figure.
+    expect(responseAccuracyOf({ outcomes: tally({ pResponse: 0.75 }), overall: { pSession: 0.5 },
                                 metrics: [] } as never)).toBe(0.5);
-    expect(responseAccuracyOf({ replay, outcomes: null, overall: { pSession: 0.4 }, metrics: [] } as never))
+    expect(responseAccuracyOf({ outcomes: null, overall: { pSession: 0.4 }, metrics: [] } as never))
       .toBe(0.4);
   });
 
@@ -290,23 +272,21 @@ describe("a spine run on the cross-session panels (#167)", () => {
     expect(pooled.pResponse).toBe(2 / 3);
   });
 
-  it("flags a spine run's plane point when either side rests on few answers", () => {
-    expect(sideLowConfidence(spine)).toBe(true); // the left well: 4 answers
-    const solid = {
-      metrics: [],
-      conditions: (spine.conditions ?? []).map((c) => ({ ...c, outcomes: tally({ rewarded: 20, responded: 20 }) })),
-    } as unknown as RunSummary;
-    expect(sideLowConfidence(solid)).toBe(false);
+  it("flags a run's plane point when either well's metric is low-confidence", () => {
+    const run = (lowConfidence: boolean) =>
+      ({ metrics: [{ answerSide: "left", lowConfidence: false }, { answerSide: "right", lowConfidence }] }) as unknown as RunSummary;
+    expect(sideLowConfidence(run(true))).toBe(true);
+    expect(sideLowConfidence(run(false))).toBe(false);
   });
 
-  it("pools a legacy run and a spine run of one session on the same curve", () => {
-    const legacy = { sessionId: "s1", animalId: "a1", profileHash: "grgl", replay: null, engagement: null,
+  it("pools two tasks' runs of one session on the same curve", () => {
+    const first = { sessionId: "s1", animalId: "a1", profileHash: "grgl", engagement: null,
       outcomes: tally({ trials: 10, administered: 10, rewarded: 6, holdFailed: 1, wrongWell: 3 }) };
-    const spineRun = { sessionId: "s1", animalId: "a2", profileHash: "spine", replay: { rows: [] },
+    const second = { sessionId: "s1", animalId: "a2", profileHash: "other",
       engagement: { presented: 12, poked: 11, odorDelivered: 10 },
       outcomes: tally({ trials: 10, administered: 10, rewarded: 7, unpaid: 1, wrongWell: 1, noResponse: 1 }) };
     const [point] = sessionOutcomePoints({
-      runs: [legacy, spineRun], sessions: [{ id: "s1", date: "2026-11-04" }], animals: [],
+      runs: [first, second], sessions: [{ id: "s1", date: "2026-11-04" }], animals: [],
     } as unknown as AnalyticsSummary);
     expect(point!.outcomes.responded).toBe(10 + 9);
     expect(point!.outcomes.pResponse).toBe((7 + 8) / 19);

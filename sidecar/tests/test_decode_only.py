@@ -14,7 +14,7 @@ from ephymeris_sidecar.discovery import LIBRARY_ENV, discover
 from ephymeris_sidecar.rig import registry
 from ephymeris_sidecar.sketch_library import SketchLibrary
 from ephymeris_sidecar.tasks import profile as task_profile
-from tests.fixtures import spine as fixture
+from tests.fixtures import rig as fixture
 from tests.live_sidecar import Refused
 from tests.wire import dispatch, running_app
 

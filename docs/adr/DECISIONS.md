@@ -10,8 +10,8 @@ only what the code does now and link here.
   entry as `DECISIONS.md#<heading-slug>`; `test_doc_links.py` checks every citation.
 - **A proposal gets its own file** in this folder (`NNNN-slug.md`, `status: proposed`) while it is
   argued and built. When it is accepted and done, fold it in here as an entry and delete the file.
-  [0003](0003-phase-spine-task-model.md) and [0009](0009-run-document-v2-and-the-analysis-file.md) are the
-  open proposals.
+  [0009](0009-run-document-v2-and-the-analysis-file.md) is the open proposal. A proposal that is
+  withdrawn instead gets a short entry here saying why and what of it shipped, and its file is deleted.
 - **Amend in place.** Add a dated **Amendment** to the entry rather than a new entry, unless the decision
   itself reverses.
 - **Supersede, don't delete.** A reversed decision keeps a short entry saying what replaced it and what
@@ -23,9 +23,9 @@ only what the code does now and link here.
 |---|---|---|---|
 | [0001](#0001-a-hypothetical-rig-definition-is-context-local) | A hypothetical rig definition is context-local | accepted | 2026-10-10 |
 | [0002](#0002-restores-upload-side-by-side) | Restores upload side by side | superseded by 0004 | 2026-10-29 |
-| [0003](0003-phase-spine-task-model.md) | A task is a phase spine, lowered and replayed | **proposed**, being built | — |
+| [0003](#0003-a-task-is-a-phase-spine-lowered-and-replayed) | A task is a phase spine, lowered and replayed | withdrawn 2026-11-19 | — |
 | [0004](#0004-restores-share-one-compile-and-upload-in-turn) | Restores share one compile and upload in turn | accepted | 2026-11-05 |
-| [0005](#0005-a-spine-run-strobes-each-trials-outcome-class) | A spine run strobes each trial's outcome class | accepted, codes withdrawn for now | 2026-11-05 |
+| [0005](#0005-a-spine-run-strobes-each-trials-outcome-class) | A spine run strobes each trial's outcome class | withdrawn with 0003, 2026-11-19 | 2026-11-05 |
 | [0006](#0006-the-shell-is-electron-not-tauri) | The shell is Electron, not Tauri | accepted, Tauri removed | 2026-11-13 |
 | [0007](#0007-rhxs-own-windows-replace-the-recording-pop-ups) | RHX's own windows replace the recording pop-ups | accepted | 2026-11-15 |
 | [0008](#0008-rounds-replace-groups) | Rounds replace groups | accepted | 2026-11-18 |
@@ -59,6 +59,30 @@ that installed it and the `asyncio.to_thread` worker it runs in.
 restores share one compile and upload to their six ports at once, to cut a cold start from six serial
 flashes. The shared compile still stands. The concurrent uploads were reversed: they were safe for the
 software (six ports, one read-only build) but not for the wire.
+
+## 0003: A task is a phase spine, lowered and replayed
+
+**Withdrawn 2026-11-19, never accepted.** The proposal made a task an ordered spine of phases from a
+fixed palette, lowered to a state table that one firmware interpreter walked, and scored every run by
+replaying it in a Python port of that interpreter. It was built behind a development flag and ran on a
+Mega only with nothing wired; no spine run was ever recorded on a real box. We removed it from the
+repository, firmware, wire and editor included, to put the lab's effort into the trial-table task (GRGL)
+it was meant to replace. A successor will be proposed under a new number; the proposal's text is in git
+history (`docs/adr/0003-phase-spine-task-model.md`).
+
+**What shipped and stays.** Its rig model is in force and documented where it lives:
+
+- the lab-wide [channel set](../../GLOSSARY.md#channel-set) beside a per-machine pin map, moved between
+  machines whole ([TASKS.md](../TASKS.md#the-channel-set-and-the-pin-map));
+- a channel's `type`, `mode` and `role`, its [edge codes](../TASKS.md#edge-codes), the rules RIG107 and
+  RIG109, and the box utility testing each [driven output](../TASKS.md#driven-outputs);
+- the outcome classes, which the [trial table](../../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#the-trial-table)
+  of every run still uses.
+
+**What it leaves behind.** A file that says the spine interpreter recorded it is reported unreadable and
+never decoded ([ANALYTICS.md](../../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#why-a-run-has-no-numbers)),
+and a stored task definition with a `spine` key is listed as unreadable
+([TASKS.md](../TASKS.md#what-a-definition-holds)). `session_animal_runs.diverged` stays as an unused column.
 
 ## 0004: Restores share one compile and upload in turn
 
@@ -109,69 +133,14 @@ rig's only many-boards-at-once electrical event.
 
 ## 0005: A spine run strobes each trial's outcome class
 
-> **Amendment, 2026-11-06.** The eight outcome codes and `BLOCK_START` were withdrawn from the shipped
-> vocabulary while the spine is in development (no spine run has been recorded on a real box), so that
-> [stream grammar 2](../TASKS.md#stream-grammar) could be issued under the names it wanted;
-> `TRIAL_START` moved to 220, shared with the trial runner. The decision stands; a machine that runs a
-> spine task adds the codes on the Strobes page until the spine ships them again.
-
-[0003](0003-phase-spine-task-model.md#the-strobe-stream) left outcome codes out of a spine run's stream:
-the board strobes what it observed and what it did, and replay supplies the meaning. That keeps the
-stream honest, but a spine `.tsv` is then unreadable without replay: a script cannot count correct
-trials, a Debug Mode run (no live replay) shows no verdict, and a recording has no event at the moment a
-trial was decided. **Every trial a spine run marks strobes its outcome class, as one of eight fixed,
-lab-wide codes, and replay predicts them.** The stream gains a verdict nobody has to trust.
-
-**The decision.**
-
-- **Eight structural codes**, one per class of `lowering.OUTCOME_CLASSES`: `OUTCOME_CORRECT`,
-  `OUTCOME_WRONG_RESPONSE`, `OUTCOME_HOLD_BROKEN`, `OUTCOME_OMISSION`, `OUTCOME_WITHHELD`,
-  `OUTCOME_FALSE_ALARM`, `OUTCOME_ABORT_BEFORE_STIMULUS`, `OUTCOME_ABORT_DURING_SAMPLING`. Their numbers
-  live only in the strobe vocabulary.
-- **When:** at the tick the trial enters its marked state, the one state per trial with a non-zero
-  `outcome` ([TASKS.md](../TASKS.md#lowering)). For a Response window, the response's branch after any
-  hold; for an early exit, the exit's end. A trial that never marks (End Session, crash, disconnect)
-  strobes none; its absence is the trial table's `complete: false`.
-- **Where in the tick:** last, after the outputs driven HIGH and before only `END_SESSION`. Every strobe
-  of a tick shares its one sync pulse ([RECORDING.md](../RECORDING.md#the-sync-line)), so order costs
-  no alignment; a tick whose only strobe is a mark still pulses.
-- **Derived from what the board already reports.** The core lists the states each tick entered
-  (`InterpActions.entered`); the runner looks up each one's `outcome` and strobes the code. Replay
-  already predicts `entered`, and the
-  [differential test](../TASKS.md#compiling-and-the-host-tests) already holds it equal between the C
-  core and the Python port.
-- **Versioned as `INTERP` 8.** Replay predicts outcome strobes only for runs whose header says 8 or
-  later; runs at 2 to 7 replay as before.
-- **Checked, never read.** Analysis still scores a spine run by replay. The outcome strobes join the
-  outputs in the checksum: a mismatch at any tick makes the run **diverged**.
-
-**Rejected.**
-
-- *Keep the stream free of verdicts* (0003 as written): every reader of a raw file then needs replay.
-- *Reuse GRGL's codes* (`END_CORRECT_ITI`, `RESP_OMIT`, …): they mix the side into the verdict, cover
-  GRGL's cases rather than the eight classes, and retire at the cutover, never reissued.
-- *One code carrying the class as a value*: the wire is a code and a timestamp (`^\d{1,3}\t\d+$`,
-  [DATA.md](../DATA.md#crash-recovery)); a value changes the line format for every reader.
-- *A strobe at each trial's end* (its ITI entry): the decision happens at the mark, and an ITI's start
-  is already visible from its outputs.
-- *A code for every state entry*: spends vocabulary per task or makes a code's meaning task-dependent.
-  Outcome codes escape that objection only because the class set is fixed lab-wide.
-- *A separate `STREAM=` announcement beside `INTERP=`*: replay keys every reproduction rule on `INTERP`,
-  and two numbers would have to be kept in step on every board and header.
-
-**Consequences.**
-
-- One more strobe per marked trial (a correct odor 2AFC trial: 13 → 14).
-- A machine seeded before the codes existed must add them at the numbers the shipped default gives;
-  `SPN104` flags a missing one ([TASKS.md](../TASKS.md#spine-diagnostics)).
-- The stream order changes in `BoxSpine.h` and `analytics/stream/spine.py` **together**, or every
-  `INTERP` 8 run reads as diverged. The host tests check each marked trial strobes its class once, at
-  its tick, last.
-- A raw spine file is countable without replay, but its counts are not the scorer's: P(correct) excludes
-  aborts and block criteria read class sets. Analysis keeps reading the trial table.
-- Every spine task's `profile_hash` moved when next saved (the hash covers `INTERP`); no animal had run a
-  spine task, so no history split. The score canary moved once.
-- The codes cost no RAM: `BoxSpine.h` keeps them in `PROGMEM`.
+**Withdrawn 2026-11-19 with [0003](#0003-a-task-is-a-phase-spine-lowered-and-replayed)**, whose runs it
+described. It had every trial of a spine run strobe its outcome class as one of eight fixed, lab-wide
+`OUTCOME_*` codes, which replay predicted and checked, so a raw file could be counted without replay.
+The codes had already left the shipped vocabulary on 2026-11-06, with `BLOCK_START`, so that
+[stream grammar 2](../TASKS.md#stream-grammar) could be issued under the names it wanted, and no real
+box recorded one. Two parts of its reasoning still hold: a trial's verdict belongs in the stream as a
+code of its own, which grammar 2 does with exactly one outcome code per trial; and the wire stays a code
+and a timestamp, never a code carrying a value.
 
 ## 0006: The shell is Electron, not Tauri
 

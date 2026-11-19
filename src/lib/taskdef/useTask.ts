@@ -4,10 +4,10 @@ import { errorMessage } from "@/lib/cohorts/commands";
 import { useRegisterUnsaved } from "@/lib/nav/unsavedGuard";
 import { useSidecar } from "@/lib/ws/context";
 import { EVT } from "@/lib/ws/protocol";
-import type { SpineView, TaskProfile } from "@/lib/ws/protocol";
+import type { TaskProfile } from "@/lib/ws/protocol";
 
 import { getTask, previewTask, saveTask } from "./commands";
-import type { TaskDiagnostic, TaskDocument } from "./types";
+import type { TaskDiagnostic, TaskDefinition } from "./types";
 
 /**
  * One task-profile editing session.
@@ -27,25 +27,20 @@ import type { TaskDiagnostic, TaskDocument } from "./types";
  * current document produces rather than the last saved one.
  */
 export interface TaskSession {
-  definition: TaskDocument | null;
-  baseline: TaskDocument | null;
+  definition: TaskDefinition | null;
+  baseline: TaskDefinition | null;
   dirty: boolean;
   /** What the definition compiles to — the state machine and the rail read it. */
   profile: TaskProfile | null;
   /** `metadataKey` → the value with NO override. What the rail measures
    *  divergence against, and what a per-field reset falls back to. */
   catalogueDefaults: Record<string, unknown>;
-  /** What the spine editor draws beside the profile; null for a trial table. */
-  spine: SpineView | null;
-  /** The newest edit's preview was refused (the document is not a definition):
-   *  `profile` and `spine` are the last good ones, and stale. */
-  stale: boolean;
   diagnostics: TaskDiagnostic[];
   checking: boolean;
   saving: boolean;
   loadError: string | null;
   actionError: string | null;
-  setDefinition: (next: TaskDocument) => void;
+  setDefinition: (next: TaskDefinition) => void;
   revert: () => void;
   save: () => Promise<boolean>;
 }
@@ -56,17 +51,15 @@ const PREVIEW_DEBOUNCE_MS = 250;
 export function useTask(
   taskId: string | null,
   /** A definition to open unsaved — a duplicate of an existing task. */
-  seed?: TaskDocument | null,
+  seed?: TaskDefinition | null,
 ): TaskSession {
   const { client, status: link } = useSidecar();
   const connected = link === "connected";
 
-  const [definition, setState] = useState<TaskDocument | null>(null);
-  const [baseline, setBaseline] = useState<TaskDocument | null>(null);
+  const [definition, setState] = useState<TaskDefinition | null>(null);
+  const [baseline, setBaseline] = useState<TaskDefinition | null>(null);
   const [profile, setProfile] = useState<TaskProfile | null>(null);
   const [catalogueDefaults, setCatalogue] = useState<Record<string, unknown>>({});
-  const [spine, setSpine] = useState<SpineView | null>(null);
-  const [stale, setStale] = useState(false);
   const [diagnostics, setDiagnostics] = useState<TaskDiagnostic[]>([]);
   const [checking, setChecking] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -93,7 +86,7 @@ export function useTask(
     void getTask(client, taskId)
       .then((reply) => {
         if (cancelled) return;
-        const doc = reply.definition as TaskDocument;
+        const doc = reply.definition as TaskDefinition;
         setState(doc);
         setBaseline(doc);
         setDiagnostics(reply.diagnostics);
@@ -140,16 +133,11 @@ export function useTask(
           setDiagnostics(reply.diagnostics);
           setProfile(reply.profile);
           setCatalogue(reply.catalogueDefaults as Record<string, unknown>);
-          setSpine(reply.spine);
-          setStale(false);
         })
         .catch((err) => {
           // Only a document that is not a definition is refused: the last good
-          // drawing stays, marked stale, until the document reads again.
-          if (mine === sequence.current) {
-            setActionError(errorMessage(err));
-            setStale(true);
-          }
+          // drawing stays until the document reads again.
+          if (mine === sequence.current) setActionError(errorMessage(err));
         })
         .finally(() => {
           if (mine === sequence.current) setChecking(false);
@@ -170,7 +158,7 @@ export function useTask(
     [client],
   );
 
-  const setDefinition = useCallback((next: TaskDocument) => {
+  const setDefinition = useCallback((next: TaskDefinition) => {
     setActionError(null);
     setState(next);
   }, []);
@@ -204,8 +192,6 @@ export function useTask(
     dirty,
     profile,
     catalogueDefaults,
-    spine,
-    stale,
     diagnostics,
     checking,
     saving,

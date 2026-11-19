@@ -65,7 +65,6 @@
 #define BOX_UTILITY_H
 
 #include <BehaviorBox.h>
-#include <BoxInterp.h> // interp_train_high(), for a train's test train
 
 #ifndef BOX_UTILITY_HAS_TONE
 #define BOX_UTILITY_HAS_TONE 0 // a table with no tone row links no tone()
@@ -90,8 +89,7 @@ enum BoxUtilDrive : uint8_t
   BOX_UTIL_TRAIN
 };
 
-/* Each drive's setting: its default and the board's limits, the same as a
-   spine task's row values (taskdef/spine.py's DRIVE_VALUES). */
+/* Each drive's setting: its default and the board's limits. */
 #define BOX_UTIL_PWM_DUTY 255
 #define BOX_UTIL_PWM_DUTY_MAX 255
 #define BOX_UTIL_TONE_HZ 1000
@@ -222,6 +220,21 @@ void setOutput(int i, bool open)
   digitalWrite(outputs[i].pin, open ? HIGH : LOW); // a train starts HIGH
 }
 
+/* A pulse train's level `elapsed` ms after it started. Pulse j of every second
+   rises at floor(j * 1000 / hz) ms into that second, j = 0 .. hz-1, and the
+   line is HIGH while the ms into the second, less the latest rise, is below
+   `width`. So a train starts HIGH, the pattern repeats exactly every 1000 ms,
+   and a rise is within 1 ms of k * 1000 / hz when hz does not divide 1000.
+   With hz in [1, 100] no product passes 10^5, so it is all uint32_t: no
+   64-bit division on the board. hz 0 is never HIGH. */
+static inline bool trainHigh(uint32_t elapsed, uint32_t hz, uint32_t width)
+{
+  if (hz == 0) return false;
+  uint32_t ms = elapsed % 1000UL;
+  uint32_t j = ((ms + 1UL) * hz - 1UL) / 1000UL; // the latest pulse to rise by `ms`
+  return ms - (j * 1000UL) / hz < width;
+}
+
 /* Every open train's pin, from millis(): called on every poll, so its edges
    land within a poll interval. */
 void stepTrains()
@@ -229,8 +242,8 @@ void stepTrains()
   for (int i = 0; i < NUM_OUTPUTS; i++)
     if (outputs[i].drive == BOX_UTIL_TRAIN && isOpen[i])
       digitalWrite(outputs[i].pin,
-                   interp_train_high((uint32_t)(millis() - trainSince[i]), setting[i],
-                                     BOX_UTIL_TRAIN_WIDTH_MS) ? HIGH : LOW);
+                   trainHigh((uint32_t)(millis() - trainSince[i]), setting[i],
+                             BOX_UTIL_TRAIN_WIDTH_MS) ? HIGH : LOW);
 }
 
 /* ---- a timed output ----------------------------------------------------------

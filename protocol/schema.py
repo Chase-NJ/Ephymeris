@@ -703,7 +703,7 @@ SHAPES = (
                 STR,
                 optional=True,
                 doc="Section heading the form files this field under; absent = "
-                "ungrouped. Part of `profile_hash` (except on a spine task), so "
+                "ungrouped. Part of `profile_hash`, so "
                 "re-filing a field splits a task's recorded runs from its future ones "
                 "(`TASKS.md#profile-and-params-hashes`).",
             ),
@@ -885,15 +885,6 @@ SHAPES = (
                 "degrades around rather than refusing.",
             ),
             f(
-                "spine",
-                MapOf(ANY),
-                optional=True,
-                doc="Phase-spine tasks only (`TASKS.md#spine-tasks`): the snapshot replay "
-                "reads — the definition, the state table as lowered, each bit's channel and "
-                "edge code names, and each parameter slot's wire key. Absent on every other "
-                "profile.",
-            ),
-            f(
                 "exposed",
                 ListOf(STR),
                 optional=True,
@@ -1006,79 +997,6 @@ SHAPES = (
             f("stopReason", STR, doc="One of the stop reasons in `ARCHITECTURE.md#session-lifecycle`."),
             f("filePath", nullable(STR)),
         ),
-    ),
-    Shape(
-        "LiveReplayStatus",
-        lit("replaying", "diverged", "unreplayable", "unavailable", "ended"),
-        doc="Where a running spine run's live replay stands (`ANALYTICS.md#live-scoring`). "
-        "`replaying`: every strobe so far is what replay predicts, and `phase` is where the board "
-        "is. `diverged`: a strobe is not, so the run has no token and no numbers, as Analytics "
-        "will not score it. `unreplayable`: replay cannot run this run at all. `unavailable`: the "
-        "live replay failed to take a strobe, so it no longer describes the run; the run itself "
-        "is unaffected. `ended`: the run is over, and its numbers, when it has them, are Analytics'.",
-    ),
-    Shape(
-        "LiveReplay",
-        obj(
-            f("box", INT),
-            f("animalId", STR),
-            f("status", Ref("LiveReplayStatus")),
-            f("detail", nullable(STR), doc="Why, when `diverged` or `unreplayable`."),
-            f(
-                "state",
-                nullable(INT),
-                doc="The table state the board is in, by replay; null unless `replaying`.",
-            ),
-            f(
-                "phase",
-                nullable(INT),
-                doc="That state's phase, an index into the profile snapshot's `spine.spine` "
-                "(its `table.phases`). What the live token sits on: never read from a strobe's "
-                "name. Null unless `replaying`, or for a state in no phase.",
-            ),
-            f(
-                "row",
-                nullable(STR),
-                doc="The row id the state belongs to; null for a state the rows share (the "
-                "pick, an early exit's end) or unless `replaying`.",
-            ),
-            f(
-                "provisional",
-                BOOL,
-                doc="The board entered this state after its latest strobe, by a timer alone: the "
-                "sidecar's estimate on the host clock of what the board does when nothing happens "
-                "(a Wait timing out, an outcome running into the ITI), which no strobe has confirmed "
-                "yet. False whenever the strobes so far put the board there, and unless `replaying`.",
-            ),
-            f(
-                "unavailable",
-                nullable(STR),
-                doc="Why the live numbers are unavailable while the token carries on: the live "
-                "scorer process could not start or stopped (`ARCHITECTURE.md#the-live-scorer`). "
-                "The run, its strobes and its file are unaffected; Analytics scores it as ever. "
-                "Null while the scorer is up, and unless `replaying` or `ended`.",
-            ),
-            f("trials", INT, doc="Complete trials so far, as the live trial table counts them."),
-            f(
-                "current",
-                nullable(Ref("ReplayTrial")),
-                doc="The trial in progress, as the table reads it so far (`complete: false`); "
-                "null between trials and unless `replaying`.",
-            ),
-            f("last", nullable(Ref("ReplayTrial")), doc="The latest complete trial."),
-            f(
-                "metrics",
-                ListOf(Ref("MetricSummary")),
-                doc="P(correct | row) over the complete trials so far, from the functions "
-                "Analytics scores the finished run with, so at `ended` they are Analytics'. "
-                "Empty when `diverged` or `unreplayable`.",
-            ),
-            f("overall", nullable(Ref("MetricSummary")), doc="P(correct) pooled over every row."),
-            f("replay", nullable(Ref("ReplayScore")), doc="The outcome-class tallies so far."),
-            f("divergence", nullable(Ref("ReplayDivergence")), doc="Where, when `diverged`."),
-        ),
-        doc="A running spine run as its live replay reads it (`ANALYTICS.md#live-scoring`): "
-        "where the board is and the numbers so far. Sent whole on every change.",
     ),
     Shape(
         "RunnerSession",
@@ -1278,10 +1196,10 @@ SHAPES = (
             f("rewardedHigh", nullable(FLOAT)),
             f("sideLow", nullable(FLOAT)),
             f("sideHigh", nullable(FLOAT)),
-            f("unpaid", INT, doc="A spine run's right answer whose reward was drawn against; 0 on a legacy run."),
-            f("withheld", INT, doc="A spine run's no-go withhold, a hit; 0 on a legacy run, which cannot tell it "
-              "from no response."),
-            f("falseAlarm", INT, doc="A spine run's no-go false alarm, a miss; 0 on a legacy run."),
+            f("unpaid", INT, doc="A right answer whose reward was drawn against. No run fills it yet: always 0."),
+            f("withheld", INT, doc="A stream-grammar-2 run's no-go withhold, a hit; 0 on a grammar-1 run, which "
+              "cannot tell it from no response."),
+            f("falseAlarm", INT, doc="A stream-grammar-2 run's no-go false alarm, a miss; 0 on a grammar-1 run."),
             f("responded", INT, doc="Every answer, right or wrong: rewarded + holdFailed + unpaid + withheld + "
               "wrongWell + falseAlarm. No response and aborts are left out."),
             f(
@@ -1345,14 +1263,13 @@ SHAPES = (
                 nullable(INT),
                 doc="The code that opens this condition's trials — what splits "
                 "the tally. Two metrics sharing one legitimately cover the "
-                "same trials. Null for a spine row, which no onset code opens.",
+                "same trials.",
             ),
             f("outcomes", Ref("TrialOutcomes")),
             f(
                 "answerSide",
                 nullable(STR),
-                doc="A spine row's one right answer's side, `left` or `right`, from its snapshot; null otherwise "
-                "(a legacy condition's side is its metric's `answerSide`).",
+                doc="Always null: a condition's side is its metric's `answerSide`.",
             ),
         ),
         doc="TrialOutcomes restricted to one declared condition "
@@ -1362,118 +1279,8 @@ SHAPES = (
     ),
     Shape(
         "RunStatus",
-        lit("ok", "no-metrics", "diverged", "unreplayable", "missing", "unreadable"),
-        doc="Why a run has numbers or not (`ANALYTICS.md#why-a-run-has-no-numbers`). A spine "
-        "task's run is `ok` when replay scored it, `diverged` when its recorded outputs are not "
-        "what replay predicts (flagged, never scored), and `unreplayable` when replay cannot run "
-        "it at all, an unknown `INTERP` among them (`ANALYTICS.md#how-a-spine-run-is-scored`).",
-    ),
-    Shape(
-        "Proportion",
-        obj(
-            f("n", INT),
-            f("of", INT),
-            f("p", nullable(FLOAT), doc="n / of; null when `of` is 0, never 0.0."),
-            f("low", nullable(FLOAT), doc="95% Wilson interval (`ANALYTICS.md#uncertainty`)."),
-            f("high", nullable(FLOAT)),
-        ),
-        doc="A count out of a total, with its interval.",
-    ),
-    Shape(
-        "OutcomeTally",
-        obj(
-            f(
-                "outcomeClass",
-                STR,
-                doc="An outcome class's name (`taskdef/lowering.py`'s `OUTCOME_CLASSES`), or "
-                "`outcome_<n>` for a number this build has no name for. An open set: a class "
-                "added later needs no wire change.",
-            ),
-            f("n", INT),
-            f("of", INT, doc="Every complete trial of the scope, unclassified ones included."),
-            f("p", nullable(FLOAT)),
-            f("low", nullable(FLOAT)),
-            f("high", nullable(FLOAT)),
-        ),
-        doc="How many of a scope's trials ended in one outcome class "
-        "(`ANALYTICS.md#metrics-from-the-trial-table`).",
-    ),
-    Shape(
-        "RowOutcomes",
-        obj(
-            f("rowId", nullable(STR), doc="Null for trials the table names no row for."),
-            f("name", nullable(STR)),
-            f("trials", INT),
-            f("unclassified", INT, doc="Trials that reached no outcome-bearing state."),
-            f("classes", ListOf(Ref("OutcomeTally"))),
-        ),
-        doc="P(outcome | row): one row's trials by outcome class.",
-    ),
-    Shape(
-        "ReplayScore",
-        obj(
-            f("interp", INT, doc="The interpreter version the run was replayed under."),
-            f("trials", INT, doc="Complete trials: a crashed run's cut-off last trial is left out."),
-            f("unclassified", INT),
-            f("classes", ListOf(Ref("OutcomeTally")), doc="By class number; with `unclassified` "
-              "they partition `trials`."),
-            f("rows", ListOf(Ref("RowOutcomes")), doc="In the task's row order."),
-            f("rewarded", Ref("Proportion"), doc="Trials whose reward line opened, of `trials`."),
-            f("rates", ListOf(Ref("WindowRate")), doc="Each row's rate in each phase that counts an input "
-              "it never acts on, row by row in the task's order, then by phase. Empty for a task with "
-              "no such phase (`ANALYTICS.md#phase-window-rates`)."),
-        ),
-        doc="A replayed spine run's tallies, each a function of its trial table "
-        "(`ANALYTICS.md#metrics-from-the-trial-table`).",
-    ),
-    Shape(
-        "RateEstimate",
-        obj(
-            f("n", INT, doc="Trials the mean is over."),
-            f("mean", nullable(FLOAT), doc="Events per second, the mean of each trial's rate; null with no "
-              "trials, never 0.0."),
-            f("low", nullable(FLOAT), doc="Student-t interval over trials, nominally 95%; it covers a bursty "
-              "licker's rate less often (`ANALYTICS.md#uncertainty`). Null with fewer than two trials."),
-            f("high", nullable(FLOAT)),
-        ),
-        doc="A mean over trials with its interval.",
-    ),
-    Shape(
-        "WindowRate",
-        obj(
-            f("rowId", STR, doc="The row's stable id."),
-            f("name", STR, doc="The row's name."),
-            f("phase", INT, doc="The phase's index in the spine."),
-            f("label", STR, doc="The phase's kind, for a person: nothing is scored by it."),
-            f("channel", STR, doc="The input channel counted."),
-            f("rate", Ref("RateEstimate"), doc="Its rises per second in the phase, clamped at 0."),
-            f("reference", nullable(INT), doc="This row's first phase counting the channel, which `versus` "
-              "is against; null on that phase itself."),
-            f("versus", nullable(Ref("RateEstimate")), doc="This phase's rate minus the reference's, "
-              "paired within each trial: in a Pavlovian task's CS and trace, its anticipatory licking. Null on the "
-              "reference."),
-            f("lowConfidence", BOOL, doc="The smaller of `rate.n` and `versus.n` is below `minCountedTrials` "
-              "or `rates.RATE_MIN_TRIALS` (`ANALYTICS.md#uncertainty`), re-judged on every request."),
-        ),
-        doc="One row's rate in one of its own phase-windows (`ANALYTICS.md#phase-window-rates`).",
-    ),
-    Shape(
-        "ReplayDivergence",
-        obj(
-            f("detail", STR),
-            f(
-                "index",
-                nullable(INT),
-                doc="0-based position in the recorded stream of the first strobe replay did not "
-                "predict. Null when the recorded inputs could not be fed to replay at all.",
-            ),
-            f("atMs", nullable(INT)),
-            f("expected", nullable(STR), doc="What replay predicts there, `CODE_NAME@ms`; "
-              "null past its end."),
-            f("recorded", nullable(STR), doc="What the file records there; null past its end."),
-        ),
-        doc="Where a `diverged` run's recorded strobes first leave what replay predicts "
-        "(`ANALYTICS.md#how-a-spine-run-is-scored`).",
+        lit("ok", "no-metrics", "missing", "unreadable"),
+        doc="Why a run has numbers or not (`ANALYTICS.md#why-a-run-has-no-numbers`).",
     ),
     Shape(
         "ProfileSource",
@@ -1580,18 +1387,6 @@ SHAPES = (
             f("seed", nullable(INT)),
             f("detail", nullable(STR)),
             f("excludedByDefault", BOOL),
-            f(
-                "replay",
-                nullable(Ref("ReplayScore")),
-                doc="A spine run's tallies from its trial table, when replay scored it. Its "
-                "`metrics` are then P(correct | row) and `overall` their pooled figure. Null for "
-                "every other run.",
-            ),
-            f(
-                "divergence",
-                nullable(Ref("ReplayDivergence")),
-                doc="Set exactly when `status` is `diverged`.",
-            ),
         ),
     ),
     Shape(
@@ -1779,8 +1574,8 @@ SHAPES = (
             f(
                 "atMs",
                 nullable(INT),
-                doc="The trial's start: ms from the session's first tick, or from a legacy "
-                "run's earliest strobe. Null only on a legacy file with no usable clock.",
+                doc="The trial's start: ms from the run's earliest strobe. Null only on a file "
+                "with no usable clock.",
             ),
             f("block", nullable(STR), doc="The block's id, when the table can say."),
             f("row", nullable(STR), doc="The row's id, when the table can say."),
@@ -1789,47 +1584,38 @@ SHAPES = (
             f(
                 "phaseEntries",
                 ListOf(nullable(INT)),
-                doc="The first ms the trial entered each phase, aligned to "
-                "`TrialTable.phases`; null for a phase it never reached. Empty when the "
-                "snapshot cannot map states to phases.",
+                doc="Always empty: no table names phases (`TrialTable.gaps`).",
             ),
-            f("response", nullable(STR), doc="The input channel whose edge was the response; "
-              "on a legacy run, the strobe that decided its condition's verdict."),
+            f("response", nullable(STR), doc="The strobe that decided the trial's verdict."),
             f("responseEdge", nullable(lit("rise", "fall"))),
             f("responseMs", nullable(INT)),
-            f("latencyMs", nullable(INT), doc="Response ms minus the ms its phase was entered "
-              "(a legacy run: minus `atMs`)."),
+            f("latencyMs", nullable(INT), doc="Response ms minus `atMs`."),
             f("outcome", nullable(STR), doc="Its outcome class; null when it reached none, or when "
               "a legacy no-go trial's strobes cannot say (`TrialTable.gaps`)."),
             f("outcomeMs", nullable(INT), doc="When the outcome was settled."),
             f("correct", nullable(BOOL), doc="Right, wrong, or null for a trial P(correct) "
               "excludes (no class, or an abort)."),
             f("rewarded", BOOL),
-            f("rewardLine", nullable(STR), doc="The output channel that paid (a legacy run: its "
-              "reward strobe)."),
+            f("rewardLine", nullable(STR), doc="The reward strobe that paid."),
             f("rewardMs", nullable(INT), doc="How long the line was open."),
-            f("correction", nullable(BOOL), doc="A correction trial; false until blocks have a "
-              "correction rule, null on a legacy run, which cannot say."),
-            f("inputCounts", ListOf(Ref("InputCount")), doc="Non-zero counts only."),
-            f("counterN", nullable(INT), doc="The N the trial's Counter phase drew when it was "
-              "entered (an FR's, a VR's or a PR's step), from replay, whether or not the trial "
-              "reached it; null when it entered no Counter, and on a legacy run."),
-            f("complete", BOOL, doc="False only for a crashed spine run's cut-off last trial."),
+            f("correction", nullable(BOOL), doc="A correction trial; null when the run cannot say."),
+            f("inputCounts", ListOf(Ref("InputCount")), doc="Always empty: no table counts inputs "
+              "(`TrialTable.gaps`)."),
+            f("counterN", nullable(INT), doc="Always null: no task has a counter."),
+            f("complete", BOOL, doc="Always true."),
             f("presented", BOOL, doc="The trial opens a presentation on the engagement ladder."),
-            f("scores", ListOf(Ref("ConditionScore")), doc="A legacy trial's verdict under every "
-              "condition its onset opens. Empty on a spine run."),
+            f("scores", ListOf(Ref("ConditionScore")), doc="The trial's verdict under every "
+              "condition its onset opens."),
         ),
-        doc="One trial of a run: a spine run's read off its replay, a legacy run's off its "
-        "strobes (`ANALYTICS.md#the-trial-table`).",
+        doc="One trial of a run, read off its strobes (`ANALYTICS.md#the-trial-table`).",
     ),
     Shape(
         "TrialTable",
         obj(
-            f("kind", lit("replay", "legacy", "grammar2"),
-              doc="Read off a replay, by the legacy decoder, or off a stream-grammar-2 run's "
+            f("kind", lit("legacy", "grammar2"),
+              doc="Read by the legacy decoder, or off a stream-grammar-2 run's "
               "headers and outcome codes (`ANALYTICS.md#stream-grammar-2`)."),
-            f("phases", ListOf(STR), doc="Each phase's kind, in spine order, for labels only. "
-              "Empty for a legacy run."),
+            f("phases", ListOf(STR), doc="Always empty: no table names phases."),
             f(
                 "gaps",
                 ListOf(STR),
@@ -1872,8 +1658,7 @@ SHAPES = (
                 "trialTable",
                 nullable(Ref("TrialTable")),
                 doc="The run's trial table, computed on each request and never cached "
-                "(`DATA.md#caching`). Null for a diverged spine run, one replay cannot run, and "
-                "a legacy run nothing decodes.",
+                "(`DATA.md#caching`). Null for a run nothing decodes.",
             ),
         ),
     ),
@@ -2018,8 +1803,7 @@ SHAPES = (
                 lit("rewritten", "skipped", "failed"),
                 doc="`rewritten`: its `.json` was rewritten with this build's table, or its `.mat` "
                 "held another table and was written from the `.json`. `skipped`: nothing was "
-                "written, because a newer replay derived its table, it was replayed (`ok`) and "
-                "this build cannot replay it, or its `.mat` can be written by no build (an "
+                "written, because a newer build derived its table, or its `.mat` can be written by no build (an "
                 "animal name outside the BMP). `failed`: something went wrong and nothing was "
                 "written. A current run is counted, never listed.",
             ),
@@ -2031,7 +1815,7 @@ SHAPES = (
                 "`.json` back; the next Re-derive finds the `.mat`'s table stale and writes it.",
             ),
         ),
-        doc="One spine run Re-derive rewrote or could not (`DATA.md#re-derive`).",
+        doc="One run Re-derive rewrote or could not (`DATA.md#re-derive`).",
     ),
     Shape(
         "RederiveResult",
@@ -2039,26 +1823,24 @@ SHAPES = (
             f(
                 "scanned",
                 INT,
-                doc="Spine runs found: `.json` files whose own file says a state table ran them. "
-                "Legacy runs are never derived, so never counted.",
+                doc="Stream-grammar-2 runs found. Grammar-1 runs are never derived, so never counted.",
             ),
             f("rewritten", INT, doc="Runs whose `.json` and `.mat` were rewritten with this build's table."),
             f("current", INT, doc="Runs whose stored block already equals what this build derives: left untouched."),
             f(
                 "skipped",
                 INT,
-                doc="Runs left alone, each listed with why: a newer replay derived their table, "
-                "they were replayed and this build does not know their INTERP (two lab machines "
-                "on different builds can share one archive), or their `.mat` can be written by "
-                "no build.",
+                doc="Runs left alone, each listed with why: a newer build derived their table "
+                "(two lab machines on different builds can share one archive), or their `.mat` "
+                "can be written by no build.",
             ),
-            f("failed", INT, doc="Runs that could not be replayed or written; each is listed with why."),
+            f("failed", INT, doc="Runs that could not be decoded or written; each is listed with why."),
             f("entries", ListOf(Ref("RederivedRun")), doc="The rewritten and failed runs."),
             f("cohortId", STR, doc="The cohort asked about."),
             f("dataFolder", STR, doc="The cohort's data folder, walked as `analytics.rescan` walks it."),
             f("folderMissing", BOOL, doc="Same distinction as RescanResult's: 'nothing there' vs 'nowhere to look'."),
         ),
-        doc="What `sessions.rederive` did to a cohort's spine runs (`DATA.md#re-derive`).",
+        doc="What `sessions.rederive` did to a cohort's runs (`DATA.md#re-derive`).",
     ),
     Shape(
         "TidySession",
@@ -2577,15 +2359,12 @@ SHAPES = (
                 "code",
                 STR,
                 doc="TSK101–TSK111, TSK113 and TSK114 from the sidecar; TSK112 is derived "
-                "on the Task tab; SPN101–SPN112 for a phase-spine task "
-                "(`TASKS.md#spine-tasks`). Each names a failure that is silent without it.",
+                "on the Task tab. Each names a failure that is silent without it.",
             ),
             f(
                 "target",
                 Ref("TaskTarget"),
-                doc="What the problem is about, for the editor to show it there "
-                "(`TASKS.md#the-spine-editor`). Read off `location`, except a stored "
-                "parameter's (its phase, row or block) and the RAM budget's (`ram`).",
+                doc="What the problem is about, for the editor to show it there. Read off `location`.",
             ),
         ),
     ),
@@ -2594,126 +2373,13 @@ SHAPES = (
         obj(
             f(
                 "kind",
-                lit("phase", "row", "block", "slot", "stage", "session", "vocabulary", "ram", "task"),
-                doc="A spine's `phase`, `row`, `block` or `slot`, a trial table's `row` "
-                "or ramp `stage`, by `index` (a spine's `row` or `block` with no index: "
-                "the list as a whole); or the session's trial cap, the strobe "
-                "vocabulary, the RAM budget or the task as a whole.",
+                lit("row", "stage", "session", "vocabulary", "task"),
+                doc="A trial table's `row` or ramp `stage`, by `index`; or the session's trial "
+                "cap, the strobe vocabulary or the task as a whole.",
             ),
             f("index", nullable(INT), doc="Its index in the definition's list, for the indexed kinds."),
         ),
-        doc="Where a task diagnostic belongs on the editor (`TASKS.md#the-spine-editor`).",
-    ),
-    Shape(
-        "SpineSlotView",
-        obj(
-            f("id", STR, doc="The slot's id, as the spine's phases and rows name it."),
-            f("type", STR, doc="`digital_in`, `digital_out`, `pwm_out` or `tone_out`."),
-            f("mode", nullable(STR), doc="`train` on a pulse-train `digital_out`, else null."),
-            f(
-                "channels",
-                ListOf(STR),
-                doc="The channels this rig has that the slot can bind: its own type and "
-                "mode, never the sync line, in declaration order. What SPN102 accepts.",
-            ),
-        ),
-        doc="One slot of a spine, and what it can bind on this rig.",
-    ),
-    Shape(
-        "SpineRamPart",
-        obj(
-            f("label", STR, doc="What takes the bytes: states and edge rows, blocks, parameters, …"),
-            f("bytes", INT, doc="Its bytes, as `spine.ram_parts` counts them."),
-        ),
-        doc="One part of a spine task's RAM (`TASKS.md#spine-diagnostics`).",
-    ),
-    Shape(
-        "SpineRam",
-        obj(
-            f(
-                "bytes",
-                nullable(INT),
-                doc="What the task's data takes of the board's RAM (`spine.task_ram_bytes`): "
-                "the sum of `parts`. Null when the spine cannot be lowered.",
-            ),
-            f("budget", INT, doc="The most it may take, 5000 B. Over it is SPN105, target `ram`."),
-            f("parts", ListOf(Ref("SpineRamPart")), doc="The bytes by part, each non-zero. Empty with no bytes."),
-        ),
-        doc="The editor's RAM meter. Over budget is a diagnostic, never a refusal: the task still saves.",
-    ),
-    Shape(
-        "SpineBlockView",
-        obj(
-            f("id", STR, doc="The block's id."),
-            f(
-                "next",
-                nullable(INT),
-                doc="The index of the block that runs after it: its `next`, else the one "
-                "after it in the list; null after the last, where the session ends.",
-            ),
-        ),
-        doc="One block of the session's sequence, for the block timeline.",
-    ),
-    Shape(
-        "SpineStoredValue",
-        obj(
-            f("key", STR, doc="The parameter's metadata key."),
-            f("value", ANY, doc="The value `params` stores for it."),
-            f("target", Ref("TaskTarget"), doc="The phase, row or block it tunes, or the session."),
-            f(
-                "field",
-                nullable(STR),
-                doc="For a key that carries a phase index (a phase's timer, hold or "
-                "count, or a block's override of one), the definition field it "
-                "overrides, as a location: `spine[2].ms`, `blocks[0].phaseMs.4`. "
-                "Inserting or removing a phase moves such a key's meaning, so the "
-                "editor folds the value into this field first. Null for a key by "
-                "row or block id.",
-            ),
-        ),
-        doc="A value the definition stores in `params`, over what its spine says.",
-    ),
-    Shape(
-        "SpineView",
-        obj(
-            f("slots", ListOf(Ref("SpineSlotView")), doc="Each slot, in order, with the channels it can bind."),
-            f("ram", Ref("SpineRam"), doc="The RAM meter."),
-            f("blocks", ListOf(Ref("SpineBlockView")), doc="The blocks, in order, each with what follows it."),
-            f(
-                "sessionEnds",
-                BOOL,
-                doc="The blocks run out by themselves. False when they loop or one never "
-                "ends: then only `sessionTrials` or End Session ends the session (SPN106).",
-            ),
-            f(
-                "overridable",
-                ListOf(INT),
-                doc="The indices of the phases a block's `phaseMs` can override: those with a "
-                "timer, a timed phase or a Wait's or Counter's limit (`lowering.has_timer`).",
-            ),
-            f(
-                "stored",
-                ListOf(Ref("SpineStoredValue")),
-                doc="Each stored `params` value a parameter reads. A key none reads is SPN110 instead.",
-            ),
-        ),
-        doc="What the spine editor draws beside the profile, all computed by the sidecar "
-        "(`spine.editor_view`, `TASKS.md#the-spine-editor`).",
-    ),
-    Shape(
-        "TaskSeed",
-        obj(
-            f("id", STR, doc="`two_afc`, `go_no_go`, `dnms`, `trace` or `ratio`."),
-            f("label", STR, doc="What the chooser calls it."),
-            f("summary", STR, doc="One sentence on the spine's shape."),
-            f(
-                "definition",
-                ANY,
-                doc="A whole spine-task definition, opened unsaved. Its rows carry no "
-                "names and bind no channels: the operator names and binds them.",
-            ),
-        ),
-        doc="A seed spine a new task starts from (`taskdef/seeds.py`).",
+        doc="Where a task diagnostic belongs on the editor.",
     ),
     Shape(
         "TaskImportConflict",
@@ -2825,18 +2491,10 @@ SHAPES = (
             f("stages", INT, doc="Rows in the shaping ramp. 1 means no ramp."),
             f(
                 "selectionMode",
-                nullable(lit("antibias", "pool", "weighted")),
+                lit("antibias", "pool", "weighted"),
                 doc="How the next trial is drawn: a side against recent bias then "
                 "a type uniformly; a block-shuffled weighted pool; or the side "
-                "draw with a weighted pick within it. Null on a spine task, whose "
-                "blocks draw its rows.",
-            ),
-            f(
-                "spine",
-                BOOL,
-                doc="A phase-spine task (`TASKS.md#spine-tasks`): `trials` counts its "
-                "rows, `stages` is 1 and `selectionMode` is null, since its blocks "
-                "draw its rows.",
+                "draw with a weighted pick within it.",
             ),
         ),
         doc="A row in the profile list, and everything a task card states "
@@ -2863,12 +2521,6 @@ SHAPES = (
             f("diagnostics", ListOf(Ref("TaskDiagnostic"))),
             f("profile", Ref("TaskProfile"), doc="What this definition compiles to."),
             f(
-                "spine",
-                nullable(Ref("SpineView")),
-                doc="What the spine editor draws beside the profile; null for a "
-                "trial-table task.",
-            ),
-            f(
                 "catalogueDefaults",
                 MapOf(ANY),
                 doc="`metadataKey` → the value this field has with NO override, "
@@ -2880,61 +2532,6 @@ SHAPES = (
             ),
         ),
         doc="A pure compile of an unsaved definition. Writes nothing.",
-    ),
-    Shape(
-        "SimulatedAnimal",
-        obj(
-            f("kind", lit("correct", "random", "biased", "silent"),
-              doc="Always correct, random, biased toward one response, or never responds "
-              "(`TASKS.md#simulating-a-spine-task`)."),
-            f("response", STR, optional=True,
-              doc="A biased animal's favoured response: one slot a Response window lists."),
-            f("permille", INT, optional=True,
-              doc="How often a biased animal takes its response when it can, 0 to 1000. Default 800."),
-        ),
-        doc="The animal a simulation runs against.",
-    ),
-    Shape(
-        "BlockSwitch",
-        obj(
-            f("index", INT, doc="The trial's `index` in the trial table."),
-            f("block", nullable(STR), doc="The block that trial runs in."),
-        ),
-        doc="A simulated trial that runs in another block than the one before it; the first trial included.",
-    ),
-    Shape(
-        "AbsentRow",
-        obj(
-            f("rowId", STR),
-            f("name", STR),
-            f("blocks", ListOf(STR), doc="The blocks that list the row; empty when none does."),
-        ),
-        doc="A row of the definition that no simulated trial drew.",
-    ),
-    Shape(
-        "TaskSimulation",
-        obj(
-            f("seed", INT, doc="The run's trial seed, which also seeds the animal: the one number "
-              "that repeats this simulation."),
-            f("limitMs", INT, doc="The session time limit it ran under."),
-            f("endedBy", lit("trials", "blocks", "lastTrial", "timeLimit"),
-              doc="The trial cap, the blocks running out, a last-trial state, or the time "
-              "limit (or a session cut off past it)."),
-            f("status", Ref("RunStatus"), doc="As Analytics scores the run: `ok` unless the simulated "
-              "run did not replay, which is a bug."),
-            f("detail", nullable(STR)),
-            f("metrics", ListOf(Ref("MetricSummary")), doc="P(correct | row), as `RunSummary.metrics`."),
-            f("overall", nullable(Ref("MetricSummary")), doc="As `RunSummary.overall`."),
-            f("replay", nullable(Ref("ReplayScore")), doc="Each row's outcome classes and the phase-window "
-              "rates, as `RunSummary.replay`."),
-            f("series", ListOf(Ref("MetricSeries")), doc="The learning curves, as `RunSeries.metrics`."),
-            f("trialTable", nullable(Ref("TrialTable")),
-              doc="Null only if the simulated run did not replay, which is a bug."),
-            f("switches", ListOf(Ref("BlockSwitch"))),
-            f("absent", ListOf(Ref("AbsentRow"))),
-        ),
-        doc="One simulated session of an unsaved spine definition (`TASKS.md#simulating-a-spine-task`). "
-        "Writes nothing.",
     ),
     Shape(
         "TasksUpdatedData",
@@ -4435,43 +4032,6 @@ COMMANDS = (
         "when the document is not a definition.",
     ),
     Command(
-        "tasks.simulate",
-        args=obj(
-            f("definition", ANY),
-            f("animal", Ref("SimulatedAnimal")),
-            f("seed", INT, optional=True, doc="Omitted: a fresh seed, reported in the result."),
-            f("limitMs", INT, optional=True, doc="The session time limit, 1 ms to 24 h. Default 60 min."),
-        ),
-        result=Ref("TaskSimulation"),
-        doc="Run an unsaved spine definition through replay against a simulated animal "
-        "and score it as Analytics scores a run (`TASKS.md#simulating-a-spine-task`). "
-        "Nothing is compiled, flashed or written. `TASK_INVALID` for a trial-table task, "
-        "a definition with any diagnostic (the bar a flash holds it to), a seed outside "
-        "the trial seed's range, a limit outside its range, or an animal it cannot be.",
-    ),
-    Command(
-        "tasks.spinePalette",
-        result=obj(
-            f("seeds", ListOf(Ref("TaskSeed")), doc="The seed spines, in the order the chooser offers them."),
-            f("phases", ListOf(STR), doc="The phase kinds of the palette (`lowering.PHASES`)."),
-            f(
-                "outcomeClasses",
-                ListOf(STR),
-                doc="The outcome classes a map entry can name (`lowering.OUTCOME_CLASSES`).",
-            ),
-            f("selections", ListOf(STR), doc="How a block can draw its rows (`lowering.SELECTIONS`)."),
-            f("timedPhases", ListOf(STR), doc="The phase kinds that last a set time, and so take `ms` (`lowering.TIMED`)."),
-            f(
-                "weightedSelections",
-                ListOf(STR),
-                doc="The selections that read each row's weight (`lowering.WEIGHTED`).",
-            ),
-        ),
-        doc="What the spine editor builds from: the seeds a new task starts from and "
-        "the palette's phases, outcome classes, selections, timed phases and weighted selections, from the model's own "
-        "lists (`TASKS.md#the-spine-editor`). Static; reads no state.",
-    ),
-    Command(
         "tasks.save",
         args=obj(f("definition", ANY)),
         result=Ref("TaskSaved"),
@@ -4707,12 +4267,12 @@ COMMANDS = (
         "sessions.rederive",
         args=obj(f("cohortId", STR)),
         result=Ref("RederiveResult"),
-        doc="Re-derive (`DATA.md#re-derive`): replay every spine run under the "
+        doc="Re-derive (`DATA.md#re-derive`): decode every stream-grammar-2 run under the "
         "cohort's data folder and, where the derived trial table its `.json` "
         "carries differs from what this build derives (a `REPLAY_VERSION` "
         "change, a missing block, a hand edit), rewrite the `.json` and `.mat` "
         "with the new one. Every other key is written back as it was read; "
-        "the `.tsv` is never opened. Legacy runs are skipped. The app never "
+        "the `.tsv` is never opened. Grammar-1 runs are skipped. The app never "
         "reads the derived table, so no number in Analytics changes. "
         "`RIG_IN_USE` while any box is running; `ARCHIVE_BUSY` while another "
         "archive write runs. Queues what it wrote for backup. Long-running; "
@@ -5068,14 +4628,6 @@ EVENTS = (
         doc="Pushed on every strobe that updates a rolling live metric. Not "
         "batched like `port.output`: metric updates are far lower-frequency "
         "than raw strobes.",
-    ),
-    Event(
-        "session.replay",
-        Ref("LiveReplay"),
-        doc="A running spine run's live replay changed: the board entered another state, a "
-        "trial was scored, the run diverged or ended (`ANALYTICS.md#live-scoring`). Replayed "
-        "on connect, one per box whose latest run is a spine run, until that box starts again "
-        "or a new mapping is confirmed, so a reloaded Mission Control lands on the current phase.",
     ),
     Event(
         "session.animalEnded",

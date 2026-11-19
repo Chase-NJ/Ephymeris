@@ -299,7 +299,7 @@ async def test_the_free_ram_the_board_measured_is_recorded_in_the_header_and_the
 
 
 async def test_a_tick_pulsed_board_is_recorded_and_its_recording_told(tmp_path: Path, bench: Bench) -> None:
-    """A spine board announces `SYNC=TICK` before READY: one sync pulse per tick
+    """A tick-pulsed board announces `SYNC=TICK` before READY: one sync pulse per tick
     that strobes (`RECORDING.md#firmware-pulse`). The header keeps it for
     offline alignment, and the recording's matcher is built to pair by tick."""
     runner, _events, ended = make_runner(tmp_path, bench)

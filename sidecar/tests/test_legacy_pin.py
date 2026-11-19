@@ -7,7 +7,7 @@ summary payload, both series, the strategy trail and the tape. Every case must
 come out the same to the last field. Regenerate it only from that commit
 (`python -m tests.legacy_corpus pin`), never from the code under test.
 
-A field added since that commit (response accuracy and the spine-only buckets,
+A field added since that commit (response accuracy and the no-go buckets,
 #167) is not compared: the pin says what the old scorer reported, and every
 field it holds must still come out the same.
 """

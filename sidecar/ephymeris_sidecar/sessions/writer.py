@@ -301,9 +301,8 @@ class AnimalWriter:
                 self._tsv.close()
                 self._tsv = None
 
-        # A spine run's trial table, replayed here, in this worker thread, once
-        # (`DATA.md#the-trial-table`): tens of milliseconds for a long run,
-        # and never able to cost the run its files.
+        # The run's trial table, derived here, in this worker thread, once
+        # (`DATA.md#the-trial-table`): never able to cost the run its files.
         document = derived.with_derived(self._document(stop_reason))
         self._final = document
 
@@ -327,8 +326,7 @@ class AnimalWriter:
 
     def header(self) -> dict[str, Any]:
         """The document as it stands before its first strobe: its fields, its
-        parameters and the profile snapshot. What a live replay is started
-        from (`sessions/live_replay.py`)."""
+        parameters and the profile snapshot."""
         return _with_odors(run_document.build(self._core, self._config, self._profile))
 
     def _document(self, stop_reason: str) -> dict[str, Any]:

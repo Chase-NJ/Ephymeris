@@ -15,12 +15,10 @@ from typing import Any, Iterable
 
 from ...tasks.profile import TaskProfile
 from . import grammar2, legacy
-from .document import codes_of
-from .spine import SpineDecodeError, is_spine_run, replayed
+from .document import codes_of, ran_by_the_trial_runner
 from .stats import _round
-from .table_metrics import row_metric_id
 from .summary import DEFAULT_MIN_COUNTED
-from .table_metrics import CORRECT, verdicts
+from .table_metrics import verdicts
 
 
 @dataclass(frozen=True)
@@ -65,33 +63,17 @@ class StrategyPoint:
 
 @dataclass(frozen=True)
 class _Curve:
-    """One condition's counted trials, in order, and its authored window (None
-    for a spine row, which has none)."""
+    """One condition's counted trials, in order, and its authored window."""
 
     id: str
     label: str
-    window: int | None
+    window: int
     verdicts: list[bool]
 
 
 def _curves(document: dict[str, Any], profile: TaskProfile | None) -> list[_Curve]:
-    """Each condition's verdicts, read off the run's trial table: a spine run's
-    rows (complete trials only, as its metrics count them), or a legacy run's
-    conditions."""
-    if is_spine_run(document):
-        try:
-            result = replayed(document)
-        except SpineDecodeError:
-            return []
-        if result.divergence is not None:
-            return []
-        done = [t for t in result.trials if t.complete]
-        return [
-            _Curve(id=row_metric_id(row), label=f"P({CORRECT} | {name or row})", window=None,
-                   verdicts=[t.correct for t in done if t.row == row and t.correct is not None])
-            for row, name in result.rows
-        ]
-    if profile is None or not profile.live_metrics:
+    """Each condition's verdicts, read off the run's trial table."""
+    if profile is None or not profile.live_metrics or not ran_by_the_trial_runner(document):
         return []
     if grammar2.is_grammar2_run(document, profile):
         table2 = grammar2.table_of(document, profile)
@@ -116,8 +98,7 @@ def series(
     is the running whole-session average rather than the rolling one.
     `len(codes)` is a safe width for it: a counted trial costs at least two
     codes (a trigger and a response), so the window can never fill and never
-    drops a trial. A spine row has no authored window, so its curve is the
-    cumulative one in either mode.
+    drops a trial.
     """
     wanted = set(metric_ids) if metric_ids is not None else None
     whole = max(1, len(codes_of(document)) or 1)
@@ -125,7 +106,7 @@ def series(
     for curve in _curves(document, profile):
         if wanted is not None and curve.id not in wanted:
             continue
-        width = curve.window if mode != "cumulative" and curve.window is not None else whole
+        width = curve.window if mode != "cumulative" else whole
         values = [
             sum(window) / len(window)
             for k in range(len(curve.verdicts))
@@ -251,9 +232,8 @@ def strategy_trail(
     already the app's answer to "too few trials to read firmly"
     (`ANALYTICS.md#uncertainty`). A window authored shorter than that caps the
     requirement at its own size, so a small-window profile still gets a walk.
-    A spine run has no answer sides, so no walk.
     """
-    if profile is None or is_spine_run(document):
+    if profile is None or not ran_by_the_trial_runner(document):
         return []
     # A grammar-2 table carries the same verdict order and gives each condition
     # the side its headers said, so the walk reads it as a legacy table.

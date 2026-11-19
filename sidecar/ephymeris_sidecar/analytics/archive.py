@@ -448,7 +448,7 @@ class CohortArchive:
 
 
     async def rederive(self, cohort_id: str) -> dict[str, Any]:
-        """Rewrite the derived trial table of a cohort's spine runs where this
+        """Rewrite the derived trial table of a cohort's grammar-2 runs where this
         build derives a different one (`DATA.md#re-derive`), as the
         `RederiveResult` wire shape.
 

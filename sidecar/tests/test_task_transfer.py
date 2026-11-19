@@ -18,10 +18,11 @@ import pytest
 
 from ephymeris_sidecar.hardware import store as rig_store
 from ephymeris_sidecar.rig import registry
-from ephymeris_sidecar.taskdef import lowering, transfer
+from ephymeris_sidecar.taskdef import transfer
 from ephymeris_sidecar.taskdef.model import TaskDefinition, TaskDefinitionError
 from ephymeris_sidecar.taskdef.store import TaskStore
-from tests.fixtures import spine as fixture
+from tests.fixtures import rig as fixture
+from tests.fixtures import task_definitions as presets
 from tests.live_sidecar import Refused, live_sidecar
 
 FIRMWARE = Path(__file__).resolve().parents[2] / "firmware"
@@ -34,12 +35,20 @@ def _issued_rig():
     fixture.uninstall()
 
 
-def tracer(**edits) -> dict:
-    return fixture.tracer(**edits)
+#: The sample task: the two-odor discrimination, as the app stores it.
+TASK_ID = "grgl_2odor"
+TASK_NAME = "GRGL 2-Odor"
+
+
+def task(**edits) -> dict:
+    doc = presets.instantiate(TASK_ID, TASK_ID).to_json()
+    assert (doc["name"], doc["category"]) == (TASK_NAME, "Discrimination")
+    doc.update(edits)
+    return doc
 
 
 def export(document: dict | None = None) -> dict:
-    return transfer.export_document(document or tracer(), registry.channels(), registry.vocabulary())
+    return transfer.export_document(document or task(), registry.channels(), registry.vocabulary())
 
 
 # --------------------------------------------------------------------------- #
@@ -48,17 +57,18 @@ def export(document: dict | None = None) -> dict:
 
 
 def test_the_export_carries_the_definition_verbatim_and_the_channels_it_names():
-    raw = tracer()
+    raw = task()
     # A field this build's model does not know: another build's contingency map.
-    raw["rows"][0]["contingency"] = {"poke": {"class": "correct", "line": "reward"}}
+    raw["trials"][0]["contingency"] = {"poke": {"class": "correct", "line": "reward"}}
     raw["futureKey"] = [1, {"x": None}]
 
     exported = export(raw)
 
     assert exported["task_export_version"] == 1
     assert exported["definition"] == raw
-    # In this machine's declaration order, not the row's binding order.
-    assert list(exported["channels"]) == ["odor_port", "trial_light", "odor_line_1", "fluid_2"]
+    # In this machine's declaration order, not the order the rows name them in.
+    assert list(exported["channels"]) == [
+        "right_well", "left_well", "odor_line_1", "odor_line_3", "fluid_0", "fluid_2"]
     assert exported["channels"]["fluid_2"] == {
         "kind": "reward", "type": "digital_out", "role": "reward", "serves": "right_well",
         "well": "right_well", "edges": {"on": "FLUID_2_ON", "off": "FLUID_2_OFF"},
@@ -70,12 +80,15 @@ def test_the_export_carries_the_definition_verbatim_and_the_channels_it_names():
 def test_the_export_numbers_every_code_the_task_strobes_from_this_vocabulary():
     vocab = registry.vocabulary()
     names = {
-        # the edges of the four channels the tracer binds
-        "ODOR_PORT_ENTER", "ODOR_PORT_EXIT", "TRIAL_LIGHT_ON", "TRIAL_LIGHT_OFF",
-        "ODOR_LINE_1_ON", "ODOR_LINE_1_OFF", "FLUID_2_ON", "FLUID_2_OFF",
-        # odor_line_1's declared onset, and a spine's structural and outcome codes
-        "ODOR_1_ON", "START_SESSION", "BLOCK_START", "TRIAL_START", "END_SESSION",
-        *lowering.OUTCOME_CODES,
+        # the edges of the six channels the task's rows name
+        "RIGHT_WELL_ENTER", "RIGHT_WELL_EXIT", "LEFT_WELL_ENTER", "LEFT_WELL_EXIT",
+        "ODOR_LINE_1_ON", "ODOR_LINE_1_OFF", "ODOR_LINE_3_ON", "ODOR_LINE_3_OFF",
+        "FLUID_0_ON", "FLUID_0_OFF", "FLUID_2_ON", "FLUID_2_OFF",
+        # each row's onset code
+        "ODOR_1_ON", "ODOR_3_ON",
+        # and the slot codes of the two wells the rows are answered at
+        *(f"{name}_{side}" for side in "LR" for name in (
+            "WATER_POKE", "WATER_UNPOKE", "WATER_UNPOKE_EARLY", "WATER_POKE_ERROR", "FLUID", "STOP_FLUID_G")),
     }
     assert export()["codes"] == {name: vocab.code_of(name) for name in sorted(names)}
 
@@ -126,7 +139,7 @@ def test_an_import_onto_the_same_channel_set_is_clean(tmp_path):
     planned = plan(export(), tmp_path)
     assert planned.conflicts == []
     assert planned.same_channel_set and not planned.replaces and not planned.identical
-    assert planned.task_id == "spine_tracer" and planned.name == "Spine Tracer"
+    assert planned.task_id == TASK_ID and planned.name == TASK_NAME
 
 
 def test_a_channel_this_rig_lacks_is_named(tmp_path):
@@ -178,18 +191,18 @@ def test_channels_declared_in_another_order_are_an_order_conflict(tmp_path):
     file = export()
 
     def edit(rig: dict) -> None:
-        # trial_light moved ahead of odor_port; no channel is added or lost.
+        # left_well moved ahead of right_well; no channel is added or lost.
         channels = rig["channels"]
-        rig["channels"] = {"trial_light": channels.pop("trial_light"), **channels}
+        rig["channels"] = {"left_well": channels.pop("left_well"), **channels}
 
     rig_with(edit)
     conflicts = plan(file, tmp_path).conflicts
     assert [(c["kind"], c["channel"]) for c in conflicts] == [
-        ("order", "trial_light"), ("order", "odor_port"),
+        ("order", "left_well"), ("order", "right_well"),
     ]
     assert conflicts[0]["message"] == (
-        "trial_light is the task's channel 1 here and 2 in that task's channel set, counting "
-        "only the 4 channels both have. Declaration order is the odor index, so the two must "
+        "left_well is the task's channel 1 here and 2 in that task's channel set, counting "
+        "only the 6 channels both have. Declaration order is the odor index, so the two must "
         "list their channels in one order."
     )
 
@@ -216,39 +229,39 @@ def test_a_code_numbered_differently_here_is_a_code_conflict_naming_both_numbers
 
 def test_a_code_this_vocabulary_lacks_is_a_code_conflict(tmp_path):
     file = export()
-    number = file["codes"]["TRIAL_START"]
+    number = file["codes"]["ODOR_1_ON"]
 
     def drop(vocab: dict) -> None:
-        del vocab["codes"]["TRIAL_START"]
+        del vocab["codes"]["ODOR_1_ON"]
 
     rig_with(vocabulary=drop)
     conflicts = [c for c in plan(file, tmp_path).conflicts if c["kind"] == "code"]
     assert [c["message"] for c in conflicts] == [
-        f"TRIAL_START is code {number} in that task's vocabulary and not a live code here. "
+        f"ODOR_1_ON is code {number} in that task's vocabulary and not a live code here. "
         "Import the other machine's channel set first, so both give it one number.",
     ]
 
 
 def test_a_code_the_task_would_strobe_here_and_the_file_does_not_number_is_a_conflict(tmp_path):
     file = export()
-    del file["codes"]["END_SESSION"]
+    del file["codes"]["ODOR_3_ON"]
     [conflict] = plan(file, tmp_path).conflicts
     assert conflict["kind"] == "code"
     assert conflict["message"].startswith(
-        "That task would strobe END_SESSION here, and the file gives it no number."
+        "That task would strobe ODOR_3_ON here, and the file gives it no number."
     )
 
 
 def test_a_name_another_task_or_a_shipped_sketch_has_is_refused(tmp_path):
-    TaskStore(tmp_path, library_root=FIRMWARE).save_document(tracer(id="mine", name="spine TRACER"))
-    conflicts = plan(export(), tmp_path, bundled=frozenset({"Spine Tracer"})).conflicts
+    TaskStore(tmp_path, library_root=FIRMWARE).save_document(task(id="mine", name="grgl 2-ODOR"))
+    conflicts = plan(export(), tmp_path, bundled=frozenset({TASK_NAME})).conflicts
     assert [c["kind"] for c in conflicts] == ["bundled_name", "name_taken"]
-    assert conflicts[1]["message"].startswith("Another task here is already called 'spine TRACER'.")
+    assert conflicts[1]["message"].startswith("Another task here is already called 'grgl 2-ODOR'.")
 
 
 def test_a_stored_file_under_the_same_id_that_will_not_read_is_still_replaced_with_confirm(tmp_path):
     (tmp_path / "tasks").mkdir()
-    (tmp_path / "tasks" / "spine_tracer.json").write_text("{ not json", encoding="utf-8")
+    (tmp_path / "tasks" / f"{TASK_ID}.json").write_text("{ not json", encoding="utf-8")
     planned = plan(export(), tmp_path)
     assert planned.replaces and planned.replaces_unreadable and planned.replaces_name is None
 
@@ -278,13 +291,13 @@ def test_the_fields_a_channel_carries_are_the_fields_the_channel_set_hash_covers
 
 def test_a_task_saved_here_under_the_same_id_is_replaced_and_an_identical_one_is_not(tmp_path):
     store = TaskStore(tmp_path, library_root=FIRMWARE)
-    store.save_document(tracer(notes="an older version"))
-    store.save_document(tracer(name="Old Tracer", notes="an older version"))
+    store.save_document(task(notes="an older version"))
+    store.save_document(task(name="Old GRGL", notes="an older version"))
     planned = plan(export(), tmp_path)
     assert planned.conflicts == [] and planned.replaces and not planned.identical
-    assert planned.replaces_name == "Old Tracer"
+    assert planned.replaces_name == "Old GRGL"
 
-    store.save_document(tracer())
+    store.save_document(task())
     planned = plan(export(), tmp_path)
     assert planned.replaces and planned.identical
 
@@ -312,13 +325,14 @@ def test_a_file_that_is_not_an_export_is_refused(tmp_path, edit, says):
 # --------------------------------------------------------------------------- #
 
 
-FOLDER = Path("tasks") / "Tasks" / "Spine Tracer"
+FOLDER = Path("tasks") / "Discrimination" / TASK_NAME
+STORED = f"tasks/{TASK_ID}.json"
 
 
-def newer_build_tracer() -> dict:
-    """The tracer as a newer build stores it, with fields this one does not know."""
-    raw = tracer()
-    raw["rows"][0]["contingency"] = {"poke": {"class": "correct", "line": "reward"}}
+def newer_build_task() -> dict:
+    """The task as a newer build stores it, with fields this one does not know."""
+    raw = task()
+    raw["trials"][0]["contingency"] = {"poke": {"class": "correct", "line": "reward"}}
     raw["futureKey"] = [1, {"x": None}]
     return raw
 
@@ -335,6 +349,11 @@ def defines(header: str) -> dict[str, int]:
     return {m[1]: int(m[2]) for m in re.finditer(r"^#define (BF_\w+) (\d+)$", header, re.M)}
 
 
+def odor_pins(header: str) -> list[int]:
+    [line] = re.findall(r"^#define BOX_ODOR_PINS \{(.*)\}$", header, re.M)
+    return [int(pin) for pin in line.split(",")]
+
+
 def swapped_pins() -> dict:
     """The shipped wiring with odor lines 1 and 2 on each other's pins."""
     doc = rig_store.default_document()
@@ -345,77 +364,63 @@ def swapped_pins() -> dict:
     return doc
 
 
-def with_spine_vocabulary(data_dir: Path) -> Path:
-    """Seed `data_dir`'s vocabulary with the spine's codes before its sidecar
-    starts, as a machine that runs a spine task has them (the shipped default
-    declares them no longer; `tests/fixtures/spine.py`)."""
-    from ephymeris_sidecar.strobes import store as strobe_store
-
-    vocab_store = strobe_store.VocabularyStore(data_dir)
-    vocab_store.root.mkdir(parents=True, exist_ok=True)
-    vocab_store.path.write_text(
-        json.dumps(fixture.with_spine_codes(registry.default_vocabulary_document())), encoding="utf-8")
-    return data_dir
-
-
 async def machine_a_exports(tmp_path) -> tuple[dict, dict, Path]:
-    """Machine A: its own wiring saved, the tracer stored by a newer build.
+    """Machine A: its own wiring saved, the task stored by a newer build.
     Returns (A's channel set export, A's task export, A's data dir)."""
-    data = with_spine_vocabulary(tmp_path / "a")
+    data = tmp_path / "a"
     (data / "tasks").mkdir(parents=True)
     # As the app stores one (`TaskStore`), so the bytes can be compared on B.
-    (data / "tasks" / "spine_tracer.json").write_text(
-        json.dumps(newer_build_tracer(), indent=2) + "\n", encoding="utf-8"
+    (data / STORED).write_text(
+        json.dumps(newer_build_task(), indent=2) + "\n", encoding="utf-8"
     )
     async with live_sidecar(data) as a:
         await a.call("hardware.save", document=rig_store.default_document(), confirm=True)
         channel_set = (await a.call("hardware.exportChannelSet"))["document"]
-        task = await a.call("tasks.export", taskId="spine_tracer")
-    assert task["filename"].startswith("task-spine_tracer-") and task["filename"].endswith(".json")
-    return channel_set, task["document"], data
+        exported = await a.call("tasks.export", taskId=TASK_ID)
+    assert exported["filename"].startswith(f"task-{TASK_ID}-") and exported["filename"].endswith(".json")
+    return channel_set, exported["document"], data
 
 
 async def test_a_task_exported_on_one_machine_strobes_identical_codes_on_another(tmp_path):
     channel_set, exported, a = await machine_a_exports(tmp_path)
 
-    async with live_sidecar(with_spine_vocabulary(tmp_path / "b")) as b:
+    async with live_sidecar(tmp_path / "b") as b:
         await b.call("hardware.save", document=swapped_pins(), confirm=True)
         await b.call("hardware.importChannelSet", document=channel_set, apply=True, confirm=True)
         plan = (await b.call("tasks.import", document=exported, apply=False))["plan"]
         assert plan["conflicts"] == [] and plan["sameChannelSet"] and not plan["replaces"]
-        assert not (tmp_path / "b" / "tasks" / "spine_tracer.json").exists(), "a plan wrote"
+        assert not (tmp_path / "b" / STORED).exists(), "a plan wrote"
 
         reply = await b.call("tasks.import", document=exported, apply=True)
         assert reply["applied"] is True
-        assert [t["id"] for t in (await b.call("tasks.list"))["tasks"]] == ["spine_tracer"]
-        assert b.latest("tasks.updated")["tasks"][0]["id"] == "spine_tracer"
+        assert [t["id"] for t in (await b.call("tasks.list"))["tasks"]] == [TASK_ID]
+        assert b.latest("tasks.updated")["tasks"][0]["id"] == TASK_ID
 
     b_dir = tmp_path / "b"
     # The definition arrived verbatim, byte for byte, fields this build does
     # not know included.
-    stored = "tasks/spine_tracer.json"
-    assert (b_dir / stored).read_bytes() == (a / stored).read_bytes()
-    assert json.loads((b_dir / stored).read_text()) == newer_build_tracer()
-    # Identical codes: every code number compiled in, and the profile with the
-    # spine snapshot replay reads code names from, are the same on both...
+    assert (b_dir / STORED).read_bytes() == (a / STORED).read_bytes()
+    assert json.loads((b_dir / STORED).read_text()) == newer_build_task()
+    # Identical codes: every code number compiled in, and the profile that
+    # names the codes a run is scored by, are the same on both...
     a_pins = (a / FOLDER / "TaskPins.h").read_text()
     b_pins = (b_dir / FOLDER / "TaskPins.h").read_text()
     assert defines(a_pins) == defines(b_pins) and "BF_FLUID_2_ON" in defines(a_pins)
     a_profile = json.loads((a / FOLDER / "task.json").read_text())
     assert a_profile == json.loads((b_dir / FOLDER / "task.json").read_text())
-    assert a_profile["spine"]["outputs"][1]["channel"] == "odor_line_1"
+    assert [m["trigger"] for m in a_profile["liveMetrics"]] == ["ODOR_1_ON", "ODOR_3_ON"]
     # ...on the other machine's own pins.
-    assert (a / FOLDER / "TaskSpine.h").read_text() != (b_dir / FOLDER / "TaskSpine.h").read_text()
+    assert odor_pins(a_pins) != odor_pins(b_pins) and sorted(odor_pins(a_pins)) == sorted(odor_pins(b_pins))
 
 
 async def test_an_import_naming_a_missing_or_differing_channel_writes_nothing_and_says_why(tmp_path):
     _channel_set, exported, _a = await machine_a_exports(tmp_path)
 
-    b_dir = with_spine_vocabulary(tmp_path / "b")
+    b_dir = tmp_path / "b"
     # B already has a task of its own, so "nothing written" has bytes to keep.
     (b_dir / "tasks").mkdir(parents=True)
     (b_dir / "tasks" / "b_own.json").write_text(
-        json.dumps(tracer(id="b_own", name="B Own", rows=[])), encoding="utf-8"
+        json.dumps(task(id="b_own", name="B Own")), encoding="utf-8"
     )
     async with live_sidecar(b_dir) as b:
         doc = rig_store.default_document()
@@ -439,7 +444,7 @@ async def test_an_import_naming_a_missing_or_differing_channel_writes_nothing_an
     assert refused.value.detail["conflicts"] == plan["conflicts"]
     assert "odor_line_1" in refused.value.message
     assert tree(b_dir / "tasks") == before and before  # every path and every byte
-    assert not (b_dir / "tasks" / "spine_tracer.json").exists()
+    assert not (b_dir / STORED).exists()
 
 
 async def test_replacing_a_saved_task_needs_confirm(tmp_path):
@@ -452,18 +457,18 @@ async def test_replacing_a_saved_task_needs_confirm(tmp_path):
         with pytest.raises(Refused) as refused:
             await again.call("tasks.import", document=exported, apply=True)
         assert refused.value.code == "TASK_IMPORT_REPLACES"
-        assert "notes" not in json.loads((a / "tasks" / "spine_tracer.json").read_text())
+        assert json.loads((a / STORED).read_text()) == newer_build_task(), "refused, so as it was"
 
         replaced = await again.call("tasks.import", document=exported, apply=True, confirm=True)
         assert replaced["applied"] and replaced["plan"]["replaces"]
-    stored = json.loads((a / "tasks" / "spine_tracer.json").read_text())
+    stored = json.loads((a / STORED).read_text())
     assert stored["notes"] == "changed on the other machine" and stored["futureKey"] == [1, {"x": None}]
 
 
 async def test_a_stored_task_that_will_not_read_is_not_found_for_export(tmp_path):
     (tmp_path / "b" / "tasks").mkdir(parents=True)
     (tmp_path / "b" / "tasks" / "broken.json").write_text('{"id": "Not An Id"}', encoding="utf-8")
-    async with live_sidecar(with_spine_vocabulary(tmp_path / "b")) as b:
+    async with live_sidecar(tmp_path / "b") as b:
         await b.call("hardware.save", document=rig_store.default_document(), confirm=True)
         with pytest.raises(Refused) as refused:
             await b.call("tasks.export", taskId="broken")
@@ -471,7 +476,7 @@ async def test_a_stored_task_that_will_not_read_is_not_found_for_export(tmp_path
 
 
 async def test_a_file_that_is_not_an_export_is_task_transfer_invalid(tmp_path):
-    async with live_sidecar(with_spine_vocabulary(tmp_path / "b")) as b:
+    async with live_sidecar(tmp_path / "b") as b:
         with pytest.raises(Refused) as refused:
             await b.call("tasks.import", document={"x": 1}, apply=False)
     assert refused.value.code == "TASK_TRANSFER_INVALID"
@@ -485,7 +490,7 @@ async def test_a_file_that_is_not_an_export_is_task_transfer_invalid(tmp_path):
 def test_a_category_that_is_not_one_plain_folder_name_is_refused_and_nothing_written(tmp_path, category):
     root = tmp_path / "data"
     with pytest.raises(transfer.TaskTransferInvalid, match="category"):
-        export(tracer(category=category))
+        export(task(category=category))
 
     file = export()
     file["definition"]["category"] = category
@@ -494,7 +499,7 @@ def test_a_category_that_is_not_one_plain_folder_name_is_refused_and_nothing_wri
 
     store = TaskStore(root, library_root=FIRMWARE)
     with pytest.raises(TaskDefinitionError, match="category"):
-        store.save_document(tracer(category=category))
+        store.save_document(task(category=category))
     assert sorted(p.relative_to(tmp_path) for p in tmp_path.rglob("*")) == []
 
 
@@ -505,7 +510,7 @@ def test_a_sketch_folder_outside_the_tasks_root_is_never_touched(tmp_path):
     victim.mkdir()
     (victim / "keep.txt").write_text("mine", encoding="utf-8")
     store = TaskStore(tmp_path / "data", library_root=FIRMWARE)
-    escaping = dataclasses.replace(TaskDefinition.from_json(tracer()), category="../../victim")
+    escaping = dataclasses.replace(TaskDefinition.from_json(task()), category="../../victim")
     with pytest.raises(TaskDefinitionError, match="outside"):
         store.regenerate(escaping)
     assert (victim / "keep.txt").read_text() == "mine" and sorted(victim.iterdir()) == [victim / "keep.txt"]
@@ -534,30 +539,30 @@ UNSAFE_FOLDER_NAMES = [
 
 def test_a_free_text_category_still_reads_lists_and_saves(tmp_path):
     store = TaskStore(tmp_path, library_root=FIRMWARE)
-    store.save_document(tracer(category="Shaping (old)"))
+    store.save_document(task(category="Shaping (old)"))
     [entry] = store.list_entries()
     assert entry["category"] == "Shaping (old)" and entry["unreadable"] is None
-    assert (tmp_path / "tasks" / "Shaping (old)" / "Spine Tracer" / "task.json").is_file()
+    assert (tmp_path / "tasks" / "Shaping (old)" / TASK_NAME / "task.json").is_file()
 
 
 @pytest.mark.parametrize("value", UNSAFE_FOLDER_NAMES)
 def test_a_category_or_name_that_is_not_a_safe_folder_name_is_not_a_definition(value):
     with pytest.raises(TaskDefinitionError, match="category"):
-        TaskDefinition.from_json(tracer(category=value))
+        TaskDefinition.from_json(task(category=value))
     if value.strip() == value:  # a name is trimmed first, which makes it safe
         with pytest.raises(TaskDefinitionError, match="name"):
-            TaskDefinition.from_json(tracer(name=value))
+            TaskDefinition.from_json(task(name=value))
 
 
 def test_a_stored_task_that_will_not_read_is_listed_as_unreadable_with_its_reason(tmp_path):
     store = TaskStore(tmp_path, library_root=FIRMWARE)
-    store.save_document(tracer())
+    store.save_document(task())
     (tmp_path / "tasks" / "old_one.json").write_text(
-        json.dumps(tracer(id="old_one", name="Old One", category="Shaping/old")), encoding="utf-8"
+        json.dumps(task(id="old_one", name="Old One", category="Shaping/old")), encoding="utf-8"
     )
     (tmp_path / "tasks" / "garbled.json").write_text("{ not json", encoding="utf-8")
     entries = {e["id"]: e for e in store.list_entries()}
-    assert entries["spine_tracer"]["unreadable"] is None
+    assert entries[TASK_ID]["unreadable"] is None
     assert "category" in entries["old_one"]["unreadable"] and entries["old_one"]["name"] == "Old One"
     assert "JSON" in entries["garbled"]["unreadable"]
 
@@ -566,22 +571,22 @@ def test_a_symlinked_category_folder_still_lists_and_regenerates(tmp_path):
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     (tmp_path / "data" / "tasks").mkdir(parents=True)
-    (tmp_path / "data" / "tasks" / "Tasks").symlink_to(elsewhere, target_is_directory=True)
+    (tmp_path / "data" / "tasks" / "Discrimination").symlink_to(elsewhere, target_is_directory=True)
     store = TaskStore(tmp_path / "data", library_root=FIRMWARE)
-    store.save_document(tracer())
+    store.save_document(task())
     [entry] = store.list_entries()
     assert entry["unreadable"] is None
     assert store.regenerate_all() == 1
-    assert (elsewhere / "Spine Tracer" / "task.json").is_file()
+    assert (elsewhere / TASK_NAME / "task.json").is_file()
 
 
 def test_a_name_another_task_holds_as_windows_sees_it_is_taken(tmp_path):
-    """Windows drops a trailing dot or space, so "Spine Tracer." and "Spine
-    Tracer" are one folder there. A stored task that no longer reads still
+    """Windows drops a trailing dot or space, so "GRGL 2-Odor." and "GRGL
+    2-Odor" are one folder there. A stored task that no longer reads still
     holds its folder."""
     (tmp_path / "tasks").mkdir()
     (tmp_path / "tasks" / "older.json").write_text(
-        json.dumps(tracer(id="older", name="SPINE TRACER.")), encoding="utf-8"
+        json.dumps(task(id="older", name="GRGL 2-ODOR.")), encoding="utf-8"
     )
     conflicts = plan(export(), tmp_path).conflicts
     assert [c["kind"] for c in conflicts] == ["name_taken"]

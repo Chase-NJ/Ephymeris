@@ -88,8 +88,6 @@ export const CMD = {
   TASKS_LIST: "tasks.list",
   TASKS_GET: "tasks.get",
   TASKS_PREVIEW: "tasks.preview",
-  TASKS_SIMULATE: "tasks.simulate",
-  TASKS_SPINE_PALETTE: "tasks.spinePalette",
   TASKS_SAVE: "tasks.save",
   TASKS_DELETE: "tasks.delete",
   TASKS_EXPORT: "tasks.export",
@@ -150,7 +148,6 @@ export const EVT = {
   COHORTS_UPDATED: "cohorts.updated",
   PREFIXES_UPDATED: "prefixes.updated",
   SESSION_TELEMETRY: "session.telemetry",
-  SESSION_REPLAY: "session.replay",
   SESSION_ANIMAL_ENDED: "session.animalEnded",
   LOGBOOK_UPDATED: "logbook.updated",
   SESSION_LIFECYCLE: "session.lifecycle",
@@ -783,9 +780,9 @@ export interface ConfigField {
   type: ConfigFieldType;
   default: unknown;
   /**
-   * Section heading the form files this field under; absent = ungrouped. Part of `profile_hash`
-   * (except on a spine task), so re-filing a field splits a task's recorded runs from its future
-   * ones (`TASKS.md#profile-and-params-hashes`).
+   * Section heading the form files this field under; absent = ungrouped. Part of `profile_hash`,
+   * so re-filing a field splits a task's recorded runs from its future ones
+   * (`TASKS.md#profile-and-params-hashes`).
    */
   group?: string;
   /** Suffix shown after the input, e.g. "ms". */
@@ -949,12 +946,6 @@ export interface TaskProfile {
    */
   identify?: IdentifySpec;
   /**
-   * Phase-spine tasks only (`TASKS.md#spine-tasks`): the snapshot replay reads — the definition,
-   * the state table as lowered, each bit's channel and edge code names, and each parameter slot's
-   * wire key. Absent on every other profile.
-   */
-  spine?: Record<string, unknown>;
-  /**
    * The parameters a generated task shows in its editor and offers in the Start dialog, by
    * `metadataKey` (`TASKS.md#parameters`); the rest stay at their defaults, unseen, and still
    * ride the `SET` lines. Absent on a hand-written profile, which offers every field. Never
@@ -1051,76 +1042,6 @@ export interface AnimalEnded {
   /** One of the stop reasons in `ARCHITECTURE.md#session-lifecycle`. */
   stopReason: string;
   filePath: string | null;
-}
-
-/**
- * Where a running spine run's live replay stands (`ANALYTICS.md#live-scoring`). `replaying`:
- * every strobe so far is what replay predicts, and `phase` is where the board is. `diverged`: a
- * strobe is not, so the run has no token and no numbers, as Analytics will not score it.
- * `unreplayable`: replay cannot run this run at all. `unavailable`: the live replay failed to
- * take a strobe, so it no longer describes the run; the run itself is unaffected. `ended`: the
- * run is over, and its numbers, when it has them, are Analytics'.
- */
-export type LiveReplayStatus = "replaying" | "diverged" | "unreplayable" | "unavailable" | "ended";
-
-/**
- * A running spine run as its live replay reads it (`ANALYTICS.md#live-scoring`): where the board
- * is and the numbers so far. Sent whole on every change.
- */
-export interface LiveReplay {
-  box: number;
-  animalId: string;
-  status: LiveReplayStatus;
-  /** Why, when `diverged` or `unreplayable`. */
-  detail: string | null;
-  /** The table state the board is in, by replay; null unless `replaying`. */
-  state: number | null;
-  /**
-   * That state's phase, an index into the profile snapshot's `spine.spine` (its `table.phases`).
-   * What the live token sits on: never read from a strobe's name. Null unless `replaying`, or for
-   * a state in no phase.
-   */
-  phase: number | null;
-  /**
-   * The row id the state belongs to; null for a state the rows share (the pick, an early exit's
-   * end) or unless `replaying`.
-   */
-  row: string | null;
-  /**
-   * The board entered this state after its latest strobe, by a timer alone: the sidecar's
-   * estimate on the host clock of what the board does when nothing happens (a Wait timing out, an
-   * outcome running into the ITI), which no strobe has confirmed yet. False whenever the strobes
-   * so far put the board there, and unless `replaying`.
-   */
-  provisional: boolean;
-  /**
-   * Why the live numbers are unavailable while the token carries on: the live scorer process
-   * could not start or stopped (`ARCHITECTURE.md#the-live-scorer`). The run, its strobes and its
-   * file are unaffected; Analytics scores it as ever. Null while the scorer is up, and unless
-   * `replaying` or `ended`.
-   */
-  unavailable: string | null;
-  /** Complete trials so far, as the live trial table counts them. */
-  trials: number;
-  /**
-   * The trial in progress, as the table reads it so far (`complete: false`); null between trials
-   * and unless `replaying`.
-   */
-  current: ReplayTrial | null;
-  /** The latest complete trial. */
-  last: ReplayTrial | null;
-  /**
-   * P(correct | row) over the complete trials so far, from the functions Analytics scores the
-   * finished run with, so at `ended` they are Analytics'. Empty when `diverged` or
-   * `unreplayable`.
-   */
-  metrics: MetricSummary[];
-  /** P(correct) pooled over every row. */
-  overall: MetricSummary | null;
-  /** The outcome-class tallies so far. */
-  replay: ReplayScore | null;
-  /** Where, when `diverged`. */
-  divergence: ReplayDivergence | null;
 }
 
 /** The runner-held session: the session and boxes of a `sessions.status` reply. */
@@ -1288,11 +1209,14 @@ export interface TrialOutcomes {
   rewardedHigh: number | null;
   sideLow: number | null;
   sideHigh: number | null;
-  /** A spine run's right answer whose reward was drawn against; 0 on a legacy run. */
+  /** A right answer whose reward was drawn against. No run fills it yet: always 0. */
   unpaid: number;
-  /** A spine run's no-go withhold, a hit; 0 on a legacy run, which cannot tell it from no response. */
+  /**
+   * A stream-grammar-2 run's no-go withhold, a hit; 0 on a grammar-1 run, which cannot tell it
+   * from no response.
+   */
   withheld: number;
-  /** A spine run's no-go false alarm, a miss; 0 on a legacy run. */
+  /** A stream-grammar-2 run's no-go false alarm, a miss; 0 on a grammar-1 run. */
   falseAlarm: number;
   /**
    * Every answer, right or wrong: rewarded + holdFailed + unpaid + withheld + wrongWell +
@@ -1356,151 +1280,16 @@ export interface ConditionOutcomes {
   label: string;
   /**
    * The code that opens this condition's trials — what splits the tally. Two metrics sharing one
-   * legitimately cover the same trials. Null for a spine row, which no onset code opens.
+   * legitimately cover the same trials.
    */
   triggerCode: number | null;
   outcomes: TrialOutcomes;
-  /**
-   * A spine row's one right answer's side, `left` or `right`, from its snapshot; null otherwise
-   * (a legacy condition's side is its metric's `answerSide`).
-   */
+  /** Always null: a condition's side is its metric's `answerSide`. */
   answerSide: string | null;
 }
 
-/**
- * Why a run has numbers or not (`ANALYTICS.md#why-a-run-has-no-numbers`). A spine task's run is
- * `ok` when replay scored it, `diverged` when its recorded outputs are not what replay predicts
- * (flagged, never scored), and `unreplayable` when replay cannot run it at all, an unknown
- * `INTERP` among them (`ANALYTICS.md#how-a-spine-run-is-scored`).
- */
-export type RunStatus = "ok" | "no-metrics" | "diverged" | "unreplayable" | "missing" | "unreadable";
-
-/** A count out of a total, with its interval. */
-export interface Proportion {
-  n: number;
-  of: number;
-  /** n / of; null when `of` is 0, never 0.0. */
-  p: number | null;
-  /** 95% Wilson interval (`ANALYTICS.md#uncertainty`). */
-  low: number | null;
-  high: number | null;
-}
-
-/**
- * How many of a scope's trials ended in one outcome class
- * (`ANALYTICS.md#metrics-from-the-trial-table`).
- */
-export interface OutcomeTally {
-  /**
-   * An outcome class's name (`taskdef/lowering.py`'s `OUTCOME_CLASSES`), or `outcome_<n>` for a
-   * number this build has no name for. An open set: a class added later needs no wire change.
-   */
-  outcomeClass: string;
-  n: number;
-  /** Every complete trial of the scope, unclassified ones included. */
-  of: number;
-  p: number | null;
-  low: number | null;
-  high: number | null;
-}
-
-/** P(outcome | row): one row's trials by outcome class. */
-export interface RowOutcomes {
-  /** Null for trials the table names no row for. */
-  rowId: string | null;
-  name: string | null;
-  trials: number;
-  /** Trials that reached no outcome-bearing state. */
-  unclassified: number;
-  classes: OutcomeTally[];
-}
-
-/**
- * A replayed spine run's tallies, each a function of its trial table
- * (`ANALYTICS.md#metrics-from-the-trial-table`).
- */
-export interface ReplayScore {
-  /** The interpreter version the run was replayed under. */
-  interp: number;
-  /** Complete trials: a crashed run's cut-off last trial is left out. */
-  trials: number;
-  unclassified: number;
-  /** By class number; with `unclassified` they partition `trials`. */
-  classes: OutcomeTally[];
-  /** In the task's row order. */
-  rows: RowOutcomes[];
-  /** Trials whose reward line opened, of `trials`. */
-  rewarded: Proportion;
-  /**
-   * Each row's rate in each phase that counts an input it never acts on, row by row in the task's
-   * order, then by phase. Empty for a task with no such phase
-   * (`ANALYTICS.md#phase-window-rates`).
-   */
-  rates: WindowRate[];
-}
-
-/** A mean over trials with its interval. */
-export interface RateEstimate {
-  /** Trials the mean is over. */
-  n: number;
-  /** Events per second, the mean of each trial's rate; null with no trials, never 0.0. */
-  mean: number | null;
-  /**
-   * Student-t interval over trials, nominally 95%; it covers a bursty licker's rate less often
-   * (`ANALYTICS.md#uncertainty`). Null with fewer than two trials.
-   */
-  low: number | null;
-  high: number | null;
-}
-
-/** One row's rate in one of its own phase-windows (`ANALYTICS.md#phase-window-rates`). */
-export interface WindowRate {
-  /** The row's stable id. */
-  rowId: string;
-  /** The row's name. */
-  name: string;
-  /** The phase's index in the spine. */
-  phase: number;
-  /** The phase's kind, for a person: nothing is scored by it. */
-  label: string;
-  /** The input channel counted. */
-  channel: string;
-  /** Its rises per second in the phase, clamped at 0. */
-  rate: RateEstimate;
-  /**
-   * This row's first phase counting the channel, which `versus` is against; null on that phase
-   * itself.
-   */
-  reference: number | null;
-  /**
-   * This phase's rate minus the reference's, paired within each trial: in a Pavlovian task's CS
-   * and trace, its anticipatory licking. Null on the reference.
-   */
-  versus: RateEstimate | null;
-  /**
-   * The smaller of `rate.n` and `versus.n` is below `minCountedTrials` or `rates.RATE_MIN_TRIALS`
-   * (`ANALYTICS.md#uncertainty`), re-judged on every request.
-   */
-  lowConfidence: boolean;
-}
-
-/**
- * Where a `diverged` run's recorded strobes first leave what replay predicts
- * (`ANALYTICS.md#how-a-spine-run-is-scored`).
- */
-export interface ReplayDivergence {
-  detail: string;
-  /**
-   * 0-based position in the recorded stream of the first strobe replay did not predict. Null when
-   * the recorded inputs could not be fed to replay at all.
-   */
-  index: number | null;
-  atMs: number | null;
-  /** What replay predicts there, `CODE_NAME@ms`; null past its end. */
-  expected: string | null;
-  /** What the file records there; null past its end. */
-  recorded: string | null;
-}
+/** Why a run has numbers or not (`ANALYTICS.md#why-a-run-has-no-numbers`). */
+export type RunStatus = "ok" | "no-metrics" | "missing" | "unreadable";
 
 /**
  * How much the decoding can be trusted (`DATA.md#reading-the-archive`). Four states —
@@ -1581,13 +1370,6 @@ export interface RunSummary {
   seed: number | null;
   detail: string | null;
   excludedByDefault: boolean;
-  /**
-   * A spine run's tallies from its trial table, when replay scored it. Its `metrics` are then
-   * P(correct | row) and `overall` their pooled figure. Null for every other run.
-   */
-  replay: ReplayScore | null;
-  /** Set exactly when `status` is `diverged`. */
-  divergence: ReplayDivergence | null;
 }
 
 export interface AnalyticsAnimal {
@@ -1750,16 +1532,13 @@ export interface ConditionScore {
   correct: boolean | null;
 }
 
-/**
- * One trial of a run: a spine run's read off its replay, a legacy run's off its strobes
- * (`ANALYTICS.md#the-trial-table`).
- */
+/** One trial of a run, read off its strobes (`ANALYTICS.md#the-trial-table`). */
 export interface ReplayTrial {
   /** 0-based, in the run's order. */
   index: number;
   /**
-   * The trial's start: ms from the session's first tick, or from a legacy run's earliest strobe.
-   * Null only on a legacy file with no usable clock.
+   * The trial's start: ms from the run's earliest strobe. Null only on a file with no usable
+   * clock.
    */
   atMs: number | null;
   /** The block's id, when the table can say. */
@@ -1768,19 +1547,13 @@ export interface ReplayTrial {
   row: string | null;
   rowName: string | null;
   level: number | null;
-  /**
-   * The first ms the trial entered each phase, aligned to `TrialTable.phases`; null for a phase
-   * it never reached. Empty when the snapshot cannot map states to phases.
-   */
+  /** Always empty: no table names phases (`TrialTable.gaps`). */
   phaseEntries: Array<number | null>;
-  /**
-   * The input channel whose edge was the response; on a legacy run, the strobe that decided its
-   * condition's verdict.
-   */
+  /** The strobe that decided the trial's verdict. */
   response: string | null;
   responseEdge: "rise" | "fall" | null;
   responseMs: number | null;
-  /** Response ms minus the ms its phase was entered (a legacy run: minus `atMs`). */
+  /** Response ms minus `atMs`. */
   latencyMs: number | null;
   /**
    * Its outcome class; null when it reached none, or when a legacy no-go trial's strobes cannot
@@ -1792,39 +1565,32 @@ export interface ReplayTrial {
   /** Right, wrong, or null for a trial P(correct) excludes (no class, or an abort). */
   correct: boolean | null;
   rewarded: boolean;
-  /** The output channel that paid (a legacy run: its reward strobe). */
+  /** The reward strobe that paid. */
   rewardLine: string | null;
   /** How long the line was open. */
   rewardMs: number | null;
-  /**
-   * A correction trial; false until blocks have a correction rule, null on a legacy run, which
-   * cannot say.
-   */
+  /** A correction trial; null when the run cannot say. */
   correction: boolean | null;
-  /** Non-zero counts only. */
+  /** Always empty: no table counts inputs (`TrialTable.gaps`). */
   inputCounts: InputCount[];
-  /**
-   * The N the trial's Counter phase drew when it was entered (an FR's, a VR's or a PR's step),
-   * from replay, whether or not the trial reached it; null when it entered no Counter, and on a
-   * legacy run.
-   */
+  /** Always null: no task has a counter. */
   counterN: number | null;
-  /** False only for a crashed spine run's cut-off last trial. */
+  /** Always true. */
   complete: boolean;
   /** The trial opens a presentation on the engagement ladder. */
   presented: boolean;
-  /** A legacy trial's verdict under every condition its onset opens. Empty on a spine run. */
+  /** The trial's verdict under every condition its onset opens. */
   scores: ConditionScore[];
 }
 
 /** A run's trial table (`ANALYTICS.md#the-trial-table`). */
 export interface TrialTable {
   /**
-   * Read off a replay, by the legacy decoder, or off a stream-grammar-2 run's headers and outcome
-   * codes (`ANALYTICS.md#stream-grammar-2`).
+   * Read by the legacy decoder, or off a stream-grammar-2 run's headers and outcome codes
+   * (`ANALYTICS.md#stream-grammar-2`).
    */
-  kind: "replay" | "legacy" | "grammar2";
-  /** Each phase's kind, in spine order, for labels only. Empty for a legacy run. */
+  kind: "legacy" | "grammar2";
+  /** Always empty: no table names phases. */
   phases: string[];
   /**
    * The columns this table cannot fill, so empty means unknown rather than none: `phase-entries`,
@@ -1857,7 +1623,7 @@ export interface RunSeries {
   trials: TrialRecord[];
   /**
    * The run's trial table, computed on each request and never cached (`DATA.md#caching`). Null
-   * for a diverged spine run, one replay cannot run, and a legacy run nothing decodes.
+   * for a run nothing decodes.
    */
   trialTable: TrialTable | null;
 }
@@ -1974,16 +1740,16 @@ export interface RecoverResult {
   folderMissing: boolean;
 }
 
-/** One spine run Re-derive rewrote or could not (`DATA.md#re-derive`). */
+/** One run Re-derive rewrote or could not (`DATA.md#re-derive`). */
 export interface RederivedRun {
   /** The run's `.json`; its `.mat` is the sibling in the session's mat folder. */
   jsonPath: string;
   /**
    * `rewritten`: its `.json` was rewritten with this build's table, or its `.mat` held another
-   * table and was written from the `.json`. `skipped`: nothing was written, because a newer
-   * replay derived its table, it was replayed (`ok`) and this build cannot replay it, or its
-   * `.mat` can be written by no build (an animal name outside the BMP). `failed`: something went
-   * wrong and nothing was written. A current run is counted, never listed.
+   * table and was written from the `.json`. `skipped`: nothing was written, because a newer build
+   * derived its table, or its `.mat` can be written by no build (an animal name outside the BMP).
+   * `failed`: something went wrong and nothing was written. A current run is counted, never
+   * listed.
    */
   status: "rewritten" | "skipped" | "failed";
   /** Why it was skipped or failed, when it was. */
@@ -1995,24 +1761,20 @@ export interface RederivedRun {
   matError: string | null;
 }
 
-/** What `sessions.rederive` did to a cohort's spine runs (`DATA.md#re-derive`). */
+/** What `sessions.rederive` did to a cohort's runs (`DATA.md#re-derive`). */
 export interface RederiveResult {
-  /**
-   * Spine runs found: `.json` files whose own file says a state table ran them. Legacy runs are
-   * never derived, so never counted.
-   */
+  /** Stream-grammar-2 runs found. Grammar-1 runs are never derived, so never counted. */
   scanned: number;
   /** Runs whose `.json` and `.mat` were rewritten with this build's table. */
   rewritten: number;
   /** Runs whose stored block already equals what this build derives: left untouched. */
   current: number;
   /**
-   * Runs left alone, each listed with why: a newer replay derived their table, they were replayed
-   * and this build does not know their INTERP (two lab machines on different builds can share one
-   * archive), or their `.mat` can be written by no build.
+   * Runs left alone, each listed with why: a newer build derived their table (two lab machines on
+   * different builds can share one archive), or their `.mat` can be written by no build.
    */
   skipped: number;
-  /** Runs that could not be replayed or written; each is listed with why. */
+  /** Runs that could not be decoded or written; each is listed with why. */
   failed: number;
   /** The rewritten and failed runs. */
   entries: RederivedRun[];
@@ -2445,133 +2207,23 @@ export interface TaskDiagnostic {
   location: string;
   message: string;
   /**
-   * TSK101–TSK111, TSK113 and TSK114 from the sidecar; TSK112 is derived on the Task tab;
-   * SPN101–SPN112 for a phase-spine task (`TASKS.md#spine-tasks`). Each names a failure that is
-   * silent without it.
+   * TSK101–TSK111, TSK113 and TSK114 from the sidecar; TSK112 is derived on the Task tab. Each
+   * names a failure that is silent without it.
    */
   code: string;
-  /**
-   * What the problem is about, for the editor to show it there (`TASKS.md#the-spine-editor`).
-   * Read off `location`, except a stored parameter's (its phase, row or block) and the RAM
-   * budget's (`ram`).
-   */
+  /** What the problem is about, for the editor to show it there. Read off `location`. */
   target: TaskTarget;
 }
 
-/** Where a task diagnostic belongs on the editor (`TASKS.md#the-spine-editor`). */
+/** Where a task diagnostic belongs on the editor. */
 export interface TaskTarget {
   /**
-   * A spine's `phase`, `row`, `block` or `slot`, a trial table's `row` or ramp `stage`, by
-   * `index` (a spine's `row` or `block` with no index: the list as a whole); or the session's
-   * trial cap, the strobe vocabulary, the RAM budget or the task as a whole.
+   * A trial table's `row` or ramp `stage`, by `index`; or the session's trial cap, the strobe
+   * vocabulary or the task as a whole.
    */
-  kind: "phase" | "row" | "block" | "slot" | "stage" | "session" | "vocabulary" | "ram" | "task";
+  kind: "row" | "stage" | "session" | "vocabulary" | "task";
   /** Its index in the definition's list, for the indexed kinds. */
   index: number | null;
-}
-
-/** One slot of a spine, and what it can bind on this rig. */
-export interface SpineSlotView {
-  /** The slot's id, as the spine's phases and rows name it. */
-  id: string;
-  /** `digital_in`, `digital_out`, `pwm_out` or `tone_out`. */
-  type: string;
-  /** `train` on a pulse-train `digital_out`, else null. */
-  mode: string | null;
-  /**
-   * The channels this rig has that the slot can bind: its own type and mode, never the sync line,
-   * in declaration order. What SPN102 accepts.
-   */
-  channels: string[];
-}
-
-/** One part of a spine task's RAM (`TASKS.md#spine-diagnostics`). */
-export interface SpineRamPart {
-  /** What takes the bytes: states and edge rows, blocks, parameters, … */
-  label: string;
-  /** Its bytes, as `spine.ram_parts` counts them. */
-  bytes: number;
-}
-
-/** The editor's RAM meter. Over budget is a diagnostic, never a refusal: the task still saves. */
-export interface SpineRam {
-  /**
-   * What the task's data takes of the board's RAM (`spine.task_ram_bytes`): the sum of `parts`.
-   * Null when the spine cannot be lowered.
-   */
-  bytes: number | null;
-  /** The most it may take, 5000 B. Over it is SPN105, target `ram`. */
-  budget: number;
-  /** The bytes by part, each non-zero. Empty with no bytes. */
-  parts: SpineRamPart[];
-}
-
-/** One block of the session's sequence, for the block timeline. */
-export interface SpineBlockView {
-  /** The block's id. */
-  id: string;
-  /**
-   * The index of the block that runs after it: its `next`, else the one after it in the list;
-   * null after the last, where the session ends.
-   */
-  next: number | null;
-}
-
-/** A value the definition stores in `params`, over what its spine says. */
-export interface SpineStoredValue {
-  /** The parameter's metadata key. */
-  key: string;
-  /** The value `params` stores for it. */
-  value: unknown;
-  /** The phase, row or block it tunes, or the session. */
-  target: TaskTarget;
-  /**
-   * For a key that carries a phase index (a phase's timer, hold or count, or a block's override
-   * of one), the definition field it overrides, as a location: `spine[2].ms`,
-   * `blocks[0].phaseMs.4`. Inserting or removing a phase moves such a key's meaning, so the
-   * editor folds the value into this field first. Null for a key by row or block id.
-   */
-  field: string | null;
-}
-
-/**
- * What the spine editor draws beside the profile, all computed by the sidecar
- * (`spine.editor_view`, `TASKS.md#the-spine-editor`).
- */
-export interface SpineView {
-  /** Each slot, in order, with the channels it can bind. */
-  slots: SpineSlotView[];
-  /** The RAM meter. */
-  ram: SpineRam;
-  /** The blocks, in order, each with what follows it. */
-  blocks: SpineBlockView[];
-  /**
-   * The blocks run out by themselves. False when they loop or one never ends: then only
-   * `sessionTrials` or End Session ends the session (SPN106).
-   */
-  sessionEnds: boolean;
-  /**
-   * The indices of the phases a block's `phaseMs` can override: those with a timer, a timed phase
-   * or a Wait's or Counter's limit (`lowering.has_timer`).
-   */
-  overridable: number[];
-  /** Each stored `params` value a parameter reads. A key none reads is SPN110 instead. */
-  stored: SpineStoredValue[];
-}
-
-/** A seed spine a new task starts from (`taskdef/seeds.py`). */
-export interface TaskSeed {
-  /** `two_afc`, `go_no_go`, `dnms`, `trace` or `ratio`. */
-  id: string;
-  /** What the chooser calls it. */
-  label: string;
-  /** One sentence on the spine's shape. */
-  summary: string;
-  /**
-   * A whole spine-task definition, opened unsaved. Its rows carry no names and bind no channels:
-   * the operator names and binds them.
-   */
-  definition: unknown;
 }
 
 /**
@@ -2666,15 +2318,9 @@ export interface TaskEntry {
   stages: number;
   /**
    * How the next trial is drawn: a side against recent bias then a type uniformly; a
-   * block-shuffled weighted pool; or the side draw with a weighted pick within it. Null on a
-   * spine task, whose blocks draw its rows.
+   * block-shuffled weighted pool; or the side draw with a weighted pick within it.
    */
-  selectionMode: "antibias" | "pool" | "weighted" | null;
-  /**
-   * A phase-spine task (`TASKS.md#spine-tasks`): `trials` counts its rows, `stages` is 1 and
-   * `selectionMode` is null, since its blocks draw its rows.
-   */
-  spine: boolean;
+  selectionMode: "antibias" | "pool" | "weighted";
 }
 
 export interface TaskSaved {
@@ -2692,8 +2338,6 @@ export interface TaskPreview {
   diagnostics: TaskDiagnostic[];
   /** What this definition compiles to. */
   profile: TaskProfile;
-  /** What the spine editor draws beside the profile; null for a trial-table task. */
-  spine: SpineView | null;
   /**
    * `metadataKey` → the value this field has with NO override, keyed the same way
    * `profile.config[].default` is. The editor needs both to know which values this profile
@@ -2702,69 +2346,6 @@ export interface TaskPreview {
    * the range or the default.
    */
   catalogueDefaults: Record<string, unknown>;
-}
-
-/** The animal a simulation runs against. */
-export interface SimulatedAnimal {
-  /**
-   * Always correct, random, biased toward one response, or never responds
-   * (`TASKS.md#simulating-a-spine-task`).
-   */
-  kind: "correct" | "random" | "biased" | "silent";
-  /** A biased animal's favoured response: one slot a Response window lists. */
-  response?: string;
-  /** How often a biased animal takes its response when it can, 0 to 1000. Default 800. */
-  permille?: number;
-}
-
-/** A simulated trial that runs in another block than the one before it; the first trial included. */
-export interface BlockSwitch {
-  /** The trial's `index` in the trial table. */
-  index: number;
-  /** The block that trial runs in. */
-  block: string | null;
-}
-
-/** A row of the definition that no simulated trial drew. */
-export interface AbsentRow {
-  rowId: string;
-  name: string;
-  /** The blocks that list the row; empty when none does. */
-  blocks: string[];
-}
-
-/**
- * One simulated session of an unsaved spine definition (`TASKS.md#simulating-a-spine-task`).
- * Writes nothing.
- */
-export interface TaskSimulation {
-  /**
-   * The run's trial seed, which also seeds the animal: the one number that repeats this
-   * simulation.
-   */
-  seed: number;
-  /** The session time limit it ran under. */
-  limitMs: number;
-  /**
-   * The trial cap, the blocks running out, a last-trial state, or the time limit (or a session
-   * cut off past it).
-   */
-  endedBy: "trials" | "blocks" | "lastTrial" | "timeLimit";
-  /** As Analytics scores the run: `ok` unless the simulated run did not replay, which is a bug. */
-  status: RunStatus;
-  detail: string | null;
-  /** P(correct | row), as `RunSummary.metrics`. */
-  metrics: MetricSummary[];
-  /** As `RunSummary.overall`. */
-  overall: MetricSummary | null;
-  /** Each row's outcome classes and the phase-window rates, as `RunSummary.replay`. */
-  replay: ReplayScore | null;
-  /** The learning curves, as `RunSeries.metrics`. */
-  series: MetricSeries[];
-  /** Null only if the simulated run did not replay, which is a bug. */
-  trialTable: TrialTable | null;
-  switches: BlockSwitch[];
-  absent: AbsentRow[];
 }
 
 export interface TasksUpdatedData {
@@ -3355,8 +2936,6 @@ export interface CommandArgsMap {
   "tasks.list": Record<string, never>;
   "tasks.get": { taskId: string };
   "tasks.preview": { definition: unknown };
-  "tasks.simulate": { definition: unknown; animal: SimulatedAnimal; seed?: number; limitMs?: number };
-  "tasks.spinePalette": Record<string, never>;
   "tasks.save": { definition: unknown };
   "tasks.delete": { taskId: string };
   "tasks.export": { taskId: string };
@@ -3453,8 +3032,6 @@ export interface CommandResultMap {
   "tasks.list": { tasks: TaskEntry[] };
   "tasks.get": { definition: unknown; diagnostics: TaskDiagnostic[] };
   "tasks.preview": TaskPreview;
-  "tasks.simulate": TaskSimulation;
-  "tasks.spinePalette": { seeds: TaskSeed[]; phases: string[]; outcomeClasses: string[]; selections: string[]; timedPhases: string[]; weightedSelections: string[] };
   "tasks.save": TaskSaved;
   "tasks.delete": { deleted: boolean };
   "tasks.export": { document: unknown; filename: string };
@@ -3504,7 +3081,6 @@ export interface EventDataMap {
   "cohorts.updated": CohortsUpdatedData;
   "prefixes.updated": PrefixesUpdatedData;
   "session.telemetry": BoxTelemetry;
-  "session.replay": LiveReplay;
   "session.animalEnded": AnimalEnded;
   "logbook.updated": LogbookUpdated;
   "session.lifecycle": ActiveSessions;

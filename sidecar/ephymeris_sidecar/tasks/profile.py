@@ -27,7 +27,6 @@ from typing import TYPE_CHECKING, Any, Callable, Iterable
 
 from ..sessions import run_document
 from ..sessions.run_document import DERIVED_KEY, SNAPSHOT_KEY  # noqa: F401 - their old home
-from .behaviour import behaviour_of
 
 if TYPE_CHECKING:
     from ..rig.registry import Vocabulary
@@ -299,13 +298,6 @@ class TaskProfile:
     #: by resemblance would be a guess, and a wrong guess decodes real data
     #: with the wrong strobe map.
     legacy_names: list[str] = field(default_factory=list)
-    #: A phase-spine task's snapshot (`TASKS.md#spine-tasks`): the definition,
-    #: the state table as lowered, which channel and edge codes each bit is,
-    #: and which wire key each parameter slot is. Everything replay needs that
-    #: the run's own header does not already hold. Opaque here and passed
-    #: through verbatim; `taskdef/spine.py` writes it. None on every other
-    #: profile, whose `to_json` (and so `profile_hash`) it leaves untouched.
-    spine: dict[str, Any] | None = None
     #: The parameters the Start dialog offers, by `metadataKey`
     #: (`TASKS.md#parameters`): a generated task's choice. None on a profile
     #: that declares none (a hand-written `task.json`), which offers every
@@ -338,8 +330,6 @@ class TaskProfile:
             out["telemetry"] = self.telemetry.to_json()
         if self.identify is not None:
             out["identify"] = self.identify.to_json()
-        if self.spine is not None:
-            out["spine"] = self.spine
         if self.exposed is not None:
             out["exposed"] = list(self.exposed)
         if self.trial_types is not None:
@@ -378,17 +368,13 @@ def profile_hash(profile: TaskProfile) -> str:
     are comparable. Stored hashes were re-keyed once when this changed
     (`cohorts/db.py` `_to_v13`).
 
-    **A spine task's hash covers its behaviour only** (`behaviour.py`): every
-    string meant for a person is left out, by an explicit list, and rows are
-    keyed by their stable id. Every other profile's hash covers its words too,
-    and must: its stored hashes cannot be recomputed.
+    **The hash covers a profile's words too** (its labels and help text), and
+    must: its stored hashes cannot be recomputed.
     """
     declaration = profile.to_json()
     declaration.pop("strobes", None)
     declaration.pop("exposed", None)
     declaration.pop("trialTypes", None)
-    if profile.spine is not None:
-        declaration = behaviour_of(declaration)
     canonical = json.dumps(declaration, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
@@ -576,7 +562,6 @@ def parse_profile(raw: Any, vocabulary: Vocabulary | None = None) -> TaskProfile
         telemetry=_parse_telemetry(raw.get("telemetry")),
         identify=_parse_identify(raw.get("identify")),
         legacy_names=_parse_legacy_names(raw.get("legacyNames")),
-        spine=_parse_spine(raw.get("spine")),
         exposed=_parse_exposed(raw.get("exposed")),
         trial_types=_parse_trial_types(raw.get("trialTypes")),
     )
@@ -609,15 +594,6 @@ def _parse_exposed(raw: Any) -> list[str] | None:
     if not isinstance(raw, list) or any(not isinstance(key, str) for key in raw):
         raise TaskProfileError("exposed must be a list of metadataKey strings")
     return list(dict.fromkeys(raw))
-
-
-def _parse_spine(raw: Any) -> dict[str, Any] | None:
-    """A spine snapshot, kept verbatim; only its outer shape is checked here."""
-    if raw is None:
-        return None
-    if not isinstance(raw, dict):
-        raise TaskProfileError("spine must be an object")
-    return raw
 
 
 def _parse_identify(raw: Any) -> Identify | None:

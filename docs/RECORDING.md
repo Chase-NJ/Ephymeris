@@ -135,39 +135,26 @@ flowchart LR
 
 ### Firmware pulse
 
-The board announces its scheme before `READY`, since a spine board flashed before the tick pulse existed
-still pulses per strobe:
-
-| Runner | Pulses | Announces |
-|---|---|---|
-| Trial runner (`emitStrobe()` in `BehaviorBox.h`: GRGL, trial-loop sketches, `GRGL_Sim`) | Once per strobe | Nothing |
-| Spine runner (`BoxSpine.h`) | Once per **tick** that strobes; the tick's strobes share its edge | `SYNC=TICK` |
-
-The runner writes `SYNC=TICK` into the header as `# sync: tick` ([DATA.md](DATA.md#the-tsv-log)), which
-offline alignment reads, and builds the box's matcher to pair by tick.
+Every bundled sketch pulses the sync line **once per strobe** (`emitStrobe()` in `BehaviorBox.h`) and
+announces nothing about it. A board that announces `SYNC=TICK` before `READY` pulses once per **tick**
+that strobes, the tick's strobes sharing its edge: the runner writes that into the header as
+`# sync: tick` ([DATA.md](DATA.md#the-tsv-log)), which offline alignment reads, and builds the box's
+matcher to pair by tick. No bundled sketch announces it.
 
 **Per strobe.** `emitStrobe()` waits out the LOW gap **first**, stamps, drives HIGH at once (**the rising
 edge is what the controller timestamps**), prints while high, then holds out the width and goes LOW. Each
 strobe costs about 0.7 ms, so the k-th strobe of a burst rises about (k−1) × 0.7 ms after the first.
 
-**Per tick.** The runner raises the line right after the tick's output pins are written, before any
-print, and lowers it on a later `loop()` pass once `BOX_SYNC_PULSE_US` has run; the next rise waits for
-`BOX_SYNC_GAP_US` of LOW (`syncStep`). Nothing blocks. A tick that strobes before the line is ready (two
-ticks in one pass when AVR `millis()` skips a value) is **owed** its rise, raised on the first pass the gap
-allows, so every strobing tick gets its own edge. At session end `shutdownOutputs()` spares the sync line
-so its last pulse is not cut too narrow.
-
 | Macro (`BoxPins.h`, `#ifndef`-guarded) | Meaning |
 |---|---|
 | `BOX_PIN_SYNC_OUT` | Default **49**. Not 13 (the bootloader blinks it on reset), 0/1 (serial) or 50–53 (SPI). **`-1` compiles the pulse out** |
-| `BOX_SYNC_PULSE_US` | Pulse width (per tick: at least this, up to one `loop()` pass longer) |
+| `BOX_SYNC_PULSE_US` | Pulse width |
 | `BOX_SYNC_GAP_US` | Minimum LOW before the next pulse |
 
 > [!CAUTION]
 > **Two pulses with no LOW between them are one edge**, and a fused pair makes every later event match one
 > strobe late, which looks like plausible data. The gap is enforced in firmware and pinned by the host
-> tests (`libraries/BehaviorBox/extras/host_test/`; `run_spine.sh`'s `sync_tick` and `sync_close` check
-> one rise per strobing tick, its width and its gap).
+> tests (`libraries/BehaviorBox/extras/host_test/run.sh`).
 
 `shutdownHardware()` (from `initBoxHardware()`) holds the line LOW, since a floating input reads as
 events. The line can be proven with no animal: a task started on an empty box from Debug Mode strobes on
@@ -656,8 +643,7 @@ data is complete: every spike and edge at full rate, every strobe, every trial's
    once would overflow `MAX_PENDING`. Before the first pair it may hold up to `MAX_PENDING` edges, so
    any number of reset twitches ahead of START are skipped.
 4. **Place each event in its trial**: the trial table's (`trial_table_of`) last trial opened at or
-   before it. A replayed spine run's trial times are the board's clock, which restarts at START like
-   the strobes'; a decoded legacy run's count from its earliest timestamp, which is added back.
+   before it. The table counts its trial times from the run's earliest timestamp, which is added back.
 5. **Write the events file**, `events/<run>.events.json` and `.mat` beside the session: every strobe,
    named, its sample on the recording's clock (or null) and its trial; the trials' conditions and
    outcomes. It is for the lab's own scripts and spike sorters; **the app never reads it back**.
@@ -718,7 +704,6 @@ To watch on the first full-length recording:
 
 | Question | If the answer is the bad one |
 |---|---|
-| Does a spine run's sync check read nothing missed and nothing stray? The tick pulse is proven only in the host shim | Edges pair with the wrong ticks. Check width, gaps and an owed rise on the DIN trace before relying on [the bound](#the-alignment-bound) |
 | Does the RMS-relative threshold need the board to have run first? | Thresholds land wrong; fix with a short `run` before `SetSpikeDetectionThresholds` |
 | Digital-input naming on the USB Interface Board (zero-based) | Handled in `digital_in_name`; untested |
 | Does `Filename.ActiveFileTimestamp` change when RHX rolls to a new file (`NewSaveFilePeriodMinutes`), or read `RecordingNotStarted` once samples arrive? | A run that lost its link is not picked back up and its owed stop is report-only: safe, but RHX must be stopped by hand ([When RHX goes away](#when-rhx-goes-away)) |

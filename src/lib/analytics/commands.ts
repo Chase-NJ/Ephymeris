@@ -105,7 +105,7 @@ export async function recover(
 
 /**
  * Re-derive (`DATA.md#re-derive`): rewrite the derived trial table in each
- * spine run's `.json`/`.mat` where this build replays a different one. The
+ * stream-grammar-2 run's `.json`/`.mat` where this build derives a different one. The
  * app never reads that table, so nothing in Analytics needs refreshing.
  */
 export async function rederive(

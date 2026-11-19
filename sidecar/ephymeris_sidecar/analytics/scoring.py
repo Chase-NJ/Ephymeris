@@ -33,6 +33,7 @@ from typing import Any, Awaitable, Callable
 from ..cohorts.db import Database
 from ..rig import registry
 from ..rig.registry import Vocabulary
+from ..sessions import run_document
 from ..sessions.models import SessionAnimalRun
 from ..tasks import profile as task_profile
 from ..taskdef import lowering
@@ -557,7 +558,7 @@ resolved: _Resolved, document: dict[str, Any], pass_: _Pass
 
     if resolved.profile is not None and resolved.profile.live_metrics:
         return _scorable(resolved.profile, document, pass_), resolved.source, resolved.digest
-    sketch = document.get("sketch")
+    sketch = run_document.sketch_of(document)
     inferred = infer.infer_profile(
         stream.codes_of(document),
         sketch_name=sketch if isinstance(sketch, str) and sketch else None,

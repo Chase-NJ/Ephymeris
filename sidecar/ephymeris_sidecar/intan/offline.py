@@ -28,6 +28,7 @@ from typing import Any, Callable
 
 from ..analytics import reader
 from ..analytics.stream.summary import trial_table_of
+from ..sessions import run_document as rd
 from ..sessions.writer import write_atomic
 from ..tasks.profile import embedded_profile
 from . import events as ev
@@ -77,7 +78,7 @@ def _channels(spec: Any) -> list[str]:
 
 def _strobes(document: dict[str, Any]) -> list[tuple[int, int]]:
     out = []
-    for pair in document.get("ts_data") or []:
+    for pair in rd.strobes_of(document) or []:
         if isinstance(pair, (list, tuple)) and len(pair) >= 2:
             code, ms = pair[0], pair[1]
             if isinstance(code, int) and isinstance(ms, int) and not isinstance(code, bool):
@@ -122,10 +123,10 @@ def load_run(run_path: str | Path, names_fallback: Callable[[int], str | None] =
     if not result.ok or result.document is None:
         raise NotRecorded(f"The run's file could not be read: {result.detail or result.status}.")
     document = result.document
-    recording = document.get("intan_recording")
-    if not recording or not document.get("intan_path"):
+    recording = rd.recording_name_of(document)
+    if not recording or not rd.recording_path_of(document):
         raise NotRecorded("This run was not recorded with Intan.")
-    folder = Path(str(document["intan_path"])) / str(recording)
+    folder = Path(str(rd.recording_path_of(document))) / str(recording)
     if not folder.is_dir():
         raise NotRecorded(f"RHX's recording folder is not where the run says: {folder}")
     if not (folder / "spike.dat").is_file():
@@ -133,8 +134,8 @@ def load_run(run_path: str | Path, names_fallback: Callable[[int], str | None] =
             "No spike.dat beside the recording. Spikes are saved only in the "
             "“per signal type” and “per channel” formats, with Save spikes on."
         )
-    digital_in = document.get("intan_digital_in")
-    channels = _channels(document.get("intan_channels"))
+    digital_in = rd.recording_digital_in_of(document)
+    channels = _channels(rd.recording_channels_of(document))
     if not isinstance(digital_in, int) or not channels:
         raise NotRecorded("The run does not say which digital input or channels were its.")
 
@@ -146,8 +147,8 @@ def load_run(run_path: str | Path, names_fallback: Callable[[int], str | None] =
         raise NotRecorded(f"RHX's files could not be read: {exc}") from exc
 
     strobes = _strobes(document)
-    rate = float(document.get("intan_sample_rate") or header.sample_rate)
-    alignment = ev.align(strobes, edges, rate, tick_pulsed=document.get("sync") == "tick")
+    rate = float(rd.recording_sample_rate_of(document) or header.sample_rate)
+    alignment = ev.align(strobes, edges, rate, tick_pulsed=rd.sync_of(document) == "tick")
     profile = embedded_profile(document)
     names = dict(profile.strobes) if profile is not None else {}
     for code, _ms in strobes:
@@ -158,7 +159,7 @@ def load_run(run_path: str | Path, names_fallback: Callable[[int], str | None] =
         run_path=path,
         folder=folder,
         rate=rate,
-        tick_pulsed=document.get("sync") == "tick",
+        tick_pulsed=rd.sync_of(document) == "tick",
         channels=channels,
         alignment=alignment,
         names=names,
@@ -363,7 +364,7 @@ class OfflineRuns:
             stat = path.stat()
             stamps.append((stat.st_size, stat.st_mtime_ns))
             document = json.loads(path.read_text(encoding="utf-8"))
-            folder = Path(str(document.get("intan_path"))) / str(document.get("intan_recording"))
+            folder = Path(str(rd.recording_path_of(document))) / str(rd.recording_name_of(document))
             for name in ("spike.dat", "digitalin.dat", "time.dat"):
                 s = (folder / name).stat()
                 stamps.append((s.st_size, s.st_mtime_ns))

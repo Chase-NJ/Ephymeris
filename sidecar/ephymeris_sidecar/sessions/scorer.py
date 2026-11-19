@@ -327,6 +327,7 @@ def serve(requests: Any, results: Any, parent: int) -> None:
     import time
 
     from ..analytics.stream import live
+    from . import run_document
 
     _lower_priority(parent)
     try:
@@ -367,7 +368,7 @@ def serve(requests: Any, results: Any, parent: int) -> None:
             stream = streams.get(key)
             if stream is None:
                 continue
-            stream["ts_data"].extend(strobes)
+            run_document.strobes_of(stream).extend(strobes)
             due[key] = count
         now = time.monotonic()
         for key in [k for k in due if now - last.get(k, 0.0) >= SCORE_INTERVAL_S]:
@@ -375,7 +376,7 @@ def serve(requests: Any, results: Any, parent: int) -> None:
             stream = streams[key]
             began = time.monotonic()
             try:
-                fields = live.fields(live.scored({**stream, "ts_data": stream["ts_data"][:count]}))
+                fields = live.fields(live.scored({**stream, "ts_data": run_document.strobes_of(stream)[:count]}))
             except Exception as exc:  # noqa: BLE001 - one run's failure is that run's
                 fields = {"status": "unavailable", "detail": f"the live scorer failed: {exc!r}"}
             took = time.monotonic() - began

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from ...sessions.run_document import strobes_of
+
 
 def codes_of(document: dict[str, Any]) -> list[int]:
     """The strobe codes out of `ts_data`, skipping malformed rows.
@@ -18,7 +20,7 @@ def codes_of(document: dict[str, Any]) -> list[int]:
     `IndexError` escaping from a worker thread would take out an indexing pass
     over an entire cohort.
     """
-    raw = document.get("ts_data")
+    raw = strobes_of(document)
     if not isinstance(raw, list):
         return []
     codes: list[int] = []
@@ -40,7 +42,7 @@ def _pairs_of(document: dict[str, Any]) -> list[tuple[int, int | None]]:
     `codes_of` applies — keeps index *i* of this list the same event as index
     *i* of that one, with the timestamp merely `None` where it is unusable.
     """
-    raw = document.get("ts_data")
+    raw = strobes_of(document)
     if not isinstance(raw, list):
         return []
     out: list[tuple[int, int | None]] = []
@@ -72,7 +74,7 @@ def _duration_ms(document: dict[str, Any]) -> int | None:
 
 
 def _timestamps(document: dict[str, Any]) -> list[int]:
-    raw = document.get("ts_data")
+    raw = strobes_of(document)
     if not isinstance(raw, list):
         return []
     out: list[int] = []

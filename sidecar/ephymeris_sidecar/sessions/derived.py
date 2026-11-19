@@ -50,6 +50,7 @@ from ..analytics.stream.legacy import infer
 from ..rig import registry
 from ..tasks import profile as task_profile
 from ..tasks.profile import DERIVED_KEY
+from . import run_document
 
 log = logging.getLogger(__name__)
 
@@ -67,7 +68,7 @@ def derive(document: dict[str, Any]) -> dict[str, Any] | None:
         try:
             result = spine.replayed(document)
         except spine.SpineDecodeError as exc:
-            interp = document.get("interp")
+            interp = run_document.interp_of(document)
             return _block("unreplayable", str(exc), interp if _is_int(interp) else None, (), ())
         if result.divergence is not None:
             return _block("diverged", result.divergence.detail, result.interp, result.phases, ())
@@ -75,7 +76,7 @@ def derive(document: dict[str, Any]) -> dict[str, Any] | None:
     profile = _profile_for(document)
     if not grammar2.is_grammar2_run(document, profile):
         return None
-    interp = document.get("interp")
+    interp = run_document.interp_of(document)
     block = _block("ok", None, interp if _is_int(interp) else None, (), grammar2.rows_of(document, profile))
     return {**block, "grammar": grammar2.GRAMMAR_2, "phases": [], "trials": block["trials"]}
 
@@ -103,15 +104,13 @@ def with_derived(document: dict[str, Any]) -> dict[str, Any]:
     returned without a block, so it can never cost a run its `.json`.
     Re-derive fills it in later.
     """
-    out = {key: value for key, value in document.items() if key != DERIVED_KEY}
+    out = run_document.without_trial_table(document)
     try:
         block = derive(out)
     except Exception:  # noqa: BLE001 - a derivation never costs the run its files
-        log.exception("couldn't derive the trial table of %s", document.get("rat"))
+        log.exception("couldn't derive the trial table of %s", run_document.animal_of(document))
         return out
-    if block is not None:
-        out[DERIVED_KEY] = block
-    return out
+    return out if block is None else run_document.with_trial_table(out, block)
 
 
 def _block(status: str, detail: str | None, interp: int | None, phases: Any, trials: Any) -> dict[str, Any]:
@@ -287,7 +286,7 @@ def rederive_file(json_path: Path) -> dict[str, Any] | None:
         return None
     entry: dict[str, Any] = {"jsonPath": str(json_path), "status": "failed", "reason": None,
                              "matError": None, "written": []}
-    rest = {key: value for key, value in document.items() if key != DERIVED_KEY}
+    rest = run_document.without_trial_table(document)
     try:
         block = derive(rest)
     except Exception as exc:  # noqa: BLE001 - one run's failure is that run's entry
@@ -296,7 +295,7 @@ def rederive_file(json_path: Path) -> dict[str, Any] | None:
         return entry
     if block is None:
         return None  # a grammar-1 run: nothing to derive
-    stored = document.get(DERIVED_KEY)
+    stored = run_document.trial_table_of(document)
     held = _kept(stored, block)
     if held is not None:
         entry.update(status="skipped", reason=held)
@@ -304,7 +303,7 @@ def rederive_file(json_path: Path) -> dict[str, Any] | None:
 
     mat_path = reader.sibling_mat(reader.sibling_tsv(json_path))
     if stored != block:
-        document = {**rest, DERIVED_KEY: block}
+        document = run_document.with_trial_table(rest, block)
         try:
             writer.write_atomic(json_path, json.dumps(document, indent=2))
         except OSError as exc:

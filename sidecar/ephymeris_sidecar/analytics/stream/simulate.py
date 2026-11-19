@@ -24,6 +24,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from ...taskdef.lowering import HIT_CLASSES, OUTCOME_CLASSES
+from ...sessions.run_document import strobes_of
 from ...tasks.profile import SNAPSHOT_KEY
 from . import replay as rp
 from . import spine
@@ -81,7 +82,7 @@ def simulate(snapshot: dict[str, Any], animal: Animal, seed: int, *,
         # replay to predict the rest; the stream it would have sent is that prediction.
         document["ts_data"] = _strobes(record, edges) + [[record.session_end, end]]
         document["ts_data"] = [list(s) for s in spine.expected_stream(spine.decode(document))]
-    document["n_events"] = len(document["ts_data"])
+    document["n_events"] = len(strobes_of(document))
     return Simulated(document, ended_by)
 
 

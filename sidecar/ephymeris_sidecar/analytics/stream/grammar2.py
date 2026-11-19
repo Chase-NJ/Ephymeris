@@ -38,6 +38,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from ...rig.registry import Vocabulary
+from ...sessions.run_document import stream_of
 from ...tasks.profile import LiveMetric, TaskProfile
 from .document import _pairs_of, codes_of
 from .engagement import TrialEngagement
@@ -51,7 +52,6 @@ from .trial_table import ConditionScore, ReplayTrial, correct_of
 #: The grammars a board can announce (`STREAM=<n>`), and what a file records as `stream`.
 GRAMMAR_1 = 1
 GRAMMAR_2 = 2
-STREAM_KEY = "stream"
 
 # The vocabulary's names for the grammar (`TASKS.md#stream-grammar`).
 HEADER = "TRIAL_START"
@@ -173,7 +173,7 @@ def grammar_of(document: dict[str, Any], profile: TaskProfile | None) -> int:
     phase-spine stream with no snapshot, which opens its trials with the same
     `TRIAL_START` but never closes one with `END_TRIAL`.
     """
-    stream = document.get(STREAM_KEY)
+    stream = stream_of(document)
     if isinstance(stream, int) and not isinstance(stream, bool):
         return stream
     names = _names(profile)

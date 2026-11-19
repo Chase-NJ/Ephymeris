@@ -36,6 +36,7 @@ from ..cohorts import relocate
 from ..logbook.repository import LogbookRepository
 from ..sessions import tidy as session_tidy
 from ..sessions.models import Session, SessionAnimalRun
+from ..sessions import run_document
 from ..sessions.paths import parse_name_date, parse_name_time, parse_session_folder
 from ..sessions.tidy import session_key
 from . import reader
@@ -861,7 +862,7 @@ class CohortArchive:
         session_folder = reader.session_folder_of(path)
         rat = None
         if result.ok and result.document is not None:
-            value = result.document.get("rat")
+            value = run_document.animal_of(result.document)
             rat = value if isinstance(value, str) else None
         match = None
         source = None
@@ -897,7 +898,7 @@ class CohortArchive:
         else:
             started_at = date_iso or ""
 
-        sketch = result.document.get("sketch")
+        sketch = run_document.sketch_of(result.document)
         sketch_name = sketch if isinstance(sketch, str) and sketch else None
         sketch_path = None
         if sketch_name is not None and self._sketch_lookup is not None:

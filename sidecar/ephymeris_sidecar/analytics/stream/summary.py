@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from ...sessions.run_document import snapshot_of, stop_reason_of, trial_seed_of
 from ...tasks.profile import TaskProfile
 from .document import _duration_ms, codes_of
 from . import crossover, grammar2, legacy, rates, table_metrics
@@ -103,11 +104,11 @@ def summarize(
 ) -> RunSummary:
     """Score one recorded run (`ANALYTICS.md#how-a-strobe-stream-is-scored`)."""
     codes = codes_of(document)
-    stop_reason = document.get("stop_reason")
+    stop_reason = stop_reason_of(document)
     stop_reason = stop_reason if isinstance(stop_reason, str) else None
 
     duration = _duration_ms(document)
-    seed = document.get("trial_seed")
+    seed = trial_seed_of(document)
     seed = seed if isinstance(seed, int) and not isinstance(seed, bool) else None
 
     base = {
@@ -178,7 +179,7 @@ def _replay_summary(document: dict[str, Any], base: dict[str, Any], min_counted:
                           divergence=result.divergence, **base)
     score = replay_score(result, min_counted)
     # The legacy shapes, so the cross-session panels read it as a legacy run (#167).
-    outcomes, conditions, engagement = crossover.tallies(result, document["task_profile"]["spine"])
+    outcomes, conditions, engagement = crossover.tallies(result, snapshot_of(document)["spine"])
     return RunSummary(
         status="ok",
         metrics=table_metrics.correct_metrics(score, min_counted=min_counted),

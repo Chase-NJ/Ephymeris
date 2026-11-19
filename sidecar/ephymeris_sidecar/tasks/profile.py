@@ -25,6 +25,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Iterable
 
+from ..sessions import run_document
+from ..sessions.run_document import DERIVED_KEY, SNAPSHOT_KEY  # noqa: F401 - their old home
 from .behaviour import behaviour_of
 
 if TYPE_CHECKING:
@@ -445,18 +447,8 @@ def params_hash(config: dict[str, Any] | None) -> str | None:
 # The snapshot a session file carries (`DATA.md#the-embedded-task-profile`)
 # --------------------------------------------------------------------------- #
 
-#: The key a per-animal session document carries its profile snapshot under.
-#:
-#: Written by `sessions/writer.py`, read here — one constant so the two halves
-#: of the contract cannot drift. With `DERIVED_KEY` it is one of the two nested
-#: values in an otherwise flat document, which is deliberate and is why
-#: `matwriter` has a rule for each.
-SNAPSHOT_KEY = "task_profile"
-
-#: The key a spine run's document carries its derived trial table under
-#: (`DATA.md#the-derived-trial-table`): written by `sessions/derived.py`, and
-#: dropped by `analytics/reader.py` so that Analytics never reads it.
-DERIVED_KEY = "derived"
+# `SNAPSHOT_KEY` and `DERIVED_KEY`, the two nested values in an otherwise flat
+# document, are defined with the rest of its layout in `sessions/run_document.py`.
 
 
 def embedded_profile(document: dict[str, Any]) -> TaskProfile | None:
@@ -475,7 +467,7 @@ def embedded_profile(document: dict[str, Any]) -> TaskProfile | None:
     damaged snapshot is still a file full of real strobes, and the ladder below
     it (`ANALYTICS.md#which-profile-decodes-a-run`) still scores it.
     """
-    raw = document.get(SNAPSHOT_KEY)
+    raw = run_document.snapshot_of(document)
     if not isinstance(raw, dict):
         return None
     try:
@@ -506,9 +498,9 @@ def recorded_config(
     if profile is None:
         return None
     values = {
-        field.metadata_key: document[field.metadata_key]
+        field.metadata_key: run_document.param_of(document, field.metadata_key)
         for field in profile.config
-        if field.metadata_key in document
+        if run_document.has_param(document, field.metadata_key)
     }
     return values or None
 

@@ -43,7 +43,7 @@ from typing import Any
 
 from ..analytics import reader
 from ..tasks.profile import SNAPSHOT_KEY
-from . import derived, matwriter
+from . import derived, matwriter, run_document
 from .writer import write_atomic
 
 log = logging.getLogger(__name__)
@@ -237,7 +237,7 @@ def recover_file(tsv_path: Path) -> dict[str, Any]:
         return entry
 
     document = recovered_document(parsed)
-    stop_reason = document["stop_reason"]
+    stop_reason = run_document.stop_reason_of(document)
 
     json_path = reader.sibling_json(tsv_path)
     try:

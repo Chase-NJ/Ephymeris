@@ -28,6 +28,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any
 
+from ...sessions.run_document import (
+    has_param,
+    interp_of,
+    param_of,
+    snapshot_of,
+    strobes_of,
+    trial_seed_of,
+)
 from ...taskdef.lowering import LoweringError, lower
 from . import rates as rt
 from . import replay as rp
@@ -119,14 +127,14 @@ def is_spine_run(document: dict[str, Any]) -> bool:
     one from an interpreter this build does not know: reported, never inferred
     and never replayed. A task's name never decides it.
     """
-    interp = document.get("interp")
+    interp = interp_of(document)
     return _snapshot_spine(document) is not None or (
         interp is not None and interp != TRIAL_RUNNER_INTERP
     )
 
 
 def _snapshot_spine(document: dict[str, Any]) -> dict[str, Any] | None:
-    snapshot = document.get("task_profile")
+    snapshot = snapshot_of(document)
     spine = snapshot.get("spine") if isinstance(snapshot, dict) else None
     return spine if isinstance(spine, dict) else None
 
@@ -151,11 +159,11 @@ def _decode(document: dict[str, Any]) -> SpineRecord:
     spine = _snapshot_spine(document)
     if spine is None:
         raise SpineDecodeError("its profile snapshot carries no spine, so there is no table to replay")
-    snapshot = document["task_profile"]
+    snapshot = snapshot_of(document)
     # The header's `interp` is what the board announced, and it alone says which
     # interpreter ran the run (TASKS.md#confirming-the-parameters). The snapshot
     # says which the table was lowered for. Both must agree, and be one replay knows.
-    interp = document.get("interp")
+    interp = interp_of(document)
     if interp not in rp.INTERP_VERSIONS:
         raise SpineDecodeError(f"the header says INTERP {interp!r}, not a version this replay knows "
                                f"({sorted(rp.INTERP_VERSIONS)})"
@@ -202,10 +210,10 @@ def _decode(document: dict[str, Any]) -> SpineRecord:
     params = []
     for key in spine.get("params", []):
         metadata = wire_to_metadata.get(key)
-        if metadata not in document:
+        if not has_param(document, metadata):
             raise SpineDecodeError(f"the run records no value for parameter {key}")
-        params.append(int(document[metadata]))
-    seed = document.get("trial_seed")
+        params.append(int(param_of(document, metadata)))
+    seed = trial_seed_of(document)
     if not isinstance(seed, int):
         raise SpineDecodeError("the run records no trial_seed: its random draws cannot be replayed")
 
@@ -249,7 +257,7 @@ def _decode(document: dict[str, Any]) -> SpineRecord:
         session_start=code(structural.get("sessionStart")),
         trial_start=code(structural.get("trialStart")),
         session_end=code(structural.get("sessionEnd")),
-        recorded=tuple((int(c), int(t)) for c, t in document.get("ts_data", [])),
+        recorded=tuple((int(c), int(t)) for c, t in strobes_of(document, [])),
         drives=tuple(drives),
         names={code: name for name, code in code_of.items()},
         naming=naming,

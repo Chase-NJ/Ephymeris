@@ -29,6 +29,7 @@ from .cohorts import folders, move_apply, relocate
 from .cohorts.move import MoveRequest
 from .cohorts.db import DB_FILENAME, Database, has_mark
 from .cohorts.repository import CohortRepository
+from .sessions import run_document
 from .sessions.paths import resolve_session_folder
 from .hardware import service as hardware_service
 from .hardware import store as hardware_store
@@ -1822,7 +1823,7 @@ class Application:
                 if not run.file_path:
                     continue
                 result = analytics_reader.read_run(run.file_path)
-                if result.ok and result.document and result.document.get("intan_recording"):
+                if result.ok and result.document and run_document.recording_name_of(result.document):
                     out.append(run.id)
             return out
 

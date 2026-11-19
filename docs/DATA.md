@@ -229,8 +229,10 @@ Each folder with a log gets a derived `notes.md`, rewritten whole about a second
 | `n_events`, `ts_data` | `[code, timestamp_ms]` as sent, ms from **that animal's** start |
 | `derived` | The [trial table](#the-derived-trial-table), last |
 
+**Code reads a field through `sessions/run_document.py`, never by key**: it alone knows where each field sits, and `test_run_document.py` enforces it.
+
 > [!CAUTION]
-> **Task fields share the top level with core fields**, so `parse_profile` rejects any `metadataKey` in `tasks/profile.py`'s `CORE_METADATA_KEYS`; add each new core field there.
+> **Task fields share the top level with core fields**, so `parse_profile` rejects any `metadataKey` in `tasks/profile.py`'s `CORE_METADATA_KEYS`; add each new core field there and to `run_document.FIELDS`.
 
 ### The tsv log
 

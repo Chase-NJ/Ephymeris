@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..tasks.profile import DERIVED_KEY
+from ..sessions import run_document
 
 log = logging.getLogger(__name__)
 
@@ -245,10 +245,9 @@ def parse_run(path: str | Path, stat: StatResult) -> ReadResult:
     # A spine run's derived trial table (`DATA.md#the-derived-trial-table`) is for
     # the lab's own scripts. Analytics never reads it: every number is a replay,
     # so the copy is dropped here, at the one door a file comes in by.
-    raw.pop(DERIVED_KEY, None)
     return ReadResult(
         status="ok",
-        document=raw,
+        document=run_document.without_trial_table(raw),
         mtime_ns=stat.mtime_ns,
         size=stat.size,
     )

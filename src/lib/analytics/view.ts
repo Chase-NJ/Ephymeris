@@ -293,18 +293,6 @@ export function sideAccuracy(
 ): { p: number | null; counted: number } {
   let hits = 0;
   let counted = 0;
-  // A spine run's rows carry their side and their response accuracy's counts
-  // (#167); its metrics are P(correct), which scores omissions and broken holds
-  // as misses, so it is placed by its rows instead, on the legacy figure.
-  const rows = (run.conditions ?? []).filter((c) => c.answerSide != null);
-  if (rows.length > 0) {
-    for (const row of rows) {
-      if (row.answerSide !== side) continue;
-      hits += responseHits(row.outcomes);
-      counted += respondedOf(row.outcomes);
-    }
-    return { p: counted > 0 ? hits / counted : null, counted };
-  }
   for (const metric of run.metrics) {
     if (metric.id === OVERALL_ID || metric.answerSide !== side) continue;
     hits += metric.hits;
@@ -313,7 +301,7 @@ export function sideAccuracy(
   return { p: counted > 0 ? hits / counted : null, counted };
 }
 
-/** The buckets response accuracy is counted from; the spine-only three may be
+/** The buckets response accuracy is counted from; the last three may be
  *  missing from a row the sidecar wrote before they existed. */
 type ResponseBuckets = Pick<TrialOutcomes, "rewarded" | "holdFailed" | "wrongWell"> &
   Partial<Pick<TrialOutcomes, "unpaid" | "withheld" | "falseAlarm">>;
@@ -330,27 +318,18 @@ function respondedOf(o: ResponseBuckets): number {
 
 /**
  * Whether a run's strategy-plane point rests on too few answers to trust:
- * a spine run's when either well's rows were answered fewer than
- * `minCounted` times, a legacy run's when either well's metric is flagged.
+ * either well's metric is flagged.
  */
-export function sideLowConfidence(run: RunSummary, minCounted = 10): boolean {
-  if ((run.conditions ?? []).some((c) => c.answerSide != null)) {
-    return (["left", "right"] as const).some((side) => sideAccuracy(run, side).counted < minCounted);
-  }
+export function sideLowConfidence(run: RunSummary): boolean {
   return run.metrics.some((m) => (m.answerSide === "left" || m.answerSide === "right") && m.lowConfidence);
 }
 
 /**
- * A run's response accuracy for the animal rail's sparkline: legacy P(hit)'s
- * figure on a legacy and a spine run alike (`ANALYTICS.md#rewarded-and-response-accuracy`),
- * so the line reads one thing across the cutover: a spine run's `pResponse`,
- * a legacy run's pooled overall. A spine run with no outcome tally (no
- * Response window) falls back to its overall too.
+ * A run's response accuracy for the animal rail's sparkline: its pooled
+ * overall P(hit) (`ANALYTICS.md#rewarded-and-response-accuracy`), which sees
+ * a no-go withhold a grammar-1 run's outcome tally cannot.
  */
 export function responseAccuracyOf(run: RunSummary): number | null {
-  // A legacy run's pooled P(hit) is this figure, and sees a no-go withhold its
-  // outcome tally cannot; a spine run's tally sees it.
-  if (run.replay && run.outcomes) return run.outcomes.pResponse ?? null;
   return (run.overall ?? pickMetric(run, null))?.pSession ?? null;
 }
 
@@ -484,8 +463,8 @@ export const OUTCOME_STYLE = {
   holdFailed: { fill: "var(--color-status-warning)", label: "correct well, no hold" },
   wrongWell: { fill: "var(--color-status-error)", label: "wrong well" },
   noResponse: { fill: "var(--color-halo)", label: "no response" },
-  // A spine run's own (#167); 0 on every legacy run. Coloured by what each
-  // means, a paler tint of its neighbour's so the two read as separate
+  // A stream-grammar-2 run's own (`unpaid` is filled by no run yet); 0 on
+  // every grammar-1 run. Coloured by what each means, a paler tint of its neighbour's so the two read as separate
   // segments: no fluid for a right answer (as a broken hold), a no-go hit, a
   // no-go miss (as a wrong well).
   unpaid: { fill: "color-mix(in srgb, var(--color-status-warning) 55%, transparent)", label: "correct, not paid" },
@@ -511,7 +490,7 @@ export interface PooledOutcomes {
   wrongWell: number;
   noResponse: number;
   aborted: number;
-  /** A spine run's unpaid right answers, withholds and false alarms (#167). */
+  /** Unpaid right answers, and a stream-grammar-2 run's withholds and false alarms. */
   unpaid: number;
   withheld: number;
   falseAlarm: number;
@@ -786,8 +765,7 @@ export const REWARDED_ACCURACY: AccuracyReading = {
 /**
  * The correct well answered first, whether or not the hold earned the drop —
  * the choice rather than the consummatory act — over the trials answered at
- * all: legacy P(hit)'s figure, on a legacy and a spine run alike, so the line
- * reads one thing across the cutover (`ANALYTICS.md#rewarded-and-response-accuracy`).
+ * all: legacy P(hit)'s figure (`ANALYTICS.md#rewarded-and-response-accuracy`).
  */
 export const RESPONSE_ACCURACY: AccuracyReading = {
   value: (o) => o.pResponse,

@@ -9,6 +9,28 @@ from __future__ import annotations
 
 from typing import Any
 
+from ...sessions.run_document import interp_of, snapshot_of, strobes_of
+
+#: The `INTERP` the trial runner announces (`BehaviorBox.h`'s `BOX_INTERP`), and
+#: the only interpreter whose runs this build reads.
+TRIAL_RUNNER_INTERP = 1
+
+
+def ran_by_the_trial_runner(document: dict[str, Any]) -> bool:
+    """Whether the trial runner recorded this run, by what its own file says.
+
+    False for a header `interp` other than the trial runner's, and for a
+    snapshot with a `spine` key (a phase-spine task's state table): such a run
+    is reported unreadable, never decoded by code names its stream only
+    resembles. A file that says neither predates the header and is the trial
+    runner's. A task's name never decides it.
+    """
+    interp = interp_of(document)
+    if interp is not None and interp != TRIAL_RUNNER_INTERP:
+        return False
+    snapshot = snapshot_of(document)
+    return not (isinstance(snapshot, dict) and isinstance(snapshot.get("spine"), dict))
+
 
 def codes_of(document: dict[str, Any]) -> list[int]:
     """The strobe codes out of `ts_data`, skipping malformed rows.
@@ -18,7 +40,7 @@ def codes_of(document: dict[str, Any]) -> list[int]:
     `IndexError` escaping from a worker thread would take out an indexing pass
     over an entire cohort.
     """
-    raw = document.get("ts_data")
+    raw = strobes_of(document)
     if not isinstance(raw, list):
         return []
     codes: list[int] = []
@@ -40,7 +62,7 @@ def _pairs_of(document: dict[str, Any]) -> list[tuple[int, int | None]]:
     `codes_of` applies — keeps index *i* of this list the same event as index
     *i* of that one, with the timestamp merely `None` where it is unusable.
     """
-    raw = document.get("ts_data")
+    raw = strobes_of(document)
     if not isinstance(raw, list):
         return []
     out: list[tuple[int, int | None]] = []
@@ -72,7 +94,7 @@ def _duration_ms(document: dict[str, Any]) -> int | None:
 
 
 def _timestamps(document: dict[str, Any]) -> list[int]:
-    raw = document.get("ts_data")
+    raw = strobes_of(document)
     if not isinstance(raw, list):
         return []
     out: list[int] = []

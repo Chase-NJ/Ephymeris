@@ -22,12 +22,11 @@ FORBIDDEN_STDLIB = {
     "socket", "sqlite3", "subprocess", "tempfile", "threading", "time",
 }
 
-#: The sidecar packages a pure module may lean on: the profile it decodes with,
-#: the vocabulary inference reads, the session-name parser false starts order
-#: runs by, and the lowering whose outcome classes and phase map a spine run's
-#: replay is named by (standard library only, by its own rule). All are pure
-#: functions of their arguments.
-ALLOWED_SIDECAR = {"tasks.profile", "rig", "rig.registry", "sessions.paths", "taskdef.lowering"}
+#: The sidecar packages a pure module may lean on: the run document's accessor
+#: (pure by `test_run_document.py`), the profile it decodes with,
+#: the vocabulary inference reads, and the session-name parser false starts
+#: order runs by. All are pure functions of their arguments.
+ALLOWED_SIDECAR = {"tasks.profile", "rig", "rig.registry", "sessions.paths", "sessions.run_document"}
 
 
 def _imports(path: Path) -> list[tuple[int, str]]:

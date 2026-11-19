@@ -30,7 +30,7 @@ def spike_file(path: Path, spikes: list[tuple[str, int]], *, snapshot: tuple[int
     before, after = snapshot
     head = struct.pack("<IH", rhx_files.SPIKE_FILE_MAGIC, 1)
     head += b"rec_260901_090000\x00" + ",".join(names).encode() + b"\x00" + ",".join(names).encode() + b"\x00"
-    head += struct.pack("<dII", float(FS), before, after)
+    head += struct.pack("<fII", float(FS), before, after)
     body = b"".join(
         struct.pack("<5siB", name.encode(), stamp, 1) + b"\x00\x00" * (before + after)
         for name, stamp in sorted(spikes, key=lambda s: s[1])
@@ -104,7 +104,7 @@ def test_spike_header_spelled_out_byte_by_byte():
         bytes.fromhex("4b47f818")  # magic 0x18f8474b, little-endian
         + b"\x01\x00"  # version 1
         + b"rec\x00" + b"A-000,A-001\x00" + b"tip,A-001\x00"
-        + struct.pack("<d", 30000.0)
+        + bytes.fromhex("0060ea46")  # 30000.0 as a float32, as a real RHX file holds it
         + struct.pack("<II", 30, 60)  # snapshot: 1 ms before, 2 ms after
     )
     header = rhx_files.parse_spike_header(data)
@@ -114,6 +114,11 @@ def test_spike_header_spelled_out_byte_by_byte():
     assert header.data_offset == len(data)
     with pytest.raises(rhx_files.RhxFileError):
         rhx_files.parse_spike_header(b"\x00" * 40)
+    # A header whose rate is a double reads as numbers, not as an error, under
+    # the real layout: it is refused rather than every record read 4 bytes off.
+    as_double = data[: -12] + struct.pack("<dII", 30000.0, 30, 60)
+    with pytest.raises(rhx_files.RhxFileError):
+        rhx_files.parse_spike_header(as_double)
 
 
 def test_spike_records_with_snapshots_and_a_partial_last_one(tmp_path):
@@ -200,23 +205,6 @@ def test_split_by_outcome_puts_each_event_under_its_trial(tmp_path):
     loaded.event_trials = [ev.trial_of(loaded.trials, e.ms) for e in loaded.alignment.events]
     view = offline.psth_view(loaded, ODOR, pre_ms=100, post_ms=200, bin_ms=10, split="outcome", raster_channel=None)
     assert view["groups"] == [{"label": "correct", "trials": 20}, {"label": "wrong", "trials": 10}]
-
-
-def test_a_spine_run_s_trials_are_on_the_strobes_own_clock():
-    """The board's clock restarts at START, and a replay's trial times are
-    that clock: a trial opens at the ms of a strobe of the run, never shifted."""
-    from tests.fixtures import spine as fixture
-
-    fixture.install()
-    try:
-        from tests.test_spine_analytics import recorded_document
-
-        document = recorded_document()
-        strobes = offline._strobes(document)
-        starts = offline._trial_starts(document, strobes)
-        assert starts and {s.ms for s in starts} <= {ms for _, ms in strobes}
-    finally:
-        fixture.uninstall()
 
 
 def test_a_run_that_cannot_be_read_says_why(tmp_path):

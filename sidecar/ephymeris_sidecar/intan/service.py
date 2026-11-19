@@ -52,6 +52,7 @@ from typing import Any, Awaitable, Callable
 
 from ..settings import IntanEndpoints, SidecarSettings
 from . import probemap
+from .rhx_names import recording_folder_name
 from .impedance import ImpedanceFile, parse_csv
 from .yield_store import RunSpikes
 from .analysis import (
@@ -208,6 +209,18 @@ class _RunCount:
 # --------------------------------------------------------------------------- #
 # The service
 # --------------------------------------------------------------------------- #
+
+
+def refuse_unsortable(config: dict[str, Any]) -> None:
+    """Refuse a recording that saves spikes without their snapshots
+    (`RECORDING.md#record-step`): `spike.dat` would hold timestamps only, so
+    Offline Sorter would have no waveform to sort. Asked before RHX is
+    touched, so a refused setup changes nothing there."""
+    if config.get("saveSpikes") and not config.get("saveSpikeSnapshots"):
+        raise IntanNotReady(
+            "Spikes would be saved without their snapshots, so there would be nothing to "
+            "sort. Turn on Spike snapshots, or turn off Save spikes."
+        )
 
 
 class IntanService:
@@ -586,6 +599,7 @@ class IntanService:
         starts for that one (`refuse_unless_ready`)."""
         if self._run_open:
             raise IntanNotReady("A recording is already running.")
+        refuse_unsortable(config)
         if not self._client.connected:
             await self.connect()
         client = self._client
@@ -627,7 +641,7 @@ class IntanService:
         await client.set("filename.basefilename", plan.base_filename, verify=True)
 
         snapshot_pre = _int(config.get("snapshotPreMs", 1), "Snapshot pre-detect", 0, 3)
-        snapshot_post = _int(config.get("snapshotPostMs", 2), "Snapshot post-detect", 1, 6)
+        snapshot_post = _int(config.get("snapshotPostMs", 1), "Snapshot post-detect", 1, 6)
         downsample = config.get("lowpassDownsample", 1)
         if downsample not in DOWNSAMPLE:
             raise IntanNotReady("Lowpass downsample must be a power of two up to 128.")
@@ -1092,15 +1106,28 @@ class IntanService:
 
     # --- what the runner tells us ----------------------------------------
 
+    @property
+    def stop_owed(self) -> bool:
+        """RHX has not confirmed the last recording's stop (`_send_owed_stop`),
+        so its files may still be open and growing."""
+        return self._stop_owed is not None
+
+    def recording_positions(self, box: int) -> dict[str, tuple[float, float]]:
+        """Each of this box's sites' position by native channel, from the probe
+        map it records with (`RECORDING.md#what-is-written`); empty without one."""
+        recording = self._recording
+        if recording is None or box not in recording.boxes:
+            return {}
+        return probemap.positions(recording.boxes[box].probe_map)
+
     def recording_fields(self, box: int) -> dict[str, Any]:
-        """Flat `intan_*` fields for one animal's session document."""
+        """One animal's recording fields, by name, for its session document
+        (`run_document.build` puts them in its `recording` block)."""
         recording = self._recording
         if recording is None or box not in recording.boxes or not self.is_recording:
             return {}
         plan = recording.boxes[box]
-        name = recording.base_filename
-        if recording.file_timestamp:
-            name = f"{name}_{recording.file_timestamp}"
+        name = recording_folder_name(recording.base_filename, recording.file_timestamp)
         return {
             "intan_recording": name,
             "intan_path": recording.path,

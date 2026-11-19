@@ -66,14 +66,10 @@ class TaskEntry:
     #: would cost a round trip each.
     trials: int
     stages: int
-    #: None on a spine task, whose blocks draw its rows.
-    selection_mode: str | None
+    selection_mode: str
     #: Why the stored file will not read as a definition, or None. Such a task
     #: is listed rather than dropped, so it never vanishes without a word.
     unreadable: str | None = None
-    #: A phase-spine task: `trials` counts its rows, and it has no ramp or
-    #: trial-table selection mode (`stages` is 1, `selection_mode` None).
-    spine: bool = False
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -87,7 +83,6 @@ class TaskEntry:
             "trials": self.trials,
             "stages": self.stages,
             "selectionMode": self.selection_mode,
-            "spine": self.spine,
         }
 
 
@@ -238,8 +233,7 @@ class TaskStore:
                     problems=len(validate(definition)),
                     trials=definition.trial_count,
                     stages=definition.stage_count,
-                    selection_mode=None if definition.spine is not None else definition.selection_mode,
-                    spine=definition.spine is not None,
+                    selection_mode=definition.selection_mode,
                     # `label` is what the impact check renders; the name is it.
                 ).to_json()
                 | {"label": definition.name}
@@ -328,9 +322,7 @@ class TaskStore:
         THE FOLDER IS REPLACED, NOT PATCHED. A renamed task leaves its old
         folder behind otherwise, and discovery would offer both.
         """
-        # A spine task copies no root sketch: its runner is the library's
-        # BoxSpine.h and the generator writes its few-line `.ino`.
-        source = "" if definition.spine is not None else self._root_sketch_source()
+        source = self._root_sketch_source()
         if source is None:
             log.warning(
                 "no %s sketch in the bundled library; %s has no flashable sketch",

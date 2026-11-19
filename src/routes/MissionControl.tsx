@@ -43,16 +43,13 @@ import {
 } from "@/lib/sessions/commands";
 import {
   useBoxEnded,
-  useBoxReplay,
   useBoxTelemetry,
   useBoxWriteError,
 } from "@/lib/sessions/context";
-import { replayNote, replayStrip } from "@/lib/sessions/liveReplay";
 import { missionControlHint, stepUrl } from "@/lib/sessions/flow";
 import type { SessionBox } from "@/lib/sessions/types";
 import { useBoxAccuracies } from "@/lib/sessions/useBoxAccuracies";
 import { useSessionFlow } from "@/lib/sessions/useSessionFlow";
-import { liveScoring } from "@/lib/sessions/liveScoring";
 import { metricLabels, useTaskProfiles } from "@/lib/sessions/useTaskProfiles";
 import { useLastRuns } from "@/lib/analytics/useLastRuns";
 import { resolveFlag } from "@/lib/logbook/commands";
@@ -677,8 +674,6 @@ export function MissionControl() {
                     box={box}
                     busy={busy || !connected}
                     metricLabels={labelsFor[box.sketchPath] ?? {}}
-                    metricsNote={liveScoring(profiles[box.sketchPath]).note}
-                    spine={profiles[box.sketchPath]?.spine !== undefined}
                     recording={isRecording}
                     durationMinutes={session?.durationMinutes ?? null}
                     onOpen={() => setFocusedId(box.animalId)}
@@ -883,8 +878,6 @@ function BoxCard({
   box,
   busy,
   metricLabels,
-  metricsNote,
-  spine,
   recording,
   durationMinutes,
   onOpen,
@@ -898,11 +891,6 @@ function BoxCard({
    *  shows the condition's name rather than the slot number telemetry sends.
    *  Empty until the profile arrives, or when the sketch has none. */
   metricLabels: Record<string, string>;
-  /** What the strip says before it has a value, from the profile (`liveScoring`). */
-  metricsNote: string;
-  /** A spine task: its strip shows what the sidecar's live replay scored
-   *  (`session.replay`), never the legacy telemetry. */
-  spine: boolean;
   /** The session is a recording: the card adds the box's live firing map. */
   recording: boolean;
   durationMinutes: number | null;
@@ -913,14 +901,6 @@ function BoxCard({
 }) {
   const port = usePortStatus(box.box);
   const telemetry = useBoxTelemetry(box.box);
-  const replay = useBoxReplay(box.box);
-  const strip = useMemo(
-    () =>
-      spine
-        ? replayStrip(replay)
-        : { metrics: telemetry, labels: metricLabels, intervals: {} },
-    [spine, replay, telemetry, metricLabels],
-  );
   const ended = useBoxEnded(box.box);
   const writeError = useBoxWriteError(box.box);
   const live = port.state === "IN_SESSION";
@@ -980,13 +960,7 @@ function BoxCard({
           Finished — <span className="text-starlight">{ended.stopReason}</span>
         </p>
       ) : (
-        <MetricStrip
-          box={box.box}
-          metrics={strip.metrics}
-          labels={strip.labels}
-          intervals={strip.intervals}
-          note={spine ? replayNote(replay) : metricsNote}
-        />
+        <MetricStrip box={box.box} metrics={telemetry} labels={metricLabels} />
       )}
       {recording && <TetherAlarm box={box.box} />}
       {recording && <LiveProbeMap box={box.box} className="mt-3 h-44" />}

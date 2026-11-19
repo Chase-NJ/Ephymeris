@@ -226,7 +226,7 @@ function buildPoints(summary: AnalyticsSummary): {
       y,
       slot,
       label: labelOf.get(run.sessionId) ?? "",
-      lowConfidence: sideLowConfidence(run, summary.minCountedTrials),
+      lowConfidence: sideLowConfidence(run),
     };
     const bucket = byAnimal.get(run.animalId);
     if (bucket) bucket.push(point);

@@ -10,6 +10,7 @@ write to one ordered log, so the ordering rules are what the tests read.
 from __future__ import annotations
 
 import asyncio
+import threading
 from contextlib import nullcontext
 from dataclasses import replace
 from datetime import date
@@ -33,7 +34,7 @@ from ephymeris_sidecar.sessions.lifecycle import (
     StopRefused,
     WiringNotLoaded,
 )
-from ephymeris_sidecar.sessions.models import Round, PrefixNameTaken
+from ephymeris_sidecar.sessions.models import Round, PrefixNameTaken, SessionAnimalRun
 from ephymeris_sidecar.sessions.repository import SessionRepository
 from ephymeris_sidecar.sessions.runner import ActiveRun, BoxConfig
 from ephymeris_sidecar.tasks.profile import parse_profile, profile_hash
@@ -56,7 +57,9 @@ class FakeRunner:
         #: The keywords `end_all` was last called with.
         self.ended_with: dict[str, Any] = {}
 
-    def configure(self, _folder, _label, box_configs, duration_s=None, *, session_id):  # noqa: ANN001
+    def configure(self, _folder, _label, box_configs, duration_s=None, *, session_id, **facts):  # noqa: ANN001, ANN003
+        #: What the lifecycle said of the run's cohort, date and earlier runs.
+        self.facts = facts
         self.session_id = session_id
         self.configs = {c.box: c for c in box_configs}
 
@@ -123,6 +126,10 @@ class FakeIntan:
         self.is_recording = False
         self.force_stop = asyncio.Event()
         self.gate: asyncio.Event | None = None
+        #: RHX has not confirmed the last stop (`IntanService.stop_owed`).
+        self.stop_owed = False
+        #: What `stop_recording` hands back as the run's record.
+        self.run_record: dict[str, Any] = {"file": "run1.rhd"}
 
     def set_up(self, session_id: str, confirmation: int) -> None:
         """What the Record step's `intan.configure` leaves behind."""
@@ -154,7 +161,7 @@ class FakeIntan:
         self.log.append("rhx stop")
         self.is_recording = False
         self.set_up_for = None
-        return {"file": "run1.rhd"}
+        return dict(self.run_record)
 
     def release(self) -> None:
         self.log.append("rhx release")
@@ -368,6 +375,20 @@ async def test_confirming_a_mapping_holds_the_session_and_the_rig(rig) -> None:
     assert rig.log == ["hold"]
     assert rig.runner.session_id == session.id
     assert rig.events[-1]["evt"] == "session.lifecycle"
+
+
+async def test_the_runner_is_told_the_cohort_the_date_and_how_to_count_earlier_runs(rig) -> None:
+    """What a run's document says of itself beyond its box (`DATA.md#the-json-document`)."""
+    session = rig.session()
+    await rig.confirm(session)
+
+    facts = rig.runner.facts
+    assert (facts["cohort_name"], facts["session_date"]) == ("C1", session.date)
+    assert facts["earlier_runs"]("C1-1") == 0, "no run yet today: the next is run 1"
+    rig.sessions.record_animal_run(SessionAnimalRun(
+        id="r1", session_id=session.id, animal_id="C1-1", box_number=1, sketch_path="/sk",
+        started_at=f"{session.date}T10:00:00+00:00"))
+    assert facts["earlier_runs"]("C1-1") == 1 and facts["earlier_runs"]("C1-2") == 0
 
 
 async def test_each_box_records_the_channel_set_its_sketch_was_generated_against(
@@ -713,6 +734,110 @@ async def test_ending_stops_the_boxes_then_rhx_then_lets_go(recording_rig) -> No
     assert rig.sessions.get_session(session.id).recording["runs"] == [{"file": "run1.rhd"}]
 
 
+async def test_a_stopped_recording_starts_its_spike_export_off_the_sessions_path(recording_rig) -> None:
+    """`RECORDING.md#the-sort-export`: the recording's runs, by its folder's
+    name, once RHX has stopped; the end does not wait for it."""
+    rig = recording_rig
+    rig.intan.run_record = {"baseFilename": "rec", "fileTimestamp": "260417_095743"}
+    asked: list[tuple[list[str], str]] = []
+    gate = threading.Event()
+
+    def slow_export(files: list[str], recording: str) -> None:
+        gate.wait(5)
+        asked.append((files, recording))
+
+    rig.lifecycle.export_spikes = slow_export
+    session = rig.session(recording=True)
+    await rig.run_round(session)
+
+    ended = await rig.lifecycle.end(session.id)
+    assert ended.status == "completed" and asked == [], "the session ended while the export still ran"
+    gate.set()
+    await rig.lifecycle.exports_settled()
+    [(files, recording)] = asked
+    assert recording == "rec_260417_095743"
+    assert files == [r.file_path for r in rig.sessions.runs_for(session.id) if r.file_path]
+
+
+async def test_an_export_that_fails_costs_the_session_nothing(recording_rig) -> None:
+    rig = recording_rig
+    rig.intan.run_record = {"baseFilename": "rec", "fileTimestamp": "260417_095743"}
+
+    def broken(_files: list[str], _recording: str) -> None:
+        raise RuntimeError("disk on fire")
+
+    rig.lifecycle.export_spikes = broken
+    session = rig.session(recording=True)
+    await rig.run_round(session)
+    ended = await rig.lifecycle.end(session.id)
+    await rig.lifecycle.exports_settled()
+    assert ended.status == "completed"
+    assert rig.sessions.get_session(session.id).recording["runs"] == [rig.intan.run_record]
+
+
+async def test_a_stopped_recording_is_aligned_then_exported_in_that_order(recording_rig) -> None:
+    """`RECORDING.md#alignment-at-session-end`: one pass, two steps, never at
+    once: alignment rewrites each run's files, then the export reads them."""
+    rig = recording_rig
+    rig.intan.run_record = {"baseFilename": "rec", "fileTimestamp": "260417_095743"}
+    steps: list[tuple[str, str]] = []
+
+    looked = asyncio.Event()
+
+    async def align(files: list[str], recording: str) -> None:
+        await looked.wait()   # held open, so the export must still wait for it
+        steps.append(("align", recording))
+
+    rig.lifecycle.align_runs = align
+    rig.lifecycle.export_spikes = lambda _files, recording: steps.append(("export", recording))
+    session = rig.session(recording=True)
+    await rig.run_round(session)
+    # An end that waited for the alignment would never return: it is held open.
+    ended = await asyncio.wait_for(rig.lifecycle.end(session.id), timeout=30)
+    assert ended.status == "completed" and steps == [], "the end waited for neither"
+    looked.set()
+    await rig.lifecycle.exports_settled()
+    assert steps == [("align", "rec_260417_095743"), ("export", "rec_260417_095743")]
+
+
+async def test_an_alignment_that_cannot_run_costs_the_session_and_the_export_nothing(recording_rig) -> None:
+    """A busy archive, a box already running again, RHX's files unreadable:
+    the run's files stay as finalization wrote them and the export still runs."""
+    rig = recording_rig
+    rig.intan.run_record = {"baseFilename": "rec", "fileTimestamp": "260417_095743"}
+    exported: list[str] = []
+
+    async def refused(_files: list[str], _recording: str) -> None:
+        raise RuntimeError("a box is running")
+
+    rig.lifecycle.align_runs = refused
+    rig.lifecycle.export_spikes = lambda _files, recording: exported.append(recording)
+    session = rig.session(recording=True)
+    await rig.run_round(session)
+    ended = await rig.lifecycle.end(session.id)
+    await rig.lifecycle.exports_settled()
+    assert ended.status == "completed" and exported == ["rec_260417_095743"]
+
+
+async def test_no_export_starts_while_rhx_has_not_confirmed_its_stop(recording_rig) -> None:
+    """Its files may still be growing: an export now could be cut short and look whole."""
+    rig = recording_rig
+    rig.intan.run_record = {"baseFilename": "rec", "fileTimestamp": "260417_095743"}
+    rig.intan.stop_owed = True
+    asked: list[str] = []
+    rig.lifecycle.export_spikes = lambda _files, recording: asked.append(recording)
+
+    async def align(_files: list[str], recording: str) -> None:
+        asked.append(recording)
+
+    rig.lifecycle.align_runs = align
+    session = rig.session(recording=True)
+    await rig.run_round(session)
+    await rig.lifecycle.end(session.id)
+    await rig.lifecycle.exports_settled()
+    assert asked == []
+
+
 async def test_a_second_transition_waits_for_a_recording_start(recording_rig) -> None:
     """Starting RHX can take seconds; an End pressed meanwhile must not run
     inside it and end boxes that haven't started."""
@@ -772,19 +897,19 @@ async def test_a_run_that_lands_after_the_session_let_go_is_still_recorded(rig) 
 async def test_a_run_record_keeps_the_interpreter_and_channel_set_it_ran_on(rig) -> None:
     """`DATA.md#run-records`: what the board announced (`INTERP=<n>`) and the
     channel set its sketch was generated against go on the record at
-    finalization; whether replay diverged is left for Analytics to say."""
+    finalization."""
     session = rig.session()
     config = BoxConfig(
         box=1, animal_id="C1-1", animal_name="remy1", sketch_path="/sk", sketch_name="sk",
         start_command=build_start_command(None, {}), config_metadata={}, profile=None,
         channel_set_hash="3f0c9a17b2d4e588", channel_set_hash_version=2,
     )
-    run = ActiveRun(box=1, config=config, run_id="r-spine", started_at="2026-10-10T10:00:00+00:00",
+    run = ActiveRun(box=1, config=config, run_id="r-1", started_at="2026-10-10T10:00:00+00:00",
                     address="/dev/fake1", session_id_label="P1_12", session_id=session.id, interp=2)
     await rig.lifecycle.animal_ended(run, "end")
 
     [recorded] = rig.sessions.runs_for(session.id)
-    assert (recorded.interp, recorded.channel_set_hash, recorded.diverged) == (2, "3f0c9a17b2d4e588", None)
+    assert (recorded.interp, recorded.channel_set_hash) == (2, "3f0c9a17b2d4e588")
 
 
 async def test_a_run_never_names_a_profile_another_writers_rollback_threw_away(

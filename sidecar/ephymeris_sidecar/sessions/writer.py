@@ -22,7 +22,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from ..tasks.profile import SNAPSHOT_KEY
-from . import derived, matwriter
+from ..analytics.stream import odors
+from . import derived, matwriter, run_document
 
 log = logging.getLogger(__name__)
 
@@ -194,8 +195,8 @@ class AnimalWriter:
         self._tsv_path = tsv_path
         self._json_path = json_path
         self._mat_path = mat_path
-        # Core fields (rat, serial_port, session_id, sketch) + task-profile
-        # config fields, merged flat at the top level to match the sample (`DATA.md#the-json-document`).
+        # The run's fields by name (rat, box, sketch, …) and its task-profile
+        # parameters; `run_document.build` puts each in its block (`DATA.md#the-json-document`).
         self._core = dict(core_metadata)
         self._config = dict(config_metadata)
         # The serialized Task Profile this run was configured from (`DATA.md#the-embedded-task-profile`) — the
@@ -236,9 +237,19 @@ class AnimalWriter:
         except OSError as exc:
             raise WriteError(f"couldn't open {self._tsv_path}: {exc}") from exc
 
-        # `# key: value` header comment lines — core fields then config fields.
-        for key, value in {**self._core, **self._config}.items():
+        # `# key: value` header comment lines (`DATA.md#the-tsv-log`): the
+        # version, each field by name, then the parameters as one JSON line,
+        # so a parameter can never be read back as a field of the same name.
+        header = self.header()
+        self._tsv.write(f"# {run_document.VERSION_KEY}: {run_document.SCHEMA_VERSION}\n")
+        for key, value in run_document.header_fields(header).items():
             self._tsv.write(f"# {key}: {_render(value)}\n")
+        params = json.dumps(run_document.params_of(header), separators=(",", ":"))
+        self._tsv.write(f"# {run_document.PARAMS_KEY}: {params}\n")
+        # A recorded run's implant and channels (`RECORDING.md#what-is-written`),
+        # each one JSON line, so a recovered run keeps them.
+        for key, block in run_document.header_blocks(header).items():
+            self._tsv.write(f"# {key}: {json.dumps(block, separators=(',', ':'))}\n")
         # The snapshot rides in the header too, as one compact JSON line, so a
         # `.tsv` recovered after a crash (`DATA.md#crash-recovery`) rebuilds a `.json` that is still
         # self-describing. Written here rather than in the footer for the
@@ -290,9 +301,8 @@ class AnimalWriter:
                 self._tsv.close()
                 self._tsv = None
 
-        # A spine run's trial table, replayed here, in this worker thread, once
-        # (`DATA.md#the-derived-trial-table`): tens of milliseconds for a long run,
-        # and never able to cost the run its files.
+        # The run's trial table, derived here, in this worker thread, once
+        # (`DATA.md#the-trial-table`): never able to cost the run its files.
         document = derived.with_derived(self._document(stop_reason))
         self._final = document
 
@@ -315,23 +325,15 @@ class AnimalWriter:
     # --- internals --------------------------------------------------------
 
     def header(self) -> dict[str, Any]:
-        """The document as it stands before its first strobe: core, then flat
-        config, then the profile snapshot. What a live replay is started from
-        (`sessions/live_replay.py`)."""
-        doc: dict[str, Any] = dict(self._core)
-        doc.update(self._config)
-        if self._profile is not None:
-            doc[SNAPSHOT_KEY] = self._profile
-        return doc
+        """The document as it stands before its first strobe: its fields, its
+        parameters and the profile snapshot."""
+        return _with_odors(run_document.build(self._core, self._config, self._profile))
 
     def _document(self, stop_reason: str) -> dict[str, Any]:
-        """The full per-animal document (`DATA.md#the-json-document`). Core, then flat config, then the
-        profile snapshot, then data."""
-        doc = self.header()
-        doc["stop_reason"] = stop_reason
-        doc["n_events"] = len(self._events)
-        doc["ts_data"] = [list(pair) for pair in self._events]
-        return doc
+        """The full per-animal document (`DATA.md#the-json-document`)."""
+        fields = {**self._core, "stop_reason": stop_reason, "n_events": len(self._events)}
+        return _with_odors(run_document.build(fields, self._config, self._profile,
+                                              [list(pair) for pair in self._events]))
 
     def _flush(self) -> None:
         assert self._tsv is not None
@@ -341,6 +343,16 @@ class AnimalWriter:
     @property
     def event_count(self) -> int:
         return len(self._events)
+
+
+def _with_odors(document: dict[str, Any]) -> dict[str, Any]:
+    """`document` with its odors table (`DATA.md#the-odors-table`), or with an
+    empty one if the table cannot be built: never at the cost of the run."""
+    try:
+        return odors.with_odor_table(document)
+    except Exception:  # noqa: BLE001 - a table never costs the run its files
+        log.exception("couldn't build the odors table of %s", run_document.animal_of(document))
+        return run_document.with_odors(document, [])
 
 
 def _render(value: Any) -> str:

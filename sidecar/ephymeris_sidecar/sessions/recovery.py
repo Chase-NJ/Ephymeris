@@ -42,8 +42,9 @@ from pathlib import Path
 from typing import Any
 
 from ..analytics import reader
+from ..analytics.stream import odors
 from ..tasks.profile import SNAPSHOT_KEY
-from . import derived, matwriter
+from . import derived, matwriter, run_document
 from .writer import write_atomic
 
 log = logging.getLogger(__name__)
@@ -82,6 +83,11 @@ _STRING_FIELDS = frozenset(
     }
 )
 
+#: The same, among the run facts a version-2 header adds (`DATA.md#the-tsv-log`):
+#: a cohort named "7" is a name. Only under a version-2 header, where a flat
+#: line of one of these names cannot be a parameter.
+_STRING_FACTS = frozenset({"cohort", "date", "started_at"})
+
 #: Footer keys `finalize` appends after the data (`DATA.md#the-tsv-log`) — never header fields.
 _FOOTER_KEYS = frozenset({"stop_reason", "n_events"})
 
@@ -90,7 +96,7 @@ _FOOTER_KEYS = frozenset({"stop_reason", "n_events"})
 #: self-describing as a finalized one — which is the whole point of the
 #: snapshot: the recovered file is exactly the one likely to be carried to
 #: another machine to find out what happened.
-_JSON_FIELDS = frozenset({SNAPSHOT_KEY})
+_JSON_FIELDS = frozenset({SNAPSHOT_KEY, run_document.PARAMS_KEY})
 
 
 @dataclass(frozen=True)
@@ -125,6 +131,7 @@ def parse_tsv(path: Path) -> ParsedTsv:
     metadata: dict[str, Any] = {}
     events: list[list[int]] = []
     stop_reason: str | None = None
+    strings = _STRING_FIELDS
 
     with open(path, encoding="utf-8", errors="replace") as fh:
         first = fh.readline().rstrip("\r\n")
@@ -150,8 +157,17 @@ def parse_tsv(path: Path) -> ParsedTsv:
                     decoded = _decode_json(value)
                     if decoded is not None:
                         metadata[key] = decoded
+                elif key in run_document.BLOCK_FIELDS and _is_version_2(metadata):
+                    # A recorded run's implant (an object or null) and channels
+                    # (a list), one JSON line each; a torn one is dropped.
+                    try:
+                        metadata[key] = json.loads(value)
+                    except ValueError:
+                        log.warning("a .tsv header carries an unparseable %s line; dropping it", key)
                 elif key not in _FOOTER_KEYS:
-                    metadata[key] = _coerce(key, value)
+                    metadata[key] = _coerce(key, value, strings)
+                    if _is_version_2(metadata):
+                        strings = _STRING_FIELDS | _STRING_FACTS
                 continue
             match = STROBE.match(line)
             if match is not None:
@@ -163,14 +179,19 @@ def parse_tsv(path: Path) -> ParsedTsv:
 def recovered_document(parsed: ParsedTsv) -> dict[str, Any]:
     """The `.json` document a parsed log recovers to: its header fields, its
     strobes, a stop reason from its footer or from how it was cut off, and a
-    spine run's trial table through its last strobe (`DATA.md#the-derived-trial-table`)."""
-    document = dict(parsed.metadata)
-    document["stop_reason"] = parsed.stop_reason or (
+    grammar-2 run's trial table through its last strobe (`DATA.md#the-trial-table`)."""
+    stop_reason = parsed.stop_reason or (
         RECOVERED_LEGACY_STOP_REASON if parsed.dialect == "legacy" else RECOVERED_STOP_REASON
     )
-    document["n_events"] = len(parsed.events)
-    document["ts_data"] = parsed.events
+    document = run_document.from_header(parsed.metadata)
+    document = run_document.replaced(document, stop_reason=stop_reason, n_events=len(parsed.events))
+    document = odors.with_odor_table(run_document.with_strobes(document, parsed.events))
     return derived.with_derived(document)
+
+
+def _is_version_2(metadata: dict[str, Any]) -> bool:
+    """The header opened with this build's `# schema_version` line."""
+    return run_document.is_version_2(metadata)
 
 
 def _parse_legacy(fh: Any) -> ParsedTsv:
@@ -193,7 +214,7 @@ def _parse_legacy(fh: Any) -> ParsedTsv:
         if line.startswith("# "):
             key, sep, value = line[2:].partition("\t")
             if sep and key:
-                metadata[key] = _coerce(key, value)
+                metadata[key] = _coerce(key, value, _STRING_FIELDS)
             continue
         match = LEGACY_STROBE.match(line)
         if match is not None:
@@ -237,7 +258,7 @@ def recover_file(tsv_path: Path) -> dict[str, Any]:
         return entry
 
     document = recovered_document(parsed)
-    stop_reason = document["stop_reason"]
+    stop_reason = run_document.stop_reason_of(document)
 
     json_path = reader.sibling_json(tsv_path)
     try:
@@ -297,15 +318,15 @@ def _decode_json(value: str) -> Any | None:
     return decoded if isinstance(decoded, dict) else None
 
 
-def _coerce(key: str, value: str) -> Any:
+def _coerce(key: str, value: str, strings: frozenset[str]) -> Any:
     """Undo the header's string rendering (`writer._render`) — best effort.
 
     The header renders every value as text, so types must be read back out:
     lowercase booleans exactly as `_render` spells them, then numbers, then
-    the string itself. Core fields (`_STRING_FIELDS`) skip all of it — they are defined as
+    the string itself. The fields in `strings` skip all of it — they are defined as
     strings whatever they look like.
     """
-    if key in _STRING_FIELDS:
+    if key in strings:
         return value
     if value == "true":
         return True

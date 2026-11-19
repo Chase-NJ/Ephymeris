@@ -24,6 +24,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncContextManager, Awaitable, Callable, Iterable
 
 from ..cohorts.db import NestedWrite, TransactionAborted
+from ..intan import sort_export
+from ..intan.rhx_names import recording_folder_name
 from ..intan.yield_store import SpikeYieldStore
 from ..ports.flashing import FlashJob, FlashQueue
 from ..ports.manager import CarriedSketch, sketch_fingerprint
@@ -206,6 +208,18 @@ class SessionLifecycle:
         #: Mappings confirmed since this process started (`ActiveSessions.confirmations`).
         self._confirmations = 0
         self._lock = asyncio.Lock()
+        #: What exports a recording's runs for sorting once RHX has stopped
+        #: (`RECORDING.md#the-sort-export`): `(run files, recording name)`,
+        #: blocking. None turns the export off.
+        self.export_spikes: Callable[[list[str], str], Any] | None = sort_export.export_runs
+        #: What aligns a recording's runs once RHX has stopped
+        #: (`RECORDING.md#alignment-at-session-end`): `(run files, recording
+        #: name)`, awaited. The app hands it the archive's `align_recorded`;
+        #: None leaves alignment to the first view of each run.
+        self.align_runs: Callable[[list[str], str], Awaitable[Any]] | None = None
+        # After-stop passes under way: started when a recording stops, awaited
+        # by nothing a session waits on.
+        self._exports: set[asyncio.Task[None]] = set()
 
     # --- questions --------------------------------------------------------
 
@@ -301,6 +315,7 @@ class SessionLifecycle:
             # just read from (`TASKS.md#the-rig-definition`).
             async with self._rig_reading():
                 names = {a.id: a.name for a in cohort.animals}
+                implanted = {a.id: a.implant for a in cohort.animals}
                 # The channel set every folder this mapping reads was
                 # generated against; no write can land until the session ends.
                 channel_set_hash = await asyncio.to_thread(
@@ -342,6 +357,7 @@ class SessionLifecycle:
                             profile=profile,
                             channel_set_hash=channel_set_hash,
                             channel_set_hash_version=registry.CHANNEL_SET_HASH_VERSION,
+                            implant=implanted.get(entry.animal_id),
                         )
                     )
 
@@ -358,6 +374,11 @@ class SessionLifecycle:
                         else None
                     ),
                     session_id=session_id,
+                    cohort_name=cohort.name,
+                    session_date=session.date,
+                    earlier_runs=lambda animal_id: self._sessions.earlier_runs_of_day(
+                        session.cohort_id, animal_id, session.date
+                    ),
                 )
                 self._held = session_id
                 # Said on the wire, because nothing else in the payload has to
@@ -807,6 +828,55 @@ class SessionLifecycle:
         run = await self._intan.stop_recording()
         if run is not None:
             await asyncio.to_thread(self._record_recording_run, session_id, run)
+            self._after_recording_later(session_id, run)
+
+    def _after_recording_later(self, session_id: str, run: dict[str, Any]) -> None:
+        """Start the after-stop pass over this recording's runs and return at
+        once: it is off the session's path, and nothing it does can fail a run
+        or hold up an end (`RECORDING.md#alignment-at-session-end`)."""
+        assert self._intan is not None
+        base = run.get("baseFilename")
+        if (self.export_spikes is None and self.align_runs is None) or not isinstance(base, str) or not base:
+            return
+        if getattr(self._intan, "stop_owed", False):
+            # RHX has not confirmed the stop, so its files may still be growing:
+            # an alignment or an export now could be cut short and look whole.
+            log.warning("nothing aligned or exported: RHX has not confirmed that it stopped recording %s", base)
+            return
+        name = recording_folder_name(base, run.get("fileTimestamp"))
+        task = asyncio.create_task(self._after_recording(session_id, name))
+        self._exports.add(task)
+        task.add_done_callback(self._exports.discard)
+
+    async def _after_recording(self, session_id: str, recording: str) -> None:
+        """The after-stop pass, in a fixed order so its two steps never work on
+        one run at once: **align, then export**. Alignment rewrites each run's
+        `.json` and `.mat`; the export then reads the `.json` it left and RHX's
+        `spike.dat`. Each step's failure is its own: neither stops the other."""
+        try:
+            files = await asyncio.to_thread(
+                lambda: [r.file_path for r in self._sessions.runs_for(session_id) if r.file_path]
+            )
+        except Exception:  # noqa: BLE001
+            log.exception("couldn't list the runs of recording %s", recording)
+            return
+        if self.align_runs is not None:
+            try:
+                await self.align_runs(files, recording)
+            except Exception as exc:  # noqa: BLE001 - left for the first view of each run
+                log.warning("recording %s was not aligned now (%s); each run is aligned when first viewed",
+                            recording, exc)
+        if self.export_spikes is not None:
+            try:
+                await asyncio.to_thread(self.export_spikes, files, recording)
+            except Exception:  # noqa: BLE001 - an export costs only itself
+                log.exception("the spike export of recording %s failed", recording)
+
+    async def exports_settled(self) -> None:
+        """Wait for the after-stop passes under way. For shutdown and tests; no
+        session waits on this."""
+        while self._exports:
+            await asyncio.gather(*list(self._exports), return_exceptions=True)
 
     def _record_recording_run(self, session_id: str, run: dict[str, Any]) -> None:
         session = self._sessions.get_session(session_id)

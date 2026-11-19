@@ -16,9 +16,8 @@
  */
 
 import type { SidecarPort } from "../ws/port";
-import { CMD, EVT, SidecarCommandError, type LiveReplay } from "../ws/protocol";
-import { appendProgress, replayTally, telemetryTally, type Tally } from "./boxProgress";
-import { replayStrip } from "./liveReplay";
+import { CMD, EVT, SidecarCommandError } from "../ws/protocol";
+import { appendProgress, telemetryTally, type Tally } from "./boxProgress";
 import type {
   ActiveSessions,
   AnimalEnded,
@@ -69,13 +68,6 @@ export class SessionStore {
    * the totals so far, so the run's shape exists nowhere else.
    */
   private progress = new Map<number, readonly Tally[]>();
-  /**
-   * Each box's latest spine-run replay, as the sidecar reports it
-   * (`session.replay`): the phase its token sits on and the numbers so far. The
-   * sidecar replays the run; this only holds what it said.
-   */
-  private replays = new Map<number, LiveReplay>();
-  private replayVersion = 0;
   /** Finished runs this session, per box. */
   private ended = new Map<number, AnimalEnded>();
   /**
@@ -202,20 +194,6 @@ export class SessionStore {
         this.notify(`telemetry:${d.box}`);
       }),
 
-      // A spine run, replayed by the sidecar as it arrives. Its numbers join the
-      // same history the rolling metrics draw, one point per scored trial: a
-      // payload that only moved the token adds none.
-      client.on(EVT.SESSION_REPLAY, (d) => {
-        if (typeof d?.box !== "number") return;
-        const before = this.replays.get(d.box);
-        this.replays.set(d.box, d);
-        if (d.trials !== (before?.trials ?? 0)) this.appendHistory(d.box, replayStrip(d).metrics);
-        this.takeTally(d.box, replayTally(d));
-        this.replayVersion += 1;
-        this.notify(`replay:${d.box}`);
-        this.notify("replay");
-      }),
-
       // Debug Mode's counterpart to the above (`debug_run.py`). Same slot, same
       // history: a port in PASSTHROUGH cannot also be IN_SESSION, so the two
       // sources can never be writing one box at once, and sharing the slot is
@@ -225,8 +203,8 @@ export class SessionStore {
       // the arm (running false -> true) is when the last run is forgotten; a
       // refused START never arms and leaves it on screen.
       //
-      // The payload has no trial count to guard on, as `session.replay` does,
-      // and two equal payloads in a row are normal (one per strobe batch), so
+      // The payload has no trial count to guard on, and two equal payloads in a
+      // row are normal (one per strobe batch), so
       // only the snapshot a connect owes is dropped (`debugReplayOwed`).
       client.on(EVT.PORT_TELEMETRY, (d) => {
         if (typeof d?.box !== "number") return;
@@ -318,16 +296,6 @@ export class SessionStore {
     return this.telemetry.get(box) ?? NO_METRICS;
   }
 
-  /** Bumped whenever any box's replay changes — the star temperatures' trigger. */
-  getReplayVersion(): number {
-    return this.replayVersion;
-  }
-
-  /** A box's latest spine-run replay, or null for none. */
-  getReplay(box: number): LiveReplay | null {
-    return this.replays.get(box) ?? null;
-  }
-
   getEnded(box: number): AnimalEnded | null {
     return this.ended.get(box) ?? null;
   }
@@ -409,8 +377,6 @@ export class SessionStore {
     this.telemetry.clear();
     this.history.clear();
     this.progress.clear();
-    this.replays.clear();
-    this.replayVersion += 1;
     this.ended.clear();
     this.writeErrors.clear();
     this.strobes.clear();
@@ -420,7 +386,6 @@ export class SessionStore {
       if (
         key.startsWith("telemetry:") ||
         key.startsWith("progress:") ||
-        key.startsWith("replay") ||
         key.startsWith("ended") ||
         key.startsWith("writeError:")
       ) {
@@ -448,8 +413,6 @@ export class SessionStore {
     this.debugReplayOwed.delete(box);
     this.history.delete(box);
     this.progress.delete(box);
-    this.replays.delete(box);
-    this.replayVersion += 1;
     this.ended.delete(box);
     this.writeErrors.delete(box);
     this.strobes.delete(box);
@@ -458,8 +421,6 @@ export class SessionStore {
     this.notify("strobes");
     this.notify(`telemetry:${box}`);
     this.notify(`progress:${box}`);
-    this.notify(`replay:${box}`);
-    this.notify("replay");
     this.notify(`ended:${box}`);
     this.notify(`writeError:${box}`);
     this.notify("ended");

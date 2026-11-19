@@ -1,7 +1,7 @@
 """A legacy run as a trial table (`ANALYTICS.md#how-a-legacy-run-becomes-a-trial-table`).
 
 `table_of(document, profile)` reads a legacy run's strobes, through the profile
-that names them, into the same `ReplayTrial` rows a replayed spine run has.
+that names them, into `ReplayTrial` rows, as a grammar-2 run's are.
 Every legacy figure is then a function of those rows (`outcomes.py`,
 `engagement.py`, `table_metrics.py`, `curves.py`), and each comes out exactly as
 the strobe scorer reported it before the table existed
@@ -33,7 +33,7 @@ from . import strobes
 from .trials import MetricAccumulator, boundaries_for
 
 #: Today's outcome buckets and the classes that mean the same thing
-#: (`taskdef/lowering.py`'s `OUTCOME_CLASSES`). Inverted by `legacy_outcome`.
+#: (`trial_table.OUTCOME_CLASSES`). Inverted by `legacy_outcome`.
 OUTCOME_CLASS = {
     "rewarded": "correct",
     "hold_failed": "hold_broken",

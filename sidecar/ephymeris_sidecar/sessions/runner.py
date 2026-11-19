@@ -2,8 +2,7 @@
 telemetry (`ARCHITECTURE.md#entering-in_session`, `DATA.md#crash-safety`).
 
 Owns the per-box run state that the port handler doesn't: which animal is in
-each box, its writer, its rolling metrics, a spine run's live replay
-(`sessions/live_replay.py`), and its `SessionAnimalRun` record.
+each box, its writer, its rolling metrics, and its `SessionAnimalRun` record.
 The handler parses strobes and calls back here; here they become durable `.tsv`
 lines and `session.telemetry` pushes.
 
@@ -24,13 +23,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from ..analytics.stream.grammar2 import scores_grammar_2
+from ..cohorts import implants
+from ..intan.rhx_names import channel_names
 from ..analytics.stream.legacy import MetricSet
-from ..analytics.stream.spine import is_spine_run
 from ..tasks.profile import TaskProfile
 from ..tasks.seed import new_trial_seed
 from ..tasks.start_command import StartCommand, StartRefused
-from .live_replay import BoxReplay
-from .scorer import LiveScorer
 from .models import SessionAnimalRun
 from .paths import AnimalFilePaths, resolve_animal_files
 from .writer import AnimalWriter
@@ -64,6 +62,9 @@ class BoxConfig:
     #: The rule that made it (`registry.CHANNEL_SET_HASH_VERSION`), recorded
     #: beside it so a reader never mistakes one rule's hash for the other's.
     channel_set_hash_version: int | None = None
+    #: The animal's implant as it is stored (`DATA.md#implants`), None for
+    #: none. A recorded run copies it as it stood on the session's date.
+    implant: dict[str, Any] | None = None
 
 
 @dataclass
@@ -80,8 +81,6 @@ class ActiveRun:
     session_id: str = ""
     writer: AnimalWriter | None = None
     metrics: MetricSet | None = None
-    #: A spine run's live replay (`sessions/live_replay.py`), from its handshake on.
-    live: BoxReplay | None = None
     end_code: int | None = None
     resolved: bool = False
     files: AnimalFilePaths | None = None
@@ -94,6 +93,9 @@ class ActiveRun:
     #: different number, and that difference is the only signal a box is still
     #: carrying an old sketch.
     host_seed: int | None = None
+    #: Which of this animal's runs of the session's date this is, from 1
+    #: (`DATA.md#the-json-document`); None when the runner was not told.
+    run_of_day: int | None = None
     #: What the board announced as `INTERP=<n>` before `READY`, recorded on the
     #: run record at finalization (`DATA.md#run-records`). `None` when it
     #: announced none.
@@ -127,7 +129,6 @@ class SessionRunner:
         broadcast: Callable[[dict[str, Any]], Awaitable[None]],
         on_animal_ended: Callable[[ActiveRun, str], Awaitable[None]],
         backup: Any = None,
-        scorer: LiveScorer | None = None,
     ) -> None:
         self._loop = loop
         self._ports = ports
@@ -143,14 +144,6 @@ class SessionRunner:
         # the `ended` a reloaded client reads, since `session.animalEnded` is
         # never replayed (`ARCHITECTURE.md#replay-on-connect`).
         self._ended: set[int] = set()
-        # Each box's live replay of its latest spine run, kept after the run
-        # ends so a client that connects then still reads its final numbers,
-        # until the box starts again or a new mapping is confirmed
-        # (`ARCHITECTURE.md#live-session-views`).
-        self._replays: dict[int, BoxReplay] = {}
-        # The one process that scores every box's spine run, started on the
-        # first one (`ARCHITECTURE.md#the-live-scorer`).
-        self._scorer = scorer if scorer is not None else LiveScorer()
         # In-flight fire-and-forget finalizations (end strobes, board drops).
         # `end_all` drains this so a caller that clears session state right
         # after it returns can't strand a finalization mid-write.
@@ -161,6 +154,9 @@ class SessionRunner:
         self._session_folder: Path | None = None
         self._session_id_label: str = ""
         self._session_id: str = ""
+        self._cohort_name: str | None = None
+        self._session_date: str | None = None
+        self._earlier_runs: Callable[[str], int] | None = None
         self._duration_s: float | None = None
         # The recording subsystem's three taps (`intan/service.py`), all
         # optional and all called ON THE SESSION THREAD, so whatever is hung
@@ -168,11 +164,13 @@ class SessionRunner:
         # arriving and that strobe being fsync'd. None of them can fail a run
         # -- each call site swallows, because a behavior session never pays for
         # the recording's problems.
-        #   recording_fields(box) -> flat `intan_*` fields for the document
+        #   recording_fields(box) -> the recording's fields, by name, for the document
+        #   recording_positions(box) -> each site's (x, y) by native channel, from the probe map
         #   on_box_started(box, animal, tick_pulsed): tick_pulsed when the board
         #     announced its sync line pulses once per tick (`SYNC=TICK`)
         #   on_strobe_tap(box, code, ms)
         self.recording_fields: Callable[[int], dict[str, Any]] | None = None
+        self.recording_positions: Callable[[int], dict[str, tuple[float, float]]] | None = None
         self.on_box_started: Callable[[int, str, bool], None] | None = None
         self.on_strobe_tap: Callable[[int, int, int], None] | None = None
 
@@ -186,6 +184,9 @@ class SessionRunner:
         duration_s: float | None = None,
         *,
         session_id: str,
+        cohort_name: str | None = None,
+        session_date: str | None = None,
+        earlier_runs: Callable[[str], int] | None = None,
     ) -> None:
         """Store the confirmed mapping for the round about to run
         (`ARCHITECTURE.md#mapping-and-the-placement-walk`).
@@ -194,16 +195,19 @@ class SessionRunner:
         auto-STOP scheduled from *its own* start, not from Start All — boxes
         are started individually, and each animal's run should be the same
         length.
+
+        `cohort_name` and `session_date` go into each run's document, and
+        `earlier_runs(animal_id)` says how many runs that animal has already
+        recorded on that date, for its `run_of_day` (`DATA.md#the-json-document`).
         """
+        self._cohort_name = cohort_name
+        self._session_date = session_date
+        self._earlier_runs = earlier_runs
         self._session_folder = session_folder
         self._session_id_label = session_id_label
         self._session_id = session_id
         self._configs = {c.box: c for c in box_configs}
         self._ended = set()
-        self._forget_replays()
-        if any(c.profile is not None and c.profile.spine is not None for c in box_configs):
-            # Started now, in set-up, so its start-up never meets a strobe.
-            self._scorer.warm()
         self._duration_s = duration_s
 
     def clear(self) -> None:
@@ -212,10 +216,12 @@ class SessionRunner:
             raise RuntimeError("cannot clear a runner with active runs")
         self._configs = {}
         self._ended = set()
-        self._forget_replays()
         self._session_folder = None
         self._session_id_label = ""
         self._session_id = ""
+        self._cohort_name = None
+        self._session_date = None
+        self._earlier_runs = None
         self._duration_s = None
 
     def snapshot(self) -> list[dict[str, Any]]:
@@ -255,6 +261,29 @@ class SessionRunner:
 
     # --- start ------------------------------------------------------------
 
+    def _implant_and_channels(
+        self, run: ActiveRun, recording: dict[str, Any], when: datetime
+    ) -> dict[str, Any]:
+        """A recorded run's `implant` and `channels` blocks
+        (`RECORDING.md#what-is-written`): the animal's implant as it stood on
+        the session's date, and one row per channel RHX records for the box."""
+        on = self._session_date or when.date().isoformat()
+        copy = implants.on_date(run.config.implant, on)
+        positions = self.recording_positions(run.box) if self.recording_positions is not None else None
+        native = channel_names(recording.get("intan_channels"))
+        return {"implant": copy, "channels": implants.channel_rows(native, copy, positions)}
+
+    def _run_of_day(self, config: BoxConfig) -> int | None:
+        """This animal's run number on the session's date, from 1; None when
+        nobody can say. Never able to stop a box from starting."""
+        if self._earlier_runs is None:
+            return None
+        try:
+            return self._earlier_runs(config.animal_id) + 1
+        except Exception:  # noqa: BLE001
+            log.exception("box %d: couldn't count the animal's earlier runs of the day", config.box)
+            return None
+
     def start_box(self, box: int) -> None:
         """Begin one box's `IN_SESSION` run (`ARCHITECTURE.md#entering-in_session`). Idempotent per box."""
         if box in self._active:
@@ -279,6 +308,7 @@ class SessionRunner:
             session_id=self._session_id,
             end_code=config.profile.end_code if config.profile else None,
             host_seed=host_seed,
+            run_of_day=self._run_of_day(config),
         )
         # The port first: it raises before anything here is registered, so a
         # box whose port refused leaves no run, no time limit and nothing for
@@ -295,8 +325,6 @@ class SessionRunner:
         )
         self._active[box] = run
         self._ended.discard(box)
-        if (gone := self._replays.pop(box, None)) is not None:
-            self._scorer.forget(gone.key)
         # The time limit counts from this box's own start (`ARCHITECTURE.md#configuration`). STOP is
         # still only a request the firmware honours at a trial boundary, so
         # the deadline sends it and the board's end strobe does the ending.
@@ -339,11 +367,18 @@ class SessionRunner:
         )
         run.files = files
 
-        # Core fields (`DATA.md#the-json-document`), then flat task-profile config, then the seeds.
+        # The run's fields by name (`DATA.md#the-json-document`); the writer has
+        # `run_document` put each in its block. `started_at` is the moment the
+        # files are named for, with this machine's UTC offset.
         core: dict[str, Any] = {
             "rat": run.config.animal_name,
-            "serial_port": run.address,
+            "cohort": self._cohort_name,
+            "box": box,
             "session_id": run.session_id_label,
+            "date": self._session_date,
+            "run_of_day": run.run_of_day,
+            "started_at": when.astimezone().isoformat(timespec="seconds"),
+            "serial_port": run.address,
             "sketch": run.config.sketch_name,
         }
         if announced.interp is not None:
@@ -380,7 +415,10 @@ class SessionRunner:
             # `params_hash` -- two runs of one tuning are comparable whether or
             # not one of them was recorded.
             try:
-                core.update(self.recording_fields(box))
+                recording = self.recording_fields(box)
+                core.update(recording)
+                if recording:
+                    core.update(self._implant_and_channels(run, recording, when))
             except Exception:  # noqa: BLE001
                 log.exception("box %d: couldn't describe its recording", box)
         config_meta = dict(run.config.config_metadata)
@@ -388,9 +426,9 @@ class SessionRunner:
             # `TASKS.md#seed`: what the firmware reports it is *running on*. Recorded
             # unchanged even when it disagrees with what we sent — the point of
             # this field is to describe the session that happened.
-            config_meta["trial_seed"] = seed
+            core["trial_seed"] = seed
         if run.host_seed is not None:
-            config_meta["host_seed"] = run.host_seed
+            core["host_seed"] = run.host_seed
         if seed is not None and run.host_seed is not None and seed != run.host_seed:
             # Not an error, but it means this box's trial
             # sequence came from the board's own weak entropy, which is worth
@@ -433,16 +471,6 @@ class SessionRunner:
             return
         run.writer = writer
         run.metrics = MetricSet(run.config.profile)
-        header = writer.header()
-        if is_spine_run(header):
-            # Replayed live as its strobes arrive, as Analytics replays the
-            # finished file (`ANALYTICS.md#live-scoring`). Never at the run's cost.
-            try:
-                run.live = BoxReplay(box, run.config.animal_id, header, loop=self._loop,
-                                     publish=self._push_replay, scorer=self._scorer)
-                self._replays[box] = run.live
-            except Exception:  # noqa: BLE001
-                log.exception("box %d: couldn't start its live replay", box)
         # From here the `.tsv` grows on every strobe; the mirror picks it up on
         # its own cadence and never on this thread (`DATA.md#backup-mirroring`).
         if self._backup is not None:
@@ -474,9 +502,6 @@ class SessionRunner:
                 self.on_strobe_tap(box, code, ts)
             except Exception:  # noqa: BLE001
                 log.exception("box %d: recording strobe tap failed", box)
-
-        if run.live is not None:
-            run.live.feed(code, ts)  # after the fsync; never raises
 
         if values:
             payload = {
@@ -541,8 +566,6 @@ class SessionRunner:
             self._finalizing.remove(box)
 
     async def _finalize(self, box: int, run: ActiveRun, reason: str) -> None:
-        if run.live is not None:
-            run.live.close()
         if run.deadline is not None:
             run.deadline.cancel()
             run.deadline = None
@@ -628,26 +651,7 @@ class SessionRunner:
         while pending := [t for t in self._finalizations if not t.done()]:
             await asyncio.gather(*pending, return_exceptions=True)
 
-    def close(self) -> None:
-        """Kill the live scorer, without waiting on it: the sidecar is going."""
-        self._scorer.stop()
-
-    def _forget_replays(self) -> None:
-        for replay in self._replays.values():
-            self._scorer.forget(replay.key)
-        self._replays = {}
-
-    def replay_snapshot(self) -> list[dict[str, Any]]:
-        """One `session.replay` payload per box with a live replay: what a
-        client that connects now is owed (`ARCHITECTURE.md#replay-on-connect`)."""
-        return [self._replays[box].payload() for box in sorted(self._replays)]
-
     # --- internals --------------------------------------------------------
-
-    async def _push_replay(self, payload: dict[str, Any]) -> None:
-        from ..protocol import Evt, event
-
-        await self._broadcast(event(Evt.SESSION_REPLAY, payload))
 
     async def _push_telemetry(self, payload: dict[str, Any]) -> None:
         from ..protocol import Evt, event

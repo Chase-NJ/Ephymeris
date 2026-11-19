@@ -25,8 +25,8 @@ export type RecordingConfigDefaults = Omit<RecordingConfig, "saveDirectory" | "b
 
 /**
  * One box's memory from the last Record step: whether it recorded, and its
- * wiring (which port, which range). Never a probe map, which follows the
- * animal (`RecordingDefaults.probeMaps`).
+ * wiring (which port, which range). Never a probe map, which is the animal's
+ * implant's (`DATA.md#implants`).
  */
 export type RecordingBoxMemory = {
   record: boolean;
@@ -43,12 +43,6 @@ export type RecordingDefaults = {
   config: RecordingConfigDefaults;
   /** Keyed by box number, "1"…"6". */
   boxes: Record<string, RecordingBoxMemory>;
-  /**
-   * The probe map last used for each animal, keyed by animal id. A probe map
-   * describes the animal's implant, so it follows the animal from box to box;
-   * the box keeps only its wiring (port and range).
-   */
-  probeMaps: Record<string, string>;
   /** What counts as an open, shorted or changed site (`RECORDING.md#impedance-tracking`). */
   impedanceFlags: ImpedanceFlags;
   /** A site is active at or above this mean crossing rate (`RECORDING.md#active-site-yield`). */
@@ -68,7 +62,6 @@ export const DEFAULT_RECORDING_DEFAULTS: RecordingDefaults = {
   saveRoot: null,
   config: baseConfig(),
   boxes: {},
-  probeMaps: {},
   impedanceFlags: { ...DEFAULT_IMPEDANCE_FLAGS },
   activeSiteHz: DEFAULT_ACTIVE_SITE_HZ,
 };
@@ -170,19 +163,12 @@ export function normalizeRecordingDefaults(raw: unknown): RecordingDefaults {
       if (memory) boxes[key] = memory;
     }
   }
-  // Absent from a file written before probe maps followed the animal: none remembered.
-  const probeMaps: Record<string, string> = {};
-  if (isRecord(raw["probeMaps"])) {
-    for (const [animalId, path] of Object.entries(raw["probeMaps"])) {
-      const kept = optString(path);
-      if (animalId !== "" && kept) probeMaps[animalId] = kept;
-    }
-  }
+  // A stored `probeMaps` (each animal's last probe map, from before implants)
+  // is dropped: an animal's probe map is its implant's (`DATA.md#implants`).
   return {
     saveRoot: optString(raw["saveRoot"]),
     config: normalizeConfig(raw["config"]),
     boxes,
-    probeMaps,
     impedanceFlags: normalizeImpedanceFlags(raw["impedanceFlags"]),
     activeSiteHz: normalizeActiveSiteHz(raw["activeSiteHz"]),
   };

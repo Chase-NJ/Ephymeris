@@ -3,7 +3,7 @@
 The firmware's host test pins what a grammar-2 board emits for every outcome
 (`extras/host_test/test_trial_stream.cpp`); this pins what the app reads out of
 each of those sequences, which decoder a run is handed to, and the per-trial
-table its files carry (`DATA.md#the-derived-trial-table`).
+table its files carry (`DATA.md#the-trial-table`).
 """
 
 from __future__ import annotations
@@ -117,8 +117,8 @@ def test_without_a_token_the_codes_decide(profile: TaskProfile) -> None:
     assert grammar2.grammar_of(document([CORRECT_R, GRAMMAR_1]), profile) == 1
     assert grammar2.grammar_of(document([]), profile) == 1
     assert grammar2.grammar_of(document(EVERY), None) == 1
-    # The header alone is not the grammar: a phase-spine stream opens its
-    # trials with TRIAL_START too, and never closes one with END_TRIAL.
+    # The header alone is not the grammar: a stream that never closes a
+    # trial with END_TRIAL is not grammar 2.
     assert grammar2.grammar_of(document(["TRIAL_START LIGHTS_ON ODOR_POKE ODOR_1_ON"] * 3), profile) == 1
 
 
@@ -175,6 +175,82 @@ def test_the_timestamps_are_the_strobes_that_say_so(profile: TaskProfile) -> Non
     assert row.reaction_ms == at["WATER_POKE_R"] - at["ODOR_UNPOKE"]
     (lazy,) = rows([LAZY], profile)
     assert lazy.reaction_ms is None and lazy.odor_poke_ms is None and lazy.response_ms is None
+
+
+# --- the columns people read (`DATA.md#the-trial-table`) -----------------------
+
+#: Every reference sequence in one run, one strobe every 100 ms: each row's
+#: odor name, how long its reward valve was open, when it opened (from the
+#: trial's own start) and whether it is a correction trial.
+READ = [
+    (CORRECT_R, "Go right", 100, 1100, False),
+    (CORRECT_L, "Go left", 100, 1100, False),
+    (WRONG_WELL, "Go right", 0, None, False),
+    (HOLD_FAILED, "Go right", 0, None, False),
+    (NO_RESPONSE, "Go left", 0, None, False),
+    (WITHHELD, "Withhold", 0, None, False),
+    (FALSE_ALARM, "Withhold", 0, None, False),
+    (LAZY, "", 0, None, False),
+    (EARLY_BEFORE_ODOR, "", 0, None, False),
+    (EARLY_SAMPLING, "Go right", 0, None, False),
+    (REPEATED_ERROR, "Go right", 0, None, False),
+    # The trial after an error the board repeats is the correction trial.
+    (CORRECT_R, "Go right", 100, 1100, True),
+]
+
+
+def test_the_reference_run_reads_its_odor_reward_and_correction(profile: TaskProfile) -> None:
+    assert [trial for trial, *_ in READ] == EVERY
+    out = rows(EVERY, profile)
+    assert [(r.odor_name, r.reward_ms, r.correction) for r in out] == [
+        (name, reward, correction) for _, name, reward, _, correction in READ]
+    assert [None if r.reward_on_ms is None else r.reward_on_ms - r.start_ms for r in out] == [
+        opened for _, _, _, opened, _ in READ]
+
+
+def test_the_reward_is_the_valves_own_open_time_never_the_parameter(profile: TaskProfile) -> None:
+    """From `FLUID_*` to its `STOP_FLUID_G_*`, on the board's clock."""
+    names = names_of([CORRECT_R])
+    stamps = {n: 100 * i for i, n in enumerate(names)}
+    stamps["STOP_FLUID_G_R"] = stamps["FLUID_R"] + 137
+    doc = {**document([CORRECT_R], stream=2), "reward_time_1": 999,
+           "ts_data": [[code(n), stamps[n]] for n in names]}
+    (row,) = grammar2.rows_of(doc, profile)
+    assert (row.reward_ms, row.reward_on_ms) == (137, stamps["FLUID_R"])
+
+
+def test_a_valve_the_run_never_saw_close_has_no_open_time(profile: TaskProfile) -> None:
+    cut = CORRECT_R.split()
+    cut = " ".join(cut[: cut.index("STOP_FLUID_G_R")])
+    (row,) = rows([cut], profile)
+    assert row.reward_on_ms is not None and row.reward_ms is None, "opened, and how long is not known"
+
+
+def test_an_odor_is_named_by_the_runs_odors_table(profile: TaskProfile) -> None:
+    from ephymeris_sidecar.sessions import run_document
+
+    written = run_document.with_odors(run_document.lifted(document([CORRECT_R, CORRECT_L], stream=2)), [
+        {"line": 1, "name": "GR-Sandalwood", "onset_code": code("ODOR_1_ON"), "side": "right",
+         "reward_ms": 100, "pool_weight": 1}])
+    named = [r.odor_name for r in grammar2.rows_of(written, profile)]
+    assert named == ["GR-Sandalwood", None], "the table's own name; none for a line it does not list"
+    # A document with no table is named from the profile, as the table would be.
+    assert [r.odor_name for r in rows([CORRECT_R], grammar1_profile())] == ["1"]
+    assert [r.odor_name for r in grammar2.rows_of(document([CORRECT_R], stream=2), None)] == []
+
+
+def test_every_time_has_a_recording_clock_column_empty_until_alignment(profile: TaskProfile) -> None:
+    """`*_s` is each `*_ms` time on the recording's clock, filled by alignment
+    (ADR 0009); a reaction time and a valve's open time are durations."""
+    import dataclasses
+
+    columns = [f.name for f in dataclasses.fields(grammar2.TrialRow)]
+    times = [c for c in columns if c.endswith("_ms") and c not in ("reaction_ms", "reward_ms")]
+    assert times == ["start_ms", "light_on_ms", "odor_poke_ms", "odor_on_ms", "odor_off_ms",
+                     "odor_unpoke_ms", "response_ms", "outcome_ms", "reward_on_ms", "end_ms"]
+    assert [c for c in columns if c.endswith("_s")] == [c[:-3] + "_s" for c in times]
+    for row in rows(EVERY, profile):
+        assert all(getattr(row, c[:-3] + "_s") is None for c in times)
 
 
 def test_the_trial_table_reads_the_same_rows(profile: TaskProfile) -> None:
@@ -336,19 +412,29 @@ def test_the_writer_puts_the_table_in_both_files(tmp_path: Path, profile: TaskPr
     writer.finalize(stream.CLEAN_STOP_REASON)
 
     written = json.loads(json_path.read_text(encoding="utf-8"))
-    assert list(written)[-1] == task_profile.DERIVED_KEY
-    assert written[task_profile.DERIVED_KEY]["grammar"] == 2
-    assert written[task_profile.DERIVED_KEY]["trials"][EVERY.index(LAZY)]["outcome"] == "LAZY_RAT"
+    assert list(written)[-3:] == ["trials", "ts_data", "task_profile"]
+    assert written["trials"]["grammar"] == 2
+    assert written["trials"]["rows"][EVERY.index(LAZY)]["outcome"] == "LAZY_RAT"
 
-    loaded = scipy.io.loadmat(str(mat))[task_profile.DERIVED_KEY][0, 0]
+    loaded = scipy.io.loadmat(str(mat))["trials"][0, 0]
     assert float(loaded["grammar"].ravel()[0]) == 2
-    trials = loaded["trials"]
+    trials = loaded["rows"]
     assert trials.shape == (len(EVERY), 1)
     assert str(trials["outcome"][0, 0][0]) == "CORRECT"
     assert float(trials["type_slot"][1, 0].ravel()[0]) == 2
     import math
 
     assert math.isnan(float(trials["reaction_ms"][EVERY.index(LAZY), 0].ravel()[0]))
+    # The columns people read: a name is text ('' when no odor was delivered),
+    # a valve time a double, and a recording-clock time NaN until alignment.
+    assert str(trials["odor_name"][0, 0][0]) == "Go right" and trials["odor_name"][EVERY.index(LAZY), 0].size == 0
+    assert float(trials["reward_ms"][0, 0].ravel()[0]) == 100.0
+    assert float(trials["reward_ms"][EVERY.index(LAZY), 0].ravel()[0]) == 0.0
+    assert math.isnan(float(trials["reward_on_ms"][EVERY.index(LAZY), 0].ravel()[0]))
+    assert bool(trials["correction"][len(EVERY) - 1, 0].ravel()[0]) is True
+    assert all(math.isnan(float(trials["odor_on_s"][i, 0].ravel()[0])) for i in range(len(EVERY)))
+    rows_written = written["trials"]["rows"]
+    assert rows_written[0]["odor_name"] == "Go right" and rows_written[0]["odor_on_s"] is None
     assert bool(trials["repeat"][EVERY.index(LAZY), 0].ravel()[0]) is True
 
 

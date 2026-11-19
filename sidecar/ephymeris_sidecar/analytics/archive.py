@@ -36,6 +36,7 @@ from ..cohorts import relocate
 from ..logbook.repository import LogbookRepository
 from ..sessions import tidy as session_tidy
 from ..sessions.models import Session, SessionAnimalRun
+from ..sessions import run_document
 from ..sessions.paths import parse_name_date, parse_name_time, parse_session_folder
 from ..sessions.tidy import session_key
 from . import reader
@@ -71,6 +72,12 @@ REDERIVE_WHILE_WRITING = (
 RESCAN_WHILE_WRITING = (
     "A box is running: a run that finishes during the walk would be found "
     "twice. Rescan once every box has finished."
+)
+
+
+ALIGN_WHILE_WRITING = (
+    "A box is running: a recorded run is aligned once every box has finished, "
+    "or when it is first viewed."
 )
 
 
@@ -441,7 +448,7 @@ class CohortArchive:
 
 
     async def rederive(self, cohort_id: str) -> dict[str, Any]:
-        """Rewrite the derived trial table of a cohort's spine runs where this
+        """Rewrite the derived trial table of a cohort's grammar-2 runs where this
         build derives a different one (`DATA.md#re-derive`), as the
         `RederiveResult` wire shape.
 
@@ -456,6 +463,27 @@ class CohortArchive:
             result = await asyncio.to_thread(derived.rederive_cohort, cohort.data_folder)
             write.changed(files=result.pop("written"))
         return {**result, "cohortId": cohort_id}
+
+    async def align_recorded(
+        self, run_files: list[str], recording: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Align these recorded runs and write each one's sync counts and
+        recording-clock times into its own files
+        (`RECORDING.md#alignment-at-session-end`).
+
+        An archive write like Re-derive: it holds the archive, is refused
+        while a box runs (and stops if one starts), and queues every file it
+        wrote for backup. `ArchiveBusy` or `RigInUse` leaves every run as it
+        was, to be aligned later.
+        """
+        from ..intan import alignment  # intan imports analytics.reader
+
+        async with self.write(refuse_while="writing", because=ALIGN_WHILE_WRITING) as write:
+            entries = await asyncio.to_thread(
+                alignment.align_runs, run_files, recording, stop=lambda: self._rig.writing
+            )
+            write.changed(files=[path for entry in entries for path in entry["written"]])
+        return entries
 
     # --- rescan ------------------------------------------------------------
 
@@ -861,7 +889,7 @@ class CohortArchive:
         session_folder = reader.session_folder_of(path)
         rat = None
         if result.ok and result.document is not None:
-            value = result.document.get("rat")
+            value = run_document.animal_of(result.document)
             rat = value if isinstance(value, str) else None
         match = None
         source = None
@@ -897,7 +925,7 @@ class CohortArchive:
         else:
             started_at = date_iso or ""
 
-        sketch = result.document.get("sketch")
+        sketch = run_document.sketch_of(result.document)
         sketch_name = sketch if isinstance(sketch, str) and sketch else None
         sketch_path = None
         if sketch_name is not None and self._sketch_lookup is not None:

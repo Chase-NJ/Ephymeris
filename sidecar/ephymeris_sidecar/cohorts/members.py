@@ -16,6 +16,7 @@ import sqlite3
 from collections import Counter
 from pathlib import Path
 
+from . import implants
 from .models import FormerAnimal
 
 
@@ -110,6 +111,9 @@ def former_members(
             "SELECT * FROM former_animals WHERE cohort_id = ? ORDER BY name", (cohort_id,)
         )
     ]
+    kept = implants.load(conn, [f.id for f in stored])
+    for former in stored:
+        former.implant = kept.get(former.id)
     known = active_ids | {f.id for f in stored}
     unlisted_ids = [animal_id for animal_id in counts if animal_id not in known]
     if not unlisted_ids:

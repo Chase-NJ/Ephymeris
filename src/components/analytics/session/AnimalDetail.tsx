@@ -17,7 +17,7 @@ import { useLogbook, useLogbookStore } from "@/lib/logbook/context";
 import { tapeMarkers, type TapeMarker } from "@/lib/logbook/tapeMarkers";
 import { tagOf } from "@/components/logbook/tags";
 
-import { AccuracyChart, TrialsView } from "./TrialsView";
+import { AccuracyChart } from "./AccuracyChart";
 
 /**
  * The inside of one animal's run (`DATA.md#pooling-across-tasks`) — the views a
@@ -29,8 +29,6 @@ import { AccuracyChart, TrialsView } from "./TrialsView";
  * animal stopped working are invisible in any aggregate. The other three are
  * the card's own numbers at full size — the trajectory the sparkline
  * compresses, the per-odor composition, and the engagement ladder as a funnel.
- * A spine run opens on its **trial table** instead, read off its replay
- * (`ANALYTICS.md#the-trial-table`); the legacy views have nothing to show it.
  */
 export function AnimalDetail({
   run,
@@ -43,8 +41,7 @@ export function AnimalDetail({
   color: string;
   revealKey: string;
 }) {
-  const spine = run.replay !== null;
-  const [view, setView] = useState<DetailView>(spine ? "trials" : "tape");
+  const [view, setView] = useState<DetailView>("tape");
 
   return (
     <motion.div
@@ -58,23 +55,16 @@ export function AnimalDetail({
           value={view}
           onChange={setView}
           label="Detail view"
-          options={
-            spine
-              ? [{ value: "trials", label: "Trials" }]
-              : [
-                  { value: "tape", label: "Tape" },
-                  { value: "trajectory", label: "Trajectory" },
-                  { value: "odors", label: "By odor" },
-                  { value: "engagement", label: "Engagement" },
-                ]
-          }
+          options={[
+            { value: "tape", label: "Tape" },
+            { value: "trajectory", label: "Trajectory" },
+            { value: "odors", label: "By odor" },
+            { value: "engagement", label: "Engagement" },
+          ]}
         />
       </div>
 
       <div className="mt-2.5">
-        {view === "trials" && run.replay && (
-          <TrialsView replay={run.replay} table={series?.trialTable ?? null} />
-        )}
         {view === "tape" && <TapeView run={run} series={series} />}
         {view === "trajectory" && <TrajectoryView series={series} />}
         {view === "odors" && <OdorView run={run} />}
@@ -86,7 +76,7 @@ export function AnimalDetail({
   );
 }
 
-type DetailView = "trials" | "tape" | "trajectory" | "odors" | "engagement";
+type DetailView = "tape" | "trajectory" | "odors" | "engagement";
 
 /** Wire spelling → the shared outcome palette; aborted drawn by shape below. */
 const TAPE_KEY: Record<string, OutcomeKey | null> = {

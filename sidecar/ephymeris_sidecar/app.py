@@ -9,7 +9,6 @@ lets through are answered by `wire_errors.py` (`ARCHITECTURE.md#dispatch`), so
 from __future__ import annotations
 
 import asyncio
-import copy
 import json
 import logging
 import threading
@@ -18,7 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .analytics import AnalyticsService, CohortArchive, simulation
+from .analytics import AnalyticsService, CohortArchive
 from .analytics import reader as analytics_reader
 from .analytics.archive import ArchiveChange
 from .analytics.repository import AnalyticsRepository
@@ -29,6 +28,7 @@ from .cohorts import folders, move_apply, relocate
 from .cohorts.move import MoveRequest
 from .cohorts.db import DB_FILENAME, Database, has_mark
 from .cohorts.repository import CohortRepository
+from .sessions import run_document
 from .sessions.paths import resolve_session_folder
 from .hardware import service as hardware_service
 from .hardware import store as hardware_store
@@ -48,15 +48,11 @@ from .strobes import store as strobe_store
 from .strobes.editor import VocabularyEditor
 from .strobes.usage import ArchiveScanner
 from .taskdef import bundled as bundled_sketches
-from .taskdef import lowering as task_lowering
-from .taskdef import seeds as task_seeds
-from .taskdef import spine as spine_task
 from .taskdef import store as taskdef_store
 from .taskdef import transfer as task_transfer
 from .taskdef.model import TaskDefinition, folder_key
 from .taskdef.validate import validate as validate_task
 from .tasks import profile as task_profile
-from .tasks import seed as task_seed
 from .tasks.start_command import build_start_command
 from .debug_run import DebugRuns
 from .ports.flashing import FlashJob, FlashQueue, Origin
@@ -72,8 +68,6 @@ from .wire_errors import ERRORS
 
 log = logging.getLogger(__name__)
 
-#: The longest session `tasks.simulate` runs (`TASKS.md#simulating-a-spine-task`).
-_SIMULATE_LIMIT_MAX_MS = 24 * 60 * 60_000
 
 
 class _LifecycleRig:
@@ -156,6 +150,9 @@ class Application:
         #: The held session and its whole lifecycle (`sessions/lifecycle.py`).
         #: Built with the runner it sequences, in `start`.
         self.lifecycle: SessionLifecycle | None = None
+        # Runs being aligned after a first view (`_align_later`): held so the
+        # tasks are not collected mid-flight.
+        self._aligning: set[asyncio.Task[None]] = set()
         #: One preview at a time, for load alone: `hardware.preview` and
         #: `tasks.preview` fire on every keystroke and re-validate every stored
         #: task profile. Correctness needs no lock -- a hypothetical is
@@ -244,9 +241,7 @@ class Application:
         self.server.register(Cmd.TASKS_LIST, self._tasks_list)
         self.server.register(Cmd.TASKS_GET, self._tasks_get)
         self.server.register(Cmd.TASKS_PREVIEW, self._tasks_preview)
-        self.server.register(Cmd.TASKS_SIMULATE, self._tasks_simulate)
         self.server.register(Cmd.TASKS_SAVE, self._tasks_save)
-        self.server.register(Cmd.TASKS_SPINE_PALETTE, self._tasks_spine_palette)
         self.server.register(Cmd.TASKS_DELETE, self._tasks_delete)
         self.server.register(Cmd.TASKS_EXPORT, self._tasks_export)
         self.server.register(Cmd.TASKS_IMPORT, self._tasks_import)
@@ -338,11 +333,6 @@ class Application:
         )
         self.server.register_snapshot(
             Evt.INTAN_STATUS, lambda: self.intan.status_json() if self.intan else None
-        )
-        # Each box's spine-run replay, so a reloaded Mission Control lands on
-        # the phase the board is in (`ARCHITECTURE.md#replay-on-connect`).
-        self.server.register_snapshot(
-            Evt.SESSION_REPLAY, lambda: self.runner.replay_snapshot() if self.runner else []
         )
 
     def start(self) -> None:
@@ -456,6 +446,7 @@ class Application:
         # The runner's three taps. They run on a port's session thread, which
         # is why the service's side of each is a `call_soon_threadsafe`.
         self.runner.recording_fields = self.intan.recording_fields
+        self.runner.recording_positions = self.intan.recording_positions
         self.runner.on_box_started = self.intan.box_started
         self.runner.on_strobe_tap = self.intan.on_strobe
         self.lifecycle = SessionLifecycle(
@@ -473,6 +464,10 @@ class Application:
             flashes=self.flashes,
             wiring_problem=self.rig_definition.wiring_problem,
         )
+        if self.archive is not None:
+            # A recording's runs are aligned when it stops, through the archive
+            # (`RECORDING.md#alignment-at-session-end`).
+            self.lifecycle.align_runs = self.archive.align_recorded
 
     async def stop(self) -> None:
         # First, and it only closes OUR sockets: a recording in progress belongs
@@ -489,9 +484,6 @@ class Application:
             await self.utility.stop()
         if self.ports is not None:
             await self.ports.stop()
-        # The live scorer is killed, never waited on (`ARCHITECTURE.md#the-live-scorer`).
-        if self.runner is not None:
-            self.runner.close()
         # After ports: nothing may be mid-flash once the manager has stopped,
         # so the daemon child (if the gRPC backend is active) can go too.
         await self.tool.close()
@@ -1065,56 +1057,6 @@ class Application:
             "diagnostics": [d.to_json() for d in diagnostics],
             "profile": profile.to_json(),
             "catalogueDefaults": {f.metadata_key: f.default for f in bare.config},
-            # What the spine editor draws beside the profile (TASKS.md#the-spine-editor).
-            "spine": spine_task.editor_view(definition) if definition.spine is not None else None,
-        }
-
-    async def _tasks_simulate(self, args: Args) -> dict[str, Any]:
-        """One simulated session of an unsaved spine task (`TASKS.md#simulating-a-spine-task`).
-
-        Refused while the definition has any diagnostic, the bar a flash holds
-        it to: a simulation of a task that cannot run says nothing true about it.
-        """
-        definition = self._definition_arg(args)
-        if definition.spine is None:
-            raise CommandError(ErrCode.TASK_INVALID, "Only a spine task can be simulated.")
-        seed = args.get("seed")
-        if seed is not None and not task_seed.SEED_MIN <= seed <= task_seed.SEED_MAX:
-            raise CommandError(ErrCode.TASK_INVALID,
-                               f"A seed is {task_seed.SEED_MIN} to {task_seed.SEED_MAX}, not {seed}.")
-        limit_ms = args.get("limitMs", simulation.DEFAULT_LIMIT_MS)
-        if not 1 <= limit_ms <= _SIMULATE_LIMIT_MAX_MS:
-            raise CommandError(ErrCode.TASK_INVALID, "A simulated session's time limit is 1 ms to 24 h.")
-        raw = args["animal"]
-        animal = simulation.Animal(raw["kind"], raw.get("response"),
-                                   **({"permille": raw["permille"]} if "permille" in raw else {}))
-        chosen = seed if seed is not None else task_seed.new_trial_seed()
-
-        def run() -> dict[str, Any]:
-            problems = validate_task(definition)
-            if problems:
-                raise CommandError(
-                    ErrCode.TASK_INVALID,
-                    f"Fix the task's {len(problems)} problem{'s' if len(problems) != 1 else ''} first.",
-                    {"diagnostics": [d.to_json() for d in problems]},
-                )
-            try:
-                return simulation.payload(definition, animal, chosen, limit_ms=limit_ms)
-            except ValueError as exc:  # an animal it cannot be
-                raise CommandError(ErrCode.TASK_INVALID, str(exc)) from exc
-
-        async with self._preview_gate:
-            return await asyncio.to_thread(run)
-
-    async def _tasks_spine_palette(self, _args: Args) -> dict[str, Any]:
-        """The seeds and the palette's lists, from the model's own (TASKS.md#the-spine-editor)."""
-        return {
-            "seeds": copy.deepcopy(task_seeds.SEEDS),
-            "phases": list(task_lowering.PHASES),
-            "outcomeClasses": list(task_lowering.OUTCOME_CLASSES),
-            "selections": list(task_lowering.SELECTIONS),
-            "timedPhases": list(task_lowering.TIMED),
-            "weightedSelections": list(task_lowering.WEIGHTED),
         }
 
     async def _tasks_save(self, args: Args) -> dict[str, Any]:
@@ -1503,7 +1445,7 @@ class Application:
         return await self._require_archive().recover(_str_arg(args, "cohortId"))
 
     async def _sessions_rederive(self, args: Args) -> dict[str, Any]:
-        """Re-derive spine runs' trial tables (`DATA.md#re-derive`), through the
+        """Re-derive a cohort's runs' trial tables (`DATA.md#re-derive`), through the
         archive (`CohortArchive.rederive`)."""
         return await self._require_archive().rederive(_str_arg(args, "cohortId"))
 
@@ -1822,7 +1764,7 @@ class Application:
                 if not run.file_path:
                     continue
                 result = analytics_reader.read_run(run.file_path)
-                if result.ok and result.document and result.document.get("intan_recording"):
+                if result.ok and result.document and run_document.recording_name_of(result.document):
                     out.append(run.id)
             return out
 
@@ -1847,9 +1789,29 @@ class Application:
             )
 
         try:
-            return await asyncio.to_thread(build)
+            view = await asyncio.to_thread(build)
         except NotRecorded as exc:
             raise CommandError(ErrCode.RECORDING_UNREADABLE, str(exc)) from exc
+        if archive is not None and not self.offline_runs.get_cached_filled(run.file_path):
+            # The pass at the recording's end did not reach this run (RHX was
+            # away, or a box was running): its first view fills its files too.
+            self._align_later(archive, run.file_path)
+        return view
+
+    def _align_later(self, archive: CohortArchive, run_file: str) -> None:
+        """Fill one viewed run's sync counts and recording-clock times, in the
+        background (`RECORDING.md#alignment-at-session-end`). Never raises: a
+        busy archive or a running box leaves it for the next view."""
+
+        async def fill() -> None:
+            try:
+                await archive.align_recorded([run_file])
+            except Exception as exc:  # noqa: BLE001
+                log.info("%s was not aligned in its files now: %s", run_file, exc)
+
+        task = asyncio.create_task(fill())
+        self._aligning.add(task)
+        task.add_done_callback(self._aligning.discard)
 
     async def _intan_acknowledge_tether(self, args: Args) -> dict[str, Any]:
         intan = self._require_intan()

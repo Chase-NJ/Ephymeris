@@ -3,12 +3,10 @@ import {
   ArrowRight,
   Check,
   CircleAlert,
-  FileUp,
   HardDrive,
   ListChecks,
   PlugZap,
   Radio,
-  X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
@@ -31,6 +29,8 @@ import {
   configurePayload,
   failedProbeMapParse,
   presentPorts,
+  followImplantMaps,
+  implantProbeMaps,
   probeMapWaiting,
   reconcileRows,
   recordingReadiness,
@@ -54,7 +54,6 @@ import { getSetupDraft, setSetupDraft } from "@/lib/sessions/setupResume";
 import { useSessionFlow } from "@/lib/sessions/useSessionFlow";
 import { useSettings } from "@/lib/settings/context";
 import { useRecordingDefaults } from "@/lib/settings/useRecordingDefaults";
-import { shell } from "@/lib/shell";
 import { useSidecar } from "@/lib/ws/context";
 import { CMD } from "@/lib/ws/protocol";
 
@@ -100,7 +99,9 @@ export function SessionRecording() {
   const [draft] = useState(() => getSetupDraft<RecordingDraft>(draftKey));
 
   // The mapped boxes and the session's own folder come from the sidecar.
-  const { session, boxes, flow, error: loadError } = useSessionFlow(sessionId);
+  const { session, cohort, boxes, flow, error: loadError } = useSessionFlow(sessionId);
+  // Null until the cohort is loaded: no row's probe map is touched before then.
+  const implantMaps = useMemo(() => (cohort ? implantProbeMaps(cohort.animals) : null), [cohort]);
   const [config, setConfig] = useState<RecordingConfigDefaults | null>(draft?.config ?? null);
   const [saveRoot, setSaveRoot] = useState<string | null>(
     draft ? draft.saveRoot : defaults.saveRoot,
@@ -133,10 +134,18 @@ export function SessionRecording() {
   useEffect(() => {
     if (boxes.length === 0) return;
     setConfig((current) => current ?? { ...defaults.config });
-    setRows((current) => assignPorts(reconcileRows(boxes, defaults, current), intan.ports));
+    setRows((current) => assignPorts(reconcileRows(boxes, defaults, current, implantMaps ?? {}), intan.ports));
     // The defaults are read once, as a starting point.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [boxes]);
+
+  // Each row's probe map is its animal's implant's, the one place it is
+  // entered (`DATA.md#implants`): followed once the cohort is in, and again
+  // if the roster changes.
+  useEffect(() => {
+    if (implantMaps === null) return;
+    setRows((current) => followImplantMaps(current, implantMaps));
+  }, [implantMaps]);
 
   // Whenever RHX reports its ports, give each unassigned box the next free
   // one with its whole range (`assignPorts`).
@@ -208,17 +217,8 @@ export function SessionRecording() {
     setRows((current) => applyParsedProbeMap(current, box, path, parsed));
   }
 
-  // The choice lands on the row at once, and the parse above follows it.
-  async function chooseProbeMap(box: number) {
-    const picked = await shell.dialog.pickFile({
-      title: `Probe map for box ${box}`,
-      filters: [{ name: "Intan probe map", extensions: ["xml"] }],
-    });
-    if (picked !== null) patchRow(box, { probeMapPath: picked, probeMap: null, probeError: null });
-  }
-
   const recorded = rows.filter((r) => r.record);
-  const { checks, overlap, savesSomething, firstProblem, ready, hint } = recordingReadiness(
+  const { checks, overlap, savesSomething, unsortable, firstProblem, ready, hint } = recordingReadiness(
     rows,
     config,
     intan,
@@ -237,7 +237,7 @@ export function SessionRecording() {
         config: configurePayload(rows, config, saveRoot, sessionFolder),
       });
       // Remembered as the next recording's starting point.
-      void save(rememberedDefaults(rows, config, saveRoot, defaults.probeMaps));
+      void save(rememberedDefaults(rows, config, saveRoot));
       navigate(stepUrl.control(sessionId!));
     } catch (err) {
       setError(errorMessage(err));
@@ -413,7 +413,7 @@ export function SessionRecording() {
                   </SettingRow>
 
                   <AnimatePresence initial={false}>
-                    {(editing || !savesSomething) && (
+                    {(editing || !savesSomething || unsortable) && (
                       <motion.div
                         key="edit"
                         initial={{ opacity: 0, height: 0 }}
@@ -542,25 +542,11 @@ export function SessionRecording() {
                                   onChange={(v) => patchRow(row.box, { lastChannel: Number(v) })}
                                 />
                               </div>
-                              <div className="flex items-center gap-2">
-                                <Button variant="outline" onClick={() => void chooseProbeMap(row.box)}>
-                                  <FileUp size={13} strokeWidth={1.75} />
-                                  {row.probeMapPath ? "Change probe map" : "Add probe map"}
-                                </Button>
-                                {row.probeMapPath && (
-                                  <Button
-                                    variant="ghost"
-                                    shape="icon"
-                                    label="Remove the probe map"
-                                    title="Remove the probe map"
-                                    onClick={() =>
-                                      patchRow(row.box, { probeMapPath: null, probeMap: null, probeError: null })
-                                    }
-                                  >
-                                    <X size={13} strokeWidth={1.75} />
-                                  </Button>
-                                )}
-                              </div>
+                              <p className="text-[11px] leading-relaxed text-static">
+                                {row.probeMapPath
+                                  ? `Probe map from ${row.animalName}'s implant.`
+                                  : `No probe map. Add one to ${row.animalName}'s implant in the cohort editor.`}
+                              </p>
                               {row.probeError && (
                                 <p className="text-[11px]" style={{ color: "var(--color-status-error)" }}>
                                   {row.probeError}
@@ -579,7 +565,7 @@ export function SessionRecording() {
                                 ) : (
                                   <div className="flex h-full items-center justify-center px-4 text-center text-[11px] leading-relaxed text-static">
                                     {!probeMapWaiting(row)
-                                      ? "Optional — Mission Control lights this box's sites on it as they fire."
+                                      ? "With a probe map on the animal's implant, Mission Control lights this box's sites on it as they fire."
                                       : link === "connected"
                                         ? "Parsing the probe map…"
                                         : "Parses the probe map once the sidecar reconnects."}

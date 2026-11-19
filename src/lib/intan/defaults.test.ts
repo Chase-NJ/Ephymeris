@@ -36,6 +36,19 @@ describe("normalizeRecordingDefaults", () => {
     expect(DEFAULT_RECORDING_DEFAULTS.saveRoot).toBeNull();
   });
 
+  it("defaults to a 1 ms snapshot each side, with snapshots on whenever spikes are", () => {
+    const { config } = DEFAULT_RECORDING_DEFAULTS;
+    expect([config.snapshotPreMs, config.snapshotPostMs]).toEqual([1, 1]);
+    expect(config.saveSpikeSnapshots).toBe(true);
+  });
+
+  it("leaves a machine's saved snapshot window and switches as the operator set them", () => {
+    const stored = { ...STORED_BY_THE_STEP.config, snapshotPreMs: 2, snapshotPostMs: 2, saveSpikeSnapshots: false };
+    const out = normalizeRecordingDefaults({ ...STORED_BY_THE_STEP, config: stored }).config;
+    expect([out.snapshotPreMs, out.snapshotPostMs]).toEqual([2, 2]);
+    expect([out.saveSpikes, out.saveSpikeSnapshots]).toEqual([true, false]);
+  });
+
   it("loads what the Record step stored before probe maps followed the animal, ignoring each box's old one", () => {
     expect(normalizeRecordingDefaults(STORED_BY_THE_STEP)).toEqual({
       ...STORED_BY_THE_STEP,
@@ -43,22 +56,18 @@ describe("normalizeRecordingDefaults", () => {
         "1": { record: true, port: "A", firstChannel: 0, lastChannel: -1 },
         "3": { record: false, port: "", firstChannel: 0, lastChannel: -1 },
       },
-      probeMaps: {},
       // Absent from a file written before impedance tracking: the defaults.
       impedanceFlags: DEFAULT_RECORDING_DEFAULTS.impedanceFlags,
       activeSiteHz: DEFAULT_RECORDING_DEFAULTS.activeSiteHz,
     });
   });
 
-  it("keeps each animal's remembered probe map, and drops one that isn't a path", () => {
+  it("drops the per-animal probe maps an older build remembered: the implant holds them now", () => {
     const out = normalizeRecordingDefaults({
       ...STORED_BY_THE_STEP,
-      probeMaps: { "rat-07": "C:/maps/rat07.xml", "rat-09": "   ", "rat-11": 4, "": "C:/maps/x.xml" },
+      probeMaps: { "rat-07": "C:/maps/rat07.xml" },
     });
-    expect(out.probeMaps).toEqual({ "rat-07": "C:/maps/rat07.xml" });
-    expect(normalizeRecordingDefaults({ ...STORED_BY_THE_STEP, probeMaps: ["C:/maps/rat07.xml"] }).probeMaps).toEqual(
-      {},
-    );
+    expect(out).not.toHaveProperty("probeMaps");
   });
 
   it("heals per key, keeping every value that is still legal", () => {
@@ -80,7 +89,7 @@ describe("normalizeRecordingDefaults", () => {
     });
     expect(out.saveRoot).toBeNull();
     expect(out.config.fileFormat).toBe("OneFilePerSignalType");
-    expect(out.config.snapshotPostMs).toBe(2);
+    expect(out.config.snapshotPostMs).toBe(1); // 99 is out of range: back to the default
     expect(out.config.lowpassDownsample).toBe(1);
     expect(out.config.newFileMinutes).toBe(30);
     expect(out.config.saveSpikeSnapshots).toBe(true); // untouched neighbour survives
@@ -121,6 +130,7 @@ describe("summarizeRecordingConfig", () => {
         fileFormat: "Traditional",
         saveWideband: false,
         saveSpikes: true,
+        saveSpikeSnapshots: false,
         saveLowpass: true,
         lowpassDownsample: 8,
         threshold: { ...base.threshold, mode: "absolute", microvolts: -60 },

@@ -9,16 +9,13 @@ wiring rules, refused at save.
 from __future__ import annotations
 
 import copy
-import dataclasses
 
 import pytest
 
 from ephymeris_sidecar.hardware import service, store
 from ephymeris_sidecar.rig import allocation, board, registry
-from ephymeris_sidecar.taskdef import generate, lowering, utility
-from ephymeris_sidecar.taskdef.model import TaskDefinition
-from ephymeris_sidecar.taskdef.validate import validate
-from tests.fixtures import spine as fixture
+from ephymeris_sidecar.taskdef import utility
+from tests.fixtures import rig as fixture
 
 
 @pytest.fixture(autouse=True)
@@ -152,8 +149,8 @@ def test_rig107_a_driven_output_where_the_trial_runner_keeps_a_level_line(droppe
 def test_every_level_line_the_trial_runner_writes_is_one_rig107_knows():
     """Every `digitalWrite` in BehaviorBox.h and the bundled trial-runner sketches
     writes a pin from a BoxPins.h macro that `registry.LEVEL_LINES` lists, or one
-    derived from those arrays. BoxSpine.h and BoxUtility.h drive by the rig's
-    drive, so they are not trial runners."""
+    derived from those arrays. BoxUtility.h drives by the rig's drive, so it
+    is not a trial runner."""
     import re
     from pathlib import Path
 
@@ -213,149 +210,11 @@ def test_the_timer_table_is_the_avr_core_s():
 # Lowering: a bit per row, a parameter per value
 # --------------------------------------------------------------------------- #
 
-#: Wait for a poke, then the light at the row's duty, the tone at its pitch and
-#: the laser's train together for a second, then an ITI.
-STIM = [
-    {"phase": "wait", "on": "port"},
-    {"phase": "present", "outputs": ["light", "tone", "laser"], "ms": 1000},
-    {"phase": "iti", "ms": 2000},
-]
-DRIVES = {"light": "pwm", "tone": "tone", "laser": "train"}
-STIM_BIND = {"port": "odor_port", "light": "light", "tone": "tone", "laser": "laser"}
-
-
-def test_a_driven_slot_has_a_bit_per_row_and_each_value_is_a_parameter():
-    rows = [{"bind": STIM_BIND}, {"bind": STIM_BIND}]
-    low = lowering.lower(STIM, inputs=["port"], outputs=["light", "tone", "laser"], rows=rows, drives=DRIVES,
-                         session_cap=True)
-    # One channel per slot, but one bit per row: each row drives it at its own value.
-    assert low.outputs == (("light", "light"), ("light", "light"), ("tone", "tone"), ("tone", "tone"),
-                           ("laser", "laser"), ("laser", "laser"))
-    assert low.params == ("NT", "T1", "T2",
-                          "PD1_1", "TF1_2", "TH1_3", "TW1_3", "TL1_3",
-                          "PD2_1", "TF2_2", "TH2_3", "TW2_3", "TL2_3")
-    slot = {k: i for i, k in enumerate(low.params)}
-    assert low.drives == ((0, "pwm", slot["PD1_1"]), (1, "pwm", slot["PD2_1"]),
-                          (2, "tone", slot["TF1_2"]), (3, "tone", slot["TF2_2"]),
-                          (4, "train", slot["TH1_3"]), (5, "train", slot["TH2_3"]))
-    present = [s for s, p in zip(low.states, low.phases) if p == 1]
-    assert [s[0] for s in present] == [0b010101, 0b101010], "each row's present lights its own bits"
-    by_key = {s.key: s for s in low.slots}
-    assert (by_key["TW2_3"].role, by_key["TW2_3"].row, by_key["TW2_3"].slot) == ("train_width", 1, "laser")
-
-
-def test_a_level_slot_is_still_one_bit_per_channel_beside_driven_ones():
-    rows = [{"bind": dict(STIM_BIND, cue="trial_light")}, {"bind": dict(STIM_BIND, cue="trial_light")}]
-    spine = [dict(STIM[0], outputs=["cue"]), {"phase": "present", "outputs": ["light"], "ms": 10}, STIM[2]]
-    low = lowering.lower(spine, inputs=["port"], outputs=["cue", "light"], rows=rows, drives={"light": "pwm"})
-    assert low.outputs == (("cue", "trial_light"), ("light", "light"), ("light", "light"))
-    assert low.params[-2:] == ("PD1_2", "PD2_2"), "numbered by the slot's place among the outputs"
-
-
-def test_a_driven_slot_in_every_row_of_many_is_refused_past_32_bits():
-    rows = [{"bind": STIM_BIND} for _ in range(11)]
-    with pytest.raises(lowering.LoweringError, match="33 output bits"):
-        lowering.lower(STIM, inputs=["port"], outputs=["light", "tone", "laser"], rows=rows, drives=DRIVES)
-
-
-# --------------------------------------------------------------------------- #
-# A spine task that drives them
-# --------------------------------------------------------------------------- #
-
-
 @pytest.fixture
 def driven_rig():
     fixture.install(*fixture.issued_rig(driven=True))
     yield
     fixture.uninstall()
-
-
-def stimulus(**edits) -> TaskDefinition:
-    return TaskDefinition.from_json(fixture.stimulus(**edits))
-
-
-def spn(definition: TaskDefinition) -> list[tuple[str, str]]:
-    return [(d.code, d.location) for d in validate(definition)]
-
-
-def test_a_task_driving_all_three_is_clean_and_its_snapshot_names_each_drive(driven_rig):
-    definition = stimulus()
-    assert spn(definition) == []
-    snapshot = generate.build_profile(definition).spine
-    assert snapshot["interp"] == lowering.INTERP_VERSION == 8
-    laser = [o for o in snapshot["outputs"] if o["slot"] == "laser"]
-    assert laser == [
-        {"slot": "laser", "channel": "laser", "on": "LASER_TRAIN_ON", "off": "LASER_TRAIN_OFF",
-         "drive": "train", "params": ["TH1_4", "TW1_4", "TL1_4"]},
-        {"slot": "laser", "channel": "laser", "on": "LASER_TRAIN_ON", "off": "LASER_TRAIN_OFF",
-         "drive": "train", "params": ["TH2_4", "TW2_4", "TL2_4"]},
-    ]
-    cue = next(o for o in snapshot["outputs"] if o["slot"] == "cue")
-    assert "drive" not in cue and "params" not in cue
-    fields = {f.metadata_key: f for f in generate.build_profile(definition).config}
-    assert (fields["pwm_duty_dim_light"].default, fields["pwm_duty_dim_light"].wire_key) == (64, "PD1_2")
-    assert fields["tone_hz_bright_tone"].default == 4000
-    assert [fields[f"train_{k}_dim_laser"].default for k in ("hz", "width_ms", "ms")] == [20, 5, 300]
-    assert (fields["train_width_ms_dim_laser"].min, fields["train_width_ms_dim_laser"].max) == (1, 999)
-
-
-def test_the_folder_names_each_drive_and_links_tone_only_when_there_is_one(driven_rig):
-    header = generate.task_spine_h(stimulus())
-    assert "#error" not in header
-    assert "#define SPINE_NUM_DRIVES 6" in header and "#define SPINE_HAS_TONE 1" in header
-    assert "{5, SPINE_DRIVE_TRAIN, " in header
-    plain = generate.task_spine_h(TaskDefinition.from_json(fixture.tracer()))
-    assert "#define SPINE_NUM_DRIVES 0" in plain and "#define SPINE_HAS_TONE 0" in plain
-
-
-@pytest.mark.parametrize(
-    ("edit", "code", "where"),
-    [
-        # A train slot bound to the PWM line: the type and mode must both agree.
-        (lambda d: d["rows"][0]["bind"].update(laser="light"), "SPN102", "rows[0].bind.laser"),
-        # A level slot bound to a train channel.
-        (lambda d: d["rows"][0]["bind"].update(cue="laser"), "SPN102", "rows[0].bind.cue"),
-        (lambda d: d["rows"][0]["drive"].pop("tone"), "SPN112", "rows[0].drive.tone.hz"),
-        (lambda d: d["rows"][1]["drive"]["light"].update(duty=256), "SPN112", "rows[1].drive.light.duty"),
-        (lambda d: d["rows"][1]["drive"]["laser"].update(hz=101), "SPN112", "rows[1].drive.laser.hz"),
-        (lambda d: d["rows"][0]["drive"]["laser"].update(widthMs=50), "SPN112", "rows[0].drive.laser.widthMs"),
-        (lambda d: d["rows"][0]["drive"].update(cue={"duty": 1}), "SPN112", "rows[0].drive.cue"),
-        (lambda d: d["slots"][4].update(mode="burst"), "SPN105", "slots[4].mode"),
-        (lambda d: d["slots"][2].update(mode="train"), "SPN105", "slots[2].mode"),
-    ],
-)
-def test_each_drive_problem_is_located(driven_rig, edit, code, where):
-    raw = fixture.stimulus()
-    edit(raw)
-    assert (code, where) in spn(TaskDefinition.from_json(raw))
-
-
-@pytest.mark.parametrize(("hz", "width"), [(20, 50), (20, 60), (100, 15)])
-def test_a_train_whose_width_is_not_shorter_than_its_period_is_never_compiled(driven_rig, hz, width):
-    """It would hold the line HIGH: a steady output where a train was asked for,
-    which replay would agree with. So the folder refuses to compile."""
-    raw = fixture.stimulus()
-    raw["rows"][0]["drive"]["laser"].update(hz=hz, widthMs=width)
-    definition = TaskDefinition.from_json(raw)
-    assert ("SPN112", "rows[0].drive.laser.widthMs") in spn(definition)
-    assert "#error" in generate.task_spine_h(definition)
-    raw["rows"][0]["drive"]["laser"].update(widthMs=1000 // hz - 1)
-    assert "#error" not in generate.task_spine_h(TaskDefinition.from_json(raw))
-
-
-def test_a_reward_line_is_a_level_output(driven_rig):
-    raw = fixture.stimulus()
-    raw["spine"].insert(2, {"phase": "outcome", "line": "laser", "ms": 0})
-    assert ("SPN105", "spine[2].line") in spn(TaskDefinition.from_json(raw))
-
-
-def test_the_ram_a_drive_costs_is_counted(driven_rig):
-    from ephymeris_sidecar.taskdef import spine as spine_module
-
-    low = spine_module._resolve(stimulus()).lowered
-    without = spine_module.task_ram_bytes(dataclasses.replace(low, drives=()))
-    assert spine_module.task_ram_bytes(low) - without == \
-        spine_module.DRIVE_RUN_BYTES + spine_module.DRIVE_BYTES * 6 + spine_module.TONE_RAM_BYTES
 
 
 # --------------------------------------------------------------------------- #
@@ -375,30 +234,3 @@ def test_the_utility_drives_each_one_as_what_it_is(driven_rig):
     assert "#define BOX_UTILITY_HAS_TONE 0" in utility.utility_channels_h("BOX_Utility")
     profile = utility.utility_profile({})
     assert profile["identify"] == {"on": "ON trial_light", "off": "OFF trial_light"}, "the first cue"
-
-
-# --------------------------------------------------------------------------- #
-# The refusal an operator reads
-# --------------------------------------------------------------------------- #
-
-
-def test_a_train_refused_for_its_pair_says_both_values_and_the_rule(driven_rig):
-    """Each value was in its own range: the message names the pulse, the rate and
-    the period, never "outside the range"."""
-    from ephymeris_sidecar.tasks.start_command import ParamsReply, StartRefused, build_start_command
-
-    profile = generate.build_profile(stimulus())
-    config = {f.metadata_key: f.default for f in profile.config} | {"train_hz_dim_laser": 100,
-                                                                   "train_width_ms_dim_laser": 15}
-    command = build_start_command(profile, config)
-    width = next(f.wire_key for f in profile.config if f.metadata_key == "train_width_ms_dim_laser")
-    with pytest.raises(StartRefused) as caught:
-        command.verify(ParamsReply(command.count, command.crc32, (width,)))
-    assert str(caught.value) == ("The train on laser has a 15 ms pulse at 100 Hz; a pulse must be shorter "
-                                 "than the 10 ms between pulses, so lower the width or the frequency, and "
-                                 "start again.")
-    assert caught.value.reason == "clamped" and caught.value.detail == {"keys": [width]}
-
-    # A value truly outside its own range keeps the range message.
-    with pytest.raises(StartRefused, match="outside the range") as caught:
-        command.verify(ParamsReply(command.count, command.crc32, ("NT",)))

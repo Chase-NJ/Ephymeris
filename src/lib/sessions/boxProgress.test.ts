@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { LiveReplay, TelemetryMetric } from "@/lib/ws/protocol";
+import type { TelemetryMetric } from "@/lib/ws/protocol";
 
 import {
   PROGRESS_LIMIT,
@@ -9,7 +9,6 @@ import {
   outcomeMix,
   pacePerMinute,
   progressLines,
-  replayTally,
   telemetryTally,
   type Tally,
 } from "./boxProgress";
@@ -25,27 +24,12 @@ const tally = (offered: number, completed: number, correct: number): Tally => ({
 });
 
 describe("telemetryTally", () => {
-  it("sums a legacy run's conditions", () => {
+  it("sums a run's conditions", () => {
     expect(telemetryTally([metric("odor1", 10, 8, 6), metric("odor3", 9, 9, 4)])).toEqual(tally(19, 17, 10));
   });
 
   it("is null for a run with no live metrics", () => {
     expect(telemetryTally([])).toBeNull();
-  });
-});
-
-describe("replayTally", () => {
-  const replay = (over: Partial<LiveReplay>): LiveReplay =>
-    ({ unavailable: null, overall: { triggered: 12, counted: 10, hits: 7 }, ...over }) as LiveReplay;
-
-  it("reads a spine run's pooled figure, never the sum of its rows", () => {
-    expect(replayTally(replay({}))).toEqual(tally(12, 10, 7));
-  });
-
-  it("is null when the replay has no numbers", () => {
-    expect(replayTally(null)).toBeNull();
-    expect(replayTally(replay({ overall: null }))).toBeNull();
-    expect(replayTally(replay({ unavailable: "the live scorer is down" }))).toBeNull();
   });
 });
 

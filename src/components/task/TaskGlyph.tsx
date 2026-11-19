@@ -55,8 +55,7 @@ export function TaskGlyph({
    * are two opposed groups; a pool is one bag, evenly weighted until the
    * weights say otherwise. Weighted keeps the two groups and steps the radius
    * within each — sides, unequal shares. The arrangement says which without a
-   * legend. A spine task has no trial-table mode (null): its blocks draw its
-   * rows, which sit evenly round the ring like a pool's.
+   * legend.
    */
   const sided = task.selectionMode === "antibias" || task.selectionMode === "weighted";
   const nodes = Array.from({ length: count }, (_, i) => {

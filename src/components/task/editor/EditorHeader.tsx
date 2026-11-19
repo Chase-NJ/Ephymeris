@@ -1,12 +1,10 @@
 import { motion } from "framer-motion";
 import { ArrowLeft, CircleAlert, FolderTree, TriangleAlert } from "lucide-react";
-import type { ReactNode } from "react";
 
 import { Button } from "@/components/common/controls";
 import { TaskDetailsBody, detailsSummary } from "@/components/task/TaskDetails";
 import { TaskGlyph } from "@/components/task/TaskGlyph";
-import { isSpine } from "@/lib/taskdef/spine";
-import type { TaskDiagnostic, TaskDocument } from "@/lib/taskdef/types";
+import type { TaskDiagnostic, TaskDefinition } from "@/lib/taskdef/types";
 import type { useTask } from "@/lib/taskdef/useTask";
 
 import { Popover } from "./Popover";
@@ -18,8 +16,8 @@ export type ProblemHome =
   | { kind: "holds" }
   | { kind: "task" };
 
-/** What the editor route hands each kind of editor body: the open document's
- *  session and the header's own state, whichever body draws the header. */
+/** What the editor route hands the editor body: the open document's session
+ *  and the header's own state. */
 export interface EditorShared {
   session: ReturnType<typeof useTask>;
   /** Whether this task exists on disk. */
@@ -36,7 +34,7 @@ export interface EditorShared {
 
 /** How the Problems list groups and labels a diagnostic: its section and, when
  *  it is about one thing in a list, which. */
-export interface ProblemPlace {
+interface ProblemPlace {
   section: string;
   which: string | null;
 }
@@ -48,8 +46,8 @@ const HOME_TITLE: Record<ProblemHome["kind"], string> = {
   task: "Task",
 };
 
-/** A trial-table task's diagnostics, placed by `homeOf`. */
-export function trialTablePlace(diagnostic: TaskDiagnostic): ProblemPlace {
+/** A diagnostic, placed by `homeOf`. */
+function placeOf(diagnostic: TaskDiagnostic): ProblemPlace {
   const home = homeOf(diagnostic);
   return { section: HOME_TITLE[home.kind], which: home.kind === "row" ? `row ${home.row + 1}` : null };
 }
@@ -77,8 +75,6 @@ export function EditorHeader({
   problemsOpen,
   onProblemsOpen,
   onJump,
-  placeOf = trialTablePlace,
-  actions,
   onBack,
   onSave,
 }: {
@@ -93,10 +89,6 @@ export function EditorHeader({
   problemsOpen: boolean;
   onProblemsOpen: (open: boolean) => void;
   onJump: (diagnostic: TaskDiagnostic) => void;
-  /** Where the Problems list files each diagnostic. */
-  placeOf?: (diagnostic: TaskDiagnostic) => ProblemPlace;
-  /** A body's own header controls, before Revert and Save: the spine editor's Simulate jump. */
-  actions?: ReactNode;
   onBack: () => void;
   onSave: () => void;
 }) {
@@ -148,7 +140,7 @@ export function EditorHeader({
               </span>
             }
           >
-            <ProblemsList diagnostics={diagnostics} placeOf={placeOf} onJump={(d) => {
+            <ProblemsList diagnostics={diagnostics} onJump={(d) => {
               onProblemsOpen(false);
               onJump(d);
             }} />
@@ -170,7 +162,6 @@ export function EditorHeader({
           <TaskDetailsBody definition={definition} categories={categories} onChange={setDefinition} />
         </Popover>
 
-        {actions}
         {session.checking && <span className="text-[10px] text-static/60">checking…</span>}
 
         {session.dirty && (
@@ -208,11 +199,9 @@ export function EditorHeader({
 
 function ProblemsList({
   diagnostics,
-  placeOf,
   onJump,
 }: {
   diagnostics: TaskDiagnostic[];
-  placeOf: (diagnostic: TaskDiagnostic) => ProblemPlace;
   onJump: (diagnostic: TaskDiagnostic) => void;
 }) {
   const groups = new Map<string, TaskDiagnostic[]>();
@@ -256,12 +245,7 @@ function ProblemsList({
 }
 
 /** What the task glyph draws, from the definition on screen. */
-function glyphTask(definition: TaskDocument, problems: number) {
-  // A spine task's conditions are its rows; it has no ramp and no
-  // trial-table selection mode, so it draws as one stage with none.
-  if (isSpine(definition)) {
-    return { id: definition.id, trials: definition.rows.length, stages: 1, selectionMode: null, problems };
-  }
+function glyphTask(definition: TaskDefinition, problems: number) {
   return {
     id: definition.id,
     trials: definition.trials.length,

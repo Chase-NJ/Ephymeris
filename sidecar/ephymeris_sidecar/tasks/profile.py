@@ -25,7 +25,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Iterable
 
-from .behaviour import behaviour_of
+from ..sessions import run_document
+from ..sessions.run_document import DERIVED_KEY, SNAPSHOT_KEY  # noqa: F401 - their old home
 
 if TYPE_CHECKING:
     from ..rig.registry import Vocabulary
@@ -46,49 +47,6 @@ CONTROL_TYPES = {"button", "select", "grid"}
 #: Reserved across every profile (`TASKS.md#seed`). The host appends the run's seed itself,
 #: so a profile claiming this key would collide and silently lose one of the two.
 RESERVED_WIRE_KEYS = {"SEED"}
-
-#: The core session-file fields (`DATA.md#the-json-document`). Config is merged into the session file FLAT at the top
-#: level, so a `metadataKey` matching one of these would overwrite it rather than
-#: sit beside it — and nothing downstream would report the loss.
-CORE_METADATA_KEYS = frozenset(
-    {
-        "rat",
-        "serial_port",
-        "session_id",
-        "sketch",
-        "stop_reason",
-        "n_events",
-        "ts_data",
-        "trial_seed",
-        "host_seed",
-        # Which firmware interpreter ran the session, announced before READY
-        # (`TASKS.md#the-start-line`): a property of the build, not the tuning.
-        "interp",
-        # Which channel set the run's sketch was generated against
-        # (`DATA.md#the-json-document`): a property of the rig, not the tuning.
-        "channel_set_hash",
-        "channel_set_hash_version",
-        # The board's free RAM with its tables loaded, announced beside `interp`.
-        "free_ram",
-        # The strobe-stream grammar the board announced as `STREAM=<n>`
-        # (`TASKS.md#stream-grammar`): a property of the build, not the tuning.
-        "stream",
-        # The run's own profile snapshot, written after the task fields — a
-        # field of this name would be silently replaced by it.
-        "task_profile",
-        # `RECORDING.md#what-is-written` -- written beside the core fields when a run is
-        # inside an Intan recording.
-        "intan_recording",
-        "intan_path",
-        "intan_digital_in",
-        "intan_port",
-        "intan_channels",
-        "intan_sample_rate",
-        # A spine run's derived trial table (`DATA.md#the-derived-trial-table`), written
-        # after the data at finalization: a field of this name would be replaced by it.
-        "derived",
-    }
-)
 
 #: Python types a declared `default` may have, per the field's `type` (`TASKS.md#config-fields`).
 #: `bool` is checked before `int` everywhere below: in Python `bool` IS an `int`,
@@ -340,19 +298,21 @@ class TaskProfile:
     #: by resemblance would be a guess, and a wrong guess decodes real data
     #: with the wrong strobe map.
     legacy_names: list[str] = field(default_factory=list)
-    #: A phase-spine task's snapshot (`TASKS.md#spine-tasks`): the definition,
-    #: the state table as lowered, which channel and edge codes each bit is,
-    #: and which wire key each parameter slot is. Everything replay needs that
-    #: the run's own header does not already hold. Opaque here and passed
-    #: through verbatim; `taskdef/spine.py` writes it. None on every other
-    #: profile, whose `to_json` (and so `profile_hash`) it leaves untouched.
-    spine: dict[str, Any] | None = None
     #: The parameters the Start dialog offers, by `metadataKey`
     #: (`TASKS.md#parameters`): a generated task's choice. None on a profile
     #: that declares none (a hand-written `task.json`), which offers every
     #: field. Written by `to_json` and left out of `profile_hash`: what is
     #: shown is presentation, and exposing a field must split no history.
     exposed: list[str] | None = None
+    #: A generated task's trial types, one per row of the table the board runs
+    #: (`TASKS.md#trial-types-in-the-profile`): its slot, the operator's name,
+    #: its onset strobe by name, the side it rewards (`left`, `right`,
+    #: `no_go`), and which parameters carry its pool weight and reward. It is
+    #: what a run's odors table is built from (`DATA.md#the-odors-table`).
+    #: None on a profile that declares none. Passed through verbatim, written
+    #: by `to_json`, and left out of `profile_hash` as `exposed` is: it says
+    #: again what the task already was, and must split no history.
+    trial_types: list[dict[str, Any]] | None = None
 
     def to_json(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -370,10 +330,10 @@ class TaskProfile:
             out["telemetry"] = self.telemetry.to_json()
         if self.identify is not None:
             out["identify"] = self.identify.to_json()
-        if self.spine is not None:
-            out["spine"] = self.spine
         if self.exposed is not None:
             out["exposed"] = list(self.exposed)
+        if self.trial_types is not None:
+            out["trialTypes"] = [dict(row) for row in self.trial_types]
         return out
 
     @property
@@ -408,16 +368,13 @@ def profile_hash(profile: TaskProfile) -> str:
     are comparable. Stored hashes were re-keyed once when this changed
     (`cohorts/db.py` `_to_v13`).
 
-    **A spine task's hash covers its behaviour only** (`behaviour.py`): every
-    string meant for a person is left out, by an explicit list, and rows are
-    keyed by their stable id. Every other profile's hash covers its words too,
-    and must: its stored hashes cannot be recomputed.
+    **The hash covers a profile's words too** (its labels and help text), and
+    must: its stored hashes cannot be recomputed.
     """
     declaration = profile.to_json()
     declaration.pop("strobes", None)
     declaration.pop("exposed", None)
-    if profile.spine is not None:
-        declaration = behaviour_of(declaration)
+    declaration.pop("trialTypes", None)
     canonical = json.dumps(declaration, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
@@ -445,18 +402,8 @@ def params_hash(config: dict[str, Any] | None) -> str | None:
 # The snapshot a session file carries (`DATA.md#the-embedded-task-profile`)
 # --------------------------------------------------------------------------- #
 
-#: The key a per-animal session document carries its profile snapshot under.
-#:
-#: Written by `sessions/writer.py`, read here — one constant so the two halves
-#: of the contract cannot drift. With `DERIVED_KEY` it is one of the two nested
-#: values in an otherwise flat document, which is deliberate and is why
-#: `matwriter` has a rule for each.
-SNAPSHOT_KEY = "task_profile"
-
-#: The key a spine run's document carries its derived trial table under
-#: (`DATA.md#the-derived-trial-table`): written by `sessions/derived.py`, and
-#: dropped by `analytics/reader.py` so that Analytics never reads it.
-DERIVED_KEY = "derived"
+# `SNAPSHOT_KEY` and `DERIVED_KEY` are defined with the rest of the document's
+# layout in `sessions/run_document.py`.
 
 
 def embedded_profile(document: dict[str, Any]) -> TaskProfile | None:
@@ -475,7 +422,7 @@ def embedded_profile(document: dict[str, Any]) -> TaskProfile | None:
     damaged snapshot is still a file full of real strobes, and the ladder below
     it (`ANALYTICS.md#which-profile-decodes-a-run`) still scores it.
     """
-    raw = document.get(SNAPSHOT_KEY)
+    raw = run_document.snapshot_of(document)
     if not isinstance(raw, dict):
         return None
     try:
@@ -490,8 +437,8 @@ def recorded_config(
 ) -> dict[str, Any] | None:
     """The parameter values this run actually ran on, out of its own file.
 
-    The document already carries every one of them — `finalize` writes the
-    config flat at the top level (`DATA.md#the-json-document`) — but *which* of its keys are parameters
+    The document already carries every one of them (`DATA.md#the-json-document`),
+    and a version-1 one has them flat beside its core fields — so *which* of its keys are parameters
     is a question only the profile answers. With the snapshot beside them, a
     copied run can be given the same `params_hash` its own rig computed, which
     is what completes the comparability pair (`TASKS.md#profile-and-params-hashes`) for data this machine never
@@ -506,9 +453,9 @@ def recorded_config(
     if profile is None:
         return None
     values = {
-        field.metadata_key: document[field.metadata_key]
+        field.metadata_key: run_document.param_of(document, field.metadata_key)
         for field in profile.config
-        if field.metadata_key in document
+        if run_document.has_param(document, field.metadata_key)
     }
     return values or None
 
@@ -615,9 +562,29 @@ def parse_profile(raw: Any, vocabulary: Vocabulary | None = None) -> TaskProfile
         telemetry=_parse_telemetry(raw.get("telemetry")),
         identify=_parse_identify(raw.get("identify")),
         legacy_names=_parse_legacy_names(raw.get("legacyNames")),
-        spine=_parse_spine(raw.get("spine")),
         exposed=_parse_exposed(raw.get("exposed")),
+        trial_types=_parse_trial_types(raw.get("trialTypes")),
     )
+
+
+#: The sides a trial type can reward, in the trial header's own words
+#: (`TASKS.md#stream-grammar`).
+TRIAL_SIDES = ("left", "right", "no_go")
+
+
+def _parse_trial_types(raw: Any) -> list[dict[str, Any]] | None:
+    """`trialTypes` verbatim, None when the profile has none. Only what the
+    odors table reads is checked: each row's onset strobe name and its side."""
+    if raw is None:
+        return None
+    if not isinstance(raw, list) or any(not isinstance(row, dict) for row in raw):
+        raise TaskProfileError("trialTypes must be a list of objects")
+    for row in raw:
+        if not isinstance(row.get("onset"), str) or row.get("side") not in TRIAL_SIDES:
+            raise TaskProfileError(
+                f"each trialTypes row needs an onset strobe name and a side of {', '.join(TRIAL_SIDES)}"
+            )
+    return [dict(row) for row in raw]
 
 
 def _parse_exposed(raw: Any) -> list[str] | None:
@@ -627,15 +594,6 @@ def _parse_exposed(raw: Any) -> list[str] | None:
     if not isinstance(raw, list) or any(not isinstance(key, str) for key in raw):
         raise TaskProfileError("exposed must be a list of metadataKey strings")
     return list(dict.fromkeys(raw))
-
-
-def _parse_spine(raw: Any) -> dict[str, Any] | None:
-    """A spine snapshot, kept verbatim; only its outer shape is checked here."""
-    if raw is None:
-        return None
-    if not isinstance(raw, dict):
-        raise TaskProfileError("spine must be an object")
-    return raw
 
 
 def _parse_identify(raw: Any) -> Identify | None:
@@ -716,18 +674,13 @@ def _parse_config(raw: Any) -> list[ConfigField]:
                 f"config entry {metadata_key} has unknown type {field_type!r}"
             )
 
-        # Four ways a profile can be wrong that all fail SILENTLY downstream —
+        # Three ways a profile can be wrong that all fail SILENTLY downstream —
         # a lost value or an overwritten one, with nothing raised at the point
         # the data goes bad. Cheaper to reject the profile here.
         if wire_key in RESERVED_WIRE_KEYS:
             raise TaskProfileError(
                 f"config entry {metadata_key} claims the reserved wire key "
                 f"{wire_key!r} (TASKS.md#seed) — the app supplies it"
-            )
-        if metadata_key in CORE_METADATA_KEYS:
-            raise TaskProfileError(
-                f"config entry {metadata_key} collides with a core session-file "
-                f"field (DATA.md#the-json-document); config is merged in flat and would overwrite it"
             )
         if metadata_key in seen_metadata:
             raise TaskProfileError(f"config declares metadataKey {metadata_key!r} twice")

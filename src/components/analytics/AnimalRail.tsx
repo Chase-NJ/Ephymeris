@@ -215,7 +215,7 @@ const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "bas
 
 /**
  * Every animal's whole history — all tasks, each run at its response accuracy
- * (`responseAccuracyOf`), one figure across the cutover. The sparkline answers "which way is this going", and a
+ * (`responseAccuracyOf`). The sparkline answers "which way is this going", and a
  * history that silently skipped every session on another task would answer it
  * about a different animal than the one in the room.
  */

@@ -1,6 +1,6 @@
-"""A legacy run read into the trial table a spine run has
+"""A legacy run read into its trial table
 (`ANALYTICS.md#how-a-legacy-run-becomes-a-trial-table`), and every figure read
-off the table for both kinds of run. `test_legacy_pin.py` pins that the numbers
+off the table. `test_legacy_pin.py` pins that the numbers
 did not move; this pins what the rows say.
 """
 
@@ -9,13 +9,12 @@ from __future__ import annotations
 from typing import Any
 
 from ephymeris_sidecar.analytics import stream
-from ephymeris_sidecar.analytics.stream import table_metrics, trial_table
+from ephymeris_sidecar.analytics.stream import trial_table
 from ephymeris_sidecar.analytics.stream.legacy import decode, infer
 from ephymeris_sidecar.rig import registry
 from ephymeris_sidecar.rig.registry import Vocabulary
+from ephymeris_sidecar.sessions.run_document import SNAPSHOT_KEY
 from ephymeris_sidecar.tasks.profile import parse_profile
-from tests.test_spine_analytics import go_no_go_animal, simulated_document
-from tests.fixtures import spine as fixture
 
 SEED = Vocabulary(registry.default_vocabulary_document())
 code = SEED.code_of
@@ -50,7 +49,7 @@ TWO_ODOR = profile(metric("r1", "ODOR_1_ON", "WATER_POKE_R", "WATER_POKE_L"),
                    metric("l3", "ODOR_3_ON", "WATER_POKE_L", "WATER_POKE_R"))
 
 
-def test_the_worked_example_is_six_rows_in_the_spine_classes() -> None:
+def test_the_worked_example_is_six_rows_in_the_outcome_classes() -> None:
     table = decode.table_of(document(WORKED), TWO_ODOR)
     rows = [(t.row, t.outcome, t.correct, t.rewarded, t.presented) for t in table.trials]
     assert rows == [
@@ -134,28 +133,26 @@ def test_a_legacy_run_charts_its_trial_table() -> None:
     assert stream.trial_table_of(document(WORKED), None) is None, "nothing decodes it"
 
 
-def test_a_spine_abort_is_excluded_from_p_correct_as_a_legacy_one_is() -> None:
+def test_an_abort_is_excluded_from_p_correct_and_a_withhold_is_a_hit() -> None:
     assert trial_table.correct_of("abort_during_sampling") is None
     assert trial_table.correct_of("abort_before_stimulus") is None
-    rows = [trial_table.ReplayTrial(index=i, at_ms=i, row="go", outcome=o, correct=trial_table.correct_of(o))
-            for i, o in enumerate(["correct", "abort_during_sampling", "wrong_response"])]
-    score = table_metrics.score(rows, rows=(("go", "Go"),))
-    [go] = table_metrics.correct_metrics(score)
-    assert (go.hits, go.counted, go.triggered, go.excluded) == (1, 2, 3, 1)
-    assert {c.outcome_class for c in score.classes} >= {"abort_during_sampling"}, "still tallied as a class"
+    assert trial_table.correct_of(None) is None
+    assert trial_table.correct_of("correct") is True and trial_table.correct_of("withheld") is True
+    assert trial_table.correct_of("wrong_response") is False and trial_table.correct_of("false_alarm") is False
 
 
-def test_a_spine_run_draws_one_curve_per_row() -> None:
-    fixture.install()
-    try:
-        document_ = simulated_document(fixture.go_no_go(), go_no_go_animal)
-    finally:
-        fixture.uninstall()
-    curves = {s.id: s for s in stream.series(document_, None)}
-    summary = stream.summarize(document_, None)
-    assert set(curves) == {m.id for m in summary.metrics}, "the curves are the summary's metrics"
-    for m in summary.metrics:
-        assert len(curves[m.id].values) == m.counted and curves[m.id].values[-1] == m.p_session
-    assert stream.strategy_trail(document_, None) == [], "a spine row has no answer side"
-    wire = stream.trial_table_of(document_, None)
-    assert wire["kind"] == "replay" and wire["gaps"] == []
+def test_a_run_another_firmware_interpreter_recorded_is_never_decoded() -> None:
+    """Its code names only resemble the trial runner's, so it is reported
+    unreadable, by its header or by its snapshot, and nothing reads a trial
+    off it (`ANALYTICS.md#why-a-run-has-no-numbers`)."""
+    assert stream.summarize(document(WORKED), TWO_ODOR).status == "ok"
+    assert stream.summarize({**document(WORKED), "interp": 1}, TWO_ODOR).status == "ok"
+    by_header = {**document(WORKED), "interp": 8}
+    by_snapshot = {**document(WORKED), SNAPSHOT_KEY: {"taskName": "t", "spine": {"interp": 8}}}
+    for foreign in (by_header, by_snapshot):
+        summary = stream.summarize(foreign, TWO_ODOR)
+        assert (summary.status, summary.metrics, summary.overall) == ("unreadable", [], None)
+        assert "firmware interpreter" in summary.detail
+        assert stream.trial_table_of(foreign, TWO_ODOR) is None
+        assert stream.series(foreign, TWO_ODOR) == [] and stream.trials_of(foreign, TWO_ODOR) == []
+        assert stream.strategy_trail(foreign, TWO_ODOR) == []

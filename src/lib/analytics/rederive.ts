@@ -13,9 +13,9 @@ export function describeRederive(result: RederiveResult): string {
     return `Can't reach ${result.dataFolder} — nothing was re-derived. Reconnect the drive, or change this cohort's data folder.`;
   }
   if (result.scanned === 0) {
-    return "No spine runs in this cohort — nothing to re-derive.";
+    return "No grammar-2 runs in this cohort — nothing to re-derive.";
   }
-  const runs = (n: number) => `${n} spine run${n === 1 ? "" : "s"}`;
+  const runs = (n: number) => `${n} grammar-2 run${n === 1 ? "" : "s"}`;
   const parts = [
     result.rewritten === 0
       ? `Every trial table is current (${runs(result.scanned)})`

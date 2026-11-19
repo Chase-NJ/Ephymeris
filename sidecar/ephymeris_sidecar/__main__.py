@@ -112,8 +112,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    # A spawned live scorer in a frozen build re-enters here (`packaging/entry.py`).
-    import multiprocessing
-
-    multiprocessing.freeze_support()
     raise SystemExit(main())

@@ -1,12 +1,9 @@
 import type { RigDocument } from "@/lib/hardware/types";
 import type { TaskDiagnostic, TaskEntry } from "@/lib/ws/protocol";
 
-import type { SpineDefinition } from "./spine";
-
 export type { TaskDiagnostic, TaskEntry };
 
-/** What every task document has, whichever kind it is: what the header and the
- *  Details popover edit. */
+/** What the header and the Details popover edit. */
 export interface TaskBase {
   id: string;
   name: string;
@@ -16,9 +13,6 @@ export interface TaskBase {
   legacyNames: string[];
   notes: string;
 }
-
-/** A task as the editor holds it: a trial table, or a phase spine (`spine.ts`). */
-export type TaskDocument = TaskDefinition | SpineDefinition;
 
 /**
  * The definition document, as the editor holds it.

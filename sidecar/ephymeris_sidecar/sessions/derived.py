@@ -1,29 +1,26 @@
 """A run's derived trial table, written into its `.json` and `.mat`
-(`DATA.md#the-derived-trial-table`).
+(`DATA.md#the-trial-table`).
 
-Finalization and recovery derive it once and write what it gives into the
-document as one block, last. A spine run's is its replay
-(`analytics/stream/spine.py`'s `replayed`):
-
-    "derived": {"status": "ok", "detail": null, "interp": 6, "replay_version": 3,
-                "phases": [...], "trials": [{"index": 0, "at_ms": 0, ...}, ...]}
-
-stamped with the `INTERP` the run was replayed under and `spine.REPLAY_VERSION`.
-A diverged or unreplayable run gets the block with its status, why, and no
-trials. A stream-grammar-2 run's is its per-trial table, read off its headers
-and outcome codes (`analytics/stream/grammar2.py`'s `rows_of`):
+Finalization and recovery derive it once and `run_document.with_trial_table`
+writes what it gives into the document as one block: `trials`, its rows under
+`rows`, in a version-2 document; `derived`, its rows under `trials`, in a
+version-1 one. The block is shown here as it is derived: a stream-grammar-2
+run's per-trial table, read off its headers and outcome codes
+(`analytics/stream/grammar2.py`'s `rows_of`):
 
     "derived": {"status": "ok", "detail": null, "interp": 1, "replay_version": 3,
                 "grammar": 2, "phases": [],
                 "trials": [{"index": 0, "type_slot": 1, "side": "right", ...}, ...]}
 
-A grammar-1 or profile-less run gets none. **The app never reads it**:
+stamped with the `INTERP` the board announced and `trial_table.REPLAY_VERSION`.
+A grammar-1 or profile-less run gets none, and neither does a run another
+firmware interpreter recorded. **The app never reads it**:
 `analytics/reader.py` drops it, and Analytics decodes afresh. Re-derive
 (`rederive_cohort`) rewrites it, and nothing else, after the decoder changes.
 
-A trial row is written by walking the row dataclass's fields (`ReplayTrial`,
-or a grammar-2 run's `TrialRow`), so a column added there is written here with
-no change. Its `.mat` class comes from each field's type hint (`_kind`): a
+A trial row is written by walking the row dataclass's fields (a grammar-2
+run's `TrialRow`; `ReplayTrial` for a block with no `grammar`, as an older
+build wrote), so a column added there is written here with no change. Its `.mat` class comes from each field's type hint (`_kind`): a
 number is a `double` (null is `NaN`, never `[]`, so `[trials.latency_ms]` stays
 one value per trial), a bool a `logical`, a string `char` (null is `''`), a
 tuple of numbers a row vector, and a tuple of dataclasses an N×1 struct array.
@@ -41,15 +38,16 @@ import math
 import types
 import typing
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from ..analytics import reader
-from ..analytics.stream import grammar2, spine
+from ..analytics.stream import grammar2, odors
+from ..analytics.stream.document import ran_by_the_trial_runner
 from ..analytics.stream import trial_table as tt
 from ..analytics.stream.legacy import infer
 from ..rig import registry
 from ..tasks import profile as task_profile
-from ..tasks.profile import DERIVED_KEY
+from . import run_document
 
 log = logging.getLogger(__name__)
 
@@ -57,26 +55,24 @@ log = logging.getLogger(__name__)
 # --- the block ------------------------------------------------------------------
 
 
-def derive(document: dict[str, Any]) -> dict[str, Any] | None:
-    """The derived block for a run's document, or None for a run neither replay
-    nor the grammar-2 decoder describes: a grammar-1 run. Decodes it once.
+def derive(document: dict[str, Any], seconds: Mapping[int, float] | None = None) -> dict[str, Any] | None:
+    """The derived block for a run's document, or None for a run the grammar-2
+    decoder does not describe: a grammar-1 run, or one another firmware
+    interpreter recorded. Decodes it once.
 
     A stored block in `document` is never read: the run is decoded afresh.
+    `seconds` is a recorded run's alignment, each strobe's time on the
+    recording's clock by its index (`intan/alignment.py`): it fills a
+    grammar-2 table's `*_s` columns.
     """
-    if spine.is_spine_run(document):
-        try:
-            result = spine.replayed(document)
-        except spine.SpineDecodeError as exc:
-            interp = document.get("interp")
-            return _block("unreplayable", str(exc), interp if _is_int(interp) else None, (), ())
-        if result.divergence is not None:
-            return _block("diverged", result.divergence.detail, result.interp, result.phases, ())
-        return _block("ok", None, result.interp, result.phases, result.trials)
+    if not ran_by_the_trial_runner(document):
+        return None
     profile = _profile_for(document)
     if not grammar2.is_grammar2_run(document, profile):
         return None
-    interp = document.get("interp")
-    block = _block("ok", None, interp if _is_int(interp) else None, (), grammar2.rows_of(document, profile))
+    interp = run_document.interp_of(document)
+    block = _block("ok", None, interp if _is_int(interp) else None, (),
+                   grammar2.rows_of(document, profile, seconds))
     return {**block, "grammar": grammar2.GRAMMAR_2, "phases": [], "trials": block["trials"]}
 
 
@@ -103,15 +99,13 @@ def with_derived(document: dict[str, Any]) -> dict[str, Any]:
     returned without a block, so it can never cost a run its `.json`.
     Re-derive fills it in later.
     """
-    out = {key: value for key, value in document.items() if key != DERIVED_KEY}
+    out = run_document.without_trial_table(document)
     try:
         block = derive(out)
     except Exception:  # noqa: BLE001 - a derivation never costs the run its files
-        log.exception("couldn't derive the trial table of %s", document.get("rat"))
+        log.exception("couldn't derive the trial table of %s", run_document.animal_of(document))
         return out
-    if block is not None:
-        out[DERIVED_KEY] = block
-    return out
+    return out if block is None else run_document.with_trial_table(out, block)
 
 
 def _block(status: str, detail: str | None, interp: int | None, phases: Any, trials: Any) -> dict[str, Any]:
@@ -119,7 +113,7 @@ def _block(status: str, detail: str | None, interp: int | None, phases: Any, tri
         "status": status,
         "detail": detail,
         "interp": interp,
-        "replay_version": spine.REPLAY_VERSION,
+        "replay_version": tt.REPLAY_VERSION,
         "phases": [str(p) for p in phases],
         "trials": [_plain(t) for t in trials],
     }
@@ -127,7 +121,7 @@ def _block(status: str, detail: str | None, interp: int | None, phases: Any, tri
 
 def row_class(block: dict[str, Any]) -> type:
     """The dataclass a block's rows were written from: a grammar-2 run's
-    `TrialRow`, else the replay's `ReplayTrial`."""
+    `TrialRow`, else `ReplayTrial`."""
     return grammar2.TrialRow if block.get("grammar") == grammar2.GRAMMAR_2 else tt.ReplayTrial
 
 
@@ -196,9 +190,11 @@ def fields_of(cls: type) -> tuple[tuple[str, _Kind], ...]:
 
 def to_matlab(block: dict[str, Any]) -> dict[str, Any]:
     """The derived block as `savemat` should write it: a scalar struct whose
-    `trials` is an N×1 struct array (`struct2table(S.derived.trials)`)."""
+    rows are an N×1 struct array (`struct2table(S.derived.trials)`; a
+    version-2 block has them under `rows`, `struct2table(S.trials.rows)`)."""
     import numpy as np
 
+    rows = "rows" if "rows" in block else "trials"
     phases = block.get("phases") or []
     cells = np.empty((1, len(phases)), dtype=object)
     for i, phase in enumerate(phases):
@@ -209,13 +205,51 @@ def to_matlab(block: dict[str, Any]) -> dict[str, Any]:
         "interp": _mat(_Kind("number"), block.get("interp")),
         "replay_version": _mat(_Kind("number"), block.get("replay_version")),
         "phases": cells,
-        "trials": _mat(_Kind("records", fields_of(row_class(block))), block.get("trials") or []),
+        rows: _mat(_Kind("records", fields_of(row_class(block))), block.get(rows) or []),
     }
     if "grammar" in block:
-        # Only a grammar-2 block carries it, so a spine run's struct keeps the
-        # exact fields it always had.
+        # Only a grammar-2 block carries it.
         out["grammar"] = _mat(_Kind("number"), block.get("grammar"))
     return out
+
+
+#: The odors table's columns and their `.mat` kinds (`analytics/stream/odors.py`'s `COLUMNS`).
+_ODOR_KINDS = tuple((name, _Kind("text" if name in ("name", "side") else "number"))
+                    for name in odors.COLUMNS)
+
+
+def odors_to_matlab(rows: list[Any]) -> Any:
+    """The odors table as `savemat` should write it: an N×1 struct array
+    (0×1 when empty), a null `NaN` or `''` as in the trial table."""
+    return _mat(_Kind("records", _ODOR_KINDS), rows)
+
+
+_TARGET_KINDS = tuple(
+    (name, _Kind("number" if name.endswith("_mm") else "text"))
+    for name in ("name", "region", "hemisphere", "ap_mm", "ml_mm", "dv_mm", "depth_set_on", "channels")
+)
+_CHANNEL_KINDS = tuple(
+    (name, _Kind("text" if name in ("native", "target") else "number"))
+    for name in ("native", "device_channel", "target", "x_um", "y_um")
+)
+
+
+def implant_to_matlab(implant: Any) -> dict[str, Any]:
+    """A run's implant copy as `savemat` should write it
+    (`RECORDING.md#what-is-written`): a struct whose `targets` is an N×1
+    struct array. None is the same struct with nothing in it."""
+    held = implant if isinstance(implant, dict) else {}
+    return {
+        "device": _mat(_Kind("text"), held.get("device")),
+        "surgery_date": _mat(_Kind("text"), held.get("surgery_date")),
+        "probe_map": _mat(_Kind("text"), held.get("probe_map")),
+        "targets": _mat(_Kind("records", _TARGET_KINDS), held.get("targets") or []),
+    }
+
+
+def channels_to_matlab(rows: list[Any]) -> Any:
+    """A run's channels table: an N×1 struct array, a null `NaN` or `''`."""
+    return _mat(_Kind("records", _CHANNEL_KINDS), rows)
 
 
 def _bmp(text: str) -> str:
@@ -262,15 +296,17 @@ def _mat(kind: _Kind, value: Any) -> Any:
 def rederive_file(json_path: Path) -> dict[str, Any] | None:
     """Re-derive one run's block (`DATA.md#re-derive`), as a `RederivedRun`
     entry plus `written`, the files it wrote; or None for a file that is not
-    a spine run (or does not parse). The `.tsv` is never opened.
+    derived (or does not parse). The `.tsv` is never opened.
 
-    - A block this build may not replace is `skipped`: one a newer replay
-      derived, or a replayed (`ok`) one this build cannot replay.
+    - A document from a newer build (`run_document.unreadable_reason`) is
+      `skipped` whole.
+    - A block this build may not replace is `skipped`: one a newer build
+      derived.
     - A block that differs from what this build derives is written into the
       `.json`, every other key as read. A `.json` that fails changes nothing.
     - Then the `.mat`, from the same document, whenever the `.json` changed or
       the `.mat`'s own derived block is not what this build would write (judged
-      by content; one a newer replay wrote is `skipped`). One that fails never
+      by content; one a newer build wrote is `skipped`). One that fails never
       holds the `.json` back: it is reported as `matError`, and the next
       Re-derive finds it stale and writes it. One no build can write (an
       animal name outside the BMP) is `skipped` once the `.json` is current.
@@ -287,24 +323,29 @@ def rederive_file(json_path: Path) -> dict[str, Any] | None:
         return None
     entry: dict[str, Any] = {"jsonPath": str(json_path), "status": "failed", "reason": None,
                              "matError": None, "written": []}
-    rest = {key: value for key, value in document.items() if key != DERIVED_KEY}
+    refused = run_document.unreadable_reason(document)
+    if refused is not None:
+        entry.update(status="skipped", reason=f"{json_path.name} {refused}")
+        return entry
+    rest = run_document.without_trial_table(document)
     try:
         block = derive(rest)
     except Exception as exc:  # noqa: BLE001 - one run's failure is that run's entry
         log.exception("couldn't re-derive %s", json_path)
-        entry["reason"] = f"couldn't replay it: {exc!r}"
+        entry["reason"] = f"couldn't decode it: {exc!r}"
         return entry
     if block is None:
         return None  # a grammar-1 run: nothing to derive
-    stored = document.get(DERIVED_KEY)
-    held = _kept(stored, block)
+    stored = run_document.trial_table_of(document)
+    block = with_stored_seconds(block, stored)
+    held = kept(stored, block)
     if held is not None:
         entry.update(status="skipped", reason=held)
         return entry
 
     mat_path = reader.sibling_mat(reader.sibling_tsv(json_path))
     if stored != block:
-        document = {**rest, DERIVED_KEY: block}
+        document = run_document.with_trial_table(rest, block)
         try:
             writer.write_atomic(json_path, json.dumps(document, indent=2))
         except OSError as exc:
@@ -313,7 +354,8 @@ def rederive_file(json_path: Path) -> dict[str, Any] | None:
         entry["written"].append(str(json_path))
         entry["status"] = "rewritten"
     else:
-        held = _mat_kept(mat_path, block)
+        held = _mat_kept(mat_path, run_document.trial_table_key(document),
+                         run_document.stored_trial_table(document, block))
         if held == "current":
             entry["status"] = "current"
             return entry
@@ -342,7 +384,23 @@ def rederive_file(json_path: Path) -> dict[str, Any] | None:
     return entry
 
 
-def _kept(stored: Any, block: dict[str, Any]) -> str | None:
+def with_stored_seconds(block: dict[str, Any], stored: Any) -> dict[str, Any]:
+    """`block` with each row's recording-clock times (`*_s`) as the stored
+    block has them. Re-derive decodes the strobes, which know nothing of the
+    recording, so without this it would wipe an alignment the session-end pass
+    wrote (`RECORDING.md#alignment-at-session-end`). Row for row, and only
+    where the two tables have the same trials; otherwise the times are left
+    empty, which reads as "not aligned"."""
+    rows, old = block.get("trials"), stored.get("trials") if isinstance(stored, dict) else None
+    if not isinstance(rows, list) or not isinstance(old, list) or len(rows) != len(old):
+        return block
+    if any(not isinstance(b, dict) or a.get("index") != b.get("index") for a, b in zip(rows, old)):
+        return block
+    carried = [{**a, **{k: b[k] for k in a if k.endswith("_s") and k in b}} for a, b in zip(rows, old)]
+    return {**block, "trials": carried}
+
+
+def kept(stored: Any, block: dict[str, Any]) -> str | None:
     """Why a stored block must not be replaced by `block`, or None.
 
     Two lab machines on different builds can share one archive, so an older
@@ -351,38 +409,37 @@ def _kept(stored: Any, block: dict[str, Any]) -> str | None:
     if not isinstance(stored, dict):
         return None
     version = stored.get("replay_version")
-    if _is_int(version) and version > spine.REPLAY_VERSION:
-        return (f"its table was derived by a newer replay (version {version}; this "
-                f"build's is {spine.REPLAY_VERSION})")
-    if stored.get("status") == "ok" and block["status"] == "unreplayable":
-        return f"this build cannot replay it ({block['detail']}), and a build that could derived its table"
+    if _is_int(version) and version > tt.REPLAY_VERSION:
+        return (f"its table was derived by a newer build (table version {version}; this "
+                f"build's is {tt.REPLAY_VERSION})")
     return None
 
 
-def _mat_kept(mat_path: Path, block: dict[str, Any]) -> str | None:
+def _mat_kept(mat_path: Path, key: str, block: dict[str, Any]) -> str | None:
     """Whether a run whose `.json` is current may keep its `.mat`: "current"
     when the `.mat`'s derived block is what this build would write, a reason
-    when a newer replay wrote it, or None when it must be written.
+    when a newer build wrote it, or None when it must be written. `key` and
+    `block` are the block's name and shape in this run's files.
 
     Judged by content, as the `.json` is, never by mtime: a copy made without
-    keeping mtimes can give an old table a new one. Only `derived` is read.
+    keeping mtimes can give an old table a new one. Only the block is read.
     """
     import io
 
     try:
         import scipy.io
 
-        on_disk = scipy.io.loadmat(str(mat_path), variable_names=[DERIVED_KEY]).get(DERIVED_KEY)
+        on_disk = scipy.io.loadmat(str(mat_path), variable_names=[key]).get(key)
         version = float(on_disk[0, 0]["replay_version"].ravel()[0])
     except Exception:  # noqa: BLE001 - missing, unreadable, or no block: write it
         return None
-    if version > spine.REPLAY_VERSION:
-        return (f"its .mat's table was derived by a newer replay (version {version:g}; this "
-                f"build's is {spine.REPLAY_VERSION})")
+    if version > tt.REPLAY_VERSION:
+        return (f"its .mat's table was derived by a newer build (table version {version:g}; this "
+                f"build's is {tt.REPLAY_VERSION})")
     buffer = io.BytesIO()
-    scipy.io.savemat(buffer, {DERIVED_KEY: to_matlab(block)})
+    scipy.io.savemat(buffer, {key: to_matlab(block)})
     buffer.seek(0)
-    wanted = scipy.io.loadmat(buffer)[DERIVED_KEY]
+    wanted = scipy.io.loadmat(buffer)[key]
     return "current" if _same(on_disk, wanted) else None
 
 
@@ -405,7 +462,7 @@ def _same(a: Any, b: Any) -> bool:
 
 
 def rederive_cohort(data_folder: str) -> dict[str, Any]:
-    """Re-derive every spine run under one cohort's data folder, as the
+    """Re-derive every grammar-2 run under one cohort's data folder, as the
     `RederiveResult` wire shape minus `cohortId`, plus `written`: every file
     it wrote, for the backup queue. Current runs are counted, not listed."""
     folder_exists = Path(data_folder).expanduser().is_dir()

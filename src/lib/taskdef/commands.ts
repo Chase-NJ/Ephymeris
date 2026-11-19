@@ -1,8 +1,7 @@
 import { CMD } from "@/lib/ws/protocol";
 import type { SidecarPort } from "@/lib/ws/port";
 
-import type { SimulateArgs } from "./simulate";
-import type { TaskDocument } from "./types";
+import type { TaskDefinition } from "./types";
 
 /**
  * The `tasks.*` calls. The strobe vocabulary has its own (`lib/strobes`).
@@ -26,25 +25,12 @@ export async function getTask(client: SidecarPort, taskId: string) {
   return client.call(CMD.TASKS_GET, { taskId });
 }
 
-export async function previewTask(client: SidecarPort, definition: TaskDocument) {
+export async function previewTask(client: SidecarPort, definition: TaskDefinition) {
   return client.call(CMD.TASKS_PREVIEW, { definition });
 }
 
-export async function saveTask(client: SidecarPort, definition: TaskDocument) {
+export async function saveTask(client: SidecarPort, definition: TaskDefinition) {
   return client.call(CMD.TASKS_SAVE, { definition });
-}
-
-/** One simulated session of an unsaved spine task against a simulated animal
- *  (`TASKS.md#simulating-a-spine-task`). Compiles, flashes and writes nothing. */
-export async function simulateTask(client: SidecarPort, definition: TaskDocument, args: SimulateArgs) {
-  return client.call(CMD.TASKS_SIMULATE, { definition, ...args });
-}
-
-/** The seed spines a new task starts from, and the palette's phases, outcome
- *  classes, selections, timed phases and weighted selections — the model's own
- *  lists (`TASKS.md#the-spine-editor`). */
-export async function spinePalette(client: SidecarPort) {
-  return client.call(CMD.TASKS_SPINE_PALETTE, {});
 }
 
 export async function deleteTask(client: SidecarPort, taskId: string) {

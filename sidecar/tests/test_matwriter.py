@@ -91,3 +91,77 @@ def test_a_character_outside_the_bmp_refuses_rather_than_mis_sizing(tmp_path: Pa
 def test_a_name_savemat_would_drop_refuses_rather_than_vanishing(tmp_path: Path) -> None:
     with pytest.raises(Warning):
         _write(tmp_path, {"_private": 1})
+
+
+# --- a version-2 document (`DATA.md#the-mat-mirror`) ---------------------------
+
+V2 = {
+    "schema_version": 2,
+    "run": {"animal": "remy1", "cohort": "The Remy's", "box": 2, "session_id": "8O-Bdisc_09",
+            "date": "2026-10-30", "run_of_day": 1, "started_at": "2026-10-30T11:29:26-05:00",
+            "serial_port": "COM5", "stop_reason": "BF_END_SESSION received", "n_events": 2},
+    "task": {"sketch": "GRGL 8-Odor EZ", "interp": 1, "trial_seed": 1987552345},
+    "params": {"num_trials": 1000, "lazy_escalation": True, "reward_scale": 0.5, "mode": "easy"},
+    "recording": {"path": "D:/rhx", "name": "0423_7", "port": "A", "channels": "A-016:A-031",
+                  "digital_in": 1, "sample_rate": 30000},
+    "ts_data": [[221, 0], [222, 1001]],
+    "task_profile": {"taskName": "GRGL 8-Odor EZ"},
+}
+
+
+def _field(struct, name):  # noqa: ANN001, ANN202
+    return struct[name][0, 0]
+
+
+def test_a_version_2_document_is_a_struct_per_block(tmp_path: Path) -> None:
+    path = _write(tmp_path, V2)
+    classes = _classes(path)
+    assert classes.pop("task_profile")[1] == "char"
+    assert classes == {
+        "schema_version": ((1, 1), "double"),
+        "run": ((1, 1), "struct"),
+        "task": ((1, 1), "struct"),
+        "params": ((1, 1), "struct"),
+        "recording": ((1, 1), "struct"),
+        "ts_data": ((2, 2), "double"),
+    }
+    loaded = scipy.io.loadmat(str(path))
+    assert json.loads(loaded["task_profile"][0]) == V2["task_profile"]
+    assert loaded["ts_data"].tolist() == V2["ts_data"]
+
+
+def test_a_version_2_blocks_fields_follow_the_same_class_rules(tmp_path: Path) -> None:
+    loaded = scipy.io.loadmat(str(_write(tmp_path, V2)), mat_dtype=True)  # a logical reads as bool
+    run, params, recording = loaded["run"], loaded["params"], loaded["recording"]
+    assert list(run.dtype.names) == list(V2["run"]), "S.run's fields, in the document's order"
+    # S.run.box and S.run.run_of_day are doubles; names and dates are chars.
+    assert _field(run, "box").dtype == float and _field(run, "box")[0, 0] == 2.0
+    assert _field(run, "run_of_day").dtype == float and _field(run, "n_events")[0, 0] == 2.0
+    assert _field(run, "animal")[0] == "remy1" and _field(run, "date")[0] == "2026-10-30"
+    assert _field(run, "started_at")[0] == "2026-10-30T11:29:26-05:00"
+    # S.params.<key>: a number is a double, a bool a logical, a string a char.
+    assert _field(params, "num_trials").dtype == float and _field(params, "num_trials")[0, 0] == 1000.0
+    assert _field(params, "lazy_escalation").dtype == bool and _field(params, "lazy_escalation")[0, 0]
+    assert _field(params, "reward_scale")[0, 0] == 0.5 and _field(params, "mode")[0] == "easy"
+    assert _field(recording, "sample_rate")[0, 0] == 30000.0 and _field(recording, "name")[0] == "0423_7"
+
+
+def test_a_fact_the_run_does_not_have_is_nan_or_empty_text_never_missing(tmp_path: Path) -> None:
+    """A recovered run from before version 2 has no box, cohort or start time.
+    Its struct keeps every field, in the class the field always has."""
+    unknown = {**V2["run"], "cohort": None, "box": None, "date": None, "run_of_day": None,
+               "started_at": None}
+    run = scipy.io.loadmat(str(_write(tmp_path, {**V2, "run": unknown})))["run"]
+    assert list(run.dtype.names) == list(V2["run"])
+    for name in ("box", "run_of_day"):
+        assert _field(run, name).dtype == float and str(_field(run, name)[0, 0]) == "nan", name
+    for name in ("cohort", "date", "started_at"):
+        assert _field(run, name).size == 0 and _field(run, name).dtype.kind == "U", name
+
+
+def test_a_long_parameter_name_is_a_field_like_any_other(tmp_path: Path) -> None:
+    """`savemat` caps a struct's field names at 31 characters unless told
+    otherwise; a generated task's parameter keys run longer."""
+    name = "block_b1_criterion_window_of_correct_trials"
+    params = scipy.io.loadmat(str(_write(tmp_path, {**V2, "params": {name: 8}})))["params"]
+    assert _field(params, name)[0, 0] == 8.0

@@ -126,7 +126,7 @@
               "level",
               "train"
             ],
-            "description": "digital_out only: level (the default, as when absent) or train, a pulse train a spine task's row sets the rate, width and length of (TASKS.md#driven-outputs). A train is a cue channel only (RIG107)."
+            "description": "digital_out only: level (the default, as when absent) or train, a pulse train (TASKS.md#driven-outputs). A train is a cue channel only (RIG107)."
           },
           "role": {
             "enum": [

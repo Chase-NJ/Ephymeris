@@ -20,7 +20,7 @@ function result(overrides: Partial<RederiveResult> = {}): RederiveResult {
 describe("describeRederive", () => {
   it("says every table is current when nothing was rewritten", () => {
     expect(describeRederive(result())).toBe(
-      "Every trial table is current (3 spine runs).",
+      "Every trial table is current (3 grammar-2 runs).",
     );
   });
 
@@ -37,7 +37,7 @@ describe("describeRederive", () => {
       }),
     );
     expect(note).toBe(
-      "Rewrote the trial table of 1 of 3 spine runs; /b.json: disk full.",
+      "Rewrote the trial table of 1 of 3 grammar-2 runs; /b.json: disk full.",
     );
   });
 
@@ -49,18 +49,18 @@ describe("describeRederive", () => {
         skipped: 1,
         entries: [
           { jsonPath: "/a.json", status: "rewritten", reason: null, matError: "couldn't write a.mat: disk full" },
-          { jsonPath: "/c.json", status: "skipped", reason: "a newer replay derived it", matError: null },
+          { jsonPath: "/c.json", status: "skipped", reason: "a newer build derived it", matError: null },
         ],
       }),
     );
     expect(note).toBe(
-      "Rewrote the trial table of 1 of 3 spine runs; left 1 spine run alone; /a.json: couldn't write a.mat: disk full; /c.json: a newer replay derived it.",
+      "Rewrote the trial table of 1 of 3 grammar-2 runs; left 1 grammar-2 run alone; /a.json: couldn't write a.mat: disk full; /c.json: a newer build derived it.",
     );
   });
 
   it("says when there is nothing to re-derive", () => {
     expect(describeRederive(result({ scanned: 0, current: 0 }))).toBe(
-      "No spine runs in this cohort — nothing to re-derive.",
+      "No grammar-2 runs in this cohort — nothing to re-derive.",
     );
   });
 

@@ -17,7 +17,7 @@ import pytest
 
 from ephymeris_sidecar.analytics import reader
 from ephymeris_sidecar.protocol import validate_command_result
-from ephymeris_sidecar.sessions import recovery
+from ephymeris_sidecar.sessions import recovery, run_document
 from ephymeris_sidecar.sessions.paths import resolve_animal_files
 from ephymeris_sidecar.sessions.writer import AnimalWriter
 
@@ -64,13 +64,13 @@ def crash_a_run(session_folder: Path, animal: str = "remy1") -> Path:
 
 
 def finalized_document() -> dict:
-    """What `finalize` would have produced from the same strobes — the target."""
-    doc = {**CORE, **CONFIG}
-    doc["task_profile"] = PROFILE
-    doc["stop_reason"] = recovery.RECOVERED_STOP_REASON
-    doc["n_events"] = len(STROBES)
-    doc["ts_data"] = [[code, ts] for code, ts in STROBES]
-    return doc
+    """What `finalize` would have produced from the same strobes — the target.
+    The run facts this writer was never told are null, as a runner told none
+    writes them."""
+    fields = {**{name: None for name in run_document.RUN_FACTS}, **CORE,
+              "stop_reason": recovery.RECOVERED_STOP_REASON, "n_events": len(STROBES)}
+    document = run_document.build(fields, CONFIG, PROFILE, [[code, ts] for code, ts in STROBES])
+    return run_document.with_odors(document, [])  # this profile names no odor's side
 
 
 def test_recovery_rebuilds_exactly_what_finalize_would_have(tmp_path: Path) -> None:
@@ -102,7 +102,7 @@ def test_a_footer_carrying_tsv_keeps_its_recorded_stop_reason(tmp_path: Path) ->
     assert entry["status"] == "recovered"
     assert entry["stopReason"] == "BF_END_SESSION received"
     document = json.loads(Path(entry["jsonPath"]).read_text(encoding="utf-8"))
-    assert document["stop_reason"] == "BF_END_SESSION received"
+    assert run_document.stop_reason_of(document) == "BF_END_SESSION received"
 
 
 def test_a_torn_final_line_costs_only_itself(tmp_path: Path) -> None:
@@ -168,7 +168,7 @@ def test_n_events_is_recomputed_never_copied(tmp_path: Path) -> None:
 
     entry = recovery.recover_file(tsv)
     document = json.loads(Path(entry["jsonPath"]).read_text(encoding="utf-8"))
-    assert document["n_events"] == len(STROBES)
+    assert run_document.n_events_of(document) == len(STROBES)
 
 
 def test_a_stray_tsv_is_refused_not_invented(tmp_path: Path) -> None:
@@ -228,8 +228,8 @@ def test_legacy_layout_recovers_into_the_legacy_folders(tmp_path: Path) -> None:
     assert Path(entry["jsonPath"]).parent.name == "behavior_json"
     assert (legacy.parent.parent / "behavior_mat").is_dir()
     document = json.loads(Path(entry["jsonPath"]).read_text(encoding="utf-8"))
-    assert document["rat"] == "remy3"
-    assert document["sketch"] == "Shape - L"  # core field: string, uncoerced
+    assert run_document.animal_of(document) == "remy3"
+    assert run_document.sketch_of(document) == "Shape - L"  # core field: string, uncoerced
 
 
 def test_recover_cohort_returns_the_wire_shape(tmp_path: Path) -> None:
@@ -304,7 +304,7 @@ def test_a_snapshot_torn_by_the_crash_is_dropped_not_kept_as_text(
     document = json.loads(reader.sibling_json(tsv).read_text(encoding="utf-8"))
     assert "task_profile" not in document
     # The data itself is untouched by any of this.
-    assert document["n_events"] == len(STROBES)
+    assert run_document.n_events_of(document) == len(STROBES)
 
 
 # --- the pre-Ephymeris dialect ---------------------------------------------

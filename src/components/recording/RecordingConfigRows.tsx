@@ -5,6 +5,7 @@ import { SettingRow } from "@/components/settings/SettingRow";
 import type { RecordingConfigDefaults } from "@/lib/intan/defaults";
 import { DEFAULT_IMPEDANCE_FLAGS, normalizeImpedanceFlags, type ImpedanceFlags } from "@/lib/intan/impedance";
 import { DEFAULT_ACTIVE_SITE_HZ, normalizeActiveSiteHz } from "@/lib/intan/yield";
+import { savesUnsortableSpikes, UNSORTABLE_REASON } from "@/lib/intan/recordingSetup";
 import { FILE_FORMATS } from "@/lib/intan/types";
 
 /**
@@ -130,7 +131,7 @@ export function SavingRows({
                 <NumberInput
                   label="Milliseconds after the spike"
                   value={value.snapshotPostMs}
-                  fallback={2}
+                  fallback={1}
                   integer
                   min={1}
                   max={6}
@@ -174,6 +175,11 @@ export function SavingRows({
       {!savesSomething && (
         <p className="px-4 py-2.5 text-[12px]" style={{ color: "var(--color-status-warning)" }}>
           Nothing would be saved. Turn on wideband, spikes, highpass or lowpass.
+        </p>
+      )}
+      {savesUnsortableSpikes(value) && (
+        <p className="px-4 py-2.5 text-[12px]" style={{ color: "var(--color-status-warning)" }}>
+          {UNSORTABLE_REASON}
         </p>
       )}
     </>

@@ -80,14 +80,15 @@ DB_FILENAME = "ephymeris.db"
 #: v15 added folder_moves (`DATA.md#data-folder`) — the journal that lets a
 #: relocate move a cohort's files and its records' paths together. A table only.
 #: v16 added session_animal_runs.interp / channel_set_hash / diverged
-#: (`DATA.md#run-records`) -- which interpreter ran a run, which channel set its
-#: sketch was generated against, and whether its replay diverged
-#: (`ANALYTICS.md#how-a-spine-run-is-scored`).
+#: (`DATA.md#run-records`) -- which interpreter ran a run and which channel set
+#: its sketch was generated against. `diverged` is no longer written.
 #: v17 removed groups (`DATA.md#cohorts-and-animals`): the `groups` table,
 #: animals.group_id and former_animals.group_name are gone, and
 #: sessions.group_runs became sessions.rounds. The first change that is not
 #: additive, so a build older than this cannot open a v17 file.
-SCHEMA_VERSION = 17
+#: v18 added implants (`DATA.md#implants`) -- a new table only, so no
+#: migration, v11's pattern.
+SCHEMA_VERSION = 18
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS cohorts (
@@ -126,6 +127,16 @@ CREATE TABLE IF NOT EXISTS former_animals (
     id_number   TEXT,
     notes       TEXT,
     removed_at  TEXT NOT NULL
+);
+
+-- An animal's implant (DATA.md#implants): its device, targets and lowerings,
+-- as the wire's JSON. Keyed by the animal's id with NO foreign key: every
+-- roster edit deletes and re-inserts the `animals` rows, so a cascade would
+-- wipe the implant on a rename. A cohort move re-keys it (`move_apply.py`).
+CREATE TABLE IF NOT EXISTS implants (
+    animal_id     TEXT PRIMARY KEY,
+    implant_json  TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
 );
 
 -- The journal of a move of animals between cohorts
@@ -234,11 +245,7 @@ CREATE TABLE IF NOT EXISTS session_animal_runs (
     -- whose board announced no interpreter.
     interp           INTEGER,
     channel_set_hash TEXT,
-    -- Written by the analytics pass that reads the file
-    -- (ANALYTICS.md#how-a-spine-run-is-scored): 1 when replay could not predict
-    -- the run's recorded outputs, 0 when it replayed and was scored, NULL when
-    -- replay has not scored it (a legacy run, an unreplayable one, or one not
-    -- read since v16).
+    -- Unused: nothing reads or writes it. Kept so the schema needs no migration.
     diverged         INTEGER
 );
 
@@ -289,7 +296,7 @@ CREATE TABLE IF NOT EXISTS run_metrics_cache (
     config_json    TEXT,
     codec_version  INTEGER NOT NULL,
     computed_at    TEXT NOT NULL,
-    status         TEXT NOT NULL,   -- 'ok' | 'no-metrics' | 'diverged' | 'unreplayable' | 'missing' | 'unreadable'
+    status         TEXT NOT NULL,   -- 'ok' | 'no-metrics' | 'missing' | 'unreadable'
     detail         TEXT,
     summary_json   TEXT NOT NULL
 );
@@ -493,6 +500,7 @@ OTHER_PATHS: dict[tuple[str, str], str] = {
     ("task_profiles", "profile_json"): "no paths",
     ("run_spike_counts", "threshold_json"): "no paths",
     ("run_spike_counts", "counts_json"): "no paths",
+    ("implants", "implant_json"): "a probe-map file's path, chosen by hand; not under a data folder",
 }
 
 
@@ -690,13 +698,12 @@ def _to_v13(conn: sqlite3.Connection) -> None:
 
 
 def _to_v16(conn: sqlite3.Connection) -> None:
-    """v15 → v16: a run record's interpreter, channel set and replay verdict
-    (`DATA.md#run-records`).
+    """v15 → v16: a run record's interpreter and channel set
+    (`DATA.md#run-records`), and a `diverged` column nothing uses now.
 
     NULL on every existing row, which is honest: `interp` and
-    `channel_set_hash` are on disk in each run's file, and `diverged` is
-    written the next time Analytics reads it. Nothing is backfilled here, so a
-    startup never reads an archive.
+    `channel_set_hash` are on disk in each run's file. Nothing is backfilled
+    here, so a startup never reads an archive.
     """
     add_column(conn, "session_animal_runs", "interp", "INTEGER")
     add_column(conn, "session_animal_runs", "channel_set_hash", "TEXT")

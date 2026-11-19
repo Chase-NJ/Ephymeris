@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 from ...tasks.profile import TaskProfile
-from . import spine
+from .document import ran_by_the_trial_runner
 from .legacy import decode
 from .stats import _round, wilson_interval
 
@@ -71,9 +71,10 @@ class TrialOutcomes:
     #: never poked at all never reaches an odor onset and is not counted here,
     #: or anywhere.
     aborted: int = 0
-    #: Spine runs only (#167): the right response, its reward drawn against, so
-    #: no fluid; a no-go row's withhold (a hit) and its false alarm (a miss).
-    #: A legacy run cannot tell these apart and leaves them 0.
+    #: A no-go condition's withhold (a hit) and its false alarm (a miss), which
+    #: only a grammar-2 run can tell apart: a grammar-1 run leaves them 0.
+    #: `unpaid`, a right response whose reward was drawn against, is filled by
+    #: no run yet.
     unpaid: int = 0
     withheld: int = 0
     false_alarm: int = 0
@@ -92,8 +93,8 @@ class TrialOutcomes:
 
     @property
     def p_response(self) -> float | None:
-        """**Response accuracy**: legacy P(hit)'s figure, on a legacy and a
-        spine run alike (`ANALYTICS.md#rewarded-and-response-accuracy`)."""
+        """**Response accuracy**: legacy P(hit)'s figure
+        (`ANALYTICS.md#rewarded-and-response-accuracy`)."""
         return self.response_hits / self.responded if self.responded else None
 
     @property
@@ -153,12 +154,9 @@ class ConditionOutcomes:
 
     metric_id: str
     label: str
-    #: None for a spine row, which no onset code opens.
     trigger_code: int | None
     outcomes: TrialOutcomes
-    #: The side its one right answer is on, `left` or `right`, for a spine row
-    #: whose snapshot says so; None otherwise (a legacy condition's side is its
-    #: metric's `answerSide`).
+    #: Never filled: a condition's side is its metric's `answerSide`.
     answer_side: str | None = None
 
     def to_json(self) -> dict[str, Any]:
@@ -316,10 +314,10 @@ def conditions_of(codes: list[int], profile: TaskProfile | None) -> list[Conditi
 
 
 def trials_of(document: dict[str, Any], profile: TaskProfile | None) -> list[TrialRecord]:
-    """A legacy run's per-trial tape. `[]` for a spine run: its trial table is its tape.
-    A grammar-2 run's tape is its trial table's outcome column, bucketed as
-    the tally buckets it."""
-    if spine.is_spine_run(document):
+    """A run's per-trial tape. A grammar-2 run's is its trial table's outcome
+    column, bucketed as the tally buckets it. `[]` for a run another firmware
+    interpreter recorded."""
+    if not ran_by_the_trial_runner(document):
         return []
     from . import grammar2  # here: grammar2 reads this module's shapes
 

@@ -19,7 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..tasks.profile import DERIVED_KEY
+from ..sessions import run_document
+from .stream import odors
 
 log = logging.getLogger(__name__)
 
@@ -242,13 +243,22 @@ def parse_run(path: str | Path, stat: StatResult) -> ReadResult:
             status="unreadable", detail=f"{target.name} is not a JSON object"
         )
 
-    # A spine run's derived trial table (`DATA.md#the-derived-trial-table`) is for
-    # the lab's own scripts. Analytics never reads it: every number is a replay,
-    # so the copy is dropped here, at the one door a file comes in by.
-    raw.pop(DERIVED_KEY, None)
+    refused = run_document.unreadable_reason(raw)
+    if refused is not None:
+        return ReadResult(status="unreadable", detail=f"{target.name} {refused}")
+
+    # A run's derived trial table (`DATA.md#the-trial-table`) is for the lab's
+    # own scripts. Analytics never reads it: every number is decoded afresh,
+    # so the copy is dropped here, at the one door a file comes in by. A flat
+    # (version-1) file is regrouped into the version-2 shape at the same door.
+    document = run_document.lifted(run_document.without_trial_table(raw))
+    if run_document.odors_of(document) is None:
+        # A file from before the odors table (`DATA.md#the-odors-table`) gets the
+        # one its own snapshot and parameters give.
+        document = odors.with_odor_table(document)
     return ReadResult(
         status="ok",
-        document=raw,
+        document=document,
         mtime_ns=stat.mtime_ns,
         size=stat.size,
     )

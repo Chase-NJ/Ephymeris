@@ -33,14 +33,15 @@ from typing import Any, Awaitable, Callable
 from ..cohorts.db import Database
 from ..rig import registry
 from ..rig.registry import Vocabulary
+from ..sessions import run_document
 from ..sessions.models import SessionAnimalRun
 from ..tasks import profile as task_profile
-from ..taskdef import lowering
 from ..tasks.profile import TaskProfile
 from . import reader, stream
 from .stream import grammar2
+from .stream.document import ran_by_the_trial_runner
 from .stream.legacy import infer
-from .stream import spine as spine_stream
+from .stream.trial_table import OUTCOME_CLASSES
 from .repository import AnalyticsRepository, CachedRun, CacheKey
 
 log = logging.getLogger(__name__)
@@ -76,16 +77,20 @@ INDEX_CHUNK = 32
 #: under such a vocabulary kept the inflated P(withhold); the canary now has
 #: a case for each, and the bump re-reads those rows.
 #:
-#: Version 11: a spine run is scored by replay (`ANALYTICS.md#how-a-spine-run-is-scored`).
-#: Every spine run cached before it is read again, as `ok`, `diverged` or `unreplayable`. This
-#: is the ADR's `CODEC_VERSION`: the cache's `codec_version` column, whose
-#: hand-set half this is. Adding an outcome class moves it by itself: the
-#: canary hashes `OUTCOME_CLASSES`.
+#: Version 11: this became the hand-set half of the cache's `codec_version`
+#: column. Adding an outcome class moves the version by itself: the canary
+#: hashes `OUTCOME_CLASSES`.
+#:
+#: Version 12: the reader hands every document on in the version-2 shape and
+#: refuses one from a newer build (`DATA.md#the-json-document`).
+#:
+#: Version 13: the reader gives a file with no odors table the one its
+#: snapshot and parameters give (`DATA.md#the-odors-table`).
 #:
 #: **"The numbers didn't move" is not an exemption.** A cached row is served
 #: verbatim, so a field added to the payload without a version change goes
 #: missing from every warm row.
-SCORE_VERSION = 11
+SCORE_VERSION = 13
 
 
 @dataclass
@@ -528,16 +533,10 @@ resolved: _Resolved, document: dict[str, Any], pass_: _Pass
     mtime/size, and of the code and vocabulary that read it, which the key's
     version covers (`score_version`).
     """
-    if spine_stream.is_spine_run(document):
-        # A spine run decodes by its own snapshot or by nothing: never today's
-        # task.json and never inference, whose onset patterns its edge code
-        # names only mimic. `summarize` scores it by replay
-        # (`ANALYTICS.md#how-a-spine-run-is-scored`).
-        embedded = task_profile.embedded_profile(document)
-        if embedded is not None:
-            return embedded, "snapshot", pass_.digest(embedded)
-        if resolved.source == "snapshot":
-            return resolved.profile, resolved.source, resolved.digest
+    if not ran_by_the_trial_runner(document):
+        # A run another firmware interpreter recorded is decoded by nothing:
+        # never today's task.json and never inference, whose onset patterns
+        # its code names only mimic. `summarize` reports it unreadable.
         return None, "unavailable", None
 
     if (
@@ -557,7 +556,7 @@ resolved: _Resolved, document: dict[str, Any], pass_: _Pass
 
     if resolved.profile is not None and resolved.profile.live_metrics:
         return _scorable(resolved.profile, document, pass_), resolved.source, resolved.digest
-    sketch = document.get("sketch")
+    sketch = run_document.sketch_of(document)
     inferred = infer.infer_profile(
         stream.codes_of(document),
         sketch_name=sketch if isinstance(sketch, str) and sketch else None,
@@ -715,10 +714,9 @@ def canary_fingerprint() -> str:
         answers: dict[str, Any] = {"canary": {"error": type(exc).__name__}}
     else:
         answers = {}
-    # The outcome-class names a replayed run's tallies are keyed by: adding a
-    # class is a new vocabulary for the scorer (ADR 0003's "adding a class
-    # bumps CODEC_VERSION"), so it moves the version by itself.
-    answers["outcome-classes"] = list(lowering.OUTCOME_CLASSES)
+    # The outcome-class names a trial table's rows carry: adding a class is a
+    # new vocabulary for the scorer, so it moves the version by itself.
+    answers["outcome-classes"] = list(OUTCOME_CLASSES)
     for name, resolved, document, vocabulary in runs:
         try:
             entry = _scored(
@@ -786,7 +784,7 @@ def _canary_runs(
 
     def document(codes: list[int], **extra: Any) -> dict[str, Any]:
         strobes = [code("START_SESSION"), *codes, code("END_SESSION")]
-        return {
+        return run_document.lifted({
             "rat": "canary",
             "sketch": "Score canary",
             "stop_reason": stream.CLEAN_STOP_REASON,
@@ -795,7 +793,7 @@ def _canary_runs(
             "n_events": len(strobes),
             "ts_data": [[c, i * 250] for i, c in enumerate(strobes)],
             **extra,
-        }
+        })
 
     declared: dict[str, Any] = {
         "taskName": "Score canary",
@@ -867,7 +865,7 @@ def _canary_runs(
     damaged_slot = Vocabulary(damaged_doc)
 
     unclean = document(session[: len(session) // 2], stop_reason="host stopped")
-    del unclean["trial_seed"]
+    unclean = run_document.without_field(unclean, "trial_seed")
 
     # A stream-grammar-2 run (`ANALYTICS.md#stream-grammar-2`): every outcome
     # once, read off the headers and outcome codes by a generated-style profile.
@@ -927,27 +925,11 @@ def _canary_runs(
             ("legacy-no-light-no-reward", held(no_light_no_reward, "snapshot"), document(session)),
             ("short", held(snapshot, "snapshot"), document(session[:12])),
             ("unclean", held(snapshot, "snapshot"), unclean),
-            # A spine run over the same onset-shaped stream, with no table:
-            # unreplayable, and never inferred.
-            ("spine-run", nothing, document(session, interp=spine_stream.rp.INTERP_VERSION, **{
-                task_profile.SNAPSHOT_KEY: {
-                    **{k: v for k, v in declared.items() if k != "liveMetrics"},
-                    "spine": {"interp": spine_stream.rp.INTERP_VERSION},
-                }})),
-            # A spine run replay scores, and the same run with one output moved.
-            ("spine-replayed", nothing, _spine_canary()),
-            ("spine-diverged", nothing, _spine_canary(diverge=True)),
-            # A two-row 2AFC window, holds and omissions: the legacy-shaped
-            # tallies a spine run gets for the cross-session panels (#167).
-            ("spine-2afc", nothing, _afc_canary()),
-            # A trace-conditioning run with licks: its phase-window rates.
-            ("spine-trace", nothing, _trace_canary()),
-            # The same with CS- on a lick sensor of its own: each row is scored
-            # only on the channel it counts.
-            ("spine-trace-split", nothing, _trace_canary(split=True)),
-            # A spine snapshot carrying every word `tasks/behaviour.py` leaves out:
-            # its scored digest is `profile_hash`'s behaviour projection, so
-            # leaving any one word in, or a row unkeyed, moves this.
+            # The same onset-shaped stream from another firmware interpreter,
+            # by its header and by its snapshot: unreadable, and never inferred.
+            ("foreign-interpreter", nothing, document(session, interp=2)),
+            ("foreign-snapshot", nothing, document(session, **{
+                task_profile.SNAPSHOT_KEY: {**declared, "spine": {"interp": 2}}})),
             # A grammar-2 run by the board's word, by its codes alone, and the
             # same stream read by a profile from before the grammar.
             ("grammar2", held(grammar2_declared, "snapshot"), document(grammar2_session, stream=2, interp=1)),
@@ -956,18 +938,6 @@ def _canary_runs(
             # ...and a grammar-2 profile over the archive's grammar-1 stream,
             # re-expressed by the first well poked (`grammar2.for_grammar_1`).
             ("grammar2-profile-on-grammar1", held(grammar2_declared, "snapshot"), document(session)),
-            ("spine-run-rows", nothing, document(session, interp=spine_stream.rp.INTERP_VERSION, **{
-                task_profile.SNAPSHOT_KEY: {
-                    **declared,
-                    "config": [declared["config"][0] | {
-                        "help": "How long the poke is held.", "unit": "ms", "group": "Holds"}],
-                    "legacyNames": ["Score canary (old)"],
-                    "liveMetrics": declared["liveMetrics"][:1],
-                    "spine": {"interp": spine_stream.rp.INTERP_VERSION, "rows": [
-                        {"id": "r1", "name": "Odor 1", "bind": {"sample": "odor_line_1"}},
-                        {"id": "r3", "name": "Odor 3", "bind": {"sample": "odor_line_3"}},
-                    ]},
-                }})),
         ]
     ] + [
         # The same single-alternate no-go snapshot, scored under a vocabulary
@@ -977,197 +947,3 @@ def _canary_runs(
         ("pre-fix-no-go-damaged-slot", held(before_the_fix, "snapshot"),
          document(session), damaged_slot),
     ]
-
-
-def _spine_canary(*, diverge: bool = False) -> dict[str, Any]:
-    """A spine run for the canary, self-contained: a table lowered here, its own
-    strobes map, and a stream the replay itself predicts from an animal's
-    pokes (trial 1 held, trial 2 aborted, trial 3 held). `diverge` moves its
-    first reward strobe one tick, which replay must report."""
-    phases = [
-        {"phase": "wait", "on": "port", "outputs": ["cue"]},
-        {"phase": "present", "outputs": ["cue", "sample"], "ms": 1000, "abortOnRelease": "port"},
-        {"phase": "delay", "ms": 500},
-        {"phase": "outcome", "line": "reward", "ms": 0},
-        {"phase": "iti", "ms": 3000},
-    ]
-    low = lowering.lower(phases, ["port"], ["cue", "sample", "reward"], session_cap=True)
-    names = ["START_SESSION", "TRIAL_START", "END_SESSION", "PORT_ENTER", "PORT_EXIT",
-             "CUE_ON", "CUE_OFF", "SAMPLE_ON", "SAMPLE_OFF", "REWARD_ON", "REWARD_OFF"]
-    names += lowering.OUTCOME_CODES  # what an INTERP 8 run also strobes
-    code = {name: i + 1 for i, name in enumerate(names)}
-    values = {"NT": 3, "RW1": 100, "RP1": 700}
-    config = [{"metadataKey": f"p_{key.lower()}", "wireKey": key, "label": key, "type": "int",
-               "default": values.get(key, 0)} for key in low.params]
-    durations = iter((1000, 500, 0, 3000))
-    recorded = {f["metadataKey"]: values.get(f["wireKey"]) or next(durations) for f in config}
-    snapshot = {
-        "taskName": "Score canary spine",
-        "kind": "behavior",
-        "config": config,
-        "liveMetrics": [],
-        "strobes": {str(c): n for n, c in code.items()},
-        "spine": {
-            "interp": spine_stream.rp.INTERP_VERSION,
-            "spine": phases,
-            "rows": [{"id": "r1", "name": "Canary row"}],
-            "blocks": [{"id": "b1", "rows": ["r1"], "trials": 3}],
-            "inputs": [{"slot": "port", "channel": "port", "rise": "PORT_ENTER", "fall": "PORT_EXIT"}],
-            "outputs": [{"slot": s, "channel": s, "on": f"{s.upper()}_ON", "off": f"{s.upper()}_OFF"}
-                        for s in ("cue", "sample", "reward")],
-            "params": list(low.params),
-            "table": {"states": [list(s) for s in low.states], "edges": [list(e) for e in low.edges]},
-            "outcomes": list(lowering.OUTCOME_CODES),
-            "structural": {"sessionStart": "START_SESSION", "trialStart": "TRIAL_START",
-                           "sessionEnd": "END_SESSION"},
-        },
-    }
-    pokes = [(200, "PORT_ENTER"), (5000, "PORT_ENTER"), (5300, "PORT_EXIT"), (8500, "PORT_ENTER")]
-    doc: dict[str, Any] = {
-        "rat": "canary", "sketch": "Score canary spine", "stop_reason": stream.CLEAN_STOP_REASON,
-        "interp": spine_stream.rp.INTERP_VERSION, "trial_seed": 11, **recorded,
-        task_profile.SNAPSHOT_KEY: snapshot,
-        "ts_data": [[code[n], t] for t, n in pokes] + [[code["END_SESSION"], 20000]],
-    }
-    return _predicted(doc, code["REWARD_ON"] if diverge else None)
-
-
-def _afc_canary() -> dict[str, Any]:
-    """A two-row 2AFC spine run for the canary, self-contained like
-    `_spine_canary`: odor 1 pays at the right well and odor 2 at the left, each
-    held, with a random animal (`stream/simulate.py`, seeded) answering, so its
-    tally holds rewarded trials, wrong wells and omissions, and each row names
-    its side. Its stream is the simulator's, so a change to the simulated
-    animal moves the canary too: one archive re-read, never a wrong number."""
-    from .stream import simulate
-
-    phases = [
-        {"phase": "wait", "on": "port", "outputs": ["cue"]},
-        {"phase": "present", "outputs": ["cue", "sample"], "ms": 500, "abortOnRelease": "port"},
-        {"phase": "response", "responses": ["left", "right"], "ms": 2000, "holdMs": 100},
-        {"phase": "outcome", "ms": 0},
-        {"phase": "iti", "ms": 1000},
-    ]
-
-    def row(row_id: str, odor: str, right: str, wrong: str) -> dict[str, Any]:
-        return {"id": row_id, "name": row_id, "bind": {"port": "port", "left": "left", "right": "right",
-                                                       "cue": "cue", "sample": odor, "reward": "reward"},
-                "map": {right: {"outcome": "correct", "line": "reward", "rewardPermille": 1000, "hold": True},
-                        wrong: {"outcome": "wrong_response"}, "timeout": {"outcome": "omission"}}}
-
-    rows = [row("odor_1", "odor_1", "right", "left"), row("odor_2", "odor_2", "left", "right")]
-    blocks = [{"id": "b1", "rows": ["odor_1", "odor_2"], "trials": 20}]
-    low = lowering.lower(phases, ["port", "left", "right"], ["cue", "sample", "reward"], rows=rows, blocks=blocks)
-    inputs = [{"slot": slot, "channel": channel, "rise": f"{channel.upper()}_ENTER",
-               "fall": f"{channel.upper()}_EXIT", **({"side": channel} if channel in ("left", "right") else {})}
-              for slot, channel in low.inputs]
-    outputs = [{"slot": slot, "channel": channel, "on": f"{channel.upper()}_ON", "off": f"{channel.upper()}_OFF"}
-               for slot, channel in low.outputs]
-    names = ["START_SESSION", "TRIAL_START", "END_SESSION", "BLOCK_START",
-             *(i[k] for i in inputs for k in ("rise", "fall")), *(o[k] for o in outputs for k in ("on", "off"))]
-    names += lowering.OUTCOME_CODES  # what an INTERP 8 run also strobes
-    code = {name: n + 1 for n, name in enumerate(names)}
-    values = {"T1": 500, "T2": 2000, "H2": 100, "T3": 0, "T4": 1000, "BN1": 20}
-    config = [{"metadataKey": f"p_{key.lower()}", "wireKey": key, "label": key, "type": "int",
-               "default": values.get(key, 100 if key.startswith("RW") else 1000)} for key in low.params]
-    snapshot = {
-        "taskName": "Score canary 2AFC", "kind": "behavior", "config": config, "liveMetrics": [],
-        "strobes": {str(c): n for n, c in code.items()},
-        "spine": {
-            "interp": spine_stream.rp.INTERP_VERSION, "spine": phases, "rows": rows, "blocks": blocks,
-            "inputs": inputs, "outputs": outputs, "params": list(low.params),
-            "table": {"states": [list(s) for s in low.states], "edges": [list(e) for e in low.edges],
-                      "phases": list(low.phases), "rows": list(low.rows),
-                      "blocks": [list(b) for b in low.blocks], "entries": [list(e) for e in low.entries],
-                      "overrides": [], "skipped": low.skipped, "hits": low.hits},
-            "outcomes": list(lowering.OUTCOME_CODES),
-            "structural": {"sessionStart": "START_SESSION", "trialStart": "TRIAL_START",
-                           "sessionEnd": "END_SESSION", "blockStart": "BLOCK_START"},
-        },
-    }
-    doc = simulate.simulate(snapshot, simulate.Animal("random"), 167).document
-    return {**doc, "rat": "canary"}
-
-
-def _trace_canary(*, split: bool = False) -> dict[str, Any]:
-    """A trace-conditioning run for the canary (`TASKS.md#pavlovian-conditioning`),
-    self-contained as `_spine_canary` is: a baseline, a CS and a trace that
-    count licks, a US paid to the CS+ row only, drawn from a bag. Its licks
-    give every row a rate in every window, and a difference against the
-    baseline (`ANALYTICS.md#phase-window-rates`). `split` puts the CS- row's
-    licks on a second sensor, `lick_b`."""
-    phases = [
-        {"phase": "delay", "ms": 1000, "watch": ["lick"]},
-        {"phase": "present", "outputs": ["cs"], "ms": 1000, "watch": ["lick"]},
-        {"phase": "delay", "ms": 500, "watch": ["lick"]},
-        {"phase": "outcome", "line": "us", "ms": 300, "watch": ["lick"]},
-        {"phase": "iti", "ms": 700},
-    ]
-    rows = [{"id": "plus", "name": "CS+", "bind": {"lick": "lick", "cs": "cs_a", "us": "us"}},
-            {"id": "minus", "name": "CS-", "bind": {"lick": "lick_b" if split else "lick", "cs": "cs_b",
-                                                     "us": "us"}}]
-    blocks = [{"id": "b1", "rows": ["plus", "minus"], "select": "bag", "weights": [2, 2], "trials": 6}]
-    low = lowering.lower(phases, ["lick"], ["cs", "us"], rows=rows, blocks=blocks)
-    names = ["START_SESSION", "BLOCK_START", "TRIAL_START", "END_SESSION", "LICK_ENTER", "LICK_EXIT",
-             "CS_A_ON", "CS_A_OFF", "CS_B_ON", "CS_B_OFF", "US_ON", "US_OFF"]
-    names += ["LICK_B_ENTER", "LICK_B_EXIT"] if split else []
-    names += lowering.OUTCOME_CODES  # what an INTERP 8 run also strobes
-    code = {name: i + 1 for i, name in enumerate(names)}
-    values = {"T0": 1000, "T1": 1000, "T2": 500, "T3": 300, "T4": 700, "RW1": 100, "RP1": 1000,
-              "RW2": 100, "RP2": 0, "BN1": 6, "W1_1": 2, "W1_2": 2}
-    config = [{"metadataKey": f"p_{key.lower()}", "wireKey": key, "label": key, "type": "int",
-               "default": values[key]} for key in low.params]
-    outputs = [{"slot": slot, "channel": channel, "on": f"{channel.upper()}_ON", "off": f"{channel.upper()}_OFF"}
-               for slot, channel in low.outputs]
-    inputs = [{"slot": slot, "channel": channel, "rise": f"{channel.upper()}_ENTER",
-               "fall": f"{channel.upper()}_EXIT"} for slot, channel in low.inputs]
-    snapshot = {
-        "taskName": "Score canary trace",
-        "kind": "behavior",
-        "config": config,
-        "liveMetrics": [],
-        "strobes": {str(c): n for n, c in code.items()},
-        "spine": {
-            "interp": spine_stream.rp.INTERP_VERSION,
-            "spine": phases,
-            "rows": rows,
-            "blocks": blocks,
-            "inputs": inputs,
-            "outputs": outputs,
-            "params": list(low.params),
-            "table": {"states": [list(s) for s in low.states], "edges": [list(e) for e in low.edges],
-                      "phases": list(low.phases), "rows": list(low.rows),
-                      "blocks": [list(b) for b in low.blocks], "entries": [list(e) for e in low.entries],
-                      "overrides": [list(o) for o in low.overrides], "skipped": low.skipped, "hits": low.hits},
-            "outcomes": list(lowering.OUTCOME_CODES),
-            "structural": {"sessionStart": "START_SESSION", "blockStart": "BLOCK_START",
-                           "trialStart": "TRIAL_START", "sessionEnd": "END_SESSION"},
-        },
-    }
-    # A lick every 250 ms through the session, and every 100 ms in its second
-    # half: more licks in some windows than others, whichever row they fall in.
-    licks = sorted({t for t in range(50, 22000, 250)} | {t for t in range(11010, 22000, 100)})
-    doc: dict[str, Any] = {
-        "rat": "canary", "sketch": "Score canary trace", "stop_reason": stream.CLEAN_STOP_REASON,
-        "interp": spine_stream.rp.INTERP_VERSION, "trial_seed": 116,
-        **{f["metadataKey"]: values[f["wireKey"]] for f in config},
-        task_profile.SNAPSHOT_KEY: snapshot,
-        "ts_data": [e for t in licks for i in inputs
-                    for e in ([code[i["rise"]], t], [code[i["fall"]], t + 20])]
-        + [[code["END_SESSION"], 30000]],
-    }
-    return _predicted(doc, None)
-
-
-def _predicted(doc: dict[str, Any], diverge: int | None) -> dict[str, Any]:
-    """`doc` with the stream replay predicts from its inputs; with `diverge`,
-    that code's first strobe moved one tick, which replay must report."""
-    # Only the inputs a state watched at their tick were strobed: replay keeps those.
-    record = spine_stream.decode(doc)
-    strobes = [list(s) for s in spine_stream.expected_stream(record)]
-    if diverge is not None:
-        first = next(s for s in strobes if s[0] == diverge)
-        first[1] += 1
-    doc["ts_data"] = strobes
-    doc["n_events"] = len(strobes)
-    return doc

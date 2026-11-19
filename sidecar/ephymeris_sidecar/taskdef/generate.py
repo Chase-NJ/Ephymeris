@@ -26,7 +26,7 @@ from typing import Any
 
 from ..rig import registry
 from ..tasks import profile as task_profile
-from . import fields, rows, spine
+from . import fields, rows
 from .model import TaskDefinition, TrialTypeDef
 
 #: `TrialType`'s no-go sentinel, mirrored from BehaviorBox.h. A no-go type has
@@ -65,11 +65,7 @@ def profile_json(definition: TaskDefinition) -> dict[str, Any]:
     NO `strobes` MAP, and the live metrics name their codes rather than number
     them: the vocabulary fills both in when the profile is loaded
     (`TASKS.md#strobes`), so nothing written here can disagree with it.
-
-    A spine task compiles to its own profile (`spine.profile_json`).
     """
-    if definition.spine is not None:
-        return spine.profile_json(definition)
     channels = registry.channels()
     vocab = registry.vocabulary()
 
@@ -92,6 +88,9 @@ def profile_json(definition: TaskDefinition) -> dict[str, Any]:
         "config": config,
         "liveMetrics": _live_metrics(definition, channels, vocab),
         "legacyNames": list(definition.legacy_names),
+        # Each row of the table the board runs, in words (`TASKS.md#trial-types-in-the-profile`):
+        # what a run's odors table is built from. Left out of `profile_hash`.
+        "trialTypes": _trial_types(definition, channels, vocab),
         # Which parameters the Start dialog offers (`TASKS.md#parameters`). Left
         # out of `profile_hash`, so exposing one splits no history; a key the
         # catalogue no longer declares is dropped here, not carried.
@@ -272,6 +271,33 @@ GO_ERROR_OUTCOMES = ("WATER_POKE_ERROR_L", "WATER_POKE_ERROR_R", "WATER_UNPOKE_E
 NO_GO_ERROR_OUTCOMES = ("WATER_POKE_ERROR_L", "WATER_POKE_ERROR_R")
 
 
+def _trial_types(definition, channels, vocab) -> list[dict[str, Any]]:
+    """One entry per row `task_trials_h` emits, in table order.
+
+    `slot` is the row's place in `kTrials[]`, the `TRIAL_TYPE_<n>` its trials
+    are headed with, so a dropped row has no entry and the rows after it move
+    up. The parameter keys are the definition's (`_pool_fields`,
+    `_reward_fields`), which do not move. The side is the well `task_trials_h`
+    compiles into the row; a no-go row answers at none and has no reward key.
+    """
+    out: list[dict[str, Any]] = []
+    for i, trial in enumerate(definition.trials):
+        row = rows.resolve_row(trial, channels, vocab)
+        if row is None:
+            continue
+        entry: dict[str, Any] = {
+            "slot": len(out) + 1,
+            "name": trial.label.strip() or trial.odor_channel.replace("_", " "),
+            "onset": trial.onset_strobe,
+            "side": "no_go" if not trial.is_go else "right" if row.port.name == "right_well" else "left",
+            "weightKey": f"pool_weight_{i + 1}",
+        }
+        if trial.is_go:
+            entry["rewardKey"] = f"reward_time_{i + 1}"
+        out.append(entry)
+    return out
+
+
 def _live_metrics(definition, channels, vocab) -> list[dict[str, Any]]:
     """One rolling P(correct | stimulus) per trial type, scored on the trial's
     outcome code.
@@ -440,7 +466,7 @@ def bundled_pins_h(sketch_name: str) -> str:
 
 
 def _box_pin_lines(channels: Any) -> list[str]:
-    """This rig's pins for `BoxPins.h`'s guarded macros: a task's and a spine's alike."""
+    """This rig's pins for `BoxPins.h`'s guarded macros."""
     lines = [
         "/*  This rig's wiring. Every one of these overrides a guarded default in",
         "    BoxPins.h; a channel the rig does not declare is simply not mentioned",
@@ -499,16 +525,11 @@ def task_pins_h(definition: TaskDefinition) -> str:
     `BoxStrobes.h` defines no codes at all, so the vocabulary block below is
     the whole of it. It may not name a type: at the point it is read,
     `TrialType` does not exist yet.
-
-    A spine task's header is the pins and the vocabulary alone: no counts and
-    no selection mode, which are the trial runner's, never the interpreter's.
     """
     channels = registry.channels()
     vocab = registry.vocabulary()
     lines: list[str] = [_banner(definition), "", "#ifndef TASK_PINS_H", "#define TASK_PINS_H", ""]
     lines += _box_pin_lines(channels) + _strobe_lines(vocab)
-    if definition.spine is not None:
-        return "\n".join(lines + ["", "#endif // TASK_PINS_H", ""])
 
     stage_keys = " ".join(f"P_STAGE({i})" for i in range(definition.stage_count))
     lines += [
@@ -593,7 +614,7 @@ def _sync_lines(channels: Any) -> list[str]:
     """
     sync = channels.unique_of_kind("sync")
     return [
-        "/*  One pulse per strobe (a spine task: per tick), into a recording controller's digital input.",
+        "/*  One pulse per strobe, into a recording controller's digital input.",
         "    -1 = this rig declares no sync channel; the pulse is compiled out. */",
         f"#define BOX_PIN_SYNC_OUT {sync.index if sync is not None else -1}",
     ]
@@ -705,11 +726,6 @@ def type_name(slot_index: int) -> str:
     return f"TRIAL_TYPE_{slot_index + 1}"
 
 
-def task_spine_h(definition: TaskDefinition) -> str:
-    """A spine task's state table and channel rows (`spine.task_spine_h`)."""
-    return spine.task_spine_h(definition, _banner(definition))
-
-
 def _banner(definition: TaskDefinition) -> str:
     channels = registry.channels()
     return _GENERATED_BANNER.format(
@@ -726,19 +742,8 @@ def generated_files(definition: TaskDefinition, sketch_source: str) -> dict[str,
     `sketch_source` is the root `GRGL.ino` read from the bundled library — copied
     rather than templated, so there is one trial runner and one session loop in
     the world and a profile cannot fork them.
-
-    A spine task's `.ino` is not copied: its runner is the library's
-    `BoxSpine.h`, and the sketch is the fixed few lines `spine.sketch_ino`
-    writes, so `sketch_source` is not read.
     """
     name = definition.name
-    if definition.spine is not None:
-        return {
-            f"{name}.ino": spine.sketch_ino(definition),
-            "TaskPins.h": task_pins_h(definition),
-            "TaskSpine.h": task_spine_h(definition),
-            "task.json": json.dumps(profile_json(definition), indent=2) + "\n",
-        }
     return {
         f"{name}.ino": sketch_source,
         "TaskPins.h": task_pins_h(definition),

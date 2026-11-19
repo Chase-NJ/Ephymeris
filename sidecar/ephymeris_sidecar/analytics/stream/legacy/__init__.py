@@ -1,10 +1,9 @@
 """The legacy decoder: the strobe scorer, frozen (`ANALYTICS.md#how-a-legacy-run-becomes-a-trial-table`).
 
-A run whose file predates the phase spine (`interp` absent or 1) records what
-the trial runner's strobe names say. This package is the only code that reads
-meaning out of those names, and it reads them into the same trial table a
-replayed spine run has (`decode.table_of`), so one analysis spans the cutover
-(ADR 0003). Nothing outside it matches a strobe name.
+A grammar-1 run records what the trial runner's strobe names say. This package
+is the only code that reads meaning out of those names, and it reads them into
+the trial table every run is scored from (`decode.table_of`). Nothing outside
+it matches a strobe name.
 
 | Module | Answers |
 |---|---|

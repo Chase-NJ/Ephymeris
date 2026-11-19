@@ -1,10 +1,11 @@
-"""A spine run's trial table, written into its `.json` and `.mat` as *derived*
-(`DATA.md#the-derived-trial-table`, ADR 0003's *Hashes and data*).
+"""A run's derived trial table, written into its `.json` and `.mat`
+(`DATA.md#the-trial-table`).
 
-Finalization and recovery write the replay's trial table into both structured
-files, stamped with the `INTERP` it was replayed under and `REPLAY_VERSION`.
-The app never reads that copy: Analytics always replays. **Re-derive**
-rewrites it, and only it, after the replay changes.
+Finalization and recovery write a stream-grammar-2 run's per-trial table into
+both structured files, stamped with the `INTERP` the board announced and
+`REPLAY_VERSION`; a grammar-1 run, and a run another firmware interpreter
+recorded, get none. The app never reads that copy: Analytics always decodes
+afresh. **Re-derive** rewrites it, and only it, after the decoder changes.
 """
 
 from __future__ import annotations
@@ -18,25 +19,26 @@ from pathlib import Path
 import pytest
 
 from ephymeris_sidecar.analytics import scoring
-from ephymeris_sidecar.analytics.stream import spine as spine_stream
-from ephymeris_sidecar.sessions import recovery
+from ephymeris_sidecar.analytics.stream import grammar2
+from ephymeris_sidecar.analytics.stream.trial_table import REPLAY_VERSION
+from ephymeris_sidecar.sessions import derived, recovery, run_document
 from ephymeris_sidecar.sessions.writer import AnimalWriter
 from ephymeris_sidecar.tasks import profile as task_profile
-from tests.fixtures import spine as fixture
-from tests.test_spine_analytics import recorded_document, rig, write_document  # noqa: F401 - rig is a fixture
+from tests import test_grammar2 as g2
+from tests.fixtures.recorded import recorded_document, rig, write_document  # noqa: F401 - rig is a fixture
 
-DERIVED = task_profile.DERIVED_KEY
+#: The trial-table block's key in a written (version-2) file, and its rows' key there.
+DERIVED = "trials"
+ROWS = "rows"
 #: The footer-less stop reason a recovered crash records.
 CRASHED = recovery.RECOVERED_STOP_REASON
 
 
 @pytest.fixture(autouse=True)
-def _issued_rig():
-    fixture.install()
+def _fresh_canary():
     scoring.forget_canary()
     yield
     scoring.forget_canary()
-    fixture.uninstall()
 
 
 def files(tmp_path: Path, stem: str = "remy1") -> tuple[Path, Path, Path]:
@@ -66,18 +68,9 @@ def run_through_writer(tmp_path: Path, document: dict, *, finalize: bool = True)
 
 
 def table_of(document: dict) -> list[dict]:
-    """What replay says the trial table is, in the file's own field names."""
-    return [_snake(t.to_json()) for t in spine_stream.replayed(document).trials]
-
-
-def _snake(value):  # noqa: ANN001, ANN202
-    """The wire's camelCase row, spelled as the file spells it: an independent
-    check that the file's columns are the trial table's, field for field."""
-    if isinstance(value, dict):
-        return {"".join("_" + c.lower() if c.isupper() else c for c in k): _snake(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_snake(v) for v in value]
-    return value
+    """What the decoder says the trial table is, in the file's own field names."""
+    rows = grammar2.rows_of(document, task_profile.embedded_profile(document))
+    return [dataclasses.asdict(row) for row in rows]
 
 
 def read_json(path: Path) -> dict:
@@ -87,23 +80,25 @@ def read_json(path: Path) -> dict:
 # --- finalization -------------------------------------------------------------
 
 
-def test_a_finalized_spine_run_carries_its_trial_table_in_the_json(tmp_path: Path) -> None:
+def test_a_finalized_run_carries_its_trial_table_in_the_json(tmp_path: Path) -> None:
     document = recorded_document()
     _, json_path, _ = run_through_writer(tmp_path, document)
     written = read_json(json_path)
 
     block = written[DERIVED]
-    assert list(written)[-1] == DERIVED, "the derived block comes after the data it is derived from"
+    assert list(written)[-3:] == [DERIVED, "ts_data", "task_profile"], "the table sits before the strobes it is read from"
     assert block["status"] == "ok" and block["detail"] is None
     assert block["interp"] == document["interp"]
-    assert block["replay_version"] == spine_stream.REPLAY_VERSION
-    assert block["phases"] == ["wait", "present", "delay", "outcome", "iti"]
-    assert block["trials"] == table_of(document)
-    assert len(block["trials"]) == 3
-    first = block["trials"][0]
-    assert (first["outcome"], first["rewarded"], first["reward_line"], first["reward_ms"]) == \
-        ("correct", True, "fluid_2", 100)
-    assert first["input_counts"] == [{"phase": 0, "channel": "odor_port", "count": 1}]
+    assert block["replay_version"] == REPLAY_VERSION
+    assert block["grammar"] == grammar2.GRAMMAR_2 and block["phases"] == []
+    assert block[ROWS] == table_of(document)
+    assert len(block[ROWS]) == len(g2.EVERY)
+    first = block[ROWS][0]
+    assert (first["outcome"], first["outcome_class"], first["correct"], first["response"], first["reward_ms"]) == \
+        ("CORRECT", "correct", True, "right", 100)
+    assert (first["type_slot"], first["odor_line"], first["odor_name"]) == (1, 1, "Go right")
+    lazy = block[ROWS][g2.EVERY.index(g2.LAZY)]
+    assert (lazy["outcome"], lazy["correct"], lazy["sampled"], lazy["repeat"]) == ("LAZY_RAT", None, False, True)
 
 
 def load_mat(path: Path) -> dict:
@@ -114,7 +109,7 @@ def load_mat(path: Path) -> dict:
 
 def mat_trials(path: Path):  # noqa: ANN201
     """`S.derived.trials` as loadmat gives it: an N×1 struct array."""
-    return load_mat(path)[DERIVED][0, 0]["trials"]
+    return load_mat(path)[DERIVED][0, 0][ROWS]
 
 
 def mat_value(cell):  # noqa: ANN001, ANN201
@@ -133,38 +128,39 @@ def mat_value(cell):  # noqa: ANN001, ANN201
     return cell
 
 
-def test_a_finalized_spine_run_carries_its_trial_table_in_the_mat(tmp_path: Path) -> None:
-    import numpy as np
-
+def test_a_finalized_run_carries_its_trial_table_in_the_mat(tmp_path: Path) -> None:
     document = recorded_document()
     _, _, mat = run_through_writer(tmp_path, document)
     expected = table_of(document)
 
     block = load_mat(mat)[DERIVED][0, 0]
     assert str(block["status"][0]) == "ok"
-    assert float(block["replay_version"][0, 0]) == spine_stream.REPLAY_VERSION
-    assert [str(c[0]) for c in block["phases"][0]] == ["wait", "present", "delay", "outcome", "iti"]
-    trials = block["trials"]
+    assert float(block["replay_version"][0, 0]) == REPLAY_VERSION
+    assert float(block["grammar"][0, 0]) == grammar2.GRAMMAR_2
+    assert block["phases"].shape == (1, 0)
+    trials = block[ROWS]
     assert trials.shape == (len(expected), 1), "one struct per trial, N×1, for struct2table"
     for i, row in enumerate(expected):
         got = trials[i, 0]
         assert mat_value(got["index"]) == row["index"]
-        assert mat_value(got["at_ms"]) == row["at_ms"]
-        assert mat_value(got["row"]) == row["row"]
-        assert mat_value(got["outcome"]) == (row["outcome"] or ""), "a null string is ''"
-        assert mat_value(got["rewarded"]) is row["rewarded"], "a bool is a logical"
-        assert mat_value(got["reward_ms"]) == row["reward_ms"], "a null number is NaN, never []"
-        assert mat_value(got["latency_ms"]) is None and got["latency_ms"].shape == (1, 1)
-        entries = got["phase_entries"]
-        assert entries.shape == (1, len(row["phase_entries"]))
-        assert [None if np.isnan(v) else v for v in entries[0]] == row["phase_entries"]
-        counts = got["input_counts"]
-        assert counts.shape == (len(row["input_counts"]), 1)
-        assert [(mat_value(c["phase"]), mat_value(c["channel"]), mat_value(c["count"]))
-                for c in counts[:, 0]] == [(c["phase"], c["channel"], c["count"]) for c in row["input_counts"]]
+        assert mat_value(got["start_ms"]) == row["start_ms"]
+        assert mat_value(got["type_slot"]) == row["type_slot"]
+        assert mat_value(got["outcome"]) == row["outcome"]
+        assert mat_value(got["odor_name"]) == (row["odor_name"] or ""), "a null string is ''"
+        assert mat_value(got["response"]) == (row["response"] or "")
+        assert mat_value(got["sampled"]) is row["sampled"], "a bool is a logical"
+        assert mat_value(got["repeat"]) is row["repeat"] and mat_value(got["correction"]) is row["correction"]
+        assert mat_value(got["correct"]) == (None if row["correct"] is None else float(row["correct"])), \
+            "a nullable flag is 1, 0 or NaN"
+        assert mat_value(got["reward_ms"]) == row["reward_ms"]
+        assert mat_value(got["reaction_ms"]) == row["reaction_ms"], "a null number is NaN, never []"
+        assert got["reaction_ms"].shape == (1, 1)
+        assert mat_value(got["odor_on_s"]) is None and got["odor_on_s"].shape == (1, 1)
+    assert {row["reaction_ms"] for row in expected} > {None}, "the run has both a reaction time and a null one"
+    assert {row["correct"] for row in expected} == {True, False, None}
 
 
-def test_a_crashed_spine_run_recovers_with_its_trial_table_through_its_last_strobe(tmp_path: Path) -> None:
+def test_a_crashed_run_recovers_with_its_trial_table_through_its_last_strobe(tmp_path: Path) -> None:
     document = recorded_document()
     cut = {**document, "ts_data": document["ts_data"][:-6]}
     tsv, json_path, mat = run_through_writer(tmp_path, cut, finalize=False)
@@ -173,12 +169,14 @@ def test_a_crashed_spine_run_recovers_with_its_trial_table_through_its_last_stro
     assert entry["status"] == "recovered" and entry["stopReason"] == CRASHED
     block = read_json(json_path)[DERIVED]
     assert block["status"] == "ok"
-    assert block["trials"] == table_of(recovery.recovered_document(recovery.parse_tsv(tsv)))
-    assert block["trials"][-1]["complete"] is False, "the trial the crash cut off"
+    assert block[ROWS] == table_of(recovery.recovered_document(recovery.parse_tsv(tsv)))
+    assert len(block[ROWS]) == len(g2.EVERY)
+    assert block[ROWS][-2]["end_ms"] is not None and block[ROWS][-1]["end_ms"] is None, "the trial the crash cut off"
+    assert block[ROWS][-1]["outcome"] is None
     trials = mat_trials(mat)
-    assert trials.shape == (len(block["trials"]), 1)
-    assert [(mat_value(t["index"]), mat_value(t["outcome"]), mat_value(t["complete"])) for t in trials[:, 0]] \
-        == [(r["index"], r["outcome"] or "", r["complete"]) for r in block["trials"]]
+    assert trials.shape == (len(block[ROWS]), 1)
+    assert [(mat_value(t["index"]), mat_value(t["outcome"]), mat_value(t["end_ms"])) for t in trials[:, 0]] \
+        == [(r["index"], r["outcome"] or "", r["end_ms"]) for r in block[ROWS]]
 
 
 def test_a_legacy_run_gets_no_derived_table(tmp_path: Path) -> None:
@@ -197,66 +195,34 @@ def test_a_legacy_run_gets_no_derived_table(tmp_path: Path) -> None:
     assert DERIVED not in read_json(tmp_path / "behavior.json" / "remy1.json")
 
 
-def diverged_document() -> dict:
-    document = recorded_document()
-    fluid_on = next(int(c) for c, n in document[task_profile.SNAPSHOT_KEY]["strobes"].items()
-                    if n == "FLUID_2_ON")
-    k = next(i for i, (c, _) in enumerate(document["ts_data"]) if c == fluid_on)
-    document["ts_data"][k][1] += 1
-    return document
-
-
-def test_a_diverged_run_is_marked_and_carries_no_trials(tmp_path: Path) -> None:
-    _, json_path, mat = run_through_writer(tmp_path, diverged_document())
-
-    block = read_json(json_path)[DERIVED]
-    assert block["status"] == "diverged" and "diverged at strobe" in block["detail"]
-    assert block["trials"] == []
-    trials = mat_trials(mat)
-    assert trials.shape == (0, 1) and "outcome" in trials.dtype.names, \
-        "an empty struct array that keeps its fields, so struct2table gives 0 rows"
-
-
-def test_an_unreplayable_run_is_marked(tmp_path: Path) -> None:
-    from ephymeris_sidecar.analytics.stream import replay
-
-    document = recorded_document()
-    document["interp"] = max(replay.INTERP_VERSIONS) + 1
-    _, json_path, _ = run_through_writer(tmp_path, document)
-    block = read_json(json_path)[DERIVED]
-    assert block["status"] == "unreplayable" and "INTERP" in block["detail"]
-    assert block["interp"] == document["interp"] and block["trials"] == []
-
-
 def test_a_derivation_that_fails_never_costs_the_json(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
-    def broken(_document):  # noqa: ANN001, ANN202
-        raise RuntimeError("a bug in replay")
+    def broken(*_args):  # noqa: ANN002, ANN202
+        raise RuntimeError("a bug in the decoder")
 
-    monkeypatch.setattr(spine_stream, "replayed", broken)
+    monkeypatch.setattr(grammar2, "rows_of", broken)
     _, json_path, mat = run_through_writer(tmp_path, recorded_document())
     written = read_json(json_path)
     assert DERIVED not in written and written["ts_data"], "the run's file, without a table"
     assert mat.is_file()
 
 
-def test_the_footer_is_durable_before_the_replay_starts(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+def test_the_footer_is_durable_before_the_derivation_starts(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
     """A kill while the trial table is derived must not cost the run its stop
     reason: the `.tsv` footer is written and fsync'd first."""
 
     class Killed(BaseException):
         """The process dying mid-derive: nothing below `finalize` catches it."""
 
-    def killed(_document):  # noqa: ANN001, ANN202
+    def killed(*_args):  # noqa: ANN002, ANN202
         raise Killed
 
-    monkeypatch.setattr(spine_stream, "replayed", killed)
+    monkeypatch.setattr(grammar2, "rows_of", killed)
     with pytest.raises(Killed):
         run_through_writer(tmp_path, recorded_document())
     tsv, json_path, _ = files(tmp_path)
     assert not json_path.exists()
 
     monkeypatch.undo()
-    fixture.install()
     entry = recovery.recover_file(tsv)
     assert entry["stopReason"] == "BF_END_SESSION received", "the footer's reason, not a crash"
     assert read_json(json_path)[DERIVED]["status"] == "ok"
@@ -267,32 +233,30 @@ def test_the_footer_is_durable_before_the_replay_starts(tmp_path: Path, monkeypa
 
 def wrong_block(block: dict) -> dict:
     """A derived block that disagrees with the run on every count."""
-    trials = [{**t, "outcome": "false_alarm", "rewarded": not t["rewarded"], "row": "nonsense"}
-              for t in block["trials"]]
-    return {**block, "trials": trials + trials, "phases": ["x"]}
+    rows = ROWS if ROWS in block else "trials"  # as a file stores it, or as `derive` returns it
+    trials = [{**t, "outcome": "WATER_POKE_ERROR_L", "outcome_class": "false_alarm",
+               "correct": not t["correct"], "odor_name": "nonsense"}
+              for t in block[rows]]
+    return {**block, rows: trials + trials, "phases": ["x"]}
 
 
-async def test_analytics_replays_and_never_reads_the_stored_table(rig) -> None:  # noqa: ANN001, F811
+async def test_analytics_decodes_afresh_and_never_reads_the_stored_table(rig) -> None:  # noqa: ANN001, F811
     document = recorded_document()
     honest = write_document(rig, document)
     before = (await rig.service.summary(rig.cohort.id))["runs"][0]
     [series_before] = (await rig.service.series([honest]))["series"]
 
     path = Path(rig.sessions.runs_for(before["sessionId"])[0].file_path)
-    tampered = {**document, DERIVED: wrong_block(spine_stream_block(document))}
+    tampered = run_document.with_trial_table(document, wrong_block(derived.derive(document)))
     path.write_text(json.dumps(tampered), encoding="utf-8")
     after = (await rig.service.summary(rig.cohort.id))["runs"][0]
     [series_after] = (await rig.service.series([honest]))["series"]
 
-    for key in ("status", "metrics", "overall", "replay", "divergence"):
+    assert before["status"] == "ok" and before["metrics"]
+    for key in ("status", "metrics", "overall"):
         assert after[key] == before[key], key
+    assert series_before["trialTable"]["trials"]
     assert series_after["trialTable"] == series_before["trialTable"]
-
-
-def spine_stream_block(document: dict) -> dict:
-    from ephymeris_sidecar.sessions import derived
-
-    return derived.derive(document)
 
 
 def test_no_analytics_module_but_the_reader_names_the_derived_key() -> None:
@@ -346,21 +310,19 @@ async def test_rederive_leaves_a_current_run_untouched(rig) -> None:  # noqa: AN
     assert not rig.changes, "nothing written, nothing queued"
 
 
-async def test_rederive_fills_in_a_spine_run_with_no_table_and_skips_a_legacy_run(rig) -> None:  # noqa: ANN001, F811
-    from tests.test_spine_analytics import tracer_stream
-
+async def test_rederive_fills_in_a_run_with_no_table_and_skips_a_grammar_1_run(rig) -> None:  # noqa: ANN001, F811
     _, json_path, _ = run_through_writer(rig.root, recorded_document())
     bare = read_json(json_path)
     del bare[DERIVED]
     json_path.write_text(json.dumps(bare, indent=2), encoding="utf-8")
     session = rig.add_session("1", "2026-10-30")
-    rig.add_run(session, "a2", tracer_stream(), snapshot=False)
+    rig.add_run(session, "a2", [g2.code(name) for name in g2.names_of([g2.GRAMMAR_1] * 3)], snapshot=False)
     legacy = Path(rig.sessions.runs_for(session)[0].file_path)
     legacy_bytes = legacy.read_bytes()
 
     result = await rig.archive.rederive(rig.cohort.id)
-    assert (result["scanned"], result["rewritten"]) == (1, 1), "the legacy run is not a spine run"
-    assert read_json(json_path)[DERIVED]["trials"] == table_of(bare)
+    assert (result["scanned"], result["rewritten"]) == (1, 1), "the grammar-1 run has no table to derive"
+    assert read_json(json_path)[DERIVED][ROWS] == table_of(bare)
     assert legacy.read_bytes() == legacy_bytes
 
 
@@ -390,7 +352,7 @@ async def test_rederive_refreshes_the_json_when_the_mat_cannot_be_written(rig, m
     [entry] = result["entries"]
     assert (result["rewritten"], result["failed"], entry["status"]) == (1, 0, "rewritten")
     assert "disk full" in entry["matError"]
-    assert read_json(json_path)[DERIVED]["replay_version"] == spine_stream.REPLAY_VERSION
+    assert read_json(json_path)[DERIVED]["replay_version"] == REPLAY_VERSION
     assert rig.changes[-1].files_to_back_up == (str(json_path),), "only what changed is queued"
 
     monkeypatch.setattr(matwriter, "savemat", real)
@@ -398,7 +360,7 @@ async def test_rederive_refreshes_the_json_when_the_mat_cannot_be_written(rig, m
     assert again["rewritten"] == 1 and again["entries"][0]["matError"] is None, \
         "the .json is current, but its .mat still holds the old table, so the .mat is written"
     assert rig.changes[-1].files_to_back_up == (str(mat),)
-    assert float(load_mat(mat)[DERIVED][0, 0]["replay_version"][0, 0]) == spine_stream.REPLAY_VERSION
+    assert float(load_mat(mat)[DERIVED][0, 0]["replay_version"][0, 0]) == REPLAY_VERSION
     assert (await rig.archive.rederive(rig.cohort.id))["current"] == 1
 
 
@@ -423,10 +385,10 @@ async def test_a_json_rederive_could_not_write_changes_nothing(rig, monkeypatch)
     assert not rig.changes
 
 
-async def test_rederive_never_overwrites_a_table_from_a_newer_replay(rig) -> None:  # noqa: ANN001, F811
+async def test_rederive_never_overwrites_a_table_from_a_newer_build(rig) -> None:  # noqa: ANN001, F811
     """Two machines on different builds can share one archive."""
     _, json_path, _ = run_through_writer(rig.root, recorded_document())
-    newer = stale_on_disk(json_path, replay_version=spine_stream.REPLAY_VERSION + 1, trials=[])
+    newer = stale_on_disk(json_path, replay_version=REPLAY_VERSION + 1, trials=[])
     result = await rig.archive.rederive(rig.cohort.id)
     assert (result["skipped"], result["rewritten"]) == (1, 0)
     [entry] = result["entries"]
@@ -434,43 +396,28 @@ async def test_rederive_never_overwrites_a_table_from_a_newer_replay(rig) -> Non
     assert read_json(json_path) == newer and not rig.changes
 
 
-async def test_rederive_never_replaces_a_replayed_table_with_unreplayable(rig, monkeypatch) -> None:  # noqa: ANN001, F811
-    """A build that does not know a run's INTERP has nothing to say about its table."""
-    from ephymeris_sidecar.analytics.stream import replay
-
-    _, json_path, _ = run_through_writer(rig.root, recorded_document())
-    before = json_path.read_bytes()
-    monkeypatch.setattr(replay, "INTERP_VERSIONS", frozenset({99}))
-    result = await rig.archive.rederive(rig.cohort.id)
-    assert (result["skipped"], result["rewritten"]) == (1, 0)
-    assert "INTERP" in result["entries"][0]["reason"]
-    assert json_path.read_bytes() == before and not rig.changes
-
-
 EMOJI = "\U0001F42D"
 
 
 def test_a_name_outside_the_bmp_is_escaped_never_costing_the_mat(tmp_path: Path) -> None:
-    """A row, channel or phase name with an emoji: escaped as JSON escapes it,
-    as the embedded profile always was, so the `.mat` is still written."""
+    """An odor or phase name with an emoji: escaped as JSON escapes it, as the
+    embedded profile always was, so the `.mat` is still written."""
     import scipy.io
 
-    from ephymeris_sidecar.sessions import derived, matwriter
+    from ephymeris_sidecar.sessions import matwriter
 
     block = derived.derive(recorded_document())
-    block["phases"][1] = f"present {EMOJI}"
-    block["trials"][0]["row_name"] = f"Odor 1 {EMOJI}"
-    block["trials"][0]["input_counts"][0]["channel"] = f"port {EMOJI}"
+    block["phases"] = ["wait", f"present {EMOJI}"]
+    block["trials"][0]["odor_name"] = f"Odor 1 {EMOJI}"
     path = tmp_path / "run.mat"
-    matwriter.savemat(str(path), {"rat": "remy1", DERIVED: block})
+    matwriter.savemat(str(path), run_document.with_trial_table(run_document.build({"rat": "remy1"}, {}), block))
 
     got = scipy.io.loadmat(str(path))[DERIVED][0, 0]
     escaped = json.dumps(EMOJI)[1:-1]  # 🐭
     assert str(got["phases"][0][1][0]) == f"present {escaped}"
-    first = got["trials"][0, 0]
-    assert mat_value(first["row_name"]) == f"Odor 1 {escaped}"
-    assert mat_value(first["input_counts"][0, 0]["channel"]) == f"port {escaped}"
-    assert json.loads(f'"{mat_value(first["row_name"])}"') == f"Odor 1 {EMOJI}", "jsondecode gives it back"
+    first = got[ROWS][0, 0]
+    assert mat_value(first["odor_name"]) == f"Odor 1 {escaped}"
+    assert json.loads(f'"{mat_value(first["odor_name"])}"') == f"Odor 1 {EMOJI}", "jsondecode gives it back"
 
 
 async def test_an_animal_name_outside_the_bmp_never_holds_the_json_back(rig) -> None:  # noqa: ANN001, F811
@@ -481,7 +428,7 @@ async def test_an_animal_name_outside_the_bmp_never_holds_the_json_back(rig) -> 
     stale_on_disk(json_path, replay_version=0)
     [entry] = (await rig.archive.rederive(rig.cohort.id))["entries"]
     assert entry["status"] == "rewritten" and "can't be written to a .mat" in entry["matError"]
-    assert read_json(json_path)[DERIVED]["replay_version"] == spine_stream.REPLAY_VERSION
+    assert read_json(json_path)[DERIVED]["replay_version"] == REPLAY_VERSION
     assert rig.changes[-1].files_to_back_up == (str(json_path),)
 
     # From then on the .json is current and its .mat can never be written, as
@@ -509,16 +456,16 @@ async def test_a_stale_mat_with_a_newer_mtime_is_rewritten(rig) -> None:  # noqa
     [entry] = result["entries"]
     assert (result["rewritten"], entry["matError"]) == (1, None)
     assert rig.changes[-1].files_to_back_up == (str(mat),), "the .json was current"
-    assert float(load_mat(mat)[DERIVED][0, 0]["replay_version"][0, 0]) == spine_stream.REPLAY_VERSION
+    assert float(load_mat(mat)[DERIVED][0, 0]["replay_version"][0, 0]) == REPLAY_VERSION
     assert (await rig.archive.rederive(rig.cohort.id))["current"] == 1
 
 
-async def test_a_mat_from_a_newer_replay_is_left_alone(rig) -> None:  # noqa: ANN001, F811
+async def test_a_mat_from_a_newer_build_is_left_alone(rig) -> None:  # noqa: ANN001, F811
     from ephymeris_sidecar.sessions import matwriter
 
     _, json_path, mat = run_through_writer(rig.root, recorded_document())
     newer = {**read_json(json_path)}
-    newer[DERIVED] = {**newer[DERIVED], "replay_version": spine_stream.REPLAY_VERSION + 1}
+    newer[DERIVED] = {**newer[DERIVED], "replay_version": REPLAY_VERSION + 1}
     matwriter.savemat(str(mat), newer)
     before = mat.read_bytes()
 
@@ -544,7 +491,6 @@ def test_every_trial_column_has_a_mat_class_and_a_matlab_name() -> None:
     """A column whose type the serializer has no class for would be written as
     JSON text: legal, but not what a MATLAB user can compute with."""
     from ephymeris_sidecar.analytics.stream import trial_table
-    from ephymeris_sidecar.sessions import derived
 
     def walk(fields, path=""):  # noqa: ANN001, ANN202
         for name, kind in fields:
@@ -553,33 +499,32 @@ def test_every_trial_column_has_a_mat_class_and_a_matlab_name() -> None:
             walk(kind.fields, f"{path}{name}.")
 
     walk(derived.fields_of(trial_table.ReplayTrial))
+    walk(derived.fields_of(grammar2.TrialRow))
     block = derived.derive(recorded_document())
     assert all(MATLAB_NAME.match(k) for k in block)
 
 
 def test_a_column_added_to_the_trial_row_is_written_with_no_change_here(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
-    """#107 may add columns to `ReplayTrial`; each is written as it is, by name."""
-    from ephymeris_sidecar.analytics.stream import trial_table
+    """A column added to `TrialRow` is written as it is, by name."""
 
     @dataclasses.dataclass(frozen=True)
-    class Wider(trial_table.ReplayTrial):
+    class Wider(grammar2.TrialRow):
         lick_rate: float | None = None
         tags: tuple[int | None, ...] = ()
 
-    real = spine_stream.replayed
+    real = grammar2.rows_of
 
-    def widened(document):  # noqa: ANN001, ANN202
-        result = real(document)
-        # `trial_table.name` builds the patched class, so each row is a Wider.
-        trials = tuple(dataclasses.replace(t, lick_rate=2.5 if t.index == 0 else None, tags=(t.index, None))
-                       for t in result.trials)
-        return dataclasses.replace(result, trials=trials)
+    def widened(*args):  # noqa: ANN002, ANN202
+        return tuple(dataclasses.replace(row, lick_rate=2.5 if row.index == 0 else None, tags=(row.index, None))
+                     for row in real(*args))
 
-    monkeypatch.setattr(trial_table, "ReplayTrial", Wider)
-    monkeypatch.setattr(spine_stream, "replayed", widened)
+    # The decoder builds the patched class, so each row is a Wider, and the
+    # `.mat`'s columns are read off it (`derived.row_class`).
+    monkeypatch.setattr(grammar2, "TrialRow", Wider)
+    monkeypatch.setattr(grammar2, "rows_of", widened)
     _, json_path, mat = run_through_writer(tmp_path, recorded_document())
 
-    rows = read_json(json_path)[DERIVED]["trials"]
+    rows = read_json(json_path)[DERIVED][ROWS]
     assert [(r["lick_rate"], r["tags"]) for r in rows[:2]] == [(2.5, [0, None]), (None, [1, None])]
     trials = mat_trials(mat)
     assert mat_value(trials[0, 0]["lick_rate"]) == 2.5 and mat_value(trials[1, 0]["lick_rate"]) is None
@@ -589,49 +534,84 @@ def test_a_column_added_to_the_trial_row_is_written_with_no_change_here(tmp_path
 # --- the replay version -------------------------------------------------------
 
 #: A fingerprint of the derived blocks of fixed runs. **When this fails, a run's
-#: trial table has changed: bump `spine.REPLAY_VERSION`, then update this pin**,
-#: so a file's stamp says which replay wrote its table (`DATA.md#the-derived-trial-table`).
-REPLAY_PIN = "b8fa7251c0b82c1e"
+#: trial table has changed: bump `trial_table.REPLAY_VERSION`, then update this pin**,
+#: so a file's stamp says which build wrote its table (`DATA.md#the-trial-table`).
+REPLAY_PIN = "dfc131d4db0204a5"
 
 
 def test_the_replay_version_pins_the_trial_table() -> None:
     from ephymeris_sidecar.analytics.stream import trial_table
-    from ephymeris_sidecar.sessions import derived
 
     document = recorded_document()
     crashed = {**document, "ts_data": document["ts_data"][:-6]}
-    blocks = [derived.derive(d) for d in (document, crashed, diverged_document())]
-    columns = [(name, kind.name) for name, kind in derived.fields_of(trial_table.ReplayTrial)]
+    # The same reference sequences with no parameters and no `interp`.
+    framed = g2.document(g2.EVERY, stream=2, task_profile=g2.generated_profile().to_json())
+    blocks = [derived.derive(d) for d in (document, crashed, framed)]
+    assert all(block is not None and block["trials"] for block in blocks)
+    columns = [(name, kind.name) for cls in (trial_table.ReplayTrial, grammar2.TrialRow)
+               for name, kind in derived.fields_of(cls)]
     canon = json.dumps({"blocks": blocks, "columns": columns}, sort_keys=True, separators=(",", ":"))
     assert hashlib.sha256(canon.encode("utf-8")).hexdigest()[:16] == REPLAY_PIN
 
 
-def test_the_legacy_adapters_columns_are_written_to_both_files(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
-    """#107's columns: `scores` as a struct array of {condition, correct}, and a
-    nullable `correct` as 1, 0 or NaN, never a null read back as false."""
-    from ephymeris_sidecar.analytics.stream import trial_table
+def test_an_older_builds_table_keeps_its_nested_columns_in_the_mat(tmp_path: Path) -> None:
+    """A block with no `grammar` holds `ReplayTrial` rows, as an older build
+    wrote them: `scores` is a struct array of {condition, correct}, a tuple of
+    numbers a row vector, and a nullable `correct` 1, 0 or NaN, never a null
+    read back as false."""
+    from ephymeris_sidecar.sessions import matwriter
 
-    real = spine_stream.replayed
+    document = recorded_document()
+    table = grammar2.table_of(document, task_profile.embedded_profile(document))
+    rows = json.loads(json.dumps([dataclasses.asdict(t) for t in table.trials]))
+    rows[0]["scores"] = [{"condition": "r1", "correct": True}, {"condition": "l1", "correct": None}]
+    rows[0]["phase_entries"] = [0, None, 250]
+    rows[1]["correct"], rows[1]["scores"] = None, []
+    block = {"status": "ok", "detail": None, "interp": 1, "replay_version": REPLAY_VERSION,
+             "phases": [], "trials": rows}
+    assert derived.row_class(block) is not grammar2.TrialRow
+    path = tmp_path / "run.mat"
+    matwriter.savemat(str(path), run_document.with_trial_table(run_document.build({"rat": "remy1"}, {}), block))
 
-    def scored(document):  # noqa: ANN001, ANN202
-        result = real(document)
-        trials = tuple(dataclasses.replace(
-            t, correct=None if t.index == 1 else t.correct,
-            scores=(trial_table.ConditionScore("r1", True), trial_table.ConditionScore("l1", None))
-            if t.index == 0 else ()) for t in result.trials)
-        return dataclasses.replace(result, trials=trials)
-
-    monkeypatch.setattr(spine_stream, "replayed", scored)
-    _, json_path, mat = run_through_writer(tmp_path, recorded_document())
-
-    rows = read_json(json_path)[DERIVED]["trials"]
-    assert rows[0]["scores"] == [{"condition": "r1", "correct": True}, {"condition": "l1", "correct": None}]
-    assert rows[1]["correct"] is None and rows[1]["scores"] == []
-    assert {"outcome_ms", "presented"} <= set(rows[0])
-    trials = mat_trials(mat)
+    trials = mat_trials(path)
+    assert trials.shape == (len(rows), 1) and {"outcome_ms", "presented"} <= set(trials.dtype.names)
     first = trials[0, 0]["scores"]
     assert first.shape == (2, 1)
     assert mat_value(first[0, 0]["condition"]) == "r1" and mat_value(first[0, 0]["correct"]) == 1.0
     assert mat_value(first[1, 0]["correct"]) is None, "an exclusion stays NaN, not false"
+    entries = trials[0, 0]["phase_entries"]
+    assert entries.shape == (1, 3) and entries[0, 0] == 0.0 and entries[0, 2] == 250.0
+    assert entries[0, 1] != entries[0, 1], "a null in a row vector is NaN"
     assert mat_value(trials[1, 0]["correct"]) is None
     assert trials[1, 0]["scores"].shape == (0, 1)
+
+
+# --- a run another firmware interpreter recorded --------------------------------
+
+
+def foreign_interp() -> dict:
+    return {**recorded_document(), "interp": 8}
+
+
+def foreign_snapshot() -> dict:
+    document = recorded_document()
+    snapshot = {**document[task_profile.SNAPSHOT_KEY], "spine": {"interp": 2}}
+    return {**document, task_profile.SNAPSHOT_KEY: snapshot}
+
+
+@pytest.mark.parametrize("foreign", [foreign_interp, foreign_snapshot])
+async def test_a_run_another_interpreter_recorded_gets_no_table_and_rederive_leaves_it(rig, foreign) -> None:  # noqa: ANN001, F811
+    document = foreign()
+    assert derived.derive(document) is None
+    _, json_path, mat = run_through_writer(rig.root, document)
+    assert DERIVED not in read_json(json_path) and DERIVED not in load_mat(mat)
+
+    # The table the build that recorded it wrote is not this build's to judge.
+    theirs = run_document.with_trial_table(read_json(json_path), derived.derive(recorded_document()))
+    json_path.write_text(json.dumps(theirs, indent=2), encoding="utf-8")
+    before = (json_path.read_bytes(), mat.read_bytes())
+    result = await rig.archive.rederive(rig.cohort.id)
+    assert (result["scanned"], result["rewritten"], result["current"], result["skipped"], result["failed"]) == \
+        (0, 0, 0, 0, 0)
+    assert result["entries"] == []
+    assert (json_path.read_bytes(), mat.read_bytes()) == before and not rig.changes

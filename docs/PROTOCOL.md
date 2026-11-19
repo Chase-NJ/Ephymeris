@@ -113,8 +113,6 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="cmd-tasks.list"></a>`tasks.list` | — | `tasks` | This rig's saved task profiles (`TASKS.md#task-definitions`). |
 | <a id="cmd-tasks.get"></a>`tasks.get` | `taskId` | `definition`, `diagnostics` | One definition and everything currently wrong with it. |
 | <a id="cmd-tasks.preview"></a>`tasks.preview` | `definition` | [TaskPreview](#shape-taskpreview) | Compile an unsaved definition and say what is wrong with it, writing nothing. |
-| <a id="cmd-tasks.simulate"></a>`tasks.simulate` | `definition`, `animal`, `seed?`, `limitMs?` | [TaskSimulation](#shape-tasksimulation) | Run an unsaved spine definition through replay against a simulated animal and score it … |
-| <a id="cmd-tasks.spinepalette"></a>`tasks.spinePalette` | — | `seeds`, `phases`, `outcomeClasses`, `selections`, `timedPhases`, `weightedSelections` | What the spine editor builds from: the seeds a new task starts from and … |
 | <a id="cmd-tasks.save"></a>`tasks.save` | `definition` | [TaskSaved](#shape-tasksaved) | Write the definition and regenerate its sketch. |
 | <a id="cmd-tasks.delete"></a>`tasks.delete` | `taskId` | `deleted` | Remove the definition and its generated sketch folder. |
 | <a id="cmd-tasks.export"></a>`tasks.export` | `taskId` | `document`, `filename` | One task as it travels to the other lab machine (`TASKS.md#moving-a-task-between-machines`). |
@@ -137,7 +135,7 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="cmd-analytics.rescan"></a>`analytics.rescan` | `cohortId`, `adoptOrphans?` | [RescanResult](#shape-rescanresult) | The explicit archive walk (`DATA.md#reading-the-archive`) — expensive reconciliation is a deliberate user action, never … |
 | <a id="cmd-analytics.recentsessions"></a>`analytics.recentSessions` | `limit?` | `sessions` | The N most recent session folders across every active cohort's archive, by folder-name date. |
 | <a id="cmd-sessions.recover"></a>`sessions.recover` | `cohortId` | [RecoverResult](#shape-recoverresult) | The crash-recovery backfill (`DATA.md#crash-recovery`): rebuilds `.json`/`.mat` from orphaned write-ahead `.tsv` files, using the same … |
-| <a id="cmd-sessions.rederive"></a>`sessions.rederive` | `cohortId` | [RederiveResult](#shape-rederiveresult) | Re-derive (`DATA.md#re-derive`): replay every spine run under the cohort's data folder and, where the … |
+| <a id="cmd-sessions.rederive"></a>`sessions.rederive` | `cohortId` | [RederiveResult](#shape-rederiveresult) | Re-derive (`DATA.md#re-derive`): decode every stream-grammar-2 run under the cohort's data folder and, where the … |
 | <a id="cmd-sessions.tidy"></a>`sessions.tidy` | `cohortId`, `apply?` | [TidyPlan](#shape-tidyplan) | Merge session records that share prefix, number and date — one folder, split by … |
 
 ### Intan recording
@@ -185,7 +183,6 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="evt-cohorts.updated"></a>`cohorts.updated` | [CohortsUpdatedData](#shape-cohortsupdateddata) | The full cohort list, pushed whenever it changes and replayed on connect — keeps … |
 | <a id="evt-prefixes.updated"></a>`prefixes.updated` | [PrefixesUpdatedData](#shape-prefixesupdateddata) | The full prefix list, pushed after `prefixes.create` or `prefixes.delete` and replayed on connect — … |
 | <a id="evt-session.telemetry"></a>`session.telemetry` | [BoxTelemetry](#shape-boxtelemetry) | Pushed on every strobe that updates a rolling live metric. |
-| <a id="evt-session.replay"></a>`session.replay` | [LiveReplay](#shape-livereplay) | A running spine run's live replay changed: the board entered another state, a trial … |
 | <a id="evt-session.animalended"></a>`session.animalEnded` | [AnimalEnded](#shape-animalended) | One animal's run finalized and recorded. |
 | <a id="evt-logbook.updated"></a>`logbook.updated` | [LogbookUpdated](#shape-logbookupdated) | A session log changed: a note or session field was written, a run finalized … |
 | <a id="evt-session.lifecycle"></a>`session.lifecycle` | [ActiveSessions](#shape-activesessions) | Broadcast whenever session identity or status changes — create, abandon, confirmMapping, startAll (or a … |
@@ -259,14 +256,13 @@ One row per name: its type (a shape's field names) and the first sentence of its
 
 | Shape | Fields | What it is |
 |---|---|---|
-| <a id="shape-absentrow"></a>AbsentRow | `rowId`, `name`, `blocks` | A row of the definition that no simulated trial drew. |
 | <a id="shape-activesessions"></a>ActiveSessions | `running`, `configuring`, `stale`, `confirmations` | Everything unfinished, discoverable with no prior knowledge of ids. |
 | <a id="shape-analyticsanimal"></a>AnalyticsAnimal | `id`, `name`, `boxNumber`, `cage`, `former` |  |
 | <a id="shape-analyticscounts"></a>AnalyticsCounts | `runs`, `decoded`, `noProfile`, `missing`, `unreadable`, `falseStarts` |  |
 | <a id="shape-analyticsprogress"></a>AnalyticsProgress | `cohortId`, `phase`, `done`, `total` |  |
 | <a id="shape-analyticssummary"></a>AnalyticsSummary | `cohortId`, `dataFolder`, `sessions`, `animals`, `runs`, `falseStarts`, `profileGroups`, `counts`, `warnings`, `minCountedTrials` | The whole cohort table in one call; selections filter it client-side. |
 | <a id="shape-analyticswarning"></a>AnalyticsWarning | `code`, `runId`, `message` |  |
-| <a id="shape-animal"></a>Animal | `id`, `name`, `boxNumber`, `cage`, `sex`, `idNumber`, `notes` |  |
+| <a id="shape-animal"></a>Animal | `id`, `name`, `boxNumber`, `cage`, `sex`, `idNumber`, `notes`, `implant?` |  |
 | <a id="shape-animalended"></a>AnimalEnded | `box`, `animalId`, `stopReason`, `filePath` |  |
 | <a id="shape-animalmoveanimal"></a>AnimalMoveAnimal | `animalId`, `name`, `status`, `outcome`, `destinationAnimalId`, `runs`, `files` |  |
 | <a id="shape-animalmovefiles"></a>AnimalMoveFiles | `count`, `bytes`, `alreadyThere`, `missing` |  |
@@ -276,7 +272,6 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="shape-answerside"></a>AnswerSide | "left" \| "right" \| "withhold" \| "port" | The kind of answer a condition rewards. |
 | <a id="shape-backupstate"></a>BackupState | "disabled" \| "pending" \| "ok" \| "deferred" \| "failed" | `pending` = directory set but no pass has completed yet, distinct from `ok` (a … |
 | <a id="shape-backupstatus"></a>BackupStatus | `configured`, `directory`, `state`, `pending`, `tracking`, `mirroredFiles`, `lastSuccessAt`, `lastError`, `syncing`, `intervalSeconds` |  |
-| <a id="shape-blockswitch"></a>BlockSwitch | `index`, `block` | A simulated trial that runs in another block than the one before it; the … |
 | <a id="shape-boardspresencedata"></a>BoardsPresenceData | `boards` |  |
 | <a id="shape-boxbinding"></a>BoxBinding | `box`, `hardwareId`, `label`, `intanDigitalIn?` |  |
 | <a id="shape-boxtelemetry"></a>BoxTelemetry | `box`, `animalId`, `metrics` |  |
@@ -307,11 +302,14 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="shape-flashorigin"></a>FlashOrigin | "baseline" \| "session" \| "debug" | Who asked for a flash, which fixes how it runs: `baseline` is a utility … |
 | <a id="shape-flashprogressdata"></a>FlashProgressData | `box`, `phase`, `stream`, `text` |  |
 | <a id="shape-flashqueuestatus"></a>FlashQueueStatus | `boxes` | The whole flash queue, every box — one snapshot, shared by the commands and … |
-| <a id="shape-formeranimal"></a>FormerAnimal | `id`, `name`, `source`, `removedAt`, `runCount`, `sex`, `idNumber`, `cage`, `notes` | An animal with history in a cohort but no place on its roster (`DATA.md#former-members`). |
+| <a id="shape-formeranimal"></a>FormerAnimal | `id`, `name`, `source`, `removedAt`, `runCount`, `sex`, `idNumber`, `cage`, `notes`, `implant?` | An animal with history in a cohort but no place on its roster (`DATA.md#former-members`). |
 | <a id="shape-identifyspec"></a>IdentifySpec | `on`, `off` | The two commands that make a box announce itself — a trial light, a … |
 | <a id="shape-impedancecomparison"></a>ImpedanceComparison | `current`, `previous` |  |
 | <a id="shape-impedancemeasurement"></a>ImpedanceMeasurement | `animalId`, `measuredAt`, `box`, `sessionId`, `frequencyHz`, `file`, `sites` | One animal's sites, measured once (`RECORDING.md#impedance-tracking`). |
 | <a id="shape-impedancesite"></a>ImpedanceSite | `ohms`, `phaseDeg` | One electrode site's impedance at the measurement's frequency. |
+| <a id="shape-implant"></a>Implant | `device`, `surgeryDate`, `probeMapPath`, `targets`, `lowerings` | An animal's implant, entered once on the animal (`DATA.md#implants`). |
+| <a id="shape-implantlowering"></a>ImplantLowering | `date`, `mm` | One turn of an implant's drive (`DATA.md#implants`). |
+| <a id="shape-implanttarget"></a>ImplantTarget | `name`, `region`, `hemisphere`, `apMm`, `mlMm`, `dvMm`, `channels` | A group of a device's channels at one place in the brain (`GLOSSARY.md#target`). |
 | <a id="shape-inputcount"></a>InputCount | `phase`, `channel`, `count` | Watched rises of one input channel during one phase of a trial. |
 | <a id="shape-intansettings"></a>IntanSettings | `commandPort`, `waveformPort`, `spikePort` | Where Intan RHX's three TCP servers listen. |
 | <a id="shape-intanspikes"></a>IntanSpikes | `box`, `counts`, `lagMs`, `sentAt` |  |
@@ -321,15 +319,12 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="shape-intantetherstat"></a>IntanTetherStat | `box`, `state`, `since`, `acknowledged`, `watchesSilence` | One recording box's tether, judged against its own baseline. |
 | <a id="shape-librarystate"></a>LibraryState | "ok" \| "empty" \| "damaged" | The three bundled-sketch-library states (`TASKS.md#sketch-library`). |
 | <a id="shape-livemetric"></a>LiveMetric | `id`, `label`, `triggerCode`, `successCode`, `alternateCode`, `alternateCodes?`, `windowSize` |  |
-| <a id="shape-livereplay"></a>LiveReplay | `box`, `animalId`, `status`, `detail`, `state`, `phase`, `row`, `provisional`, `unavailable`, `trials`, `current`, `last`, `metrics`, `overall`, `replay`, `divergence` | A running spine run as its live replay reads it (`ANALYTICS.md#live-scoring`): where the board … |
-| <a id="shape-livereplaystatus"></a>LiveReplayStatus | "replaying" \| "diverged" \| "unreplayable" \| "unavailable" \| "ended" | Where a running spine run's live replay stands (`ANALYTICS.md#live-scoring`). |
 | <a id="shape-logbookcohort"></a>LogbookCohort | `cohortId`, `logs`, `notes`, `changes` | A cohort's whole session log, flat; the client groups it by `sessionId`. |
 | <a id="shape-logbookupdated"></a>LogbookUpdated | `cohortId`, `sessionIds` |  |
 | <a id="shape-metricseries"></a>MetricSeries | `id`, `label`, `values`, `n`, `windowSize` |  |
 | <a id="shape-metricsummary"></a>MetricSummary | `id`, `label`, `pSession`, `pWindow`, `hits`, `counted`, `triggered`, `excluded`, `windowSize`, `wilsonLow`, `wilsonHigh`, `lowConfidence`, `answerSide` | One metric's whole-session result (`ANALYTICS.md#how-a-strobe-stream-is-scored`). |
 | <a id="shape-notescope"></a>NoteScope | `kind`, `animalId`, `box` | What a note is about. |
 | <a id="shape-notetag"></a>NoteTag | "observation" \| "intervention" \| "hardware" \| "animal-health" \| "protocol-deviation" | What kind of entry a note is. |
-| <a id="shape-outcometally"></a>OutcomeTally | `outcomeClass`, `n`, `of`, `p`, `low`, `high` | How many of a scope's trials ended in one outcome class (`ANALYTICS.md#metrics-from-the-trial-table`). |
 | <a id="shape-outputline"></a>OutputLine | `dir`, `text`, `ts` | One passthrough console line. |
 | <a id="shape-paramchange"></a>ParamChange | `key`, `from`, `to` |  |
 | <a id="shape-portoutputdata"></a>PortOutputData | `box`, `lines` |  |
@@ -342,8 +337,6 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="shape-profilekind"></a>ProfileKind | "behavior" \| "utility" | A scored IN_SESSION task, or a PASSTHROUGH tool (`TASKS.md#task-profile`). |
 | <a id="shape-profilemetricinfo"></a>ProfileMetricInfo | `id`, `label`, `windowSize`, `answerSide` |  |
 | <a id="shape-profilesource"></a>ProfileSource | "snapshot" \| "sketch-current" \| "inferred" \| "unavailable" | How much the decoding can be trusted (`DATA.md#reading-the-archive`). |
-| <a id="shape-proportion"></a>Proportion | `n`, `of`, `p`, `low`, `high` | A count out of a total, with its interval. |
-| <a id="shape-rateestimate"></a>RateEstimate | `n`, `mean`, `low`, `high` | A mean over trials with its interval. |
 | <a id="shape-recordingbox"></a>RecordingBox | `box`, `digitalIn`, `port`, `channels`, `probeMap` |  |
 | <a id="shape-recordingboxconfig"></a>RecordingBoxConfig | `box`, `port`, `firstChannel`, `lastChannel`, `probeMapPath?` |  |
 | <a id="shape-recordingconfig"></a>RecordingConfig | `saveDirectory`, `fileFormat`, `saveWideband`, `saveSpikes`, `saveSpikeSnapshots`, `snapshotPreMs`, `snapshotPostMs`, `saveLowpass`, `lowpassDownsample`, `saveHighpass`, `newFileMinutes?`, `threshold`, `boxes` | Everything the recording walkthrough collects (`RECORDING.md#recording-walkthrough`). |
@@ -351,11 +344,9 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="shape-recordingthreshold"></a>RecordingThreshold | `mode`, `microvolts`, `rmsMultiple`, `negative` |  |
 | <a id="shape-recoveredtsv"></a>RecoveredTsv | `tsvPath`, `jsonPath`, `status`, `nEvents`, `stopReason`, `reason` | One orphaned write-ahead log the crash-recovery backfill processed. |
 | <a id="shape-recoverresult"></a>RecoverResult | `scanned`, `recovered`, `failed`, `entries`, `cohortId`, `dataFolder`, `folderMissing` |  |
-| <a id="shape-rederivedrun"></a>RederivedRun | `jsonPath`, `status`, `reason`, `matError` | One spine run Re-derive rewrote or could not (`DATA.md#re-derive`). |
-| <a id="shape-rederiveresult"></a>RederiveResult | `scanned`, `rewritten`, `current`, `skipped`, `failed`, `entries`, `cohortId`, `dataFolder`, `folderMissing` | What `sessions.rederive` did to a cohort's spine runs (`DATA.md#re-derive`). |
-| <a id="shape-replaydivergence"></a>ReplayDivergence | `detail`, `index`, `atMs`, `expected`, `recorded` | Where a `diverged` run's recorded strobes first leave what replay predicts (`ANALYTICS.md#how-a-spine-run-is-scored`). |
-| <a id="shape-replayscore"></a>ReplayScore | `interp`, `trials`, `unclassified`, `classes`, `rows`, `rewarded`, `rates` | A replayed spine run's tallies, each a function of its trial table (`ANALYTICS.md#metrics-from-the-trial-table`). |
-| <a id="shape-replaytrial"></a>ReplayTrial | `index`, `atMs`, `block`, `row`, `rowName`, `level`, `phaseEntries`, `response`, `responseEdge`, `responseMs`, `latencyMs`, `outcome`, `outcomeMs`, `correct`, `rewarded`, `rewardLine`, `rewardMs`, `correction`, `inputCounts`, `counterN`, `complete`, `presented`, `scores` | One trial of a run: a spine run's read off its replay, a legacy … |
+| <a id="shape-rederivedrun"></a>RederivedRun | `jsonPath`, `status`, `reason`, `matError` | One run Re-derive rewrote or could not (`DATA.md#re-derive`). |
+| <a id="shape-rederiveresult"></a>RederiveResult | `scanned`, `rewritten`, `current`, `skipped`, `failed`, `entries`, `cohortId`, `dataFolder`, `folderMissing` | What `sessions.rederive` did to a cohort's runs (`DATA.md#re-derive`). |
+| <a id="shape-replaytrial"></a>ReplayTrial | `index`, `atMs`, `block`, `row`, `rowName`, `level`, `phaseEntries`, `response`, `responseEdge`, `responseMs`, `latencyMs`, `outcome`, `outcomeMs`, `correct`, `rewarded`, `rewardLine`, `rewardMs`, `correction`, `inputCounts`, `counterN`, `complete`, `presented`, `scores` | One trial of a run, read off its strobes (`ANALYTICS.md#the-trial-table`). |
 | <a id="shape-rescanorphan"></a>RescanOrphan | `path`, `animalId`, `animalName`, `animalSource`, `date`, `status`, `reason` |  |
 | <a id="shape-rescanpruned"></a>RescanPruned | `runs`, `sessions`, `adopted` | What the rescan removed because the disk no longer has it (`DATA.md#reading-the-archive`). |
 | <a id="shape-rescanresult"></a>RescanResult | `scanned`, `adopted`, `pruned`, `rehomed`, `duplicates`, `orphans`, `cohortId`, `dataFolder`, `folderMissing` |  |
@@ -368,12 +359,11 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="shape-rigsaved"></a>RigSaved | `status`, `problems`, `breaks`, `allocations` |  |
 | <a id="shape-rigstatus"></a>RigStatus | `custom`, `derivedFrom`, `board`, `editedAt`, `pinoutHash`, `channelSetHash`, `notices`, `canReset`, `resetReplaces`, `canSave`, `needsPinConfirmation` |  |
 | <a id="shape-round"></a>Round | `order`, `startedAt`, `endedAt`, `label` | One set of animals run together in a session (`GLOSSARY.md#round`). |
-| <a id="shape-rowoutcomes"></a>RowOutcomes | `rowId`, `name`, `trials`, `unclassified`, `classes` | P(outcome \| row): one row's trials by outcome class. |
 | <a id="shape-runchange"></a>RunChange | `runId`, `sessionId`, `animalId`, `box`, `task`, `recovered`, `previousRunId`, `previousSessionId`, `first`, `taskChange`, `boxChange`, `params`, `paramsKnown`, `falseStart`, `falseStartSource` | What differs between a run and the same animal's previous run, recorded and recovered … |
 | <a id="shape-runnersession"></a>RunnerSession | `session`, `boxes` | The runner-held session: the session and boxes of a `sessions.status` reply. |
 | <a id="shape-runseries"></a>RunSeries | `runId`, `mode`, `metrics`, `trail`, `trials`, `trialTable` |  |
-| <a id="shape-runstatus"></a>RunStatus | "ok" \| "no-metrics" \| "diverged" \| "unreplayable" \| "missing" \| "unreadable" | Why a run has numbers or not (`ANALYTICS.md#why-a-run-has-no-numbers`). |
-| <a id="shape-runsummary"></a>RunSummary | `runId`, `sessionId`, `animalId`, `boxNumber`, `startedAt`, `endedAt`, `sketchPath`, `sketchName`, `profileHash`, `paramsHash`, `profileSource`, `stale`, `falseStart`, `falseStartSource`, `restartedBy`, `status`, `metrics`, `overall`, `outcomes`, `conditions`, `engagement`, `totalEvents`, `durationMs`, `stopReason`, `clean`, `seed`, `detail`, `excludedByDefault`, `replay`, `divergence` |  |
+| <a id="shape-runstatus"></a>RunStatus | "ok" \| "no-metrics" \| "missing" \| "unreadable" | Why a run has numbers or not (`ANALYTICS.md#why-a-run-has-no-numbers`). |
+| <a id="shape-runsummary"></a>RunSummary | `runId`, `sessionId`, `animalId`, `boxNumber`, `startedAt`, `endedAt`, `sketchPath`, `sketchName`, `profileHash`, `paramsHash`, `profileSource`, `stale`, `falseStart`, `falseStartSource`, `restartedBy`, `status`, `metrics`, `overall`, `outcomes`, `conditions`, `engagement`, `totalEvents`, `durationMs`, `stopReason`, `clean`, `seed`, `detail`, `excludedByDefault` |  |
 | <a id="shape-runyield"></a>RunYield | `runId`, `sessionId`, `box`, `startedAt`, `countedSeconds`, `runSeconds`, `threshold`, `counts` | One recorded run's spike counts per site, the basis of active-site yield (`RECORDING.md#active-site-yield`). |
 | <a id="shape-seriesresult"></a>SeriesResult | `series`, `warnings` |  |
 | <a id="shape-serverhello"></a>ServerHello | `protocolVersion`, `sidecarVersion` |  |
@@ -388,17 +378,10 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="shape-settingoption"></a>SettingOption | `label`, `value`, `command` | One value a grid row's setting can take. |
 | <a id="shape-sex"></a>Sex | "M" \| "F" \| "unknown" |  |
 | <a id="shape-sidecarerrordata"></a>SidecarErrorData | `code`, `message`, `detail` | Failures with no command to attribute them to. |
-| <a id="shape-simulatedanimal"></a>SimulatedAnimal | `kind`, `response?`, `permille?` | The animal a simulation runs against. |
 | <a id="shape-sketchdiscovery"></a>SketchDiscovery | `library`, `sketches`, `skipped`, `skippedCount`, `libraries`, `librariesPath` | The full result of a library scan (`TASKS.md#sketch-library`): the bundled sketches plus this rig's … |
 | <a id="shape-sketchentry"></a>SketchEntry | `category`, `name`, `path`, `source`, `decodeOnly` |  |
 | <a id="shape-sketchlibrarystatus"></a>SketchLibraryStatus | `state`, `path`, `message`, `source` | Every non-ok state means a broken or partial INSTALL rather than a wrong setting … |
 | <a id="shape-skippedentry"></a>SkippedEntry | `path`, `reason` | Carried in full so a missing sketch is inspectable, not silent. |
-| <a id="shape-spineblockview"></a>SpineBlockView | `id`, `next` | One block of the session's sequence, for the block timeline. |
-| <a id="shape-spineram"></a>SpineRam | `bytes`, `budget`, `parts` | The editor's RAM meter. |
-| <a id="shape-spinerampart"></a>SpineRamPart | `label`, `bytes` | One part of a spine task's RAM (`TASKS.md#spine-diagnostics`). |
-| <a id="shape-spineslotview"></a>SpineSlotView | `id`, `type`, `mode`, `channels` | One slot of a spine, and what it can bind on this rig. |
-| <a id="shape-spinestoredvalue"></a>SpineStoredValue | `key`, `value`, `target`, `field` | A value the definition stores in `params`, over what its spine says. |
-| <a id="shape-spineview"></a>SpineView | `slots`, `ram`, `blocks`, `sessionEnds`, `overridable`, `stored` | What the spine editor draws beside the profile, all computed by the sidecar (`spine.editor_view` … |
 | <a id="shape-strategypoint"></a>StrategyPoint | `trial`, `x`, `y`, `n` | One sample of the within-session strategy walk (`DATA.md#analytics-views`). |
 | <a id="shape-strobearchivecoverage"></a>StrobeArchiveCoverage | `files`, `unreadable`, `roots`, `unreachableRoots` | What the archive scan could see. |
 | <a id="shape-strobecode"></a>StrobeCode | `name`, `code`, `origin`, `emittedOn?`, `rationale?`, `portSlot?` |  |
@@ -410,16 +393,14 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="shape-strobevocabulary"></a>StrobeVocabulary | `version`, `codeMin`, `codeMax`, `reserved`, `freeRanges`, `nextFree`, `contentHash`, `codes`, `retired`, `portSlots`, `editable`, `problem` | This machine's strobe vocabulary (`TASKS.md#strobe-vocabulary`) — the one source of every code. |
 | <a id="shape-syncresult"></a>SyncResult | `copied`, `skipped`, `failed`, `deferred`, `errors`, `directory` | What `backup.syncNow` did. |
 | <a id="shape-taskdiagnostic"></a>TaskDiagnostic | `location`, `message`, `code`, `target` |  |
-| <a id="shape-taskentry"></a>TaskEntry | `id`, `name`, `unreadable`, `category`, `path`, `label`, `editedAt`, `problems`, `trials`, `stages`, `selectionMode`, `spine` | A row in the profile list, and everything a task card states before the … |
+| <a id="shape-taskentry"></a>TaskEntry | `id`, `name`, `unreadable`, `category`, `path`, `label`, `editedAt`, `problems`, `trials`, `stages`, `selectionMode` | A row in the profile list, and everything a task card states before the … |
 | <a id="shape-taskimportconflict"></a>TaskImportConflict | `kind`, `channel`, `message` | One way another machine's task disagrees with this machine (`TASKS.md#moving-a-task-between-machines`). |
 | <a id="shape-taskimportplan"></a>TaskImportPlan | `conflicts`, `taskId`, `name`, `replaces`, `replacesName`, `replacesUnreadable`, `identical`, `sameChannelSet`, `hereHash`, `fileHash`, `fileHashVersion`, `diagnostics` | What importing another machine's task would do here (`TASKS.md#moving-a-task-between-machines`). |
-| <a id="shape-taskpreview"></a>TaskPreview | `diagnostics`, `profile`, `spine`, `catalogueDefaults` | A pure compile of an unsaved definition. |
-| <a id="shape-taskprofile"></a>TaskProfile | `taskName`, `kind`, `config`, `strobes`, `liveMetrics`, `controls`, `legacyNames`, `telemetry?`, `identify?`, `spine?`, `exposed?` | Parsed from the sketch's `task.json` sibling (`TASKS.md#task-profile`); passed through verbatim — the sidecar validates … |
+| <a id="shape-taskpreview"></a>TaskPreview | `diagnostics`, `profile`, `catalogueDefaults` | A pure compile of an unsaved definition. |
+| <a id="shape-taskprofile"></a>TaskProfile | `taskName`, `kind`, `config`, `strobes`, `liveMetrics`, `controls`, `legacyNames`, `telemetry?`, `identify?`, `exposed?`, `trialTypes?` | Parsed from the sketch's `task.json` sibling (`TASKS.md#task-profile`); passed through verbatim — the sidecar validates … |
 | <a id="shape-tasksaved"></a>TaskSaved | `entry`, `diagnostics`, `sketchPath` |  |
-| <a id="shape-taskseed"></a>TaskSeed | `id`, `label`, `summary`, `definition` | A seed spine a new task starts from (`taskdef/seeds.py`). |
-| <a id="shape-tasksimulation"></a>TaskSimulation | `seed`, `limitMs`, `endedBy`, `status`, `detail`, `metrics`, `overall`, `replay`, `series`, `trialTable`, `switches`, `absent` | One simulated session of an unsaved spine definition (`TASKS.md#simulating-a-spine-task`). |
 | <a id="shape-tasksupdateddata"></a>TasksUpdatedData | `tasks` |  |
-| <a id="shape-tasktarget"></a>TaskTarget | `kind`, `index` | Where a task diagnostic belongs on the editor (`TASKS.md#the-spine-editor`). |
+| <a id="shape-tasktarget"></a>TaskTarget | `kind`, `index` | Where a task diagnostic belongs on the editor. |
 | <a id="shape-telemetryfield"></a>TelemetryField | `key`, `label` |  |
 | <a id="shape-telemetrymetric"></a>TelemetryMetric | `id`, `value`, `n`, `triggered`, `counted`, `hits` | One live metric: its rolling value, and its whole-run totals (`ARCHITECTURE.md#live-session-views`). |
 | <a id="shape-telemetryspec"></a>TelemetrySpec | `match`, `fields` | How to parse a utility sketch's non-persisted STATUS lines out of `port.output` (`TASKS.md#task-profile`). |
@@ -436,4 +417,3 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="shape-utilityboxstate"></a>UtilityBoxState | `box`, `state`, `detail`, `identifying` |  |
 | <a id="shape-utilitystatus"></a>UtilityStatus | `configured`, `sketchPath`, `sketchName`, `canIdentify`, `held`, `message`, `boxes` | The whole baseline picture — one snapshot, shared by the command and the event … |
 | <a id="shape-valuechange"></a>ValueChange | `from`, `to` |  |
-| <a id="shape-windowrate"></a>WindowRate | `rowId`, `name`, `phase`, `label`, `channel`, `rate`, `reference`, `versus`, `lowConfidence` | One row's rate in one of its own phase-windows (`ANALYTICS.md#phase-window-rates`). |

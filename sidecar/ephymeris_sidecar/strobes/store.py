@@ -104,10 +104,9 @@ class VocabularyStore:
 
         Returns the plan, or None when the document will not read: nothing is
         written then, for `load_strict`'s reason. A code whose shipped number
-        this machine has given to something else is skipped and logged, and
-        the spine editor keeps asking for it (SPN104); the rest are added. The
-        watermark moves either way, so a skipped code is asked for once by
-        this path and from then on only by the editor.
+        this machine has given to something else is skipped and logged; the
+        rest are added. The watermark moves either way, so a skipped code is
+        asked for once.
         """
         try:
             doc = self.load_strict()

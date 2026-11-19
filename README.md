@@ -33,7 +33,7 @@ the [Releases](https://github.com/Chase-NJ/Ephymeris/releases) page.
 4. Start Ephymeris from the Start menu or the desktop shortcut. On the first start it unpacks its
    Arduino toolchain, so boards take a few extra seconds to appear that once.
 
-**On an Apple silicon Mac**, for looking at data, the logbook and simulations away from the rigs:
+**On an Apple silicon Mac**, for looking at data and the logbook away from the rigs:
 download `Ephymeris-<version>-arm64.dmg` from the same page, open it and drag Ephymeris to
 Applications. It is not notarized, so the first launch is refused: open **System Settings → Privacy &
 Security** and click **Open Anyway**. A Mac copy does not update itself: install a newer

@@ -290,9 +290,7 @@ class AnalyticsService:
             "metrics": [m.to_json() for m in metrics],
             "trail": [p.to_json() for p in trail],
             "trials": [t.to_json() for t in trials],
-            # The run's trial table: a spine run's from its replay, a legacy
-            # run's from the legacy decoder
-            # (`ANALYTICS.md#how-a-legacy-run-becomes-a-trial-table`). Here, not
+            # The run's trial table (`ANALYTICS.md#the-trial-table`). Here, not
             # in the summary: per-trial data is never cached (`DATA.md#caching`).
             "trialTable": stream.trial_table_of(document, profile),
         }, None

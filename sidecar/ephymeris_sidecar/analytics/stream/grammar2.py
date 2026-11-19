@@ -8,7 +8,7 @@ trial comes back, and `END_TRIAL`. So a trial is decoded by splitting on the
 header and reading, never by matching a pattern against the names: `table_of`
 reads such a run into the rows a legacy run has (`legacy/decode.py`), and
 `rows_of` into the per-trial table its `.json` and `.mat` carry
-(`DATA.md#the-derived-trial-table`).
+(`DATA.md#the-trial-table`).
 
 Which grammar a run speaks is `grammar_of`: the `stream` the board announced
 before `READY` when the file records one; otherwise the codes themselves, a
@@ -20,7 +20,7 @@ Names come out of the profile's `strobes` map, never from numbers
 profile whose map lacks them decodes nothing here.
 
 What differs from a legacy row (`ANALYTICS.md#how-a-legacy-run-becomes-a-trial-table`):
-`outcome` is the trial's one outcome code, in the spine's classes; `correct` is
+`outcome` is the trial's one outcome code, as its class (`trial_table.OUTCOME_CLASSES`); `correct` is
 read from it (a hold failure is wrong, an abort is excluded), while `scores`
 still carries the profile's metric verdicts, as Mission Control showed them;
 `latencyMs` is the reaction time, `ODOR_UNPOKE` to the first well poke;
@@ -35,11 +35,14 @@ from __future__ import annotations
 import re
 from collections import Counter
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, Mapping
 
 from ...rig.registry import Vocabulary
+from ...sessions.run_document import odors_of, stream_of
 from ...tasks.profile import LiveMetric, TaskProfile
 from .document import _pairs_of, codes_of
+from .odors import ONSET as _ONSET
+from .odors import odor_table
 from .engagement import TrialEngagement
 from .legacy import infer
 from .legacy import strobes as legacy_strobes
@@ -51,7 +54,6 @@ from .trial_table import ConditionScore, ReplayTrial, correct_of
 #: The grammars a board can announce (`STREAM=<n>`), and what a file records as `stream`.
 GRAMMAR_1 = 1
 GRAMMAR_2 = 2
-STREAM_KEY = "stream"
 
 # The vocabulary's names for the grammar (`TASKS.md#stream-grammar`).
 HEADER = "TRIAL_START"
@@ -60,13 +62,12 @@ END = "END_TRIAL"
 REPEAT = "INVALID_TRIAL"
 TERMINATORS_1 = ("END_CORRECT_ITI", "END_INCORRECT_ITI")
 _TYPE = re.compile(r"^TRIAL_TYPE_(\d+)$")
-_ONSET = re.compile(r"^ODOR_(\d+)_ON$")
 LIGHTS_ON, ODOR_POKE, ODOR_OFF, ODOR_UNPOKE, LIGHTS_OFF = (
     "LIGHTS_ON", "ODOR_POKE", "ODOR_OFF", "ODOR_UNPOKE", "LIGHTS_OFF")
 POKES = {"WATER_POKE_L": "left", "WATER_POKE_R": "right"}
 FLUIDS = {"FLUID_L": "STOP_FLUID_G_L", "FLUID_R": "STOP_FLUID_G_R"}
 
-#: Each outcome code's class (`taskdef/lowering.py`'s `OUTCOME_CLASSES`). A
+#: Each outcome code's class (`trial_table.OUTCOME_CLASSES`). A
 #: `WATER_POKE_ERROR_*` inside a no-go trial is a false alarm, not a wrong well.
 OUTCOME_CLASS = {
     "CORRECT": "correct",
@@ -80,8 +81,8 @@ OUTCOME_CLASS = {
     "ODOR_UNPOKE_EARLY": "abort_before_stimulus",
     "ODOR_UNPOKE_EARLY_SAMPLING": "abort_during_sampling",
 }
-#: The legacy bucket of each class (`outcomes.TrialOutcomes`), as the spine's
-#: crossover files them; an abort before the stimulus is on the engagement
+#: The legacy bucket of each class (`outcomes.TrialOutcomes`); an abort
+#: before the stimulus is on the engagement
 #: ladder and in no tally, as a lazy trial never was.
 _BUCKET = {"correct": "rewarded", "hold_broken": "hold_failed", "wrong_response": "wrong_well",
            "omission": "no_response", "withheld": "withheld", "false_alarm": "false_alarm",
@@ -91,7 +92,7 @@ _BUCKET = {"correct": "rewarded", "hold_broken": "hold_failed", "wrong_response"
 @dataclass(frozen=True)
 class TrialRow:
     """One trial of the per-trial table a grammar-2 run's files carry
-    (`DATA.md#the-derived-trial-table`): what the header, the timeline and the
+    (`DATA.md#the-trial-table`): what the header, the timeline and the
     outcome said, column by column. Every value is plain, and every time is ms
     from the run's earliest strobe."""
 
@@ -101,6 +102,9 @@ class TrialRow:
     #: The odor line the trial presented, from its `ODOR_<n>_ON` code; None when
     #: no odor was delivered.
     odor_line: int | None
+    #: That line's name in the run's odors table (`DATA.md#the-odors-table`);
+    #: `''` when no odor was delivered, None when the table lists no such line.
+    odor_name: str | None
     #: What the header said the row rewards: `left`, `right` or `no_go`.
     side: str | None
     #: Odor was delivered: the trial carries an onset code.
@@ -115,8 +119,15 @@ class TrialRow:
     response: str | None
     #: `ODOR_UNPOKE` to the first well poke.
     reaction_ms: int | None
+    #: How long the reward valve was open, `FLUID_*` to its `STOP_FLUID_G_*`:
+    #: what the board did, not the parameter it was sent. 0 when no reward was
+    #: given; None when the valve opened and the run never saw it close.
+    reward_ms: int | None
     #: The next trial re-presents this one (`INVALID_TRIAL` in the footer).
     repeat: bool
+    #: This trial re-presents the one before it, which ended in an error: a
+    #: correction trial.
+    correction: bool
     start_ms: int | None
     light_on_ms: int | None
     odor_poke_ms: int | None
@@ -125,7 +136,22 @@ class TrialRow:
     odor_unpoke_ms: int | None
     response_ms: int | None
     outcome_ms: int | None
+    #: When the reward valve opened; None when no reward was given.
+    reward_on_ms: int | None
     end_ms: int | None
+    # Each time above on the recording's clock, in seconds. None until a
+    # recorded run is aligned (ADR 0009): all None means "not aligned", never
+    # "nothing happened".
+    start_s: float | None = None
+    light_on_s: float | None = None
+    odor_poke_s: float | None = None
+    odor_on_s: float | None = None
+    odor_off_s: float | None = None
+    odor_unpoke_s: float | None = None
+    response_s: float | None = None
+    outcome_s: float | None = None
+    reward_on_s: float | None = None
+    end_s: float | None = None
 
 
 @dataclass(frozen=True)
@@ -169,11 +195,11 @@ def grammar_of(document: dict[str, Any], profile: TaskProfile | None) -> int:
     a board that announced it. Without one, the codes decide: a stream closed
     by grammar 1's terminators is grammar 1, whatever else it carries, and one
     with the grammar-2 header AND footer is grammar 2. Anything else is
-    grammar 1, which every recorded run before the header existed is; so is a
-    phase-spine stream with no snapshot, which opens its trials with the same
-    `TRIAL_START` but never closes one with `END_TRIAL`.
+    grammar 1, which every recorded run before the header existed is; so is
+    any stream that opens trials with `TRIAL_START` but never closes one with
+    `END_TRIAL`.
     """
-    stream = document.get(STREAM_KEY)
+    stream = stream_of(document)
     if isinstance(stream, int) and not isinstance(stream, bool):
         return stream
     names = _names(profile)
@@ -295,9 +321,20 @@ def _outcome_of(span: _Span, side: str | None) -> tuple[str, int, int | None, st
     return None
 
 
-def table_of(document: dict[str, Any], profile: TaskProfile | None) -> Grammar2Table:
-    """A grammar-2 run's document as its trial table."""
+def table_of(document: dict[str, Any], profile: TaskProfile | None,
+             seconds: Mapping[int, float] | None = None) -> Grammar2Table:
+    """A grammar-2 run's document as its trial table.
+
+    `seconds` is a recorded run's alignment: each strobe's time on the
+    recording's clock, by its index in the stream. It fills the rows' `*_s`
+    columns; a strobe whose pulse never came, and every strobe without it, is
+    None there."""
     pairs = _pairs_of(document)
+    placed = seconds or {}
+
+    def second(strobe: tuple[str, int, int | None] | None) -> float | None:
+        return placed.get(strobe[1]) if strobe else None
+
     names = _names(profile)
     conditions = conditions_of(profile)
     stamps = [ts for _, ts in pairs if ts is not None]
@@ -337,6 +374,13 @@ def table_of(document: dict[str, Any], profile: TaskProfile | None) -> Grammar2T
     strobes_map = profile.strobes if profile else {}
     by_code = {code: name for name, code in names.items()}
 
+    # Each odor line's name: the document's own odors table, else the one its
+    # profile gives (`DATA.md#the-odors-table`).
+    listed = odors_of(document)
+    odor_names = {row.get("line"): row.get("name")
+                  for row in (listed if isinstance(listed, list) else odor_table(profile, {}))
+                  if isinstance(row, dict)}
+
     trials: list[ReplayTrial] = []
     rows: list[TrialRow] = []
     previous_repeats_an_error = False
@@ -363,6 +407,9 @@ def table_of(document: dict[str, Any], profile: TaskProfile | None) -> Grammar2T
         reaction = (response_ms - unpoke[2] if response_ms is not None and unpoke and unpoke[2] is not None
                     and response_ms >= unpoke[2] else None)
         repeats = span.has(REPEAT)
+        odor_line = int(_ONSET.match(onset[0]).group(1)) if onset else None  # type: ignore[union-attr]
+        valve_ms = (stop[2] - fluid[2] if fluid and stop and fluid[2] is not None and stop[2] is not None
+                    and stop[2] >= fluid[2] else None)
         trials.append(ReplayTrial(
             index=k,
             at_ms=at,
@@ -376,8 +423,7 @@ def table_of(document: dict[str, Any], profile: TaskProfile | None) -> Grammar2T
             correct=correct_of(klass),
             rewarded=klass == "correct" and fluid is not None,
             reward_line=(strobes_map.get(codes[fluid[1]]) or str(codes[fluid[1]])) if fluid else None,
-            reward_ms=(stop[2] - fluid[2] if fluid and stop and fluid[2] is not None and stop[2] is not None
-                       and stop[2] >= fluid[2] else None),
+            reward_ms=valve_ms,
             correction=previous_repeats_an_error,
             complete=end is not None,
             presented=light is not None,
@@ -386,7 +432,8 @@ def table_of(document: dict[str, Any], profile: TaskProfile | None) -> Grammar2T
         rows.append(TrialRow(
             index=k,
             type_slot=int(_TYPE.match(type_code[0]).group(1)) if type_code else None,  # type: ignore[union-attr]
-            odor_line=int(_ONSET.match(onset[0]).group(1)) if onset else None,  # type: ignore[union-attr]
+            odor_line=odor_line,
+            odor_name=odor_names.get(odor_line) if onset else "",
             side="no_go" if side == "withhold" else side,
             sampled=onset is not None,
             outcome=outcome[0] if outcome else None,
@@ -394,7 +441,9 @@ def table_of(document: dict[str, Any], profile: TaskProfile | None) -> Grammar2T
             correct=correct_of(klass),
             response=POKES[response[0]] if response else None,
             reaction_ms=reaction,
+            reward_ms=valve_ms if fluid else 0,
             repeat=repeats,
+            correction=previous_repeats_an_error,
             start_ms=at,
             light_on_ms=light[2] if light else None,
             odor_poke_ms=poke[2] if poke else None,
@@ -403,7 +452,18 @@ def table_of(document: dict[str, Any], profile: TaskProfile | None) -> Grammar2T
             odor_unpoke_ms=unpoke[2] if unpoke else None,
             response_ms=response_ms,
             outcome_ms=outcome[2] if outcome else None,
+            reward_on_ms=fluid[2] if fluid else None,
             end_ms=end[2] if end else None,
+            start_s=second(span.strobes[0] if span.strobes else None),
+            light_on_s=second(light),
+            odor_poke_s=second(poke),
+            odor_on_s=second(onset),
+            odor_off_s=second(odor_off),
+            odor_unpoke_s=second(unpoke),
+            response_s=second(response),
+            outcome_s=second(outcome[:3] if outcome else None),
+            reward_on_s=second(fluid),
+            end_s=second(end),
         ))
         previous_repeats_an_error = repeats and klass in ("wrong_response", "hold_broken", "omission",
                                                           "false_alarm")
@@ -423,9 +483,11 @@ def _with_side(condition: Condition, trials: list[ReplayTrial], spans: list[_Spa
     return condition
 
 
-def rows_of(document: dict[str, Any], profile: TaskProfile | None) -> tuple[TrialRow, ...]:
-    """The per-trial table of a grammar-2 run, for its files."""
-    return table_of(document, profile).rows
+def rows_of(document: dict[str, Any], profile: TaskProfile | None,
+            seconds: Mapping[int, float] | None = None) -> tuple[TrialRow, ...]:
+    """The per-trial table of a grammar-2 run, for its files; with `seconds`,
+    its recording-clock columns filled (`table_of`)."""
+    return table_of(document, profile, seconds).rows
 
 
 def verdicts(table: Grammar2Table, condition: str) -> list[bool]:
@@ -441,7 +503,7 @@ def _tally(buckets: list[str | None]) -> TrialOutcomes:
     counts = Counter(b for b in buckets if b is not None)
     return TrialOutcomes(
         trials=sum(counts.values()),
-        # As the legacy tally and the spine's crossover: every answered or
+        # As the legacy tally: every answered or
         # unanswered trial; an abort during sampling is not among them.
         administered=sum(n for b, n in counts.items() if b != "aborted"),
         rewarded=counts["rewarded"],

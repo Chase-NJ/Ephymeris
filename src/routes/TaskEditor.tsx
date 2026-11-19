@@ -8,9 +8,6 @@ import { SketchStateMachine } from "@/components/task/SketchStateMachine";
 import { EditorHeader, homeOf, type EditorShared } from "@/components/task/editor/EditorHeader";
 import { GenerationPanel } from "@/components/task/editor/GenerationPanel";
 import { Panel } from "@/components/task/editor/Panel";
-import { SeedChooser } from "@/components/task/spine/SeedChooser";
-import { SpineEditor } from "@/components/task/spine/SpineEditor";
-import { SpineGuide } from "@/components/task/spine/SpineGuide";
 import { ParameterPanel } from "@/components/task/editor/ParameterPanel";
 import { TrialTypes } from "@/components/task/editor/TrialTypes";
 import { errorMessage } from "@/lib/cohorts/commands";
@@ -19,12 +16,9 @@ import type { RigDocument } from "@/lib/hardware/types";
 import { CASCADE, RISE, springPanel } from "@/lib/motion";
 import { useStrobeVocabulary } from "@/lib/strobes/useStrobeVocabulary";
 import { idFromName, listTasks } from "@/lib/taskdef/commands";
-import { spineEditorEnabled } from "@/lib/taskdef/devFlags";
-import { offerGuide } from "@/lib/taskdef/guide";
 import { isRowOwnedField } from "@/lib/taskdef/lines";
-import { isSpine } from "@/lib/taskdef/spine";
 import { blankTrial, nextStage } from "@/lib/taskdef/types";
-import type { TaskDefinition, TaskDiagnostic, TaskDocument, TaskEntry } from "@/lib/taskdef/types";
+import type { TaskDefinition, TaskDiagnostic, TaskEntry } from "@/lib/taskdef/types";
 import { useTask } from "@/lib/taskdef/useTask";
 import { editorLayout } from "@/lib/tasks/editorLayout";
 import { GENERATION_TAB, ROWS_TAB, tabOf, taskGraph, type TaskNode } from "@/lib/tasks/topology";
@@ -38,15 +32,11 @@ const MARK_MS = 2400;
 /**
  * The task editor — one task, open.
  *
- * The route loads, saves and names the document, and hands it to the body for
- * its kind: a trial-table task to `TrialTableEditor` (`TASKS.md#editor`), a
- * phase-spine task to `SpineEditor` (`TASKS.md#the-spine-editor`). `/task/new`
- * with nothing handed over is a fresh trial-table task (`freshTask`): the
- * spine editor has not been tested on a real box, so making a new spine task
- * from a seed is behind a development flag (`lib/taskdef/devFlags.ts`); a
- * saved spine task still opens in its own editor.
+ * The route loads, saves and names the document, and hands it to
+ * `TrialTableEditor` (`TASKS.md#editor`). `/task/new` with nothing handed over
+ * is a fresh task (`freshTask`).
  *
- * The trial-table body is a telemetry display (`ARCHITECTURE.md#telemetry-panels`) in one frame: the
+ * The body is a telemetry display (`ARCHITECTURE.md#telemetry-panels`) in one frame: the
  * derived state machine front and centre with every trial type beneath it,
  * and beside them the parameters panel and the trial-generation panel. The
  * machine has a floor and the page bends around it (`editorLayout`): when the
@@ -74,24 +64,13 @@ export function TaskEditor() {
   const [problemsOpen, setProblemsOpen] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
 
-  /** A brand-new task: a fresh trial-table task built here (`freshTask`), a
-   *  DUPLICATE handed over in router state by the landing, or, behind the
-   *  development flag, a seed spine picked here (`SeedChooser`). Seeded ONCE:
-   *  `useTask` treats a new seed object as a fresh open and would discard every
-   *  edit since. Null on `/task/new` only while the flag's chooser waits. */
+  /** A brand-new task: a fresh task built here (`freshTask`), or a DUPLICATE
+   *  handed over in router state by the landing. Seeded ONCE: `useTask` treats
+   *  a new seed object as a fresh open and would discard every edit since. */
   const location = useLocation();
-  const [seed, setSeed] = useState<TaskDocument | null>(() =>
-    taskId === undefined ? (seedFrom(location.state) ?? (spineEditorEnabled() ? null : freshTask())) : null,
+  const [seed] = useState<TaskDefinition | null>(() =>
+    taskId === undefined ? (seedFrom(location.state) ?? freshTask()) : null,
   );
-  /** The guided first task (`SpineGuide`): offered on `/task/new` behind the
-   *  same flag while the machine has no spine task, opened from the seed
-   *  chooser's link, and left for the editor (or the chooser) at any step. */
-  const [guide, setGuide] = useState<"offered" | "on" | "off">("offered");
-  const guiding =
-    taskId === undefined &&
-    spineEditorEnabled() &&
-    !seedFrom(location.state) &&
-    (guide === "on" || (guide === "offered" && seed === null && tasks !== null && offerGuide(tasks)));
   // Never opened by itself: a new task's category defaults to `Tasks`, which
   // the header's Details button shows, and the folder it decides is changed
   // there whenever someone wants another.
@@ -106,7 +85,7 @@ export function TaskEditor() {
       .then((r) => setTasks(r.tasks))
       .catch((err) => setListError(errorMessage(err)));
     // The wiring is what the trial-table pickers offer and where each line's
-    // onset code is declared. A spine's pickers come from its preview.
+    // onset code is declared.
     void getRig(client).then((r) => setRig(r.document as RigDocument));
   }, [client, connected]);
 
@@ -158,26 +137,7 @@ export function TaskEditor() {
   };
 
   let body;
-  if (guiding) {
-    body = (
-      <SpineGuide
-        session={session}
-        rig={rig}
-        onPickSeed={(picked) => {
-          setGuide("on");
-          setSeed(picked);
-        }}
-        onLeave={() => setGuide("off")}
-        onSave={() => void save()}
-      />
-    );
-  } else if (taskId === undefined && seed === null && guide === "offered" && spineEditorEnabled() && connected && tasks === null && !listError) {
-    // Whether to offer the guide waits on the task list: nothing, rather than
-    // the chooser for a frame.
-    body = null;
-  } else if (taskId === undefined && seed === null) {
-    body = <SeedChooser onPick={setSeed} onBack={() => navigate("/task")} onGuide={() => setGuide("on")} />;
-  } else if (session.loadError || !definition) {
+  if (session.loadError || !definition) {
     body = (
       <Frame scrolls>
         {session.loadError ? (
@@ -197,8 +157,6 @@ export function TaskEditor() {
         )}
       </Frame>
     );
-  } else if (isSpine(definition)) {
-    body = <SpineEditor shared={shared} definition={definition} rig={rig} />;
   } else {
     body = <TrialTableEditor shared={shared} definition={definition} rig={rig} />;
   }
@@ -545,7 +503,7 @@ function TrialTableEditor({
 }
 
 /**
- * A trial-table task with nothing decided yet.
+ * A task with nothing decided yet.
  *
  * Built in the frontend rather than fetched, because there is nothing to fetch:
  * every value here is either empty or the shape the firmware needs at minimum.
@@ -569,10 +527,10 @@ function freshTask(): TaskDefinition {
 }
 
 /** A duplicated task handed over by the Task landing, if that is how we got here. */
-function seedFrom(state: unknown): TaskDocument | null {
+function seedFrom(state: unknown): TaskDefinition | null {
   if (typeof state !== "object" || state === null || !("seed" in state)) return null;
   const seed = (state as { seed: unknown }).seed;
-  return typeof seed === "object" && seed !== null ? (seed as TaskDocument) : null;
+  return typeof seed === "object" && seed !== null ? (seed as TaskDefinition) : null;
 }
 
 /** The motion frame every editor state sits in. */

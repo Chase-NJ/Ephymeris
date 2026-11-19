@@ -322,8 +322,8 @@ export function Analytics() {
   }
 
   /**
-   * Re-derive (`DATA.md#re-derive`): rewrite the derived trial table in spine
-   * runs' files. Analytics never reads that table, so there is nothing to
+   * Re-derive (`DATA.md#re-derive`): rewrite the derived trial table in
+   * stream-grammar-2 runs' files. Analytics never reads that table, so there is nothing to
    * refresh afterwards; the note says what was rewritten.
    */
   async function runRederive() {
@@ -518,7 +518,7 @@ export function Analytics() {
                 variant="outline"
                 onClick={() => void runRederive()}
                 disabled={!connected || !cohortId || rescanning || recovering || rederiving}
-                title="Rewrite the trial table stored in spine runs' .json/.mat files with this version's replay. Strobes are never touched"
+                title="Rewrite the trial table stored in grammar-2 runs' .json/.mat files with this version's. Strobes are never touched"
               >
                 <TableProperties size={13} strokeWidth={1.75} />
                 {rederiving ? "Re-deriving…" : "Re-derive"}

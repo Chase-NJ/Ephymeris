@@ -11,10 +11,8 @@ import { useBoxEnded } from "@/lib/sessions/context";
 import type { SessionBox, TaskProfile } from "@/lib/sessions/types";
 
 /**
- * The star panel's chrome, shared by both kinds of task (`StarPanel`): the
- * header band, the trial flow, the charts beside the metrics, and the strobe
- * feed. What fills it is the caller's: `StarPanel.tsx` for a task the legacy
- * panels decode, `SpinePanel.tsx` for a spine task.
+ * The star panel's chrome: the header band, the trial flow, the charts beside
+ * the metrics, and the strobe feed. What fills it is `StarPanel.tsx`'s.
  */
 
 
@@ -74,7 +72,7 @@ export function Readout({ title, value, count }: { title: string; value: number 
   );
 }
 
-/** The panel's chrome, shared by both kinds of task: the header band, the
+/** The panel's chrome: the header band, the
  *  trial flow, the charts beside the metrics and the strobe feed. */
 export function PanelFrame({
   box,

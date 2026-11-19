@@ -21,8 +21,6 @@ rather than a warning:
   TSK114  an onset code not its line's own      -> a condition labelled as another odor
   TSK115  a row with no TRIAL_TYPE code         -> a trial header nothing can decode
 
-A spine task (`model.Spine`) is judged by `spine.py` instead, as SPN101-SPN112.
-
 (TSK112 is the Task tab's own, derived client-side: an onset code no live
 metric scores.)
 
@@ -54,10 +52,9 @@ class Diagnostic:
     location: str
     message: str
     code: str
-    #: What the problem is about, for the editor to show it there
-    #: (`TASKS.md#the-spine-editor`): `{kind, index}`. Read off `location` by
-    #: `locate` unless the rule that found it knows better (a stored parameter's
-    #: owner, the RAM budget).
+    #: What the problem is about, for the editor to show it there:
+    #: `{kind, index}`. Read off `location` by `locate` unless the rule that
+    #: found it knows better.
     target: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
@@ -70,8 +67,7 @@ class Diagnostic:
 
 
 #: A location's leading path -> the kind of thing it is in.
-_INDEXED = {"spine": "phase", "rows": "row", "blocks": "block", "slots": "slot", "trials": "row",
-            "stages": "stage"}
+_INDEXED = {"trials": "row", "stages": "stage"}
 _INDEX_RE = re.compile(r"^(\w+)\[(\d+)\]")
 
 
@@ -80,14 +76,12 @@ def target(kind: str, index: int | None = None) -> dict[str, Any]:
 
 
 def locate(location: str) -> dict[str, Any]:
-    """The phase, row, block, slot or stage a diagnostic's location is in, or
-    the session, the vocabulary or the task as a whole."""
+    """The row or stage a diagnostic's location is in, or the session, the
+    vocabulary or the task as a whole."""
     indexed = _INDEX_RE.match(location)
     if indexed and indexed.group(1) in _INDEXED:
         return target(_INDEXED[indexed.group(1)], int(indexed.group(2)))
     head = location.split(".", 1)[0]
-    if head in ("rows", "blocks"):  # the list as a whole: none, or none that ends
-        return target(_INDEXED[head])
     if head == "sessionTrials":
         return target("session")
     if head == "vocabulary":
@@ -101,12 +95,6 @@ def validate(definition: TaskDefinition) -> list[Diagnostic]:
     Fixing a new task should be one pass rather than a game of whack-a-mole —
     the same argument `ChannelMap.disagreements()` makes.
     """
-    if definition.spine is not None:
-        # A spine task is judged by its own rules (SPN101-SPN112). Imported here
-        # because `spine` builds on this module's `Diagnostic`.
-        from . import spine
-
-        return spine.diagnostics(definition)
     out: list[Diagnostic] = []
     channels = registry.channels()
     vocab = registry.vocabulary()

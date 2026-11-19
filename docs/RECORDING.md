@@ -135,39 +135,26 @@ flowchart LR
 
 ### Firmware pulse
 
-The board announces its scheme before `READY`, since a spine board flashed before the tick pulse existed
-still pulses per strobe:
-
-| Runner | Pulses | Announces |
-|---|---|---|
-| Trial runner (`emitStrobe()` in `BehaviorBox.h`: GRGL, trial-loop sketches, `GRGL_Sim`) | Once per strobe | Nothing |
-| Spine runner (`BoxSpine.h`) | Once per **tick** that strobes; the tick's strobes share its edge | `SYNC=TICK` |
-
-The runner writes `SYNC=TICK` into the header as `# sync: tick` ([DATA.md](DATA.md#the-tsv-log)), which
-offline alignment reads, and builds the box's matcher to pair by tick.
+Every bundled sketch pulses the sync line **once per strobe** (`emitStrobe()` in `BehaviorBox.h`) and
+announces nothing about it. A board that announces `SYNC=TICK` before `READY` pulses once per **tick**
+that strobes, the tick's strobes sharing its edge: the runner writes that into the header as
+`# sync: tick` ([DATA.md](DATA.md#the-tsv-log)), which offline alignment reads, and builds the box's
+matcher to pair by tick. No bundled sketch announces it.
 
 **Per strobe.** `emitStrobe()` waits out the LOW gap **first**, stamps, drives HIGH at once (**the rising
 edge is what the controller timestamps**), prints while high, then holds out the width and goes LOW. Each
 strobe costs about 0.7 ms, so the k-th strobe of a burst rises about (k−1) × 0.7 ms after the first.
 
-**Per tick.** The runner raises the line right after the tick's output pins are written, before any
-print, and lowers it on a later `loop()` pass once `BOX_SYNC_PULSE_US` has run; the next rise waits for
-`BOX_SYNC_GAP_US` of LOW (`syncStep`). Nothing blocks. A tick that strobes before the line is ready (two
-ticks in one pass when AVR `millis()` skips a value) is **owed** its rise, raised on the first pass the gap
-allows, so every strobing tick gets its own edge. At session end `shutdownOutputs()` spares the sync line
-so its last pulse is not cut too narrow.
-
 | Macro (`BoxPins.h`, `#ifndef`-guarded) | Meaning |
 |---|---|
 | `BOX_PIN_SYNC_OUT` | Default **49**. Not 13 (the bootloader blinks it on reset), 0/1 (serial) or 50–53 (SPI). **`-1` compiles the pulse out** |
-| `BOX_SYNC_PULSE_US` | Pulse width (per tick: at least this, up to one `loop()` pass longer) |
+| `BOX_SYNC_PULSE_US` | Pulse width |
 | `BOX_SYNC_GAP_US` | Minimum LOW before the next pulse |
 
 > [!CAUTION]
 > **Two pulses with no LOW between them are one edge**, and a fused pair makes every later event match one
 > strobe late, which looks like plausible data. The gap is enforced in firmware and pinned by the host
-> tests (`libraries/BehaviorBox/extras/host_test/`; `run_spine.sh`'s `sync_tick` and `sync_close` check
-> one rise per strobing tick, its width and its gap).
+> tests (`libraries/BehaviorBox/extras/host_test/run.sh`).
 
 `shutdownHardware()` (from `initBoxHardware()`) holds the line LOW, since a floating input reads as
 events. The line can be proven with no animal: a task started on an empty box from Debug Mode strobes on
@@ -296,13 +283,14 @@ URL, because it is re-entered from the dock, between rounds and after a reload.
 
 It comes **after mapping** (it asks for each *mapped* box's headstage port), runs **once per [round](../GLOSSARY.md#round)**, and
 opens prefilled from `settings.recordingDefaults`, which it writes back on Continue. Whether a box records,
-its port and channel range are remembered **by box**; a probe map is the animal's implant, remembered **by
-animal id** (`probeMaps`).
+its port and channel range are remembered **by box**. **A probe map is never entered here**: each row
+shows its animal's [implant](DATA.md#implants)'s (`implantProbeMaps`, `followImplantMaps`), the one place
+a probe map is entered, so the two can never disagree.
 
 - **Readiness**: RHX connected and not recording, a headstage present, a sync channel in the wiring, a
   digital input for every recorded box. Each failing line links to its fix.
 - **Saving**: `<session folder>/ephys` by default, or the session's folder name under a chosen root.
-- **Boxes**: Record or Behavior only, DIN, port, channel range, optional probe-map XML (parsed by
+- **Boxes**: Record or Behavior only, DIN, port, channel range, and the implant's probe-map XML (parsed by
   `intan.parseProbeMap`; a parse cut off by a lost connection reruns on reconnect). Boxes may share a
   port on disjoint ranges only. A box not in the round's confirmed mapping is refused before RHX is
   touched (`SessionLifecycle.mapped_boxes`).
@@ -313,7 +301,14 @@ confirming the mapping again, even unchanged, makes Start refuse until the Recor
 ![The Set Up the Recording step: Readiness 5/5, Saving with a save location ending in /ephys and a warning that the path contains a space, "Using your defaults" with Edit for this session, and the first box's Record or Behavior only choice with its port, channels 0 to 15 and probe map](images/record-step.webp)
 
 **Wideband defaults on**: everything else RHX saves derives from it, and a bad threshold cannot be
-re-picked without it.
+re-picked without it. **A spike snapshot defaults to 1 ms before and 1 ms after the crossing** (30
+samples each side at 30 kS/s), and snapshots are on whenever spikes are. A machine's saved defaults are
+kept as the operator set them.
+
+> [!CAUTION]
+> **Spikes saved without snapshots cannot be sorted**: `spike.dat` then holds timestamps only. Such a
+> setup is refused, with that reason, by the Record step and by `IntanService.configure`
+> (`refuse_unsortable`) before RHX is touched.
 
 On **Continue**, `intan.configure` (`IntanService.configure`) applies the plan in one pass. An RHX in `Run`
 is stopped (it ignores saving parameters while running); one in `Record` is refused. **Unclaimed channels
@@ -488,21 +483,58 @@ folder. Probe-map XMLs are copied beside them as `box<n>_<name>.xml`.
 channels and probe-map file). `NULL` means behavior only. A save location inside a cohort folder follows
 a relocate of that folder.
 
-**Each animal's document** ([DATA.md](DATA.md#per-animal-files)) gains flat `intan_*` fields, also in the
-`.tsv` header so a crash-recovered file keeps them:
+**Each recorded animal's document** ([DATA.md](DATA.md#the-json-document)) gains three blocks. All three are in the `.tsv` header, so a crash-recovered file keeps them.
 
-| Field | |
-|---|---|
-| `intan_recording` | base filename + RHX's timestamp: the name to look for |
-| `intan_path` | where RHX was told to save |
-| `intan_digital_in`, `intan_port`, `intan_channels` | this box's input, port and `A-016:A-031` range |
-| `intan_sample_rate` | for converting sample numbers |
+**`recording`**: which recording the run is inside. In the `.tsv` header each field is the `intan_*` line named beside it; a version-1 document has them flat under those names, and is read into this block:
+
+| Field | `.tsv` line | |
+|---|---|---|
+| `name` | `intan_recording` | base filename + RHX's timestamp: the name to look for |
+| `path` | `intan_path` | where RHX was told to save |
+| `digital_in`, `port`, `channels` | `intan_digital_in`, `intan_port`, `intan_channels` | this box's input, port and `A-016:A-031` range |
+| `sample_rate` | `intan_sample_rate` | for converting sample numbers |
+
+**`implant`**: the animal's [implant](DATA.md#implants) as it stood on the session's date (`implants.on_date`); `null` for an animal with none.
+
+```jsonc
+"implant": {"device": "custom 32-channel electrode", "surgery_date": "2026-11-30", "probe_map": null,
+            "targets": [{"name": "OFC", "region": "orbitofrontal cortex", "hemisphere": "left",
+                         "ap_mm": 3.2, "ml_mm": 2.4, "dv_mm": 4.85, "depth_set_on": "2026-12-14", "channels": "0-15"}]}
+```
+
+- `dv_mm` is the depth in force that day and `depth_set_on` the date of the lowering that set it (the surgery date before any). A lowering moves the contacts to other neurons, so only runs sharing `depth_set_on` were recorded in one place.
+- It is a copy: editing the implant later changes no run already written.
+
+**`channels`**: one row per channel RHX records for the box, in order (`implants.channel_rows`). It is the one place RHX's naming and the device's meet.
+
+```jsonc
+"channels": [{"native": "A-016", "device_channel": 0, "target": "OFC", "x_um": null, "y_um": null}]
+```
+
+- **Device channel k is the k-th channel of the box's range**: a box on `A-016:A-047` has device channel 0 at `A-016`. On the lab's custom electrode that is the number printed beside the hole on the EIB.
+- `target` is the implant target claiming that device channel, `''` for none and for an animal with no implant.
+- `x_um`, `y_um` are the site's position in the implant's probe map, `null` without one.
+- In the `.tsv` header `implant` and `channels` are one JSON line each. In the `.mat`, `S.implant.targets` and `S.channels` are N×1 struct arrays.
 
 > [!IMPORTANT]
-> **Core, not config, so they stay out of `params_hash`**: two runs of one tuning must compare in Analytics
-> whether or not one was recorded ([TASKS.md](TASKS.md#profile-and-params-hashes)). They are in
-> `tasks/profile.py`'s `CORE_METADATA_KEYS`, and the string ones in `sessions/recovery.py`'s
-> `_STRING_FIELDS` (so `0423_7` does not come back as a number).
+> **Never parameters, so they stay out of `params_hash`**: two runs of one tuning must compare in Analytics
+> whether or not one was recorded ([TASKS.md](TASKS.md#profile-and-params-hashes)). The string ones are in
+> `sessions/recovery.py`'s `_STRING_FIELDS` (so `0423_7` does not come back as a number).
+
+<a id="the-sort-export"></a>
+**`sort/<run>.spikes.mat`**, one per recorded animal, in the session folder beside `behavior.json/`: what Plexon Offline Sorter imports (`intan/sort_export.py`). It holds the three variables the lab's own `save_extracted_spikes.m` writes per port, restricted to the animal's channels:
+
+| Variable | |
+|---|---|
+| `spiketimes` | K×1 cell, each n×1 double: spike times, seconds on RHX's clock |
+| `spikewaves` | K×1 cell, each n×30 double: waveforms in µV, rows are spikes |
+| `unique_ch` | K×1 cell, each one whole native channel name (`A-016`) |
+
+- K is the animal's channels with at least one spike, in RHX's channel order; a silent channel is left out.
+- µV is `0.195 × (count − 32768)`. The 30 samples run from 6 before the crossing to 24 after: samples 25:54 of a snapshot with 30 pre-detect samples, counted from the crossing for any other lead-in. Spikes RHX flagged as artifacts (id 128) are kept.
+- Written once RHX has confirmed its stop, in the background, after the run is [aligned](#alignment-at-session-end): it never holds up an end, and a failure costs only the export. The file is written whole or not at all. While RHX's stop is still owed nothing is exported, since `spike.dat` may still be growing.
+- **No file, with the reason logged**, when the recording saved no snapshots, keeps fewer than 6 samples before or 24 after a detection, or the animal's channels never fired.
+- `tests/test_sort_export.py` compares it with the lab's `ExtractIntanSpikes.py`, value for value, on a real recording named by `EPHYMERIS_RHX_SAMPLE` and `EPHYMERIS_LAB_EXPORTS`.
 
 The durable record is RHX's files plus the `.tsv`; nothing the sync check or the firing map computes is
 persisted.
@@ -598,12 +630,12 @@ the same one, so only Ephymeris can align to `ODOR_1_ON` rather than "something 
 ([ADR 0007](adr/DECISIONS.md#0007-rhxs-own-windows-replace-the-recording-pop-ups)). After the session the
 data is complete: every spike and edge at full rate, every strobe, every trial's outcome.
 
-`intan/offline.py`'s `load_run`, from one run's `.json`:
+`intan/offline.py`'s `align_run`, from one run's `.json`. It is the one alignment: the first view of a run (`load_run`, which adds the spikes) and the [pass at a recording's end](#alignment-at-session-end) both call it.
 
-1. **Find the recording**: `intan_path` / `intan_recording`, RHX's per-run folder.
+1. **Find the recording**: the document's `recording.path` / `recording.name`, RHX's per-run folder.
 2. **Read RHX's files** (`intan/rhx_files.py`, layouts from RHX's `FilePerSignalTypeSaveManager`):
-   `spike.dat` for the box's channels, and the rising edges of its `intan_digital_in` in
-   `digitalin.dat`, timed by `time.dat`. A one-hour `digitalin.dat` is about 108 million words; they
+   the rising edges of the box's `recording.digital_in` in `digitalin.dat`, timed by `time.dat`
+   (and, for a PSTH, `spike.dat` for its channels). A one-hour `digitalin.dat` is about 108 million words; they
    are never looped over in Python: each chunk's byte holding the bit is sliced out, mapped to 0/1 with
    `bytes.translate` and searched with `bytes.find`, so only the edges are.
 3. **Align** (`intan/events.py`'s `align`): the live sync check's own `EdgeMatcher`, fed as a live
@@ -611,8 +643,7 @@ data is complete: every spike and edge at full rate, every strobe, every trial's
    once would overflow `MAX_PENDING`. Before the first pair it may hold up to `MAX_PENDING` edges, so
    any number of reset twitches ahead of START are skipped.
 4. **Place each event in its trial**: the trial table's (`trial_table_of`) last trial opened at or
-   before it. A replayed spine run's trial times are the board's clock, which restarts at START like
-   the strobes'; a decoded legacy run's count from its earliest timestamp, which is added back.
+   before it. The table counts its trial times from the run's earliest timestamp, which is added back.
 5. **Write the events file**, `events/<run>.events.json` and `.mat` beside the session: every strobe,
    named, its sample on the recording's clock (or null) and its trial; the trials' conditions and
    outcomes. It is for the lab's own scripts and spike sorters; **the app never reads it back**.
@@ -634,6 +665,27 @@ panel shows nothing for a session with none.
 > counts. A shifted match draws a PSTH that looks as convincing as a right one; a missed or
 > unpaired count is the warning.
 
+### Alignment at session end
+
+Once RHX has confirmed its stop, the lifecycle starts one background pass over the recording's runs (`SessionLifecycle._after_recording`), in a fixed order so its two steps never work on one run at once: **align, then [export](#the-sort-export)**. Neither step can hold up an end or cost a run anything, and a failure of one does not stop the other.
+
+Alignment (`intan/alignment.py`, through `CohortArchive.align_recorded`) writes what `align_run` found into the run's own files:
+
+- **`recording.sync`**: `{"matched", "missed", "stray"}`, the counts the events file and the PSTH panel show.
+- **The trial table's `*_s` columns** ([DATA.md](DATA.md#the-trial-table)): each event's time in seconds on the recording's clock, its sample divided by the sample rate, the clock of `spiketimes` in the sort export. An event whose pulse never came stays null.
+- **The events file**, as at first view.
+
+How it treats the files:
+
+- The `.json` is read, `recording.sync` and `trials` are replaced, and every other block is written back as it was read, whole or not at all; then the `.mat`. **The `.tsv` is never opened.**
+- It is an [archive write](DATA.md#the-cohort-archive): it holds the archive, is refused while a box runs and stops if one starts, and queues the files it wrote for [backup](DATA.md#backup-mirroring). The rewrite changes the file's size and time once, so its [cached score](DATA.md#caching) is recomputed once.
+- **RHX's files missing or unreadable leave the run exactly as finalization wrote it.** A run the pass did not reach is filled the first time it is viewed (`Application._align_later`). A second pass over an aligned run writes nothing.
+- [Re-derive](DATA.md#re-derive) keeps the `*_s` columns it finds (`derived.with_stored_seconds`). A run [recovered](DATA.md#crash-recovery) from its `.tsv` has none until it is aligned again.
+- A version-1 file is never rewritten: its events file is its alignment. Nothing runs while RHX's stop is still owed.
+
+> [!CAUTION]
+> **All-null `*_s` columns mean "not aligned", never "nothing happened"**, and `recording.sync` is absent then. Check `missed` and `stray` before trusting the times: a shifted match is as tidy as a right one.
+
 ## Not yet verified
 
 Configure, record, the sync line into a real digital input and the graceful end have run against a real
@@ -652,7 +704,6 @@ To watch on the first full-length recording:
 
 | Question | If the answer is the bad one |
 |---|---|
-| Does a spine run's sync check read nothing missed and nothing stray? The tick pulse is proven only in the host shim | Edges pair with the wrong ticks. Check width, gaps and an owed rise on the DIN trace before relying on [the bound](#the-alignment-bound) |
 | Does the RMS-relative threshold need the board to have run first? | Thresholds land wrong; fix with a short `run` before `SetSpikeDetectionThresholds` |
 | Digital-input naming on the USB Interface Board (zero-based) | Handled in `digital_in_name`; untested |
 | Does `Filename.ActiveFileTimestamp` change when RHX rolls to a new file (`NewSaveFilePeriodMinutes`), or read `RecordingNotStarted` once samples arrive? | A run that lost its link is not picked back up and its owed stop is report-only: safe, but RHX must be stopped by hand ([When RHX goes away](#when-rhx-goes-away)) |

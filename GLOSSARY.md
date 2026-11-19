@@ -51,23 +51,18 @@ _Avoid_: standing box, assigned box
 
 <a id="trial-type"></a>
 **Trial type**:
-One kind of trial a spine task presents: a row of its definition, with a name, the channel that plays each role, and what each answer means. A trial-table task's equivalent is a condition.
-_Avoid_: row (in anything a user reads), condition (for a spine task)
+One kind of trial a task presents: a row of its trial table, with a name, its odor line, the port that answers it, and the reward line and volume that pay it.
+_Avoid_: row (in anything a user reads)
+
+<a id="target"></a>
+**Target**:
+A group of an implanted device's channels that sit at one place in the brain, with a region, a hemisphere and coordinates. A device has one or more; the lab's custom 32-channel electrode has two, one per bundle of 16.
+_Avoid_: site (Intan's word for one contact), bundle (the wires, not where they are)
 
 <a id="role"></a>
 **Role**:
-A part a channel plays in a spine task's trial (the port the animal pokes, the sample, the left well, the line that pays): a slot of the definition that each trial type binds to a channel of this rig.
-_Avoid_: slot (in anything a user reads), wire
-
-<a id="step"></a>
-**Step**:
-One phase of a spine task's trial as the editor shows it: a Wait, Hold, Present, Delay, Response window, Counter, Outcome or ITI.
-_Avoid_: phase (in anything a user reads), state
-
-<a id="penalty"></a>
-**Penalty**:
-How long a spine trial that ended a given way waits before the next trial, in place of the ITI; set on the exit that ends it (a Wait's timeout, a broken hold, an abort) or on a contingency-map entry.
-_Avoid_: timeout (a phase's own duration), punishment
+What a channel is for on the rig, declared in the channel set: `port`, `stimulus`, `reward`, `cue`, `routing` or `sync`. The box utility reads it, with the channel's type, to decide how it tests the channel.
+_Avoid_: kind (which decides what a task's firmware does with the channel), wire
 
 <a id="decode-only-sketch"></a>
 **Decode-only sketch**:

@@ -210,6 +210,18 @@ class _RunCount:
 # --------------------------------------------------------------------------- #
 
 
+def refuse_unsortable(config: dict[str, Any]) -> None:
+    """Refuse a recording that saves spikes without their snapshots
+    (`RECORDING.md#record-step`): `spike.dat` would hold timestamps only, so
+    Offline Sorter would have no waveform to sort. Asked before RHX is
+    touched, so a refused setup changes nothing there."""
+    if config.get("saveSpikes") and not config.get("saveSpikeSnapshots"):
+        raise IntanNotReady(
+            "Spikes would be saved without their snapshots, so there would be nothing to "
+            "sort. Turn on Spike snapshots, or turn off Save spikes."
+        )
+
+
 class IntanService:
     def __init__(
         self,
@@ -586,6 +598,7 @@ class IntanService:
         starts for that one (`refuse_unless_ready`)."""
         if self._run_open:
             raise IntanNotReady("A recording is already running.")
+        refuse_unsortable(config)
         if not self._client.connected:
             await self.connect()
         client = self._client
@@ -627,7 +640,7 @@ class IntanService:
         await client.set("filename.basefilename", plan.base_filename, verify=True)
 
         snapshot_pre = _int(config.get("snapshotPreMs", 1), "Snapshot pre-detect", 0, 3)
-        snapshot_post = _int(config.get("snapshotPostMs", 2), "Snapshot post-detect", 1, 6)
+        snapshot_post = _int(config.get("snapshotPostMs", 1), "Snapshot post-detect", 1, 6)
         downsample = config.get("lowpassDownsample", 1)
         if downsample not in DOWNSAMPLE:
             raise IntanNotReady("Lowpass downsample must be a power of two up to 128.")

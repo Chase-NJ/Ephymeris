@@ -313,7 +313,14 @@ confirming the mapping again, even unchanged, makes Start refuse until the Recor
 ![The Set Up the Recording step: Readiness 5/5, Saving with a save location ending in /ephys and a warning that the path contains a space, "Using your defaults" with Edit for this session, and the first box's Record or Behavior only choice with its port, channels 0 to 15 and probe map](images/record-step.webp)
 
 **Wideband defaults on**: everything else RHX saves derives from it, and a bad threshold cannot be
-re-picked without it.
+re-picked without it. **A spike snapshot defaults to 1 ms before and 1 ms after the crossing** (30
+samples each side at 30 kS/s), and snapshots are on whenever spikes are. A machine's saved defaults are
+kept as the operator set them.
+
+> [!CAUTION]
+> **Spikes saved without snapshots cannot be sorted**: `spike.dat` then holds timestamps only. Such a
+> setup is refused, with that reason, by the Record step and by `IntanService.configure`
+> (`refuse_unsortable`) before RHX is touched.
 
 On **Continue**, `intan.configure` (`IntanService.configure`) applies the plan in one pass. An RHX in `Run`
 is stopped (it ignores saving parameters while running); one in `Record` is refused. **Unclaimed channels

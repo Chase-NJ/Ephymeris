@@ -48,9 +48,9 @@ def config(tmp_path, **edits) -> dict:
         "fileFormat": "OneFilePerSignalType",
         "saveWideband": False,
         "saveSpikes": True,
-        "saveSpikeSnapshots": False,
+        "saveSpikeSnapshots": True,
         "snapshotPreMs": 1,
-        "snapshotPostMs": 2,
+        "snapshotPostMs": 1,
         "saveLowpass": False,
         "lowpassDownsample": 1,
         "saveHighpass": False,
@@ -151,6 +151,32 @@ async def test_channels_nobody_claimed_are_switched_off(rig, tmp_path):
     await h.service.configure("s1", config(tmp_path, boxes=boxes), "x")
     assert h.fake.params["a-007.enabled"] == "true"
     assert h.fake.params["a-008.enabled"] == "false"
+
+
+async def test_spikes_without_snapshots_are_refused_before_rhx_is_touched(rig, tmp_path):
+    """`RECORDING.md#record-step`: `spike.dat` would hold timestamps only, so
+    there would be nothing to sort. Said before a single command is sent."""
+    h = await rig(poll_s=60.0)
+    await h.service.connect()
+    before = list(h.fake.log)
+    with pytest.raises(IntanNotReady, match="nothing to sort"):
+        await h.service.configure("s1", config(tmp_path, saveSpikeSnapshots=False), "x")
+    assert h.fake.log == before, "RHX heard nothing"
+    assert "savespikedata" not in h.fake.params
+
+    # Nothing about spikes is asked of a recording that saves none.
+    await h.service.configure(
+        "s1", config(tmp_path, saveWideband=True, saveSpikes=False, saveSpikeSnapshots=False), "x")
+    assert h.fake.params["savespikedata"] == "false"
+
+
+async def test_the_snapshot_window_defaults_to_a_millisecond_each_side(rig, tmp_path):
+    """30 samples before and 30 after a detection at 30 kS/s, as the lab records."""
+    h = await rig()
+    unset = {k: v for k, v in config(tmp_path).items() if k not in ("snapshotPreMs", "snapshotPostMs")}
+    await h.service.configure("s1", unset, "x")
+    assert h.fake.params["spikesnapshotpredetectmilliseconds"] == "-1"
+    assert h.fake.params["spikesnapshotpostdetectmilliseconds"] == "1"
 
 
 async def test_a_save_location_rhx_would_truncate_is_refused_not_recorded_elsewhere(rig, tmp_path):

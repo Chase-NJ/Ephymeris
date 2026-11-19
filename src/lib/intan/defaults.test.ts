@@ -36,6 +36,19 @@ describe("normalizeRecordingDefaults", () => {
     expect(DEFAULT_RECORDING_DEFAULTS.saveRoot).toBeNull();
   });
 
+  it("defaults to a 1 ms snapshot each side, with snapshots on whenever spikes are", () => {
+    const { config } = DEFAULT_RECORDING_DEFAULTS;
+    expect([config.snapshotPreMs, config.snapshotPostMs]).toEqual([1, 1]);
+    expect(config.saveSpikeSnapshots).toBe(true);
+  });
+
+  it("leaves a machine's saved snapshot window and switches as the operator set them", () => {
+    const stored = { ...STORED_BY_THE_STEP.config, snapshotPreMs: 2, snapshotPostMs: 2, saveSpikeSnapshots: false };
+    const out = normalizeRecordingDefaults({ ...STORED_BY_THE_STEP, config: stored }).config;
+    expect([out.snapshotPreMs, out.snapshotPostMs]).toEqual([2, 2]);
+    expect([out.saveSpikes, out.saveSpikeSnapshots]).toEqual([true, false]);
+  });
+
   it("loads what the Record step stored before probe maps followed the animal, ignoring each box's old one", () => {
     expect(normalizeRecordingDefaults(STORED_BY_THE_STEP)).toEqual({
       ...STORED_BY_THE_STEP,
@@ -80,7 +93,7 @@ describe("normalizeRecordingDefaults", () => {
     });
     expect(out.saveRoot).toBeNull();
     expect(out.config.fileFormat).toBe("OneFilePerSignalType");
-    expect(out.config.snapshotPostMs).toBe(2);
+    expect(out.config.snapshotPostMs).toBe(1); // 99 is out of range: back to the default
     expect(out.config.lowpassDownsample).toBe(1);
     expect(out.config.newFileMinutes).toBe(30);
     expect(out.config.saveSpikeSnapshots).toBe(true); // untouched neighbour survives
@@ -121,6 +134,7 @@ describe("summarizeRecordingConfig", () => {
         fileFormat: "Traditional",
         saveWideband: false,
         saveSpikes: true,
+        saveSpikeSnapshots: false,
         saveLowpass: true,
         lowpassDownsample: 8,
         threshold: { ...base.threshold, mode: "absolute", microvolts: -60 },

@@ -12,6 +12,7 @@ import {
   probeMapWaiting,
   reconcileRows,
   recordingReadiness,
+  UNSORTABLE_REASON,
   rememberedDefaults,
   saveDirectory,
   type BoxRow,
@@ -282,6 +283,18 @@ describe("recordingReadiness", () => {
     const r = recordingReadiness(two, config, { ...rhx, connected: false, ports: {} }, wired, "/d");
     expect(r.checks.map((c) => c.ok)).toEqual([false, false, false, true, true]);
     expect(r.hint).toBe("Connect Ephymeris to Intan RHX.");
+  });
+
+  it("is not ready when spikes would be saved without their snapshots, and says why", () => {
+    const bare = { ...config, saveSpikes: true, saveSpikeSnapshots: false };
+    const r = recordingReadiness(two, bare, rhx, wired, "/d");
+    expect(r).toMatchObject({ unsortable: true, firstProblem: UNSORTABLE_REASON, ready: false });
+    expect(UNSORTABLE_REASON).toMatch(/nothing to sort/);
+    const sortable = recordingReadiness(two, { ...bare, saveSpikeSnapshots: true }, rhx, wired, "/d");
+    expect(sortable).toMatchObject({ unsortable: false, ready: true });
+    // Snapshots off means nothing when no spikes are saved.
+    const none = recordingReadiness(two, { ...bare, saveSpikes: false }, rhx, wired, "/d");
+    expect(none).toMatchObject({ unsortable: false, ready: true });
   });
 
   it("is not ready when nothing would be saved, or before the save directory is known", () => {

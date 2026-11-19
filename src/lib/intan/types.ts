@@ -77,9 +77,11 @@ export function defaultRecordingConfig(saveDirectory: string): RecordingConfig {
     fileFormat: "OneFilePerSignalType",
     saveWideband: true,
     saveSpikes: false,
-    saveSpikeSnapshots: false,
+    // On, so turning Save spikes on saves something Offline Sorter can sort
+    // (`RECORDING.md#record-step`); 1 ms each side of the crossing.
+    saveSpikeSnapshots: true,
     snapshotPreMs: 1,
-    snapshotPostMs: 2,
+    snapshotPostMs: 1,
     saveLowpass: false,
     lowpassDownsample: 1,
     saveHighpass: false,

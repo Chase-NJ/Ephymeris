@@ -198,6 +198,21 @@ export interface ReadinessCheck {
   fix?: { label: string; to: string };
 }
 
+/**
+ * Why a setup that saves spikes without their snapshots is refused
+ * (`RECORDING.md#record-step`); the sidecar refuses it too, before RHX is touched.
+ */
+export const UNSORTABLE_REASON =
+  "Spikes would be saved without their snapshots, so there would be nothing to sort. " +
+  "Turn on Spike snapshots, or turn off Save spikes.";
+
+/** The setup saves spike times with no waveform around them. */
+export function savesUnsortableSpikes(
+  config: Pick<RecordingConfigDefaults, "saveSpikes" | "saveSpikeSnapshots"> | null,
+): boolean {
+  return !!config && config.saveSpikes && !config.saveSpikeSnapshots;
+}
+
 export interface RecordingReadiness {
   /** The Readiness tile's lines, in order. */
   checks: ReadinessCheck[];
@@ -205,6 +220,8 @@ export interface RecordingReadiness {
   overlap: string | null;
   /** The policy saves at least one signal; the editor stays open until it does. */
   savesSomething: boolean;
+  /** Spikes would be saved without snapshots; the editor stays open until they are not. */
+  unsortable: boolean;
   /** The first thing standing in the way, for the Continue button's title. */
   firstProblem: string | null;
   ready: boolean;
@@ -287,15 +304,18 @@ export function recordingReadiness(
       fix: { label: "Open Recording", to: "/recording" },
     },
   ];
+  const unsortable = savesUnsortableSpikes(config);
   const firstProblem =
-    checks.find((c) => !c.ok)?.label ?? overlap ?? (!savesSomething ? "Nothing would be saved" : null);
-  const ready = checks.every((c) => c.ok) && !overlap && savesSomething && directory !== "";
+    checks.find((c) => !c.ok)?.label ??
+    overlap ??
+    (!savesSomething ? "Nothing would be saved" : unsortable ? UNSORTABLE_REASON : null);
+  const ready = checks.every((c) => c.ok) && !overlap && savesSomething && !unsortable && directory !== "";
   const hint = !intan.connected
     ? "Connect Ephymeris to Intan RHX."
     : !ready
       ? "Finish the recording setup."
       : "Ready — continue to Mission Control.";
-  return { checks, overlap, savesSomething, firstProblem, ready, hint };
+  return { checks, overlap, savesSomething, unsortable, firstProblem, ready, hint };
 }
 
 // --- what Continue sends --------------------------------------------------------

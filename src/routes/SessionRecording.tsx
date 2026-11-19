@@ -218,7 +218,7 @@ export function SessionRecording() {
   }
 
   const recorded = rows.filter((r) => r.record);
-  const { checks, overlap, savesSomething, firstProblem, ready, hint } = recordingReadiness(
+  const { checks, overlap, savesSomething, unsortable, firstProblem, ready, hint } = recordingReadiness(
     rows,
     config,
     intan,
@@ -413,7 +413,7 @@ export function SessionRecording() {
                   </SettingRow>
 
                   <AnimatePresence initial={false}>
-                    {(editing || !savesSomething) && (
+                    {(editing || !savesSomething || unsortable) && (
                       <motion.div
                         key="edit"
                         initial={{ opacity: 0, height: 0 }}

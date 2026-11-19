@@ -10,7 +10,7 @@ Traditional `.rhd` saves no spike file at all. RHX's own writer,
                      uint32 magic 0x18f8474b, uint16 version,
                      the folder name, the native names (comma-separated), the
                      custom names, each a NUL-terminated string;
-                     float64 sample rate; uint32 samples before and after a
+                     float32 sample rate; uint32 samples before and after a
                      detection kept as a snapshot (0 when none are saved);
                    record: 5 chars native name, int32 timestamp, uint8 id,
                      then (before + after) uint16 snapshot samples.
@@ -37,6 +37,14 @@ SPIKE_FILE_MAGIC = 0x18F8474B
 CHUNK_SAMPLES = 1 << 20
 _NAME_BYTES = 5
 _RECORD = struct.Struct("<5siB")
+#: After the header's three strings: the sample rate as a float32 (not a
+#: double), then the snapshot's samples before and after a detection. Checked
+#: against a real RHX recording and Intan's own `read_Intan_spike_file.m`.
+_HEADER_TAIL = struct.Struct("<fII")
+#: Bounds no recording crosses: RHX samples at 30 kS/s at most, and keeps at
+#: most a few milliseconds around a detection.
+MAX_SAMPLE_RATE = 100_000.0
+MAX_SNAPSHOT_SAMPLES = 4096
 
 
 class RhxFileError(ValueError):
@@ -71,11 +79,15 @@ def parse_spike_header(data: bytes) -> SpikeFileHeader:
     _folder, at = _cstring(data, at)
     natives, at = _cstring(data, at)
     _customs, at = _cstring(data, at)
-    if len(data) < at + 16:
+    if len(data) < at + _HEADER_TAIL.size:
         raise RhxFileError("spike.dat's header is cut short")
-    rate, before, after = struct.unpack_from("<dII", data, at)
+    rate, before, after = _HEADER_TAIL.unpack_from(data, at)
+    # A layout read wrongly gives numbers, not an error: refuse ones no
+    # recording has, rather than read every record from the wrong byte.
+    if not 1.0 <= rate <= MAX_SAMPLE_RATE or before + after > MAX_SNAPSHOT_SAMPLES:
+        raise RhxFileError("spike.dat's header does not read as a sample rate and a snapshot length")
     names = tuple(n.strip().upper() for n in natives.split(",") if n.strip())
-    return SpikeFileHeader(rate, names, before + after, at + 16)
+    return SpikeFileHeader(rate, names, before + after, at + _HEADER_TAIL.size)
 
 
 def read_spikes(path: Path, channels: set[str] | None = None) -> tuple[SpikeFileHeader, dict[str, array]]:

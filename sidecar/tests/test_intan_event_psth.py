@@ -30,7 +30,7 @@ def spike_file(path: Path, spikes: list[tuple[str, int]], *, snapshot: tuple[int
     before, after = snapshot
     head = struct.pack("<IH", rhx_files.SPIKE_FILE_MAGIC, 1)
     head += b"rec_260901_090000\x00" + ",".join(names).encode() + b"\x00" + ",".join(names).encode() + b"\x00"
-    head += struct.pack("<dII", float(FS), before, after)
+    head += struct.pack("<fII", float(FS), before, after)
     body = b"".join(
         struct.pack("<5siB", name.encode(), stamp, 1) + b"\x00\x00" * (before + after)
         for name, stamp in sorted(spikes, key=lambda s: s[1])
@@ -104,7 +104,7 @@ def test_spike_header_spelled_out_byte_by_byte():
         bytes.fromhex("4b47f818")  # magic 0x18f8474b, little-endian
         + b"\x01\x00"  # version 1
         + b"rec\x00" + b"A-000,A-001\x00" + b"tip,A-001\x00"
-        + struct.pack("<d", 30000.0)
+        + bytes.fromhex("0060ea46")  # 30000.0 as a float32, as a real RHX file holds it
         + struct.pack("<II", 30, 60)  # snapshot: 1 ms before, 2 ms after
     )
     header = rhx_files.parse_spike_header(data)
@@ -114,6 +114,11 @@ def test_spike_header_spelled_out_byte_by_byte():
     assert header.data_offset == len(data)
     with pytest.raises(rhx_files.RhxFileError):
         rhx_files.parse_spike_header(b"\x00" * 40)
+    # A header whose rate is a double reads as numbers, not as an error, under
+    # the real layout: it is refused rather than every record read 4 bytes off.
+    as_double = data[: -12] + struct.pack("<dII", 30000.0, 30, 60)
+    with pytest.raises(rhx_files.RhxFileError):
+        rhx_files.parse_spike_header(as_double)
 
 
 def test_spike_records_with_snapshots_and_a_partial_last_one(tmp_path):

@@ -20,3 +20,6 @@ import "@fontsource/inter/600.css";
 // Mono / data — console text, timestamps, port names, IDs.
 import "@fontsource/jetbrains-mono/400.css";
 import "@fontsource/jetbrains-mono/500.css";
+
+// Paper — the Log's pages only (`ARCHITECTURE.md#the-paper-exception`).
+import "./paper-fonts.css";

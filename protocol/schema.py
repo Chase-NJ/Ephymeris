@@ -3111,12 +3111,117 @@ SHAPES = (
         "recorded and recovered alike (`DATA.md#what-changed`).",
     ),
     Shape(
+        "HealthEntry",
+        obj(
+            f("animalId", STR),
+            f("date", STR, doc="The day weighed, `YYYY-MM-DD`: a session's `date`, not a moment."),
+            f("weightG", FLOAT, doc="Body weight in grams."),
+            f(
+                "baseline",
+                BOOL,
+                doc="Marked as the animal's reference weight. A later weigh-in is "
+                "read against the latest one marked at or before its day; with "
+                "none marked there is no percentage, only the change since the "
+                "weigh-in before.",
+            ),
+            f("recordedAt", STR, doc="When it was last written, UTC ISO."),
+        ),
+        doc="One animal's weigh-in on one day (`DATA.md#weigh-ins`). Keyed by "
+        "animal and day, never by session: two sessions on one day share it.",
+    ),
+    Shape(
+        "SiteSignal",
+        obj(
+            f("channel", STR, doc="RHX's native name, e.g. `A-016`."),
+            f(
+                "crossings",
+                nullable(INT),
+                doc="Threshold crossings counted live over `RunSignal.countedSeconds` "
+                "(`RECORDING.md#active-site-yield`). Null when the run kept no live count.",
+            ),
+            f(
+                "spikes",
+                nullable(INT),
+                doc="Spikes RHX saved for the site over `RunSignal.recordedSeconds`, "
+                "artifacts included. Null when no waveforms were measured.",
+            ),
+            f(
+                "artifacts",
+                nullable(INT),
+                doc="Of `spikes`, those set aside as artifacts: flagged by RHX, "
+                "coincident across the animal's sites, or past the amplitude cap.",
+            ),
+            f(
+                "noiseUv",
+                nullable(FLOAT),
+                doc="The site's noise, µV: a robust standard deviation of the "
+                "samples each snapshot keeps before its spike.",
+            ),
+            f(
+                "snrCounts",
+                nullable(ListOf(INT)),
+                doc="The site's spikes that are not artifacts, by amplitude over "
+                "`noiseUv`: one count per bin of `RunSignal.snrEdges`, the last "
+                "bin open-ended. A spike under the first edge is in none.",
+            ),
+        ),
+        doc="One electrode site's signal over a recorded run "
+        "(`RECORDING.md#unit-like-sites`). Raw measurements only: the webview judges.",
+    ),
+    Shape(
+        "RunSignal",
+        obj(
+            f("runId", STR),
+            f("sessionId", STR),
+            f("animalId", STR),
+            f("box", nullable(INT)),
+            f("startedAt", nullable(STR)),
+            f(
+                "countedSeconds",
+                nullable(FLOAT),
+                doc="As `RunYield.countedSeconds`: the denominator of `crossings`. "
+                "Null when the run kept no live count.",
+            ),
+            f("runSeconds", nullable(FLOAT), doc="As `RunYield.runSeconds`."),
+            f("threshold", nullable(MapOf(ANY)), doc="As `RunYield.threshold`."),
+            f(
+                "recordedSeconds",
+                nullable(FLOAT),
+                doc="The span of the recording the waveforms were measured over, "
+                "the denominator of `snrCounts`. Null when none were measured: "
+                "the recording saved no snapshots, or too short a lead-in to "
+                "measure noise from, or its after-stop pass has not run.",
+            ),
+            f(
+                "snrEdges",
+                ListOf(FLOAT),
+                doc="The lower edges of `SiteSignal.snrCounts`' bins, in noise "
+                "standard deviations, ascending.",
+            ),
+            f("sites", ListOf(Ref("SiteSignal")), doc="Every site the run recorded, in RHX's order."),
+        ),
+        doc="How much signal one recorded run's electrode sites carried, the "
+        "basis of the Logbook's unit-like estimate (`RECORDING.md#unit-like-sites`).",
+    ),
+    Shape(
         "LogbookCohort",
         obj(
             f("cohortId", STR),
             f("logs", ListOf(Ref("SessionLog"))),
             f("notes", ListOf(Ref("SessionNote")), doc="Every live note, oldest first."),
             f("changes", ListOf(Ref("RunChange")), doc="One per run, recorded or recovered."),
+            f(
+                "health",
+                ListOf(Ref("HealthEntry")),
+                doc="Every weigh-in of the cohort's animals, former members "
+                "included, oldest first.",
+            ),
+            f(
+                "signals",
+                ListOf(Ref("RunSignal")),
+                doc="One per recorded run that kept a live count or had its "
+                "waveforms measured, oldest first. Empty for a cohort never recorded.",
+            ),
         ),
         doc="A cohort's whole session log, flat; the client groups it by "
         "`sessionId`. Sessions themselves come from `sessions.list`.",
@@ -4534,6 +4639,27 @@ COMMANDS = (
         "a blank one cleared. Broadcasts `logbook.updated`.",
     ),
     Command(
+        "logbook.setHealth",
+        args=obj(
+            f("cohortId", STR),
+            f("animalId", STR),
+            f("date", STR, doc="`YYYY-MM-DD`."),
+            f(
+                "weightG",
+                nullable(FLOAT),
+                doc="Grams, 1 to 2000. Null removes the day's weigh-in, its "
+                "baseline mark with it.",
+            ),
+            f("baseline", BOOL, optional=True, doc="Absent keeps the mark as it is; a new weigh-in starts unmarked."),
+        ),
+        result=obj(f("entry", nullable(Ref("HealthEntry")), doc="Null once removed.")),
+        doc="Write, change or remove one animal's weigh-in for one day "
+        "(`DATA.md#weigh-ins`). `SESSION_INVALID` for an animal that is neither "
+        "in the cohort nor a former member of it, an unreadable date, or a "
+        "weight out of range. Broadcasts `logbook.updated` naming the cohort's "
+        "sessions of that day.",
+    ),
+    Command(
         "logbook.openFlags",
         args=obj(f("cohortId", STR)),
         result=obj(f("notes", ListOf(Ref("SessionNote")))),
@@ -4637,9 +4763,10 @@ EVENTS = (
     Event(
         "logbook.updated",
         Ref("LogbookUpdated"),
-        doc="A session log changed: a note or session field was written, a run "
-        "finalized (its what-changed entry appeared), a session ended (its "
-        "clock closed), or a tidy moved notes between records. A pointer, not "
+        doc="A session log changed: a note, session field or weigh-in was "
+        "written, a run finalized (its what-changed entry appeared), a session "
+        "ended (its clock closed), a recording's waveforms were measured, or a "
+        "tidy moved notes between records. A pointer, not "
         "the data — the client refetches `logbook.cohort`. Not replayed on connect.",
     ),
     Event(

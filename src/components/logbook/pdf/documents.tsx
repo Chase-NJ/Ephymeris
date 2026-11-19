@@ -299,6 +299,48 @@ function SessionBody({ session }: { session: DocSession }) {
         )}
       </Section>
 
+      {session.weights.length > 0 && (
+        <Section title="Weights">
+          <View style={s.tableHead}>
+            <Text style={[s.th, { width: 110 }]}>animal</Text>
+            <Text style={[s.th, { width: 70, textAlign: "right" }]}>weight</Text>
+            <Text style={[s.th, { width: 70, textAlign: "right" }]}>change</Text>
+            <Text style={[s.th, { width: 90, textAlign: "right" }]}>of baseline</Text>
+          </View>
+          {session.weights.map((row) => (
+            <View key={row.animal} style={s.tr} wrap={false}>
+              <Text style={{ width: 110, fontSize: 8.5 }}>{row.animal}</Text>
+              <Text style={[s.td, { width: 70, textAlign: "right" }]}>{row.weight}</Text>
+              <Text style={[s.td, { width: 70, textAlign: "right" }]}>{row.change}</Text>
+              <Text style={[s.td, { width: 90, textAlign: "right" }]}>
+                {row.share}
+                {row.low ? " (low)" : ""}
+              </Text>
+            </View>
+          ))}
+          <Text style={s.fine}>
+            Change is since the weigh-in before. The share is of the weight marked as the animal's
+            baseline; low is under 85% of it.
+          </Text>
+        </Section>
+      )}
+
+      {session.recording.length > 0 && (
+        <Section title="Recording">
+          {session.recording.map((row) => (
+            <View key={row.animal} style={s.tr} wrap={false}>
+              <Text style={{ width: 110, fontSize: 8.5 }}>{row.animal}</Text>
+              <Text style={[s.td, { width: 130 }]}>{row.sites}</Text>
+              <Text style={{ flex: 1, fontSize: 8.5 }}>{row.verdict}</Text>
+            </View>
+          ))}
+          <Text style={s.fine}>
+            Unit-like sites: an estimate of what there is to sort, from spike amplitude over each
+            site's noise. Not sorted units.
+          </Text>
+        </Section>
+      )}
+
       <Section title="What changed since each animal's previous run">
         {session.changes.every((c) => c.parts.length === 0) ? (
           <Text style={s.empty}>

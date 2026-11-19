@@ -17,7 +17,14 @@ import { listSessions } from "../analytics/commands";
 import type { SidecarPort } from "../ws/port";
 import { EVT } from "../ws/protocol";
 import { getLogbook } from "./commands";
-import type { LogbookCohort, RunChange, SessionLog, SessionNote } from "./types";
+import type {
+  HealthEntry,
+  LogbookCohort,
+  RunChange,
+  RunSignal,
+  SessionLog,
+  SessionNote,
+} from "./types";
 
 export type LogbookState = "idle" | "loading" | "ready" | "error";
 
@@ -37,6 +44,11 @@ export interface LogbookEntry {
   falseStartsBySession: Map<string, RunChange[]>;
   /** Unresolved carry-forward notes, oldest first. */
   openFlags: SessionNote[];
+  /** Each animal's weigh-ins, oldest first (`DATA.md#weigh-ins`). */
+  healthByAnimal: Map<string, HealthEntry[]>;
+  /** Every recorded run's site signal, oldest first (`RECORDING.md#unit-like-sites`). */
+  signals: RunSignal[];
+  signalsBySession: Map<string, RunSignal[]>;
 }
 
 const EMPTY: LogbookEntry = {
@@ -48,6 +60,9 @@ const EMPTY: LogbookEntry = {
   changesBySession: new Map(),
   falseStartsBySession: new Map(),
   openFlags: [],
+  healthByAnimal: new Map(),
+  signals: [],
+  signalsBySession: new Map(),
 };
 
 export function indexLogbook(
@@ -68,6 +83,18 @@ export function indexLogbook(
     list.push(change);
     into.set(change.sessionId, list);
   }
+  const healthByAnimal = new Map<string, HealthEntry[]>();
+  for (const item of [...data.health].sort((a, b) => a.date.localeCompare(b.date))) {
+    const list = healthByAnimal.get(item.animalId) ?? [];
+    list.push(item);
+    healthByAnimal.set(item.animalId, list);
+  }
+  const signalsBySession = new Map<string, RunSignal[]>();
+  for (const run of data.signals) {
+    const list = signalsBySession.get(run.sessionId) ?? [];
+    list.push(run);
+    signalsBySession.set(run.sessionId, list);
+  }
   return {
     sessions,
     notesBySession,
@@ -75,6 +102,9 @@ export function indexLogbook(
     changesBySession,
     falseStartsBySession,
     openFlags: data.notes.filter((n) => n.carryForward && n.resolvedAt === null),
+    healthByAnimal,
+    signals: data.signals,
+    signalsBySession,
   };
 }
 

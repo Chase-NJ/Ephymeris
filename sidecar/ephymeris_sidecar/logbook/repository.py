@@ -19,6 +19,7 @@ from .models import (
     MAX_FIELD,
     NOTE_TAGS,
     SCOPE_KINDS,
+    HealthEntry,
     NoteInvalid,
     NoteNotFound,
     SessionLog,
@@ -232,6 +233,72 @@ class LogbookRepository:
             )
         return self.get_log(session_id) or SessionLog(session_id=session_id)
 
+    # --- weigh-ins (DATA.md#weigh-ins) --------------------------------------
+
+    def get_health(self, animal_id: str, date: str) -> HealthEntry | None:
+        with self._db.read() as q:
+            row = q.execute(
+                "SELECT * FROM animal_health WHERE animal_id = ? AND date = ?", (animal_id, date)
+            ).fetchone()
+        return None if row is None else _hydrate_health(row)
+
+    def set_health(
+        self,
+        animal_id: str,
+        date: str,
+        weight_g: float,
+        baseline: bool | None = None,
+        *,
+        tx: Tx | None = None,
+    ) -> HealthEntry:
+        """Write the day's weigh-in. `baseline` None keeps the mark a row
+        already has; a new row starts unmarked."""
+        with self._db.write(tx) as unit:
+            unit.execute(
+                "INSERT INTO animal_health (animal_id, date, weight_g, baseline, recorded_at)"
+                " VALUES (?, ?, ?, ?, ?)"
+                " ON CONFLICT(animal_id, date) DO UPDATE SET weight_g = excluded.weight_g,"
+                " baseline = COALESCE(?, animal_health.baseline), recorded_at = excluded.recorded_at",
+                (
+                    animal_id,
+                    date,
+                    weight_g,
+                    int(bool(baseline)),
+                    now_iso(),
+                    None if baseline is None else int(baseline),
+                ),
+            )
+        entry = self.get_health(animal_id, date)
+        assert entry is not None
+        return entry
+
+    def delete_health(self, animal_id: str, date: str, *, tx: Tx | None = None) -> bool:
+        with self._db.write(tx) as unit:
+            cursor = unit.execute(
+                "DELETE FROM animal_health WHERE animal_id = ? AND date = ?", (animal_id, date)
+            )
+        return cursor.rowcount > 0
+
+    def health_for_animals(
+        self, animal_ids: list[str], dates: list[str] | None = None
+    ) -> list[HealthEntry]:
+        """These animals' weigh-ins, oldest first; with `dates`, those days' only."""
+        if not animal_ids or dates == []:
+            return []
+        found: list[HealthEntry] = []
+        with self._db.read() as q:
+            for at in range(0, len(animal_ids), 500):
+                chunk = animal_ids[at:at + 500]
+                marks = ",".join("?" * len(chunk))
+                rows = q.execute(
+                    f"SELECT * FROM animal_health WHERE animal_id IN ({marks})", tuple(chunk)
+                ).fetchall()
+                found.extend(_hydrate_health(row) for row in rows)
+        if dates is not None:
+            wanted = set(dates)
+            found = [entry for entry in found if entry.date in wanted]
+        return sorted(found, key=lambda entry: (entry.date, entry.animal_id))
+
     # --- what tidy and prune must keep (DATA.md#tidy-records) ---------------
 
     def annotated_session_ids(self, cohort_id: str) -> set[str]:
@@ -258,6 +325,16 @@ def _hydrate_log(row: sqlite3.Row) -> SessionLog:
         operator=row["operator"],
         summary=row["summary"],
         updated_at=row["updated_at"],
+    )
+
+
+def _hydrate_health(row: sqlite3.Row) -> HealthEntry:
+    return HealthEntry(
+        animal_id=row["animal_id"],
+        date=row["date"],
+        weight_g=row["weight_g"],
+        baseline=bool(row["baseline"]),
+        recorded_at=row["recorded_at"],
     )
 
 

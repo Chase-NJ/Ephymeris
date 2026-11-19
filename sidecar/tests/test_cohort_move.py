@@ -266,6 +266,29 @@ def test_an_animal_s_impedance_history_follows_it_into_the_animal_it_joins(lab: 
     assert store.latest("remy1") is not None
 
 
+def test_an_animal_s_weigh_ins_follow_it_into_the_animal_it_joins(lab: Lab) -> None:
+    """`DATA.md#weigh-ins`: keyed by animal, so a move that joins slow1 to B's
+    b-slow takes its weights with it. On a day both were weighed, the animal
+    it joins keeps its own, and nothing is left under the old id."""
+    from ephymeris_sidecar.logbook.repository import LogbookRepository
+
+    give_b(lab, "slow1", "b-slow")
+    repo = LogbookRepository(lab.db)
+    repo.set_health("slow1", "2026-07-21", 301.0, True)
+    repo.set_health("slow1", "2026-07-22", 299.5)
+    repo.set_health("b-slow", "2026-07-22", 300.0)
+    repo.set_health("remy1", "2026-07-22", 320.0)
+
+    lab.apply("slow1")
+
+    assert repo.health_for_animals(["slow1"]) == []
+    moved = repo.health_for_animals(["b-slow"])
+    assert [(e.date, e.weight_g, e.baseline) for e in moved] == [
+        ("2026-07-21", 301.0, True), ("2026-07-22", 300.0, False),
+    ]
+    assert [e.weight_g for e in repo.health_for_animals(["remy1"])] == [320.0]
+
+
 def test_a_carried_animal_lands_on_the_destination_roster(lab: Lab) -> None:
     lab.apply("slow1")
     [animal] = lab.cohorts.get(lab.b.id).animals

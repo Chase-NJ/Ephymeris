@@ -16,7 +16,9 @@ import {
 import type { AnalyticsSummary, SessionListItem, TrialOutcomes } from "../analytics/types";
 import { boxText, changeParts, unknownParams, unknownParamsNote } from "./changes";
 import { elapsedSeconds, formatDuration, formatOffset, longDate, wallClock } from "./clock";
-import { newestFirst } from "./rail";
+import { formatDelta, formatGrams, formatShare, readWeight } from "./health";
+import { oldestFirst } from "./pages";
+import { GRADE_LABEL, sessionVerdicts } from "./signal";
 import type { LogbookEntry } from "./store";
 import type { NoteScope, NoteTag, SessionNote } from "./types";
 
@@ -76,6 +78,66 @@ export interface DocSession {
   changes: Array<{ animal: string; box: string; parts: string[] }>;
   /** Said once under the changes, not on each row (`unknownParamsNote`). */
   changesNote: string | null;
+  /** The day's weigh-ins (`DATA.md#weigh-ins`); only animals weighed that day. */
+  weights: DocWeight[];
+  /** Each recorded animal's unit-like sites (`RECORDING.md#unit-like-sites`). */
+  recording: DocRecording[];
+}
+
+export interface DocWeight {
+  animal: string;
+  weight: string;
+  /** Since the weigh-in before, or a dash for the first on record. */
+  change: string;
+  /** Of the marked baseline: a share, "baseline" for the mark itself, or a dash. */
+  share: string;
+  low: boolean;
+}
+
+export interface DocRecording {
+  animal: string;
+  /** `9 / 16`, or the active count when no waveforms were measured. */
+  sites: string;
+  verdict: string;
+}
+
+function weightRows(entry: LogbookEntry, date: string, names: Map<string, string>): DocWeight[] {
+  const rows: DocWeight[] = [];
+  for (const [animalId, history] of entry.healthByAnimal) {
+    const reading = readWeight(history, date);
+    if (!reading.entry) continue;
+    rows.push({
+      animal: names.get(animalId) ?? animalId,
+      weight: `${formatGrams(reading.entry.weightG)} g`,
+      change: reading.deltaG === null ? "—" : formatDelta(reading.deltaG),
+      share:
+        reading.reference?.date === reading.entry.date
+          ? "baseline"
+          : reading.ofReference === null
+            ? "—"
+            : formatShare(reading.ofReference),
+      low: reading.low,
+    });
+  }
+  return rows.sort((a, b) => collator.compare(a.animal, b.animal));
+}
+
+function recordingRows(
+  entry: LogbookEntry,
+  sessionId: string,
+  names: Map<string, string>,
+): DocRecording[] {
+  const verdicts = sessionVerdicts(entry.signalsBySession.get(sessionId) ?? []);
+  return [...verdicts.values()]
+    .map((verdict) => ({
+      animal: names.get(verdict.animalId) ?? verdict.animalId,
+      sites:
+        verdict.basis === "waveforms"
+          ? `${verdict.unitLike} / ${verdict.total} unit-like`
+          : `${verdict.active} / ${verdict.total} active`,
+      verdict: verdict.grade ? GRADE_LABEL[verdict.grade] : "waveforms not measured",
+    }))
+    .sort((a, b) => collator.compare(a.animal, b.animal));
 }
 
 export interface DocCohort {
@@ -268,6 +330,8 @@ function sessionModel(
     changesNote: unknownParamsNote(
       unknownParams(entry.changesBySession.get(session.id) ?? []),
     ),
+    weights: weightRows(entry, session.date, names),
+    recording: recordingRows(entry, session.id, names),
   };
 }
 
@@ -279,7 +343,7 @@ export function buildCohort(
   names: Map<string, string>,
   now: Date,
 ): DocCohort {
-  const ordered = newestFirst(entry.sessions).reverse();
+  const ordered = oldestFirst(entry.sessions);
   const byId = new Map(entry.sessions.map((s) => [s.id, s]));
   const first = ordered[0];
   const last = ordered[ordered.length - 1];

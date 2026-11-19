@@ -166,6 +166,7 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="cmd-logbook.deletenote"></a>`logbook.deleteNote` | `noteId` | `{}` | Hide a note. |
 | <a id="cmd-logbook.resolveflag"></a>`logbook.resolveFlag` | `noteId`, `resolved`, `sessionId?` | `note` | Resolve or reopen a carry-forward flag. |
 | <a id="cmd-logbook.setsessionlog"></a>`logbook.setSessionLog` | `sessionId`, `operator?`, `summary?` | `log` | Set a session's operator and/or summary; an absent field is kept, a blank one … |
+| <a id="cmd-logbook.sethealth"></a>`logbook.setHealth` | `cohortId`, `animalId`, `date`, `weightG`, `baseline?` | `entry` | Write, change or remove one animal's weigh-in for one day (`DATA.md#weigh-ins`). |
 | <a id="cmd-logbook.openflags"></a>`logbook.openFlags` | `cohortId` | `notes` | A cohort's unresolved carry-forward notes, oldest first — what Step 1 and the running … |
 
 ## Events
@@ -184,7 +185,7 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="evt-prefixes.updated"></a>`prefixes.updated` | [PrefixesUpdatedData](#shape-prefixesupdateddata) | The full prefix list, pushed after `prefixes.create` or `prefixes.delete` and replayed on connect — … |
 | <a id="evt-session.telemetry"></a>`session.telemetry` | [BoxTelemetry](#shape-boxtelemetry) | Pushed on every strobe that updates a rolling live metric. |
 | <a id="evt-session.animalended"></a>`session.animalEnded` | [AnimalEnded](#shape-animalended) | One animal's run finalized and recorded. |
-| <a id="evt-logbook.updated"></a>`logbook.updated` | [LogbookUpdated](#shape-logbookupdated) | A session log changed: a note or session field was written, a run finalized … |
+| <a id="evt-logbook.updated"></a>`logbook.updated` | [LogbookUpdated](#shape-logbookupdated) | A session log changed: a note, session field or weigh-in was written, a run … |
 | <a id="evt-session.lifecycle"></a>`session.lifecycle` | [ActiveSessions](#shape-activesessions) | Broadcast whenever session identity or status changes — create, abandon, confirmMapping, startAll (or a … |
 | <a id="evt-hardware.updated"></a>`hardware.updated` | [RigStatus](#shape-rigstatus) | Broadcast after a successful `hardware.save` or `hardware.reset`. |
 | <a id="evt-strobes.updated"></a>`strobes.updated` | [StrobeVocabulary](#shape-strobevocabulary) | Broadcast after every successful vocabulary edit. |
@@ -303,6 +304,7 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="shape-flashprogressdata"></a>FlashProgressData | `box`, `phase`, `stream`, `text` |  |
 | <a id="shape-flashqueuestatus"></a>FlashQueueStatus | `boxes` | The whole flash queue, every box — one snapshot, shared by the commands and … |
 | <a id="shape-formeranimal"></a>FormerAnimal | `id`, `name`, `source`, `removedAt`, `runCount`, `sex`, `idNumber`, `cage`, `notes`, `implant?` | An animal with history in a cohort but no place on its roster (`DATA.md#former-members`). |
+| <a id="shape-healthentry"></a>HealthEntry | `animalId`, `date`, `weightG`, `baseline`, `recordedAt` | One animal's weigh-in on one day (`DATA.md#weigh-ins`). |
 | <a id="shape-identifyspec"></a>IdentifySpec | `on`, `off` | The two commands that make a box announce itself — a trial light, a … |
 | <a id="shape-impedancecomparison"></a>ImpedanceComparison | `current`, `previous` |  |
 | <a id="shape-impedancemeasurement"></a>ImpedanceMeasurement | `animalId`, `measuredAt`, `box`, `sessionId`, `frequencyHz`, `file`, `sites` | One animal's sites, measured once (`RECORDING.md#impedance-tracking`). |
@@ -319,7 +321,7 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="shape-intantetherstat"></a>IntanTetherStat | `box`, `state`, `since`, `acknowledged`, `watchesSilence` | One recording box's tether, judged against its own baseline. |
 | <a id="shape-librarystate"></a>LibraryState | "ok" \| "empty" \| "damaged" | The three bundled-sketch-library states (`TASKS.md#sketch-library`). |
 | <a id="shape-livemetric"></a>LiveMetric | `id`, `label`, `triggerCode`, `successCode`, `alternateCode`, `alternateCodes?`, `windowSize` |  |
-| <a id="shape-logbookcohort"></a>LogbookCohort | `cohortId`, `logs`, `notes`, `changes` | A cohort's whole session log, flat; the client groups it by `sessionId`. |
+| <a id="shape-logbookcohort"></a>LogbookCohort | `cohortId`, `logs`, `notes`, `changes`, `health`, `signals` | A cohort's whole session log, flat; the client groups it by `sessionId`. |
 | <a id="shape-logbookupdated"></a>LogbookUpdated | `cohortId`, `sessionIds` |  |
 | <a id="shape-metricseries"></a>MetricSeries | `id`, `label`, `values`, `n`, `windowSize` |  |
 | <a id="shape-metricsummary"></a>MetricSummary | `id`, `label`, `pSession`, `pWindow`, `hits`, `counted`, `triggered`, `excluded`, `windowSize`, `wilsonLow`, `wilsonHigh`, `lowConfidence`, `answerSide` | One metric's whole-session result (`ANALYTICS.md#how-a-strobe-stream-is-scored`). |
@@ -362,6 +364,7 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="shape-runchange"></a>RunChange | `runId`, `sessionId`, `animalId`, `box`, `task`, `recovered`, `previousRunId`, `previousSessionId`, `first`, `taskChange`, `boxChange`, `params`, `paramsKnown`, `falseStart`, `falseStartSource` | What differs between a run and the same animal's previous run, recorded and recovered … |
 | <a id="shape-runnersession"></a>RunnerSession | `session`, `boxes` | The runner-held session: the session and boxes of a `sessions.status` reply. |
 | <a id="shape-runseries"></a>RunSeries | `runId`, `mode`, `metrics`, `trail`, `trials`, `trialTable` |  |
+| <a id="shape-runsignal"></a>RunSignal | `runId`, `sessionId`, `animalId`, `box`, `startedAt`, `countedSeconds`, `runSeconds`, `threshold`, `recordedSeconds`, `snrEdges`, `sites` | How much signal one recorded run's electrode sites carried, the basis of the Logbook's … |
 | <a id="shape-runstatus"></a>RunStatus | "ok" \| "no-metrics" \| "missing" \| "unreadable" | Why a run has numbers or not (`ANALYTICS.md#why-a-run-has-no-numbers`). |
 | <a id="shape-runsummary"></a>RunSummary | `runId`, `sessionId`, `animalId`, `boxNumber`, `startedAt`, `endedAt`, `sketchPath`, `sketchName`, `profileHash`, `paramsHash`, `profileSource`, `stale`, `falseStart`, `falseStartSource`, `restartedBy`, `status`, `metrics`, `overall`, `outcomes`, `conditions`, `engagement`, `totalEvents`, `durationMs`, `stopReason`, `clean`, `seed`, `detail`, `excludedByDefault` |  |
 | <a id="shape-runyield"></a>RunYield | `runId`, `sessionId`, `box`, `startedAt`, `countedSeconds`, `runSeconds`, `threshold`, `counts` | One recorded run's spike counts per site, the basis of active-site yield (`RECORDING.md#active-site-yield`). |
@@ -378,6 +381,7 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="shape-settingoption"></a>SettingOption | `label`, `value`, `command` | One value a grid row's setting can take. |
 | <a id="shape-sex"></a>Sex | "M" \| "F" \| "unknown" |  |
 | <a id="shape-sidecarerrordata"></a>SidecarErrorData | `code`, `message`, `detail` | Failures with no command to attribute them to. |
+| <a id="shape-sitesignal"></a>SiteSignal | `channel`, `crossings`, `spikes`, `artifacts`, `noiseUv`, `snrCounts` | One electrode site's signal over a recorded run (`RECORDING.md#unit-like-sites`). |
 | <a id="shape-sketchdiscovery"></a>SketchDiscovery | `library`, `sketches`, `skipped`, `skippedCount`, `libraries`, `librariesPath` | The full result of a library scan (`TASKS.md#sketch-library`): the bundled sketches plus this rig's … |
 | <a id="shape-sketchentry"></a>SketchEntry | `category`, `name`, `path`, `source`, `decodeOnly` |  |
 | <a id="shape-sketchlibrarystatus"></a>SketchLibraryStatus | `state`, `path`, `message`, `source` | Every non-ok state means a broken or partial INSTALL rather than a wrong setting … |

@@ -55,6 +55,8 @@ describe("the log's changes", () => {
       logs: [],
       notes: [],
       changes: [change("early", true), change("real", false)],
+      health: [],
+      signals: [],
     });
     expect(entry.changesBySession.get("s1")!.map((c) => c.runId)).toEqual(["real"]);
     expect(entry.falseStartsBySession.get("s1")!.map((c) => c.runId)).toEqual(["early"]);

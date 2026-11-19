@@ -6,7 +6,7 @@ only what the code does now and link here.
 
 **How to keep it.**
 
-- **Number entries in sequence and never reuse a number.** The next is **0010**. Code and docs cite an
+- **Number entries in sequence and never reuse a number.** The next is **0011**. Code and docs cite an
   entry as `DECISIONS.md#<heading-slug>`; `test_doc_links.py` checks every citation.
 - **A proposal gets its own file** in this folder (`NNNN-slug.md`, `status: proposed`) while it is
   argued and built. When it is accepted and done, fold it in here as an entry and delete the file.
@@ -30,6 +30,7 @@ only what the code does now and link here.
 | [0007](#0007-rhxs-own-windows-replace-the-recording-pop-ups) | RHX's own windows replace the recording pop-ups | accepted | 2026-11-15 |
 | [0008](#0008-rounds-replace-groups) | Rounds replace groups | accepted | 2026-11-18 |
 | [0009](0009-run-document-v2-and-the-analysis-file.md) | A run's document is nested and versioned, and a recorded run gets one analysis file | **proposed** | — |
+| [0010](#0010-the-log-is-a-paper-notebook) | The Log is a paper notebook | accepted | 2026-11-19 |
 
 ## 0001: A hypothetical rig definition is context-local
 
@@ -300,3 +301,46 @@ lived in the cohort model and the screens, so the session path changed little.
   its order. Which animals ran in a round is read from the run records' start times, as before.
 - An RHX recording is named for the animals recorded rather than for a group, so its name grows with the
   number of boxes recorded.
+
+## 0010: The Log is a paper notebook
+
+The Log was built from the same glass tiles as every other screen: a flight-recorder rail of sessions on
+the left, the selected session's readout on the right. It held everything a lab notebook holds and read
+like a dashboard, and it was the one place the instrument's look worked against the job: a notebook is
+read in long sittings, written in with hands full, and compared page against page.
+**We made the Log a paper notebook on a desk: light, typeset like a LaTeX document, one spread per
+session, navigated by turning pages** ([ARCHITECTURE.md](../ARCHITECTURE.md#the-paper-exception)). It
+is the single exception to "dark mode only" and to "no shadows", and it is fenced: the paper tokens, the
+serif and the shadows live under `.paper` and nowhere else.
+
+The same change gave the notebook two things it lacked. **Weigh-ins**, entered in a table on each
+session's right page and kept per animal and day ([DATA.md](../DATA.md#weigh-ins)). And, for recorded
+sessions, **an estimate of how much there is to sort**: how many of an animal's electrode sites carried
+unit-like signal, measured after the recording stops in the pass that already reads its spikes
+([RECORDING.md](../RECORDING.md#unit-like-sites)).
+
+**Rejected.**
+
+- **Restyle the tiles and keep the rail.** A warmer dashboard is still a dashboard: the rail and the
+  page compete for the eye, and a session's content stays cut into boxes that hide how little or how
+  much was written.
+- **A light theme for the whole app.** The rig room is dim and the instrument screens are glanced at
+  from across it; only the notebook is read.
+- **Sort spikes, or cluster them, to count units.** Sorting stays in Offline Sorter
+  ([ADR 0009](0009-run-document-v2-and-the-analysis-file.md)). The estimate needs no clustering: a site
+  either has large spikes arriving steadily or it does not, and that is enough to order the sorting by.
+- **Judge the sites in the sidecar.** The thresholds are first guesses. Kept as raw measurements and
+  judged in the webview, a changed threshold re-reads every recorded run, as
+  [active-site yield](../RECORDING.md#active-site-yield) already does.
+
+**Costs.**
+
+- **Two visual systems.** A shared control (`Button`, `Dropdown`) cannot be used on a page, so the
+  notebook has its own small set; the caution in ARCHITECTURE.md is what keeps the two apart.
+- **One more bundled face.** Latin Modern Roman, four files and about 190 KB, from the `latex.css`
+  package, pinned exactly; nothing else of the package is imported.
+- **A bright surface in a dim room.** Paper is a warm off-white, not white, and the desk stays dark, but
+  the Log is now the brightest screen in the app.
+- **The estimate is unvalidated against sorted data.** It counts sites, not neurons, and a site with two
+  good units counts once. It ranks days; it is not a yield figure for a paper.
+- **Schema v19**: two new tables and no migration ([DATA.md](../DATA.md#changing-the-schema)).

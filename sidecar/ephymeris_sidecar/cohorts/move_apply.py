@@ -263,6 +263,14 @@ def _apply_records(conn: Tx, plan: MovePlan, sessions: SessionRepository) -> Non
             # The implant itself too (`DATA.md#implants`); a carried animal
             # keeps its id, so its implant needs nothing.
             implants.follow(conn, old, new)
+            # And its weigh-ins (`DATA.md#weigh-ins`): the animal's own
+            # history, whichever cohort it is in. On a day both were weighed,
+            # the animal it joins keeps its own.
+            conn.execute(
+                "UPDATE OR IGNORE animal_health SET animal_id = ? WHERE animal_id = ?",
+                (new, old),
+            )
+            conn.execute("DELETE FROM animal_health WHERE animal_id = ?", (old,))
 
     for entry in plan.sessions:
         _apply_session(conn, plan, entry, mapped, now, sessions)

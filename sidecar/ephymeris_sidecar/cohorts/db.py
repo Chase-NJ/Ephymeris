@@ -88,7 +88,10 @@ DB_FILENAME = "ephymeris.db"
 #: additive, so a build older than this cannot open a v17 file.
 #: v18 added implants (`DATA.md#implants`) -- a new table only, so no
 #: migration, v11's pattern.
-SCHEMA_VERSION = 18
+#: v19 added animal_health (`DATA.md#weigh-ins`) and run_site_quality
+#: (`RECORDING.md#unit-like-sites`) -- new tables only, so no migration,
+#: v11's pattern.
+SCHEMA_VERSION = 19
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS cohorts (
@@ -427,6 +430,34 @@ CREATE TABLE IF NOT EXISTS run_spike_counts (
     threshold_json   TEXT,            -- the recording's spike-threshold setup
     counts_json      TEXT NOT NULL    -- native channel -> crossings, every recorded site
 );
+
+-- Each recorded run's sites as measured from RHX's saved snapshots once the
+-- recording has stopped (RECORDING.md#unit-like-sites): noise, artifacts, and
+-- spikes by amplitude over noise. Raw measurements; the webview judges them.
+-- Keyed by run and without a foreign key, as run_spike_counts is, and pruned
+-- with its run the same way.
+CREATE TABLE IF NOT EXISTS run_site_quality (
+    run_id            TEXT PRIMARY KEY,
+    measured_at       TEXT NOT NULL,
+    recorded_seconds  REAL NOT NULL,   -- the recording's span: the rates' denominator
+    edges_json        TEXT NOT NULL,   -- the amplitude-over-noise bins' lower edges
+    sites_json        TEXT NOT NULL    -- one row per site, in RHX's order
+);
+
+-- An animal's weigh-ins (DATA.md#weigh-ins): one per animal per day, the
+-- operator's own measurement, so user data like a note. Keyed by ANIMAL and
+-- day, never by session: two sessions on one day share it, and a tidy or a
+-- prune of a session leaves it alone. No foreign key and no cohort: the
+-- roster is deleted and re-inserted on every cohort edit (as for
+-- electrode_impedances), and a cohort move remaps animal_id (`move_apply.py`).
+CREATE TABLE IF NOT EXISTS animal_health (
+    animal_id    TEXT NOT NULL,
+    date         TEXT NOT NULL,              -- YYYY-MM-DD, a session's date
+    weight_g     REAL NOT NULL,
+    baseline     INTEGER NOT NULL DEFAULT 0, -- marked as the animal's reference weight
+    recorded_at  TEXT NOT NULL,
+    PRIMARY KEY (animal_id, date)
+);
 """
 
 
@@ -500,6 +531,8 @@ OTHER_PATHS: dict[tuple[str, str], str] = {
     ("task_profiles", "profile_json"): "no paths",
     ("run_spike_counts", "threshold_json"): "no paths",
     ("run_spike_counts", "counts_json"): "no paths",
+    ("run_site_quality", "edges_json"): "no paths",
+    ("run_site_quality", "sites_json"): "no paths",
     ("implants", "implant_json"): "a probe-map file's path, chosen by hand; not under a data folder",
 }
 

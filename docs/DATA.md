@@ -88,7 +88,7 @@ History keeps `animal_id` with no foreign key ([Indexes](#indexes)), so a **form
 
 | Source | What it is |
 |---|---|
-| `removed` | Removed by `cohorts.update` while it had a run, adoption or note; kept in `former_animals` with its name and biography. An animal with no history is just deleted |
+| `removed` | Removed by `cohorts.update` while it had a run, adoption, note or [weigh-in](#weigh-ins); kept in `former_animals` with its name and biography. An animal with no history is just deleted |
 | `files` | An id the history names with no row; named at read time from its runs' stored paths, never written back |
 
 On the wire as `Cohort.formerAnimals` (single-cohort loads only); `Cohort.animals` stays the roster. Restoring is posting the id in `animals` again. Analytics lists former members after the roster (`AnalyticsAnimal.former`), so no colour shifts. `former_animals` is its own table because `animals` rows are deleted and re-inserted on every roster save.
@@ -143,8 +143,8 @@ A rescan re-points (`rehomed`) records an older relocate left behind, wherever t
 - **Identity**, by case-folded name: a roster animal or [former member](#former-members) of that name in the destination is **joined**; otherwise the animal is carried under its own id.
 - **Files:** every `.json`/`.tsv`/`.mat` of its recorded and [adopted](#orphan-adoption) runs, plus unrecorded files whose stem names it. Never `notes.md`, RHX recordings or AppleDouble files.
 - **Sessions** only moved animals ran in move whole; shared ones are **split**, the destination getting its own record (no recording). Notes about moved animals or their boxes move, about staying ones stay, and the rest (whole-session, shared box) are **copied**.
-- **Impedance history** ([RECORDING.md](RECORDING.md#impedance-tracking)) follows the animal into the one it
-  joins.
+- **Impedance history** ([RECORDING.md](RECORDING.md#impedance-tracking)) and [weigh-ins](#weigh-ins)
+  follow the animal into the one it joins; on a day both were weighed, the destination's stands.
 - **Caches** follow with their [freshness keys](#caching). An adoption whose run the destination already holds joins that row, which keeps its id and ruling.
 - **Refused** with nothing touched when: anything runs; either cohort has an open session; a folder is unreachable, shared or nested; a destination file differs; a run file lies outside the source; two moved animals share a name; the destination is archived; or an earlier move would collide.
 
@@ -191,7 +191,7 @@ Resuming a round mid-run is out of scope. `sessions.resume` re-holds one of *tod
 
 ## The session log
 
-The **Log** tab: notes and free fields per session, the session clock and what changed per run. Owned by `logbook/` (`logbook.*`, [PROTOCOL.md](PROTOCOL.md#session-log); [USER-GUIDE.md](USER-GUIDE.md#keeping-the-log)).
+The **Log** tab, a cohort's lab notebook ([ARCHITECTURE.md](ARCHITECTURE.md#the-paper-exception)): notes and free fields per session, the session clock, what changed per run, each day's [weigh-ins](#weigh-ins) and, for a recorded session, how much there is to sort ([RECORDING.md](RECORDING.md#unit-like-sites)). Owned by `logbook/` (`logbook.*`, [PROTOCOL.md](PROTOCOL.md#session-log); [USER-GUIDE.md](USER-GUIDE.md#keeping-the-log)).
 
 > [!IMPORTANT]
 > **Notes are user data.** A session with one is never judged empty by [Tidy records](#tidy-records) or [pruned](#pruning); deletes are soft (`deleted_at`).
@@ -211,13 +211,22 @@ Derived, never stored (`Session.clock_started_at`, `clock_ended_at`): `clockStar
 
 A **carry forward** note stays open until resolved and shows in Step 1 and Mission Control (`logbook.openFlags`); `resolved_in_session` follows a tidy merge.
 
+### Weigh-ins
+
+`animal_health`: one row per **animal and calendar day**, a body weight in grams and whether it is marked as the animal's **baseline** (`logbook.setHealth`, `LogbookCohort.health`). Never per session: an animal is weighed once a day however often the cohort runs, so two sessions on one day show the same weight, and a day's weight is entered from any session's page of that day.
+
+- **Keyed by the animal's id with no foreign key**, as [implants](#implants) are, because a roster save deletes and re-inserts every `animals` row. It stays with a [former member](#former-members) and follows a [moved](#moving-animals-between-cohorts) animal; [Tidy records](#tidy-records) and [pruning](#pruning) never touch it, since no session owns it.
+- **A weight is 1 to 2000 g.** Writing `null` removes the day's row, its baseline mark with it.
+- **A percentage is only ever of a marked baseline**: a weigh-in is read against the latest one marked at or before its day (`lib/logbook/health.ts`'s `readWeight`). With none marked the page shows the change since the weigh-in before and no share, since the first weight on record is not assumed to be a free-feeding one. Under 85% of baseline (`LOW_WEIGHT_FRACTION`) the row is marked low: a prompt to look, not a rule the app enforces.
+- Other health observations are [notes](#notes) tagged `animal-health` about that animal; the weights table starts one.
+
 ### What changed
 
 `logbook/diff.py` compares each run, recorded or [adopted](#orphan-adoption), with the animal's previous one by `(date, started_at)`: task (by profile hash; a new hash under one name is *definition revised*), box (only when both are known; recovered runs' are `null`), and parameters (by `params_hash`, then key by key). Missing parameters report `paramsKnown: false`, **unknown, never "changed"**.
 
 ### The notes.md mirror
 
-Each folder with a log gets a derived `notes.md`, rewritten whole about a second after a change (via `.part`, per-folder lock, off every command path) and queued for [backup](#session-files). Never read back, never creates a missing prefix folder, invisible to the archive walk.
+Each folder with a log (a note, a free field, or a weigh-in on its day) gets a derived `notes.md`, the day's weights included, rewritten whole about a second after a change (via `.part`, per-folder lock, off every command path) and queued for [backup](#session-files). Never read back, never creates a missing prefix folder, invisible to the archive walk.
 
 ### Exporting a log
 
@@ -408,7 +417,9 @@ erDiagram
     animals |o..o{ adopted_runs : "animal_id"
     animals |o..o{ electrode_impedances : "animal_id"
     animals |o..o| implants : "animal_id"
+    animals |o..o{ animal_health : "animal_id"
     session_animal_runs |o..o| run_spike_counts : "run_id"
+    session_animal_runs |o..o| run_site_quality : "run_id"
     task_profiles |o..o{ session_animal_runs : "profile_hash"
     session_animal_runs |o..o| run_metrics_cache : "run_id"
     adopted_runs |o..o| run_metrics_cache : "run_id"
@@ -561,6 +572,20 @@ erDiagram
         REAL run_seconds
         TEXT threshold_json
         TEXT counts_json
+    }
+    run_site_quality {
+        TEXT run_id PK
+        TEXT measured_at
+        REAL recorded_seconds
+        TEXT edges_json
+        TEXT sites_json
+    }
+    animal_health {
+        TEXT animal_id PK
+        TEXT date PK
+        REAL weight_g
+        INTEGER baseline
+        TEXT recorded_at
     }
     session_notes {
         TEXT id PK

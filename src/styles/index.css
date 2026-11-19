@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./paper.css";
 
 /* ---------------------------------------------------------------------------
    Theme tokens — see `ARCHITECTURE.md#theme`.
@@ -71,6 +72,36 @@
      ordinary routes clear of it, and the negative offset the sky views use to
      reach back underneath it. One token, so they cannot drift apart. */
   --spacing-sidebar: 200px;
+
+  /* Paper — the Logbook's own palette (`ARCHITECTURE.md#the-paper-exception`).
+     The one screen that is not the instrument: a lab notebook lying on the
+     desk, typeset like a LaTeX document. Used inside `.paper` and nowhere
+     else; nothing above changes, and nothing here may leak onto a dark
+     surface, where every one of these fails contrast.
+
+     Paper is a warm off-white, not white: the rig room is dim, and a white
+     page in a dark app is a lamp. Each ink clears WCAG AA (4.5:1) on Paper
+     and on Paper Shade, so any of them may set small text; on Highlight only
+     Ink, Ink Soft, blue, red and plum do, which is all a sticky note uses. */
+  --color-desk: #141317; /* what the notebook lies on: Void, a touch warmer */
+  --color-paper: #f2ede2; /* the page */
+  --color-paper-shade: #e7e0d1; /* the page in its own shadow: gutter, table stripe, fields */
+  --color-rule: #cbc3b1; /* hairlines and table rules that are not ink */
+  --color-ink: #1f222c; /* text */
+  --color-ink-soft: #545868; /* secondary text */
+  --color-ink-faint: #646259; /* folios, placeholders, units */
+  --color-ink-blue: #2a55a5; /* section numbers, links, the pen */
+  --color-ink-red: #a5321e; /* flags, low weights, corrections */
+  --color-ink-teal: #106c66; /* health, and "as expected" */
+  --color-ink-ochre: #85590a; /* hardware, cautions */
+  --color-ink-plum: #70469a; /* recording; Pulsar's cousin in print */
+  --color-highlight: #f3d977; /* highlighter and sticky notes: a fill, never text */
+
+  /* Latin Modern is Computer Modern for the screen, bundled
+     (`styles/paper-fonts.css`). The rest are a net under a file that failed
+     to load, and what draws a glyph it lacks: nearest first. */
+  --font-paper: "Latin Modern Roman", "LM Roman 10", "CMU Serif", "New Computer Modern",
+    "STIX Two Text", "Cambria", "Georgia", serif;
 }
 
 @layer base {

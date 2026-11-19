@@ -141,6 +141,7 @@ class Cmd:
     LOGBOOK_DELETE_NOTE: Final = "logbook.deleteNote"
     LOGBOOK_RESOLVE_FLAG: Final = "logbook.resolveFlag"
     LOGBOOK_SET_SESSION_LOG: Final = "logbook.setSessionLog"
+    LOGBOOK_SET_HEALTH: Final = "logbook.setHealth"
     LOGBOOK_OPEN_FLAGS: Final = "logbook.openFlags"
 
 
@@ -410,7 +411,10 @@ SHAPES: Final[dict[str, Any]] = {
     "ValueChange": ('obj', (('from', 'any', False), ('to', 'any', False))),
     "ParamChange": ('obj', (('key', 'str', False), ('from', 'any', False), ('to', 'any', False))),
     "RunChange": ('obj', (('runId', 'str', False), ('sessionId', 'str', False), ('animalId', 'str', False), ('box', ('union', ('int', 'null')), False), ('task', 'str', False), ('recovered', 'bool', False), ('previousRunId', ('union', ('str', 'null')), False), ('previousSessionId', ('union', ('str', 'null')), False), ('first', 'bool', False), ('taskChange', ('union', (('ref', 'ValueChange'), 'null')), False), ('boxChange', ('union', (('ref', 'ValueChange'), 'null')), False), ('params', ('list', ('ref', 'ParamChange')), False), ('paramsKnown', 'bool', False), ('falseStart', 'bool', False), ('falseStartSource', ('union', (('lit', ('automatic', 'marked', 'restored')), 'null')), False))),
-    "LogbookCohort": ('obj', (('cohortId', 'str', False), ('logs', ('list', ('ref', 'SessionLog')), False), ('notes', ('list', ('ref', 'SessionNote')), False), ('changes', ('list', ('ref', 'RunChange')), False))),
+    "HealthEntry": ('obj', (('animalId', 'str', False), ('date', 'str', False), ('weightG', 'float', False), ('baseline', 'bool', False), ('recordedAt', 'str', False))),
+    "SiteSignal": ('obj', (('channel', 'str', False), ('crossings', ('union', ('int', 'null')), False), ('spikes', ('union', ('int', 'null')), False), ('artifacts', ('union', ('int', 'null')), False), ('noiseUv', ('union', ('float', 'null')), False), ('snrCounts', ('union', (('list', 'int'), 'null')), False))),
+    "RunSignal": ('obj', (('runId', 'str', False), ('sessionId', 'str', False), ('animalId', 'str', False), ('box', ('union', ('int', 'null')), False), ('startedAt', ('union', ('str', 'null')), False), ('countedSeconds', ('union', ('float', 'null')), False), ('runSeconds', ('union', ('float', 'null')), False), ('threshold', ('union', (('map', 'any'), 'null')), False), ('recordedSeconds', ('union', ('float', 'null')), False), ('snrEdges', ('list', 'float'), False), ('sites', ('list', ('ref', 'SiteSignal')), False))),
+    "LogbookCohort": ('obj', (('cohortId', 'str', False), ('logs', ('list', ('ref', 'SessionLog')), False), ('notes', ('list', ('ref', 'SessionNote')), False), ('changes', ('list', ('ref', 'RunChange')), False), ('health', ('list', ('ref', 'HealthEntry')), False), ('signals', ('list', ('ref', 'RunSignal')), False))),
     "LogbookUpdated": ('obj', (('cohortId', 'str', False), ('sessionIds', ('list', 'str'), False))),
 }
 
@@ -506,6 +510,7 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "logbook.deleteNote": ('obj', (('noteId', 'str', False),)),
     "logbook.resolveFlag": ('obj', (('noteId', 'str', False), ('resolved', 'bool', False), ('sessionId', ('union', ('str', 'null')), True))),
     "logbook.setSessionLog": ('obj', (('sessionId', 'str', False), ('operator', ('union', ('str', 'null')), True), ('summary', ('union', ('str', 'null')), True))),
+    "logbook.setHealth": ('obj', (('cohortId', 'str', False), ('animalId', 'str', False), ('date', 'str', False), ('weightG', ('union', ('float', 'null')), False), ('baseline', 'bool', True))),
     "logbook.openFlags": ('obj', (('cohortId', 'str', False),)),
 }
 
@@ -601,6 +606,7 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "logbook.deleteNote": ('obj', ()),
     "logbook.resolveFlag": ('obj', (('note', ('ref', 'SessionNote'), False),)),
     "logbook.setSessionLog": ('obj', (('log', ('ref', 'SessionLog'), False),)),
+    "logbook.setHealth": ('obj', (('entry', ('union', (('ref', 'HealthEntry'), 'null')), False),)),
     "logbook.openFlags": ('obj', (('notes', ('list', ('ref', 'SessionNote')), False),)),
 }
 

@@ -129,6 +129,7 @@ export const CMD = {
   LOGBOOK_DELETE_NOTE: "logbook.deleteNote",
   LOGBOOK_RESOLVE_FLAG: "logbook.resolveFlag",
   LOGBOOK_SET_SESSION_LOG: "logbook.setSessionLog",
+  LOGBOOK_SET_HEALTH: "logbook.setHealth",
   LOGBOOK_OPEN_FLAGS: "logbook.openFlags",
 } as const;
 
@@ -2856,6 +2857,91 @@ export interface RunChange {
 }
 
 /**
+ * One animal's weigh-in on one day (`DATA.md#weigh-ins`). Keyed by animal and day, never by
+ * session: two sessions on one day share it.
+ */
+export interface HealthEntry {
+  animalId: string;
+  /** The day weighed, `YYYY-MM-DD`: a session's `date`, not a moment. */
+  date: string;
+  /** Body weight in grams. */
+  weightG: number;
+  /**
+   * Marked as the animal's reference weight. A later weigh-in is read against the latest one
+   * marked at or before its day; with none marked there is no percentage, only the change since
+   * the weigh-in before.
+   */
+  baseline: boolean;
+  /** When it was last written, UTC ISO. */
+  recordedAt: string;
+}
+
+/**
+ * One electrode site's signal over a recorded run (`RECORDING.md#unit-like-sites`). Raw
+ * measurements only: the webview judges.
+ */
+export interface SiteSignal {
+  /** RHX's native name, e.g. `A-016`. */
+  channel: string;
+  /**
+   * Threshold crossings counted live over `RunSignal.countedSeconds`
+   * (`RECORDING.md#active-site-yield`). Null when the run kept no live count.
+   */
+  crossings: number | null;
+  /**
+   * Spikes RHX saved for the site over `RunSignal.recordedSeconds`, artifacts included. Null when
+   * no waveforms were measured.
+   */
+  spikes: number | null;
+  /**
+   * Of `spikes`, those set aside as artifacts: flagged by RHX, coincident across the animal's
+   * sites, or past the amplitude cap.
+   */
+  artifacts: number | null;
+  /**
+   * The site's noise, µV: a robust standard deviation of the samples each snapshot keeps before
+   * its spike.
+   */
+  noiseUv: number | null;
+  /**
+   * The site's spikes that are not artifacts, by amplitude over `noiseUv`: one count per bin of
+   * `RunSignal.snrEdges`, the last bin open-ended. A spike under the first edge is in none.
+   */
+  snrCounts: number[] | null;
+}
+
+/**
+ * How much signal one recorded run's electrode sites carried, the basis of the Logbook's
+ * unit-like estimate (`RECORDING.md#unit-like-sites`).
+ */
+export interface RunSignal {
+  runId: string;
+  sessionId: string;
+  animalId: string;
+  box: number | null;
+  startedAt: string | null;
+  /**
+   * As `RunYield.countedSeconds`: the denominator of `crossings`. Null when the run kept no live
+   * count.
+   */
+  countedSeconds: number | null;
+  /** As `RunYield.runSeconds`. */
+  runSeconds: number | null;
+  /** As `RunYield.threshold`. */
+  threshold: Record<string, unknown> | null;
+  /**
+   * The span of the recording the waveforms were measured over, the denominator of `snrCounts`.
+   * Null when none were measured: the recording saved no snapshots, or too short a lead-in to
+   * measure noise from, or its after-stop pass has not run.
+   */
+  recordedSeconds: number | null;
+  /** The lower edges of `SiteSignal.snrCounts`' bins, in noise standard deviations, ascending. */
+  snrEdges: number[];
+  /** Every site the run recorded, in RHX's order. */
+  sites: SiteSignal[];
+}
+
+/**
  * A cohort's whole session log, flat; the client groups it by `sessionId`. Sessions themselves
  * come from `sessions.list`.
  */
@@ -2866,6 +2952,13 @@ export interface LogbookCohort {
   notes: SessionNote[];
   /** One per run, recorded or recovered. */
   changes: RunChange[];
+  /** Every weigh-in of the cohort's animals, former members included, oldest first. */
+  health: HealthEntry[];
+  /**
+   * One per recorded run that kept a live count or had its waveforms measured, oldest first.
+   * Empty for a cohort never recorded.
+   */
+  signals: RunSignal[];
 }
 
 export interface LogbookUpdated {
@@ -2969,6 +3062,7 @@ export interface CommandArgsMap {
   "logbook.deleteNote": { noteId: string };
   "logbook.resolveFlag": { noteId: string; resolved: boolean; sessionId?: string | null };
   "logbook.setSessionLog": { sessionId: string; operator?: string | null; summary?: string | null };
+  "logbook.setHealth": { cohortId: string; animalId: string; date: string; weightG: number | null; baseline?: boolean };
   "logbook.openFlags": { cohortId: string };
 }
 
@@ -3065,6 +3159,7 @@ export interface CommandResultMap {
   "logbook.deleteNote": Record<string, never>;
   "logbook.resolveFlag": { note: SessionNote };
   "logbook.setSessionLog": { log: SessionLog };
+  "logbook.setHealth": { entry: HealthEntry | null };
   "logbook.openFlags": { notes: SessionNote[] };
 }
 

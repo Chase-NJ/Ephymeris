@@ -112,6 +112,22 @@ def test_a_note_alone_is_history(db, repo) -> None:
     assert former.id == "remy2" and former.run_count == 0
 
 
+def test_a_weigh_in_alone_is_history(db, repo) -> None:
+    """`DATA.md#weigh-ins`: the operator's own measurement, so an animal with
+    one is kept as a former member rather than deleted with its weights left
+    under an id nothing names."""
+    cohort = cohort_with(repo, "remy1", "remy2", "typo")
+    LogbookRepository(db).set_health("remy2", "2026-07-22", 312.4)
+
+    updated = repo.update(cohort.id, {"animals": [a for a in roster(cohort) if a["id"] == "remy1"]})
+
+    [former] = updated.former_animals
+    assert former.id == "remy2" and former.run_count == 0
+    # And it stays one across the next roster edit.
+    again = repo.update(cohort.id, {"animals": roster(updated)})
+    assert [f.id for f in again.former_animals] == ["remy2"]
+
+
 def test_posting_a_former_members_id_restores_it(db, repo) -> None:
     cohort = cohort_with(repo, "remy1", "remy2")
     add_run(db, cohort.id, "remy2", run_file("remy2"))

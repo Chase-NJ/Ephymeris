@@ -71,6 +71,8 @@ describe("buildSession", () => {
             falseStartSource: null,
           },
         ],
+        health: [],
+        signals: [],
       }),
     };
     const doc = buildSession(SESSION, entry, null, new Map([["a1", "remy1"]]), new Date());

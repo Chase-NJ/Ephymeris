@@ -17,6 +17,33 @@ export function formatDuration(totalSeconds: number): string {
   return hours > 0 ? `${hours}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
+/** `1 h 29 min`, `42 min`, `under a minute`: a duration as a sentence would say it. */
+export function proseDuration(totalSeconds: number): string {
+  const minutes = Math.floor(Math.max(0, totalSeconds) / 60);
+  if (minutes < 1) return "under a minute";
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (hours === 0) return `${rest} min`;
+  return rest === 0 ? `${hours} h` : `${hours} h ${rest} min`;
+}
+
+/** Local `HH:MM`, for a time set in running text. */
+export function shortTime(iso: string | null): string {
+  const full = wallClock(iso);
+  return full === "—" ? full : full.slice(0, 5);
+}
+
+/** `19 Nov` from an ISO date, read as a calendar day (no zone). */
+export function shortDate(isoDate: string): string {
+  const [y, m, d] = isoDate.split("-").map(Number);
+  if (!y || !m || !d) return isoDate;
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    timeZone: "UTC",
+  });
+}
+
 /** A note's offset into its session — `T+12:04` — or empty when it has none. */
 export function formatOffset(offsetMs: number | null): string {
   return offsetMs === null ? "" : `T+${formatDuration(offsetMs / 1000)}`;

@@ -16,7 +16,7 @@ tasks and firmware: [TASKS.md](TASKS.md); files, database and analytics: [DATA.m
 - [Hardware utility baseline](#hardware-utility-baseline): [When a restore happens](#when-a-restore-happens), [Three rules it never breaks](#three-rules-it-never-breaks), [Unloaded wiring holds it](#unloaded-wiring-holds-it), [Running a task from Debug Mode](#running-a-task-from-debug-mode)
 - [Session lifecycle](#session-lifecycle): [The flow](#the-flow), [Configuration](#configuration), [Mapping and the placement walk](#mapping-and-the-placement-walk), [Between rounds](#between-rounds), [Running boxes](#running-boxes), [Entering IN_SESSION](#entering-in_session), [Clean exit](#clean-exit), [Board drop](#board-drop), [Stop reasons](#stop-reasons)
 - [Frontend](#frontend): [Routes](#routes), [The shell module](#the-shell-module), [One sky](#one-sky), [Cohort browser](#cohort-browser), [Shaders and lights](#shaders-and-lights), [Live session views](#live-session-views), [Export progress](#export-progress)
-- [Theme](#theme): [Telemetry panels](#telemetry-panels), [Printed documents](#printed-documents)
+- [Theme](#theme): [Telemetry panels](#telemetry-panels), [The paper exception](#the-paper-exception), [Printed documents](#printed-documents)
 - [Module map](#module-map)
 
 ## Overview
@@ -732,13 +732,14 @@ declares its steps up front, a failure stays until dismissed, and a cancelled sa
 
 ## Theme
 
-Every token is declared once in `src/styles/index.css`'s `@theme` block. **Dark mode only.** **Void**
+Every token is declared once in `src/styles/index.css`'s `@theme` block. **Dark mode only**, but for
+[one screen](#the-paper-exception). **Void**
 (background), **Nebula** (surfaces), **Halo** (hairlines), **Pulsar** (matte purple accent), **Ion**
 ("connected / nominal" only), **Starlight** (text); `status-*` carry state and are never decorative.
 
 > [!IMPORTANT]
 > **No gradients, glossy highlights or glow.** The only exceptions are the fenced shaders in
-> [Shaders and lights](#shaders-and-lights).
+> [Shaders and lights](#shaders-and-lights) and the shadows of [the Log's paper](#the-paper-exception).
 
 Space Grotesk is for headers only, Inter for UI, JetBrains Mono for all data. Motion is Framer Motion springs;
 reduced motion stills things rather than removing them. Icons are Lucide outline.
@@ -750,6 +751,40 @@ corner brackets and a dot reticle, titled by `PanelTitle`.
 
 > [!IMPORTANT]
 > **Every mark is an SVG data URI; nothing glows.** The brackets carry Static's hex, so change them with the token.
+
+### The paper exception
+
+The Log (`routes/Log.tsx`) is the one screen that is not the instrument: a cohort's lab notebook lying open
+on a desk, typeset like a LaTeX document and read by turning pages
+([ADR 0010](adr/DECISIONS.md#0010-the-log-is-a-paper-notebook)). The **desk** (`.desk`) is dark and keeps
+the app's tokens and controls. Everything inside **`.paper`** follows `styles/paper.css` instead:
+
+| Rule | On paper |
+|---|---|
+| Colour | Its own tokens, in the same `@theme` block: **Paper**, **Paper Shade**, **Rule**, **Ink** with a soft and a faint step, five coloured inks (blue, red, teal, ochre, plum) and **Highlight**, a fill that never sets text. Every ink clears WCAG AA on Paper and on Paper Shade |
+| Type | One serif, **Latin Modern Roman** (`--font-paper`), for all a person reads, digits included. Bundled: `styles/paper-fonts.css` declares the four faces from the `latex.css` package's woff2 files, the only part of that package used. Small capitals (`.smallcaps`) are spaced capitals at a size the caller gives, since the face keeps its own in a separate file. Mono (`.lit`) only for a literal a machine wrote: a parameter key, a channel name |
+| Tables | Ruled like `booktabs` (`.booktabs`): a heavy rule above and below, a light one under the head, no vertical rule, no box. Captions sit above |
+| Controls | A field is a ruled line (`.ink-field`); a control is a word in blue ink (`.ink-link`). No button has a border |
+| Depth | Shadows are allowed, glow is not: a page darkens toward its gutter and a turning leaf casts a shadow |
+| Animal colour | `PAPER_SERIES` (`paper/parts.tsx`): six colours in the series ramp's order, chosen for Paper, since the ramp tuned for Void washes out on it |
+
+> [!CAUTION]
+> **A paper token on a dark surface fails contrast, and a dark token on paper does too.** Nothing under
+> `.paper` may use Void, Nebula, Halo, Pulsar, Starlight or Static, or a shared control built from them
+> (`Button`, `Dropdown`, `HudTile`); nothing outside it may use a paper token.
+
+`paper/Notebook.tsx` owns the turn and nothing else. A spread is an id in `lib/logbook/pages.ts`'s order:
+the front matter (title page and contents), then one spread per session, **oldest first**. Going forward
+the right page lifts on the spine and lands as the next spread's left; a turn asked for mid-turn finishes
+the one in the air at once. Reduced motion swaps the spread with no leaf.
+
+> [!CAUTION]
+> **A page mounts more than once.** Mid-turn the leaf's two faces are fresh mounts of pages that were, or
+> will be, flat. So a page takes everything it shows from props and the stores, never from an effect
+> that runs on mount, and has no entry animation; its scroll offset is kept by `Notebook` and put back.
+> A handle to "the" note box is found in the DOM outside `[inert]`, never held in a ref.
+
+The route still mounts `SkyBackdrop`, at `opacity: 0` ([One sky](#one-sky)).
 
 ### Printed documents
 

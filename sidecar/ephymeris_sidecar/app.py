@@ -286,6 +286,7 @@ class Application:
         self.server.register(Cmd.LOGBOOK_DELETE_NOTE, self._logbook_delete_note)
         self.server.register(Cmd.LOGBOOK_RESOLVE_FLAG, self._logbook_resolve_flag)
         self.server.register(Cmd.LOGBOOK_SET_SESSION_LOG, self._logbook_set_session_log)
+        self.server.register(Cmd.LOGBOOK_SET_HEALTH, self._logbook_set_health)
         self.server.register(Cmd.LOGBOOK_OPEN_FLAGS, self._logbook_open_flags)
 
         self.server.register(Cmd.HARDWARE_GET, self._hardware_get)
@@ -1633,6 +1634,13 @@ class Application:
         session_id = _str_arg(args, "sessionId")
         fields = {k: args[k] for k in ("operator", "summary") if k in args}
         return await self._require_logbook().set_session_log(session_id, fields)
+
+    async def _logbook_set_health(self, args: Args) -> dict[str, Any]:
+        cohort_id = _str_arg(args, "cohortId")
+        animal_id = _str_arg(args, "animalId")
+        return await self._require_logbook().set_health(
+            cohort_id, animal_id, args.get("date"), args.get("weightG"), args.get("baseline")
+        )
 
     # --- Intan recording (RECORDING.md) -----------------------------------
 

@@ -4,13 +4,16 @@
  */
 
 export type {
+  HealthEntry,
   LogbookCohort,
   LogbookUpdated,
   NoteScope,
   NoteTag,
   ParamChange,
   RunChange,
+  RunSignal,
   SessionLog,
   SessionNote,
+  SiteSignal,
   ValueChange,
 } from "../ws/protocol";

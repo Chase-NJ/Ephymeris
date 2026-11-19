@@ -1,7 +1,8 @@
 """The session log's data model — `DATA.md#the-session-log`.
 
 `to_json` produces exactly the payload shapes documented in
-`PROTOCOL.md#shape-sessionnote` and `PROTOCOL.md#shape-sessionlog`.
+`PROTOCOL.md#shape-sessionnote`, `PROTOCOL.md#shape-sessionlog` and
+`PROTOCOL.md#shape-healthentry`.
 """
 
 from __future__ import annotations
@@ -26,6 +27,12 @@ SCOPE_KINDS: tuple[str, ...] = ("session", "animal", "box")
 #: rather than written into the database and every PDF.
 MAX_BODY = 20_000
 MAX_FIELD = 4_000
+
+#: What a weigh-in may read, in grams (`DATA.md#weigh-ins`): wide enough for a
+#: mouse pup and the heaviest rat, narrow enough to refuse kilograms typed as
+#: grams and a slipped decimal point.
+MIN_WEIGHT_G = 1.0
+MAX_WEIGHT_G = 2000.0
 
 
 @dataclass
@@ -86,6 +93,26 @@ class SessionLog:
     @property
     def is_blank(self) -> bool:
         return not (self.operator or "").strip() and not (self.summary or "").strip()
+
+
+@dataclass
+class HealthEntry:
+    """One animal's weigh-in on one day (`DATA.md#weigh-ins`)."""
+
+    animal_id: str
+    date: str
+    weight_g: float
+    baseline: bool = False
+    recorded_at: str = ""
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "animalId": self.animal_id,
+            "date": self.date,
+            "weightG": self.weight_g,
+            "baseline": self.baseline,
+            "recordedAt": self.recorded_at,
+        }
 
 
 class NoteNotFound(Exception):

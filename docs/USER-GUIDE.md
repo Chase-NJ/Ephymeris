@@ -488,34 +488,70 @@ At the top of Analytics, all refused while a box is running:
 
 ## Keeping the log
 
-The **Log** tab is each cohort's lab notebook: sessions on the left, the selected session's page on the right.
+The **Log** tab is each cohort's lab notebook, and it looks like one: paper pages on a desk, one two-page
+spread per session, oldest first. What a person wrote is on the left page (the day, who ran it, a
+summary, the notes); what was measured is on the right (performance, weights, recording, what changed).
 
-### Moving through sessions
+### Turning pages
 
-Sessions sit on a timeline, newest first, **spaced by real days**. Scroll or press **j**/**k** to step;
-click a session or month to jump. A filled diamond is finished, green **live** running, hollow abandoned
-or recovered; a number counts notes, a flag marks a carried-forward note. The page shows **Start** (when
-the first round began), **End** and **Elapsed** (**~** when read from files), and **Session folder**
-opens the folder.
+| To | Do |
+|---|---|
+| Turn one page | **←** / **→**, or the arrows either side of the notebook |
+| Jump a month | **PgUp** / **PgDn**, or a month's tab on the notebook's edge |
+| Open the contents | **Home**, or **Contents** |
+| Open the latest session | **End**, or **Latest** |
+
+The notebook opens on the running session, else the latest. Its first spread is the **title page** and the
+**contents**: every session under its month with its note count, a flag for an open carried-forward note
+and, for a recorded session, how many of its sites were unit-like; click a line to open that page.
+
+A page's heading is the day; under it are the session's start and end (when the first round began and
+the last ended; **~** when read from files) and **session folder**, which opens it. **Run by** and
+**Summary** are typed in place and kept when you leave the field.
 
 ### Writing notes
 
-Press **n**, or click the note box under **Notes**.
+Press **n**, or click **Write a note…** under the last note.
 
-1. Pick a kind: **Observation**, **Intervention**, **Hardware**, **Health** or **Deviation**.
-2. Pick what it is about: the session, a box or an animal.
-3. Type it (for something earlier, set **At** first); **Ctrl+Enter** saves.
+1. Type it. **Enter** saves; **Shift+Enter** starts a new line.
+2. If it is not an observation about the whole session, the line under the box says so: pick a kind
+   (**Observation**, **Intervention**, **Hardware**, **Health**, **Deviation**), what it is **about**
+   (the session, a box or an animal) and, for something earlier, the time it happened **at**.
+3. Tick **carry forward** for what the next person must know.
 
-Hover a note to edit or delete it. Notes are copied to the session folder's `notes.md`; edit them in the
-app. Turn on **Carry forward to next session** for what the next person must know; the flag shows on the
-Log, at **Before you start** and on Mission Control until **Resolve**.
+Hover a note to **edit** or **delete** it. Notes are copied to the session folder's `notes.md`; edit them
+in the app. A carried-forward note is a yellow sticky note on every page, at **Before you start** and on
+Mission Control until someone clicks **resolve**.
 
-**What changed** lists, per animal, the task, box or settings that differ from its previous session;
-**Performance** is the Analytics session table.
+### Weighing animals
+
+**Weights** on the right page is the day's weigh-in sheet. Press **w**, type the first animal's weight in
+grams and press **Enter** to move down the list; an emptied cell removes the weight. The animals that ran
+are listed first, the rest of the cohort under them.
+
+- **Change** is since that animal's weigh-in before, whenever it was.
+- **Of baseline** needs a baseline: on the day an animal is at its free-feeding weight, click **set as
+  baseline**. Later weights then show as a share of it, and one under 85% is marked **▼ low**. The
+  **☆** on a later row makes that day the baseline instead; **★ baseline** unmarks it.
+- **note** at the end of a row starts a health note about that animal on the left page.
+
+A weight belongs to the animal and the day, so two sessions on one day show the same one.
+
+### Performance, recording and what changed
+
+**Performance** is the Analytics session table: for each animal, the share of sampled trials rewarded over
+the number sampled, per condition. **Changes since last time** lists, per animal, the task, box or
+settings that differ from its previous session.
+
+**Recording** appears for a session recorded with Intan. Each square is one electrode site: filled is
+**unit-like** (large spikes arriving steadily), pale is merely active, hollow is quiet. **For sorting**
+turns the count into advice: **Sort first** (half the sites or more), **Worth sorting** (a quarter),
+**Low yield**. The title page lists the cohort's best recordings in order. It is an estimate made
+without sorting anything, to help you decide which day to open in Offline Sorter first.
 
 ### Saving the log as a PDF
 
-**Session PDF** saves the selected page; **Logbook PDF** saves every session, oldest first, after a cover
+**Session PDF** saves the open session; **Logbook PDF** saves every session, oldest first, after a cover
 of open flags. Characters the PDF fonts lack (Chinese, emoji) print as `?`.
 
 ## Updating Ephymeris

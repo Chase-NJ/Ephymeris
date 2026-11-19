@@ -103,6 +103,7 @@ KEY_CONSTANTS = {"SNAPSHOT_KEY", "DERIVED_KEY"}
 NOT_A_DOCUMENT: dict[str, dict[str, str]] = {
     "cohorts/move.py": {"run": "a database row"},
     "intan/impedance_store.py": {"first": "a database row"},
+    "intan/quality_store.py": {"row": "a database row"},
     "intan/yield_store.py": {"row": "a database row"},
     "logbook/repository.py": {"row": "a database row"},
     "rig/transfer.py": {"other": "a rig export file"},

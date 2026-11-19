@@ -21,6 +21,7 @@ yet been made ([Not yet verified](#not-yet-verified)).
   - [Record step](#record-step)
   - [Impedance tracking](#impedance-tracking)
   - [Active-site yield](#active-site-yield)
+  - [Unit-like sites](#unit-like-sites)
 - [Start and end](#start-and-end)
   - [Start](#start)
   - [Graceful end](#graceful-end)
@@ -377,6 +378,65 @@ live, since the map opened (`FiringModel.activeCount`), after its first 10 s.
 > **Artifacts count as crossings.** Chewing or a loose connector can make a dead site look active; the
 > yield says a site carries threshold crossings, not that they are neurons.
 
+### Unit-like sites
+
+How much there is to **sort** in a recorded run, so the days worth opening in Offline Sorter first can be
+picked from the Log without sorting anything
+([ADR 0010](adr/DECISIONS.md#0010-the-log-is-a-paper-notebook)). Active-site yield counts crossings of any
+size, artifacts included; this asks the narrower question: on how many of an animal's sites did **spikes
+well clear of the site's own noise arrive steadily**?
+
+**Measured after the recording stops**, in the pass that already reads its spikes for the
+[sort export](#the-sort-export) (`intan/site_quality.py`, called from `sort_export._export`), from the
+snapshots RHX saved. Per site of the animal:
+
+| Measurement | How |
+|---|---|
+| Noise, µV | `1.4826 × MAD` about the median of each snapshot's **lead-in**: the samples before the crossing, leaving the `LEAD_GAP` (12) nearest it unread, since a spike's onset is in them. Gathered as a histogram, never by holding the samples |
+| Amplitude | Each spike's extremum \|µV\| from `AMPLITUDE_BEFORE` (4) samples before the crossing to `AMPLITUDE_AFTER` (10) after, over the site's noise |
+| Artifacts | A spike RHX flagged (id 128), one past `ARTIFACT_UV` (1000 µV), or one **coincident** across the probe: within `COINCIDENT_S` (0.5 ms) of spikes on half the animal's fired sites or more, and at least `COINCIDENT_MIN_SITES` (4). Neurons do not fire in lockstep across a probe; chewing and a loose connector do |
+| `snrCounts` | The spikes that are not artifacts, binned by amplitude over noise at `SNR_EDGES` (4, 5, 6, 7, 8, 10, 12, 16, 24 SDs), the last bin open-ended |
+
+- **Kept per run, raw** (`run_site_quality`, [DATA.md](DATA.md#tables), `SiteQualityStore`), under the run
+  record as the live counts are, and pruned with it. `_after_recording` stores each written export's
+  measurements, then asks the Log to refresh (`logbook.updated`).
+- **The rates' denominator is the recording**, first spike to last over the whole `spike.dat`
+  (`recordedSeconds`), not the animal's run window: the snapshots are the recording's.
+- **No measurement, never a guess**, when the export wrote nothing, or when a snapshot keeps fewer than
+  `LEAD_GAP + MIN_LEAD_SAMPLES` (24) samples before a detection. RHX's default of 30 leaves 18 to measure
+  from. A site that never fired is in the row with zeros; one whose lead-in never varied has no noise.
+- **A measurement failure costs only itself**: the `.spikes.mat` is written either way, byte for byte
+  what it was. It adds about half a second and 70 MB to a 20 s, 2 GB export.
+
+**Judged in the webview** (`lib/logbook/signal.ts`), so a changed threshold re-reads every recorded run. A
+site is **unit-like** when spikes of at least `UNIT_SNR` (6) noise SDs arrive at `UNIT_MIN_HZ` (0.5 Hz)
+or more; **active** when it is not but its spikes, artifacts left out, reach 0.5 Hz; else **quiet**.
+`logbook.cohort`'s `signals` carries each run's sites (`RunSignal`); the Log's **Recording** table draws
+them, grades the animal's day by the share of its sites that are unit-like (**Sort first** at half,
+**Worth sorting** at a quarter, else **Low yield**) and trends it against the animal's earlier recorded
+sessions; the notebook's title page ranks the cohort's recordings.
+
+**Where the two numbers came from.** The lab's 2.8-hour recording of April 2026, two animals on 32 sites
+each, the detection threshold near 4 noise SDs on one and lower on the other:
+
+| Unit-like sites of 32 | Animal 1, 0.2 Hz | 0.5 Hz | Animal 2, 0.2 Hz | 0.5 Hz |
+|---|---|---|---|---|
+| ≥ 5 SDs | 22 | 18 | 11 | 7 |
+| **≥ 6 SDs** | 20 | **16** | 7 | **6** |
+| ≥ 7 SDs | 17 | 14 | 6 | 3 |
+| ≥ 8 SDs | 15 | 8 | 3 | 1 |
+
+At 4 or 5 SDs nearly every crossing counts, since the threshold sits there. 6 SDs at 0.5 Hz kept the
+sites whose mean waveform was a spike's or that had a clear tail of large spikes, and dropped the
+artifact-heavy ones a rate of 0.2 Hz let in; 7 SDs lost real-looking sites on the noisier animal. Against
+that, 29 and 31 of the same sites were merely [active](#active-site-yield).
+
+> [!CAUTION]
+> **An estimate that ranks days, not a count of neurons.** It was set on one recording and has not been
+> checked against sorted units. A site with two good units counts once; a sparse large unit under 0.5 Hz
+> is not counted; and a run with no measurement is judged on live crossings alone, shown without a count
+> or a grade, since crossings cannot tell a neuron from an artifact.
+
 ## Start and end
 
 Context: [ARCHITECTURE.md](ARCHITECTURE.md#session-lifecycle). One round's recording
@@ -667,7 +727,7 @@ panel shows nothing for a session with none.
 
 ### Alignment at session end
 
-Once RHX has confirmed its stop, the lifecycle starts one background pass over the recording's runs (`SessionLifecycle._after_recording`), in a fixed order so its two steps never work on one run at once: **align, then [export](#the-sort-export)**. Neither step can hold up an end or cost a run anything, and a failure of one does not stop the other.
+Once RHX has confirmed its stop, the lifecycle starts one background pass over the recording's runs (`SessionLifecycle._after_recording`), in a fixed order so its two steps never work on one run at once: **align, then [export](#the-sort-export)**. Neither step can hold up an end or cost a run anything, and a failure of one does not stop the other. The export also measures each animal's sites ([Unit-like sites](#unit-like-sites)); the pass keeps what it measured and tells the Log.
 
 Alignment (`intan/alignment.py`, through `CohortArchive.align_recorded`) writes what `align_run` found into the run's own files:
 

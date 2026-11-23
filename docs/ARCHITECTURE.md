@@ -660,8 +660,10 @@ There is **one app-wide WebGL canvas** (`constellation3d/SharedCanvas.tsx`) that
 ![The Dashboard over the rig's 3D sky: six box stars labelled with their box number and bench name (1 Left bench to 6 Back wall), with the launch column on the left and the Boxes list and Observatory on the right](images/dashboard.webp)
 
 > [!CAUTION]
-> **Every route mounts a constellation** (`SkyBackdrop` at `opacity: 0` if need be); a route with none
-> releases the shared shader programs and blanks the canvas.
+> **Every route mounts a constellation** (`SkyBackdrop`, covered by an opaque layer if need be); a route
+> with none releases the shared shader programs and blanks the canvas. **Never at `opacity: 0`**: the canvas
+> leaves compositing while it keeps drawing, and the next route blocks for up to half a second showing it
+> again (`lib/sky.test.ts`).
 
 > [!CAUTION]
 > **The rig's sky is built only in `useRigSky`.** A second placement puts stars elsewhere, and the shared
@@ -786,8 +788,7 @@ the one in the air at once. Reduced motion swaps the spread with no leaf.
 > A handle to "the" note box is found in the DOM outside `[inert]`, never held in a ref.
 
 **The route is three layers, each with its own way in and out** (`routes/Log.tsx`). The sky
-(`SkyBackdrop`, [One sky](#one-sky)) holds still and is only covered, then switched to `opacity: 0` once
-it is. The desk is opaque, so it fades in and out on its own: an opaque layer with no `exit` sits over
+(`SkyBackdrop`, [One sky](#one-sky)) holds still and is only covered, never turned off. The desk is opaque, so it fades in and out on its own: an opaque layer with no `exit` sits over
 the next route for the whole transition (`AppShell.tsx`'s `RouteTransition` moves a page and never fades
 it, so every route fades its own). What lies on the desk, the cohort list or
 a notebook, crossfades with the other. A notebook is not mounted until its sessions are known, and

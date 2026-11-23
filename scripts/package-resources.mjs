@@ -5,7 +5,8 @@
  * installer packages from (`extraResources` in `electron-builder.yml`):
  *
  *   resources/
- *     sidecar/                PyInstaller-frozen sidecar (onedir)
+ *     sidecar/                PyInstaller-frozen sidecar (onedir), started
+ *                             once here and made to do real work
  *       ephymeris-sidecar[.exe]
  *       _internal/ephymeris_sidecar/rig/
  *         schema/ hardware/              the channel, pinout and strobe registries
@@ -159,6 +160,14 @@ mkdirSync(resourcesDir, { recursive: true });
 // back into this checkout, which codesign refuses and no other Mac could follow.
 cpSync(frozen, join(resourcesDir, "sidecar"), { recursive: true, verbatimSymlinks: true });
 console.log(`\nstaged sidecar (${sizeOf(join(resourcesDir, "sidecar"))})`);
+
+// The staged copy is started as the shell starts it and made to recover a
+// crashed run, whose `.mat` is read back (`sidecar/packaging/check_frozen.py`).
+// A freeze that hangs at launch, or starts and cannot write a `.mat`, stops
+// the packaging here rather than reaching a lab machine.
+run(python, [join("packaging", "check_frozen.py"), join(resourcesDir, "sidecar", `ephymeris-sidecar${exe}`)], {
+  cwd: sidecarDir,
+});
 
 // --- 2. bundle arduino-cli -------------------------------------------------
 

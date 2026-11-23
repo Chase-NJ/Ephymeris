@@ -55,15 +55,16 @@ run reads the sketch library from `firmware/` in place ([its README](../firmware
 | `cd sidecar && .venv/bin/python -m tests.sim --data-dir ../.sim` | The real sidecar on a simulated rig (six boards, instant flashes, a GRGL session on `START`), for running the app with no hardware. It prints the two `localStorage` lines that point a browser preview at it. The boards ignore parameter values and nothing is compiled |
 | `npm run build` / `npm run build:electron` | `tsc` and a production Vite build into `dist/`; compile `electron/` into `dist-electron/` |
 | `npm run check` | Protocol mirrors current, both typechecks, unit tests; all run even after a failure |
-| `npm run test` / `test:watch` | Vitest over `src/lib/**` and `electron/**` |
+| `npm run test` / `test:watch` | Vitest over `src/lib/**`, `src/features/**` and `electron/**` |
 | `npm run gen:protocol` | Regenerate `protocol.py`, `protocol.ts` and `PROTOCOL.md` from `protocol/schema.py` |
+| `cd sidecar && .venv/bin/python -m ephymeris_sidecar.simulation --out DIR` | Compile the task simulator and run it through one trial ([TASKS.md](TASKS.md#simulating-a-task)). A checkout does this by itself on the first simulation, into `sidecar/build/tasksim`, and needs a C++ compiler on `PATH` |
 | `npm run package:electron` | Stage resources and build the Electron installer into `release/` ([below](#building-the-installer)) |
 | `pytest` in `sidecar/` | The sidecar suite; CI adds `-n 4 --dist worksteal` |
 | `firmware/libraries/BehaviorBox/extras/host_test/run.sh` | Firmware host tests; `run_box.sh` for the box utility, `run_stream.sh` for the stream grammar |
 
 ## Tests
 
-**Frontend: Vitest over `src/lib/**` and `electron/**`, with no DOM.** It pins the arithmetic and
+**Frontend: Vitest over `src/lib/**`, `src/features/**` and `electron/**`, with no DOM.** It pins the arithmetic and
 decoding that produce a drawing or readout that looks deliberate when wrong (the derived state machine,
 its layout, the strategy plane, the cohort sky, the probe geometry and firing map), and the Electron shell's pure parts.
 Stores are tested through `FakeSidecar` (`lib/ws/fakeSidecar.ts`); `ws/port.contract.test.ts` holds it to
@@ -129,7 +130,8 @@ npm run package:electron
 
 `scripts/package-resources.mjs` stages `build/resources/`: the sidecar frozen with PyInstaller from
 `sidecar/.venv`, `arduino-cli` from `PATH`, a clean `arduino:avr` core (needs the network once; delete
-`build/resources/` to re-seed), and the sketch library from `firmware/`. `electron-builder`
+`build/resources/` to re-seed), the sketch library from `firmware/`, and the task simulator, compiled
+here and run once (a C++ compiler on `PATH`: MinGW's `g++` on Windows, which the CI runner has). `electron-builder`
 (`electron-builder.yml`) then writes `release/Ephymeris-<version>-setup.exe`, its `.blockmap` and
 `latest.yml`. The frozen sidecar carries the Python that built it; use 3.13, as CI does (3.12's Windows
 asyncio clock makes short waits end early). The installer is unsigned.
@@ -177,6 +179,9 @@ Frontend packages are bundled at build time; `@react-pdf/renderer` still loads o
   with a saved wiring document have no sync channel until one is added.
 - **PWM, tone and pulse trains** measured on a real box
   ([TASKS.md](TASKS.md#driven-outputs)).
+- **The task simulator from an installed copy.** CI builds it with MinGW and runs it on Windows, but
+  the installer's staging step and a run from an installed copy have not been tried, and a simulated
+  seed's trial order has not been compared with a board's ([TASKS.md](TASKS.md#simulating-a-task)).
 
 ### Known bugs
 

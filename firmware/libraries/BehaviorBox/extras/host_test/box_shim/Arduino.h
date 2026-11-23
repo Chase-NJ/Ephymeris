@@ -125,9 +125,30 @@ inline int digitalRead(int pin)
 }
 
 // ---- random ----
+#ifdef BB_AVR_RANDOM
+/* The board's own generator, for a build whose draws must be the board's (the
+   task simulator, the sidecar's simulation/host/): avr-libc's random() is Park-Miller's minimal
+   standard, x' = 16807 x mod (2^31 - 1), by Schrage's method in 32-bit
+   arithmetic, and the Arduino core's random(lo, hi) is that modulo the span.
+   randomSeed(0) is a no-op there too. */
+static int32_t bb_rngState = 1;
+inline long bb_avrRandom()
+{
+  int32_t x = bb_rngState;
+  if (x == 0) x = 123459876;
+  int32_t hi = x / 127773, lo = x % 127773;
+  x = 16807 * lo - 2836 * hi;
+  if (x < 0) x += 0x7fffffff;
+  bb_rngState = x;
+  return (long)x;
+}
+inline long _bb_random(long lo, long hi) { return lo >= hi ? lo : lo + bb_avrRandom() % (hi - lo); }
+inline void randomSeed(unsigned long s) { if (s != 0) bb_rngState = (int32_t)s; }
+#else
 inline long _bb_random(long lo, long hi) { return lo + (long)(rand() % (hi - lo)); }
-#define random(...) _bb_random(__VA_ARGS__)
 inline void randomSeed(unsigned long s) { srand((unsigned)s); }
+#endif
+#define random(...) _bb_random(__VA_ARGS__)
 
 // ---- min/max ----
 template <class T> T _bb_min(T a, T b) { return a < b ? a : b; }
@@ -175,10 +196,19 @@ inline void bb_realTiming(long baud)
   bb_txAt = micros();
 }
 
+// Called when the sketch asks for input and none is queued, so a harness can
+// supply the next line from outside (the sidecar's simulation/host/tasksim.cpp) instead of a test
+// having fed everything up front.
+static void (*bb_onSerialEmpty)() = nullptr;
+
 struct _BoxSerialShim
 {
   void begin(long) {}
-  int available() { return (int)bb_serialIn.size(); }
+  int available()
+  {
+    if (bb_serialIn.empty() && bb_onSerialEmpty) bb_onSerialEmpty();
+    return (int)bb_serialIn.size();
+  }
   int read()
   {
     if (bb_serialIn.empty()) return -1;

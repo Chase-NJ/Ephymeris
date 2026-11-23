@@ -64,6 +64,10 @@ const CALL_TIMEOUT_OVERRIDES: Readonly<Record<string, number>> = {
   [CMD.HARDWARE_RESET]: 600_000,
   [CMD.HARDWARE_IMPORT_CHANNEL_SET]: 600_000,
   [CMD.TASKS_SAVE]: 600_000,
+  // A source checkout compiles the simulator on its first use, and a stress
+  // test is up to 600 sessions.
+  [CMD.TASKS_SIMULATE]: 120_000,
+  [CMD.TASKS_STRESS_TEST]: 300_000,
   [CMD.TASKS_DELETE]: 600_000,
   [CMD.STROBES_ADD]: 600_000,
   [CMD.STROBES_EDIT]: 600_000,

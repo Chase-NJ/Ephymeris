@@ -2569,6 +2569,132 @@ SHAPES = (
         doc="A pure compile of an unsaved definition. Writes nothing.",
     ),
     Shape(
+        "SimulatedAnimal",
+        obj(
+            f("followsOdor", FLOAT, optional=True,
+              doc="How often it answers by the odor at the session's start, 0 to 1."),
+            f("followsOdorEnd", FLOAT, optional=True,
+              doc="How often it answers by the odor once it has learned."),
+            f("learningTrials", INT, optional=True,
+              doc="Sampled trials over which it moves from `followsOdor` to `followsOdorEnd`; "
+              "0 is at `followsOdorEnd` from the first trial."),
+            f("fallback", lit("side", "winStay", "alternate", "repeat"), optional=True,
+              doc="What it does when it is not answering by the odor: a side by `sideBias`, "
+              "the last well if it paid and the other if not, the other well, or the same well."),
+            f("sideBias", FLOAT, optional=True, doc="-1 is always left, 1 always right."),
+            f("initiates", FLOAT, optional=True,
+              doc="How often it pokes the odor port when the trial light comes on."),
+            f("satiatesAfter", INT, optional=True,
+              doc="Rewards after which it starts to stop initiating, reaching never at one "
+              "and a half times this; 0 is never sated."),
+            f("answers", FLOAT, optional=True, doc="How often it goes to a well once it has sampled."),
+            f("leavesEarly", FLOAT, optional=True,
+              doc="How often it pulls out of the odor port on impulse."),
+            f("dropsHold", FLOAT, optional=True,
+              doc="How often it leaves a well before water could come."),
+            f("holdMs", INT, optional=True, doc="About how long it can hold a poke."),
+            f("reactionMs", INT, optional=True, doc="About how long it takes to act."),
+        ),
+        doc="The animal a simulation runs against (`TASKS.md#the-simulated-animal`). It senses "
+        "only the light, the odor and water, and never a task parameter. A field left out "
+        "takes a trained animal's value.",
+    ),
+    Shape(
+        "SimulationTelemetry",
+        obj(
+            f("strobe", INT, doc="The index in `strobes` of the strobe that moved the metrics."),
+            f("metrics", ListOf(Ref("TelemetryMetric"))),
+        ),
+        doc="The live metrics as a running box's `session.telemetry` would have carried them "
+        "at one strobe of a simulated session.",
+    ),
+    Shape(
+        "SimulationSummary",
+        obj(
+            f("status", Ref("RunStatus")),
+            f("metrics", ListOf(Ref("MetricSummary"))),
+            f("overall", nullable(Ref("MetricSummary"))),
+            f("outcomes", nullable(Ref("TrialOutcomes"))),
+            f("conditions", ListOf(Ref("ConditionOutcomes"))),
+            f("engagement", nullable(Ref("TrialEngagement"))),
+            f("totalEvents", INT),
+            f("durationMs", nullable(FLOAT)),
+            f("stopReason", nullable(STR)),
+            f("clean", BOOL),
+            f("seed", nullable(INT)),
+            f("detail", nullable(STR)),
+            f("excludedByDefault", BOOL),
+        ),
+        doc="A simulated session as the scorer summarises a run: `RunSummary`'s scored "
+        "fields, without the ones that say which recorded run it is.",
+    ),
+    Shape(
+        "SimulatedWater",
+        obj(
+            f("rewards", INT, doc="Trials that were paid."),
+            f("ms", INT, doc="How long the fluid lines were open in all."),
+        ),
+    ),
+    Shape(
+        "TaskSimulation",
+        obj(
+            f("seed", INT, doc="The trial seed the session ran on; it seeds the animal too."),
+            f("limitMs", INT),
+            f("endedBy", lit("trials", "timeLimit", "cutOff"),
+              doc="The trial cap, the `STOP` sent at the time limit, or a session that ran "
+              "half an hour past its limit without reaching a trial boundary."),
+            f("durationMs", INT, doc="The last strobe's timestamp."),
+            f("animal", Ref("SimulatedAnimal"), doc="The animal as run, every field filled."),
+            f("strobes", ListOf(ListOf(INT)),
+              doc="`[code, ms]` pairs, as the firmware printed them: this machine's codes, "
+              "ms since `START_SESSION`."),
+            f("telemetry", ListOf(Ref("SimulationTelemetry")),
+              doc="One entry per strobe at which a live metric changed."),
+            f("summary", Ref("SimulationSummary")),
+            f("trialTable", nullable(Ref("TrialTable"))),
+            f("water", Ref("SimulatedWater")),
+        ),
+        doc="One simulated session (`TASKS.md#simulating-a-task`).",
+    ),
+    Shape(
+        "StressSession",
+        obj(
+            f("seed", INT),
+            f("endedBy", lit("trials", "timeLimit", "cutOff")),
+            f("durationMs", INT),
+            f("presented", INT, doc="Trials in the trial table, repeats included."),
+            f("scored", INT, doc="Trials P(correct) counts."),
+            f("correct", INT),
+            f("rewards", INT),
+            f("waterMs", INT),
+            f("accuracy", nullable(FLOAT), doc="The run's pooled P(correct); null with nothing counted."),
+        ),
+    ),
+    Shape(
+        "StressAnimal",
+        obj(
+            f("label", STR),
+            f("animal", Ref("SimulatedAnimal")),
+            f("sessions", ListOf(Ref("StressSession"))),
+            f("meanAccuracy", nullable(FLOAT)),
+            f("meanRewards", nullable(FLOAT)),
+            f("meanWaterMs", nullable(FLOAT)),
+            f("meanPresented", nullable(FLOAT)),
+            f("meanDurationMs", nullable(FLOAT)),
+            f("rewardsPerHour", nullable(FLOAT)),
+        ),
+        doc="One animal's sessions in a stress test, and their means.",
+    ),
+    Shape(
+        "TaskStressTest",
+        obj(
+            f("seeds", ListOf(INT), doc="The seeds every animal ran on, so two rows differ by the animal alone."),
+            f("limitMs", INT),
+            f("animals", ListOf(Ref("StressAnimal"))),
+        ),
+        doc="Several animals over the same sessions of one task (`TASKS.md#the-stress-test`).",
+    ),
+    Shape(
         "TasksUpdatedData",
         obj(f("tasks", ListOf(Ref("TaskEntry")))),
     ),
@@ -4172,6 +4298,37 @@ COMMANDS = (
         "when the document is not a definition.",
     ),
     Command(
+        "tasks.simulate",
+        args=obj(
+            f("definition", ANY),
+            f("animal", Ref("SimulatedAnimal")),
+            f("seed", INT, optional=True, doc="Omitted: a fresh seed, reported in the result."),
+            f("limitMs", INT, optional=True, doc="The session time limit, 1 ms to 24 h. Default 60 min."),
+        ),
+        result=Ref("TaskSimulation"),
+        doc="Run an unsaved definition's firmware on this computer against a simulated "
+        "animal and score it as Analytics scores a run (`TASKS.md#simulating-a-task`). "
+        "The task runs at its own parameter values. Nothing is flashed, recorded or "
+        "written. `SIMULATION_REFUSED` for a task with no presentable trial, an animal, "
+        "seed or limit out of range, or while a box is running; `SIMULATOR_UNAVAILABLE` "
+        "when this computer has no simulator.",
+    ),
+    Command(
+        "tasks.stressTest",
+        args=obj(
+            f("definition", ANY),
+            f("animals", ListOf(obj(f("label", STR), f("animal", Ref("SimulatedAnimal")))),
+              doc="1 to 12 animals."),
+            f("sessions", INT, optional=True, doc="Sessions per animal, 1 to 50. Default 10."),
+            f("seed", INT, optional=True,
+              doc="The first session's seed; the rest follow from it. Omitted: a fresh one."),
+            f("limitMs", INT, optional=True, doc="Each session's time limit. Default 60 min."),
+        ),
+        result=Ref("TaskStressTest"),
+        doc="Simulate the task against several animals over the same seeds "
+        "(`TASKS.md#the-stress-test`). Refused as `tasks.simulate` is.",
+    ),
+    Command(
         "tasks.save",
         args=obj(f("definition", ANY)),
         result=Ref("TaskSaved"),
@@ -5136,6 +5293,17 @@ ERRORS = (
         "STROBE_SESSION_RUNNING",
         "A vocabulary edit while a session is set up or a box is running. Every "
         "edit regenerates the sketches a box was or will be flashed from.",
+    ),
+    ErrorCode(
+        "SIMULATION_REFUSED",
+        "`tasks.simulate` or `tasks.stressTest` that cannot run as asked: a task with no "
+        "presentable trial, an animal, seed or limit out of range, parameters the firmware "
+        "would not take, or a box running (`TASKS.md#simulating-a-task`).",
+    ),
+    ErrorCode(
+        "SIMULATOR_UNAVAILABLE",
+        "This computer has no task simulator: an install built without one, or a source "
+        "checkout with no C++ compiler.",
     ),
     ErrorCode(
         "TASK_NOT_FOUND",

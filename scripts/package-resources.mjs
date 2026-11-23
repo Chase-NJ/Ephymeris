@@ -15,6 +15,8 @@
  *                             avrdude) seeded via `core install` into an empty
  *                             directory, so nothing from the dev machine's own
  *                             Arduino15 rides along
+ *     tasksim/                the task simulator: the trial runner compiled for
+ *                             this machine, one executable per selection mode
  *     sketches/               the bundled sketch library: firmware/, copied
  *                             without dotfiles or host-test build output
  *
@@ -227,5 +229,21 @@ if (inos === 0) {
   process.exit(1);
 }
 console.log(`bundled sketch library: ${inos} sketches (${sizeOf(sketchesOut)})`);
+
+// --- 5. build the task simulator --------------------------------------------
+// The firmware's own trial runner, compiled for this machine and run through one
+// trial before it is staged (`TASKS.md#simulating-a-task`). Needs a C++ compiler
+// on PATH: MinGW's g++ on Windows, linked statically, clang or gcc elsewhere.
+// A failure stops the packaging: an installer without it would offer a Simulate
+// view that can only refuse.
+
+const tasksimOut = join(resourcesDir, "tasksim");
+rmSync(tasksimOut, { recursive: true, force: true });
+mkdirSync(tasksimOut, { recursive: true });
+run(
+  python,
+  ["-m", "ephymeris_sidecar.simulation", "--out", tasksimOut, "--firmware", firmwareDir],
+  { cwd: sidecarDir },
+);
 
 console.log(`\nresources staged at ${resourcesDir} — total ${sizeOf(resourcesDir)}`);

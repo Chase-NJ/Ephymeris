@@ -1,17 +1,19 @@
 import { LayoutGroup, motion } from "framer-motion";
 import { CircleAlert } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation, useNavigate, useParams } from "react-router";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 
 import { DENSE_SKY_OPACITY, SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
 import { SketchStateMachine } from "@/components/task/SketchStateMachine";
-import { EditorHeader, homeOf, type EditorShared } from "@/components/task/editor/EditorHeader";
+import { EditorHeader, homeOf, type EditorShared, type EditorView } from "@/components/task/editor/EditorHeader";
 import { GenerationPanel } from "@/components/task/editor/GenerationPanel";
 import { Panel } from "@/components/task/editor/Panel";
 import { ParameterPanel } from "@/components/task/editor/ParameterPanel";
 import { TrialTypes } from "@/components/task/editor/TrialTypes";
 import { errorMessage } from "@/lib/cohorts/commands";
 import { getRig } from "@/lib/hardware/commands";
+import { TRAINED } from "@/features/simulation/animals";
+import { SimulateView, type SimSettings } from "@/features/simulation/SimulateView";
 import type { RigDocument } from "@/lib/hardware/types";
 import { CASCADE, RISE, springPanel } from "@/lib/motion";
 import { useStrobeVocabulary } from "@/lib/strobes/useStrobeVocabulary";
@@ -198,6 +200,19 @@ function TrialTableEditor({
   const [markedRow, setMarkedRow] = useState<number | null>(null);
 
   const model = useMemo(() => taskGraph(session.profile), [session.profile]);
+
+  // The view rides the query, not the path: the route's page is keyed by its
+  // path (`AppShell`), so the working draft and its session survive the switch.
+  const [search, setSearch] = useSearchParams();
+  const view: EditorView = search.get("view") === "simulate" ? "simulate" : "design";
+  const onView = (next: EditorView) =>
+    setSearch(next === "simulate" ? { view: "simulate" } : {}, { replace: true });
+  const [simSettings, setSimSettings] = useState<SimSettings>({
+    animal: TRAINED,
+    limitMinutes: 60,
+    seed: null,
+    deal: 0,
+  });
 
   /* `config` is what the profile compiles with today; `catalogueDefaults` is
    * what it would compile with if this task pinned nothing — the difference is
@@ -454,12 +469,27 @@ function TrialTableEditor({
               onJump={onJump}
               onBack={shared.onBack}
               onSave={shared.onSave}
+              view={view}
+              onView={onView}
             />
             {shared.listError && <p className="text-[11px] text-status-error">{shared.listError}</p>}
 
             {/* The panels assemble as a CASCADE, and move between the split
                 and stacked homes on their shared layout ids. */}
-            <LayoutGroup>
+            {view === "simulate" &&
+              (session.profile ? (
+                <SimulateView
+                  definition={definition}
+                  profile={session.profile}
+                  model={model}
+                  split={split}
+                  settings={simSettings}
+                  onSettings={setSimSettings}
+                />
+              ) : (
+                <p className="text-[11px] text-static">Compiling the task…</p>
+              ))}
+            {view === "design" && <LayoutGroup>
               <motion.div
                 variants={CASCADE}
                 initial="hidden"
@@ -494,7 +524,7 @@ function TrialTableEditor({
                   </div>
                 </motion.div>
               </motion.div>
-            </LayoutGroup>
+            </LayoutGroup>}
           </>
         )}
       </motion.div>

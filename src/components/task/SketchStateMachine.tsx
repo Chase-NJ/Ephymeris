@@ -398,10 +398,16 @@ export function LiveStateMachine({
   liveNode,
   liveCondition = null,
   observedConditions = null,
+  shares = null,
 }: {
   model: TaskGraphModel;
   /** Node the token sits on — null before the first strobe of a trial. */
   liveNode: string | null;
+  /**
+   * Node id → the share of trials that reached it, written over each node. A
+   * finished or simulated run's overlay; the model itself carries no counts.
+   */
+  shares?: ReadonlyMap<string, number> | null;
   /**
    * Which condition this trial is presenting (`liveConditionId`). Three states,
    * kept apart on purpose — see that function.
@@ -477,6 +483,23 @@ export function LiveStateMachine({
             onChipClick={() => {}}
           />
         ))}
+        {shares &&
+          model.nodes.map((node) => {
+            const share = shares.get(node.id);
+            if (share === undefined) return null;
+            return (
+              <text
+                key={`share-${node.id}`}
+                x={frame.x(node)}
+                y={frame.y(node) - 12}
+                textAnchor="middle"
+                pointerEvents="none"
+                className="fill-static font-mono text-[9px] tabular-nums"
+              >
+                {Math.round(share * 100)}%
+              </text>
+            );
+          })}
       </svg>
 
       {/* The caption strip, repurposed as the live readout: the state the box

@@ -70,5 +70,6 @@ include = ["ephymeris_sidecar*"]
 "ephymeris_sidecar.rig" = ["schema/*.json", "hardware/*.json"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "ephymeris_sidecar"]
+pythonpath = ["."]
 asyncio_mode = "auto"

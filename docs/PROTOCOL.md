@@ -113,6 +113,8 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="cmd-tasks.list"></a>`tasks.list` | — | `tasks` | This rig's saved task profiles (`TASKS.md#task-definitions`). |
 | <a id="cmd-tasks.get"></a>`tasks.get` | `taskId` | `definition`, `diagnostics` | One definition and everything currently wrong with it. |
 | <a id="cmd-tasks.preview"></a>`tasks.preview` | `definition` | [TaskPreview](#shape-taskpreview) | Compile an unsaved definition and say what is wrong with it, writing nothing. |
+| <a id="cmd-tasks.simulate"></a>`tasks.simulate` | `definition`, `animal`, `seed?`, `limitMs?` | [TaskSimulation](#shape-tasksimulation) | Run an unsaved definition's firmware on this computer against a simulated animal and score … |
+| <a id="cmd-tasks.stresstest"></a>`tasks.stressTest` | `definition`, `animals`, `sessions?`, `seed?`, `limitMs?` | [TaskStressTest](#shape-taskstresstest) | Simulate the task against several animals over the same seeds (`TASKS.md#the-stress-test`). |
 | <a id="cmd-tasks.save"></a>`tasks.save` | `definition` | [TaskSaved](#shape-tasksaved) | Write the definition and regenerate its sketch. |
 | <a id="cmd-tasks.delete"></a>`tasks.delete` | `taskId` | `deleted` | Remove the definition and its generated sketch folder. |
 | <a id="cmd-tasks.export"></a>`tasks.export` | `taskId` | `document`, `filename` | One task as it travels to the other lab machine (`TASKS.md#moving-a-task-between-machines`). |
@@ -241,6 +243,8 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | `STROBE_IMPORT_CONFLICT` | `strobes.import` applied with a plan that has conflicts. |
 | `STROBE_VOCABULARY_UNREADABLE` | This machine's vocabulary document will not read. |
 | `STROBE_SESSION_RUNNING` | A vocabulary edit while a session is set up or a box is running. |
+| `SIMULATION_REFUSED` | `tasks.simulate` or `tasks.stressTest` that cannot run as asked: a task with no presentable trial … |
+| `SIMULATOR_UNAVAILABLE` | This computer has no task simulator: an install built without one, or a source … |
 | `TASK_NOT_FOUND` | No task profile with that id on this rig. |
 | `TASK_TRANSFER_INVALID` | `tasks.import` with a file that is not an exported task (another version, no definition … |
 | `TASK_IMPORT_CONFLICT` | `tasks.import` applied with a plan that has conflicts. |
@@ -382,12 +386,18 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="shape-settingoption"></a>SettingOption | `label`, `value`, `command` | One value a grid row's setting can take. |
 | <a id="shape-sex"></a>Sex | "M" \| "F" \| "unknown" |  |
 | <a id="shape-sidecarerrordata"></a>SidecarErrorData | `code`, `message`, `detail` | Failures with no command to attribute them to. |
+| <a id="shape-simulatedanimal"></a>SimulatedAnimal | `followsOdor?`, `followsOdorEnd?`, `learningTrials?`, `fallback?`, `sideBias?`, `initiates?`, `satiatesAfter?`, `answers?`, `leavesEarly?`, `dropsHold?`, `holdMs?`, `reactionMs?` | The animal a simulation runs against (`TASKS.md#the-simulated-animal`). |
+| <a id="shape-simulatedwater"></a>SimulatedWater | `rewards`, `ms` |  |
+| <a id="shape-simulationsummary"></a>SimulationSummary | `status`, `metrics`, `overall`, `outcomes`, `conditions`, `engagement`, `totalEvents`, `durationMs`, `stopReason`, `clean`, `seed`, `detail`, `excludedByDefault` | A simulated session as the scorer summarises a run: `RunSummary`'s scored fields, without the … |
+| <a id="shape-simulationtelemetry"></a>SimulationTelemetry | `strobe`, `metrics` | The live metrics as a running box's `session.telemetry` would have carried them at one … |
 | <a id="shape-sitesignal"></a>SiteSignal | `channel`, `crossings`, `spikes`, `artifacts`, `noiseUv`, `snrCounts` | One electrode site's signal over a recorded run (`RECORDING.md#unit-like-sites`). |
 | <a id="shape-sketchdiscovery"></a>SketchDiscovery | `library`, `sketches`, `skipped`, `skippedCount`, `libraries`, `librariesPath` | The full result of a library scan (`TASKS.md#sketch-library`): the bundled sketches plus this rig's … |
 | <a id="shape-sketchentry"></a>SketchEntry | `category`, `name`, `path`, `source`, `decodeOnly` |  |
 | <a id="shape-sketchlibrarystatus"></a>SketchLibraryStatus | `state`, `path`, `message`, `source` | Every non-ok state means a broken or partial INSTALL rather than a wrong setting … |
 | <a id="shape-skippedentry"></a>SkippedEntry | `path`, `reason` | Carried in full so a missing sketch is inspectable, not silent. |
 | <a id="shape-strategypoint"></a>StrategyPoint | `trial`, `x`, `y`, `n` | One sample of the within-session strategy walk (`DATA.md#analytics-views`). |
+| <a id="shape-stressanimal"></a>StressAnimal | `label`, `animal`, `sessions`, `meanAccuracy`, `meanRewards`, `meanWaterMs`, `meanPresented`, `meanDurationMs`, `rewardsPerHour` | One animal's sessions in a stress test, and their means. |
+| <a id="shape-stresssession"></a>StressSession | `seed`, `endedBy`, `durationMs`, `presented`, `scored`, `correct`, `rewards`, `waterMs`, `accuracy` |  |
 | <a id="shape-strobearchivecoverage"></a>StrobeArchiveCoverage | `files`, `unreadable`, `roots`, `unreachableRoots` | What the archive scan could see. |
 | <a id="shape-strobecode"></a>StrobeCode | `name`, `code`, `origin`, `emittedOn?`, `rationale?`, `portSlot?` |  |
 | <a id="shape-strobefirmwareref"></a>StrobeFirmwareRef | `path`, `kind` |  |
@@ -404,6 +414,8 @@ One row per name: its type (a shape's field names) and the first sentence of its
 | <a id="shape-taskpreview"></a>TaskPreview | `diagnostics`, `profile`, `catalogueDefaults` | A pure compile of an unsaved definition. |
 | <a id="shape-taskprofile"></a>TaskProfile | `taskName`, `kind`, `config`, `strobes`, `liveMetrics`, `controls`, `legacyNames`, `telemetry?`, `identify?`, `exposed?`, `trialTypes?` | Parsed from the sketch's `task.json` sibling (`TASKS.md#task-profile`); passed through verbatim — the sidecar validates … |
 | <a id="shape-tasksaved"></a>TaskSaved | `entry`, `diagnostics`, `sketchPath` |  |
+| <a id="shape-tasksimulation"></a>TaskSimulation | `seed`, `limitMs`, `endedBy`, `durationMs`, `animal`, `strobes`, `telemetry`, `summary`, `trialTable`, `water` | One simulated session (`TASKS.md#simulating-a-task`). |
+| <a id="shape-taskstresstest"></a>TaskStressTest | `seeds`, `limitMs`, `animals` | Several animals over the same sessions of one task (`TASKS.md#the-stress-test`). |
 | <a id="shape-tasksupdateddata"></a>TasksUpdatedData | `tasks` |  |
 | <a id="shape-tasktarget"></a>TaskTarget | `kind`, `index` | Where a task diagnostic belongs on the editor. |
 | <a id="shape-telemetryfield"></a>TelemetryField | `key`, `label` |  |

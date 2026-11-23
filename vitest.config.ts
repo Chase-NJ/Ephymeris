@@ -2,7 +2,7 @@ import { defineConfig } from "vitest/config";
 import { fileURLToPath, URL } from "node:url";
 
 /**
- * Unit tests for `src/lib/**`: the pure layer, and the stores driven through
+ * Unit tests for `src/lib/**` and `src/features/**`: the pure layer, and the stores driven through
  * `FakeSidecar` (`lib/ws/fakeSidecar.ts`). Also `electron/**`.
  *
  * Deliberately no jsdom and no component rendering. What is worth pinning in
@@ -21,6 +21,6 @@ export default defineConfig({
     environment: "node",
     // `electron/`: the Electron shell's pure parts (handshake, launch order,
     // window size, which URLs are the app's) and its settings file.
-    include: ["src/lib/**/*.test.ts", "electron/**/*.test.ts"],
+    include: ["src/lib/**/*.test.ts", "src/features/**/*.test.ts", "electron/**/*.test.ts"],
   },
 });

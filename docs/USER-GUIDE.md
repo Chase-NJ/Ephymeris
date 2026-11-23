@@ -87,6 +87,13 @@ setting at session start. It saves even with problems.
 
 ![The task editor for 4-Odor Discrimination: Details at the top, the state machine across the left, four trial types below it, and Trial generation set to Weighted (an older dial where Parameters now sits)](images/task-editor.webp)
 
+**Simulate.** **Simulate**, beside **Design** at the top of the editor, runs the task as you have it,
+saved or not, with a simulated animal in the box. Pick an animal (**Trained**, **Naive**, **Side-biased**
+and others) or set your own, then watch the session: the trial flow, the strobes, the live metrics, and
+a timeline you can drag. Changing the animal reruns the same session; the dice deal a new one.
+**Stress test** runs every animal and marks any that earns half a trained animal's rewards without using
+the odor. Nothing is flashed or saved, and it waits while a box is running.
+
 **Strobes.** The **Strobes** tile lists every event code; click one for its meaning and users.
 **Add code** takes a free number, the event's for good once recorded; **Retire** keeps it reserved;
 **Remove** works only for a code no session on this computer contains. **Export**/**Import** copy codes

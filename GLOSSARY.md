@@ -9,6 +9,16 @@ A lab app that runs rodent behavior sessions on six Arduino boxes and keeps the 
 The rig wiring plus the strobe vocabulary in force on this machine: what every generated sketch takes from the rig rather than from its task.
 _Avoid_: rig configuration, rig settings
 
+<a id="task-simulator"></a>
+**Task simulator**:
+The bundled sketch and trial runner compiled for the computer rather than a board, started by the sidecar as a board is, with a simulated animal breaking its beams. It runs a task definition off the rig.
+_Avoid_: emulator, simulated rig (the test harness that fakes six boards)
+
+<a id="simulated-animal"></a>
+**Simulated animal**:
+What answers a task simulator's outputs: it senses the trial light, the odor and water, and breaks beams. It reads no strobe and no task parameter.
+_Avoid_: agent, bot, model
+
 <a id="channel-set"></a>
 **Channel set**:
 The rig wiring's lab-wide half: every channel and what it is (type, role, the code names of its edges), with no pins. It carries its own content hash.

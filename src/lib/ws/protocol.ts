@@ -88,6 +88,8 @@ export const CMD = {
   TASKS_LIST: "tasks.list",
   TASKS_GET: "tasks.get",
   TASKS_PREVIEW: "tasks.preview",
+  TASKS_SIMULATE: "tasks.simulate",
+  TASKS_STRESS_TEST: "tasks.stressTest",
   TASKS_SAVE: "tasks.save",
   TASKS_DELETE: "tasks.delete",
   TASKS_EXPORT: "tasks.export",
@@ -208,6 +210,8 @@ export const ERR = {
   STROBE_IMPORT_CONFLICT: "STROBE_IMPORT_CONFLICT",
   STROBE_VOCABULARY_UNREADABLE: "STROBE_VOCABULARY_UNREADABLE",
   STROBE_SESSION_RUNNING: "STROBE_SESSION_RUNNING",
+  SIMULATION_REFUSED: "SIMULATION_REFUSED",
+  SIMULATOR_UNAVAILABLE: "SIMULATOR_UNAVAILABLE",
   TASK_NOT_FOUND: "TASK_NOT_FOUND",
   TASK_TRANSFER_INVALID: "TASK_TRANSFER_INVALID",
   TASK_IMPORT_CONFLICT: "TASK_IMPORT_CONFLICT",
@@ -2381,6 +2385,146 @@ export interface TaskPreview {
   catalogueDefaults: Record<string, unknown>;
 }
 
+/**
+ * The animal a simulation runs against (`TASKS.md#the-simulated-animal`). It senses only the
+ * light, the odor and water, and never a task parameter. A field left out takes a trained
+ * animal's value.
+ */
+export interface SimulatedAnimal {
+  /** How often it answers by the odor at the session's start, 0 to 1. */
+  followsOdor?: number;
+  /** How often it answers by the odor once it has learned. */
+  followsOdorEnd?: number;
+  /**
+   * Sampled trials over which it moves from `followsOdor` to `followsOdorEnd`; 0 is at
+   * `followsOdorEnd` from the first trial.
+   */
+  learningTrials?: number;
+  /**
+   * What it does when it is not answering by the odor: a side by `sideBias`, the last well if it
+   * paid and the other if not, the other well, or the same well.
+   */
+  fallback?: "side" | "winStay" | "alternate" | "repeat";
+  /** -1 is always left, 1 always right. */
+  sideBias?: number;
+  /** How often it pokes the odor port when the trial light comes on. */
+  initiates?: number;
+  /**
+   * Rewards after which it starts to stop initiating, reaching never at one and a half times
+   * this; 0 is never sated.
+   */
+  satiatesAfter?: number;
+  /** How often it goes to a well once it has sampled. */
+  answers?: number;
+  /** How often it pulls out of the odor port on impulse. */
+  leavesEarly?: number;
+  /** How often it leaves a well before water could come. */
+  dropsHold?: number;
+  /** About how long it can hold a poke. */
+  holdMs?: number;
+  /** About how long it takes to act. */
+  reactionMs?: number;
+}
+
+/**
+ * The live metrics as a running box's `session.telemetry` would have carried them at one strobe
+ * of a simulated session.
+ */
+export interface SimulationTelemetry {
+  /** The index in `strobes` of the strobe that moved the metrics. */
+  strobe: number;
+  metrics: TelemetryMetric[];
+}
+
+/**
+ * A simulated session as the scorer summarises a run: `RunSummary`'s scored fields, without the
+ * ones that say which recorded run it is.
+ */
+export interface SimulationSummary {
+  status: RunStatus;
+  metrics: MetricSummary[];
+  overall: MetricSummary | null;
+  outcomes: TrialOutcomes | null;
+  conditions: ConditionOutcomes[];
+  engagement: TrialEngagement | null;
+  totalEvents: number;
+  durationMs: number | null;
+  stopReason: string | null;
+  clean: boolean;
+  seed: number | null;
+  detail: string | null;
+  excludedByDefault: boolean;
+}
+
+export interface SimulatedWater {
+  /** Trials that were paid. */
+  rewards: number;
+  /** How long the fluid lines were open in all. */
+  ms: number;
+}
+
+/** One simulated session (`TASKS.md#simulating-a-task`). */
+export interface TaskSimulation {
+  /** The trial seed the session ran on; it seeds the animal too. */
+  seed: number;
+  limitMs: number;
+  /**
+   * The trial cap, the `STOP` sent at the time limit, or a session that ran half an hour past its
+   * limit without reaching a trial boundary.
+   */
+  endedBy: "trials" | "timeLimit" | "cutOff";
+  /** The last strobe's timestamp. */
+  durationMs: number;
+  /** The animal as run, every field filled. */
+  animal: SimulatedAnimal;
+  /**
+   * `[code, ms]` pairs, as the firmware printed them: this machine's codes, ms since
+   * `START_SESSION`.
+   */
+  strobes: number[][];
+  /** One entry per strobe at which a live metric changed. */
+  telemetry: SimulationTelemetry[];
+  summary: SimulationSummary;
+  trialTable: TrialTable | null;
+  water: SimulatedWater;
+}
+
+export interface StressSession {
+  seed: number;
+  endedBy: "trials" | "timeLimit" | "cutOff";
+  durationMs: number;
+  /** Trials in the trial table, repeats included. */
+  presented: number;
+  /** Trials P(correct) counts. */
+  scored: number;
+  correct: number;
+  rewards: number;
+  waterMs: number;
+  /** The run's pooled P(correct); null with nothing counted. */
+  accuracy: number | null;
+}
+
+/** One animal's sessions in a stress test, and their means. */
+export interface StressAnimal {
+  label: string;
+  animal: SimulatedAnimal;
+  sessions: StressSession[];
+  meanAccuracy: number | null;
+  meanRewards: number | null;
+  meanWaterMs: number | null;
+  meanPresented: number | null;
+  meanDurationMs: number | null;
+  rewardsPerHour: number | null;
+}
+
+/** Several animals over the same sessions of one task (`TASKS.md#the-stress-test`). */
+export interface TaskStressTest {
+  /** The seeds every animal ran on, so two rows differ by the animal alone. */
+  seeds: number[];
+  limitMs: number;
+  animals: StressAnimal[];
+}
+
 export interface TasksUpdatedData {
   tasks: TaskEntry[];
 }
@@ -3061,6 +3205,8 @@ export interface CommandArgsMap {
   "tasks.list": Record<string, never>;
   "tasks.get": { taskId: string };
   "tasks.preview": { definition: unknown };
+  "tasks.simulate": { definition: unknown; animal: SimulatedAnimal; seed?: number; limitMs?: number };
+  "tasks.stressTest": { definition: unknown; animals: Array<{ label: string; animal: SimulatedAnimal }>; sessions?: number; seed?: number; limitMs?: number };
   "tasks.save": { definition: unknown };
   "tasks.delete": { taskId: string };
   "tasks.export": { taskId: string };
@@ -3158,6 +3304,8 @@ export interface CommandResultMap {
   "tasks.list": { tasks: TaskEntry[] };
   "tasks.get": { definition: unknown; diagnostics: TaskDiagnostic[] };
   "tasks.preview": TaskPreview;
+  "tasks.simulate": TaskSimulation;
+  "tasks.stressTest": TaskStressTest;
   "tasks.save": TaskSaved;
   "tasks.delete": { deleted: boolean };
   "tasks.export": { document: unknown; filename: string };

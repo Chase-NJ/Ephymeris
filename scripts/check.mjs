@@ -9,7 +9,7 @@
  *   protocol   protocol/schema.py  →  the Python and TypeScript wire mirrors
  *   typecheck  the frontend against those mirrors
  *   electron typecheck  the Electron shell (`electron/`)
- *   unit       the frontend's pure layer (`src/lib/**`) and the Electron shell's
+ *   unit       the frontend's pure layer (`src/lib/**`, `src/features/**`) and the Electron shell's
  *
  * All read-only. Run `npm run gen:protocol` to fix the first; the others are
  * fixed by fixing the frontend.

@@ -632,7 +632,7 @@ All routes are children of `components/chrome/AppShell.tsx` in `src/App.tsx`, fi
 
 Each domain in `src/lib/` has one Provider and store over `SidecarPort` (`lib/ws/port.ts`), whose adapters are
 `SidecarClient` (the socket) and `FakeSidecar` (tests). `HardwareProvider` sits at the root, since the sidebar
-needs box health everywhere. **Unit tests cover `src/lib/**` only**, so logic lives in pure modules there.
+needs box health everywhere. **Unit tests cover `src/lib/**` and a feature folder's pure modules only**, so logic lives there.
 
 > [!CAUTION]
 > **Every drag-and-drop is HTML5 drag-and-drop, and depends on the shell leaving drops to the page.** A shell
@@ -815,8 +815,9 @@ The dependency policy lives in [DEVELOPING.md](DEVELOPING.md#dependency-policy).
 | `…/ports/`, `…/boards/` | State machine, per-port handler, manager, flash queue; `arduino-cli` backends |
 | `…/sessions/` | Lifecycle, runner, writers, recovery ([DATA.md](DATA.md#per-animal-files)) |
 | `…/cohorts/`, `…/analytics/`, `…/backup/`, `…/logbook/` | [DATA.md](DATA.md#cohorts-and-animals), [ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#the-folder-at-a-glance) |
-| `…/tasks/`, `…/taskdef/`, `…/rig/`, `…/strobes/`, `…/hardware/` | [TASKS.md](TASKS.md#the-rig-definition) |
+| `…/tasks/`, `…/taskdef/`, `…/rig/`, `…/strobes/`, `…/hardware/`, `…/simulation/` | [TASKS.md](TASKS.md#the-rig-definition), [simulating a task](TASKS.md#simulating-a-task) |
 | `…/intan/` | [RECORDING.md](RECORDING.md) |
 | `src/lib/`, `src/components/`, `src/routes/` | Pure logic and stores; UI by domain; routes |
+| `src/features/<name>/` | A feature whole: its components, its pure modules and their tests. `simulation/` is the first, beside the sidecar's `…/simulation/`, which holds its own tests and the simulator's C++ |
 | `electron/` | The desktop shell |
 | `protocol/`, `scripts/` | Wire schema and generator; npm helpers |

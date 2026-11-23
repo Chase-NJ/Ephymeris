@@ -235,6 +235,11 @@ tests could not see them.
   `BoundedExit` (1200 ms) in `AppShell`, no nested `AnimatePresence`, and unclickable exiting routes.
 - **Capture the pointer only after a slop threshold in screen pixels**; capturing on pointerdown
   retargets the click.
+- **Cover the sky, never zero it.** A WebGL canvas at `opacity: 0` drops out of compositing but keeps
+  drawing; the next route to show it blocked 0.2–0.5 s, which was every exit from the Log
+  ([ARCHITECTURE.md](ARCHITECTURE.md#one-sky)). To stop it drawing, pause it.
+- **A route returned to mid-exit is the same mount.** Routes are keyed by path, so anything done once on
+  mount (taking the shared canvas) is not done again; key such work to presence as well.
 - **Fade a container's contents, not the container.** Opacity below 1 makes it a backdrop root and
   breaks blur inside it.
 - **Tailwind emits `.relative` after `.absolute`**, so don't put both on one element.

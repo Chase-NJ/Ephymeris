@@ -28,14 +28,28 @@ import { DebugConstellation } from "@/components/debug/DebugConstellation";
  * > frame. That is the "focused star lingers, then jumps" this removes — by
  * > making the teardown unreachable rather than merely cheaper.
  * >
- * > If a new route ever needs a plain background, give it this at `opacity: 0`
- * > rather than omitting it.
+ * > If a new route ever needs a plain background, mount this and cover it with
+ * > an opaque layer rather than omitting it, and pass `paused` once it is
+ * > covered: the sky then stops drawing. **Never at `opacity: 0`**: the
+ * > canvas drops out of compositing while its render loop keeps drawing, and the
+ * > next route to show it again blocks for 0.2–0.5 s bringing it back. Leaving
+ * > the Log did exactly that on every exit (`lib/sky.test.ts`).
  *
  * Inert by construction: `interactive={false}` stands the orbit controls down and
  * marks every star inactive, so there is no hover reticle, no click that goes
  * nowhere, and no pan pad over a scene that does not pan.
  */
-export function SkyBackdrop({ opacity = 1 }: { opacity?: number }) {
+export function SkyBackdrop({
+  opacity = 1,
+  paused = false,
+}: {
+  opacity?: number;
+  /**
+   * The route has covered the sky with an opaque layer of its own: park the
+   * frameloop, which keeps the canvas and its last frame (`SharedCanvas`).
+   */
+  paused?: boolean;
+}) {
   return (
     /*
      * **Must not sit inside the route's entrance animation.** The shared canvas
@@ -49,6 +63,7 @@ export function SkyBackdrop({ opacity = 1 }: { opacity?: number }) {
         selected={null}
         docksPanel={false}
         interactive={false}
+        paused={paused}
         onSelect={NO_SELECTION}
       />
     </div>

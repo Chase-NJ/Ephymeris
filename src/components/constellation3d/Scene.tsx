@@ -87,6 +87,7 @@ export function ConstellationScene({
   onHover,
   ringIds,
   frameAll = false,
+  paused = false,
 }: {
   nodes: SceneNode[];
   links: SceneLink[];
@@ -121,6 +122,8 @@ export function ConstellationScene({
   ringIds?: ReadonlySet<string> | undefined;
   /** The whole asterism is the subject (`SceneIntent.frameAll`). */
   frameAll?: boolean;
+  /** Covered by the view's own opaque layer: draw nothing (`SharedCanvas`). */
+  paused?: boolean;
 }) {
   /*
    * **Tell the permanent camera what this view is** (`sceneIntent.ts`).
@@ -181,7 +184,7 @@ export function ConstellationScene({
     </>
   );
 
-  const trackRef = useConstellationView(content);
+  const trackRef = useConstellationView(content, paused);
 
   return (
     <>

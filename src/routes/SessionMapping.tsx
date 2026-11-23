@@ -1381,6 +1381,7 @@ function BoxStar({ state }: { state: FlashCardState }) {
         cy={20}
         r={5}
         fill={fill}
+        initial={false}
         animate={
           state === "flashing"
             ? { r: [4, 9, 4], opacity: [0.9, 0.35, 0.9] }

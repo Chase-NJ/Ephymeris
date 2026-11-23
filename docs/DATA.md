@@ -113,8 +113,6 @@ An animal's **implant** (`cohorts/implants.py`, `Animal.implant` on the wire) is
 
 `cohorts/folders.py` sets `dataFolder = <dataDirectory>/<sanitized name>` (suffixed `-2`, `-3`, … if taken) and stores it verbatim: **renaming a cohort never moves its folder.**
 
-![The cohort editor for Odor Discrimination 2026: the Name field, and under Data folder the stored path D:/Ephymeris Data/Odor Discrimination 2026 with the note "Renaming this cohort won't move its folder" and a Change data folder button](images/cohort-editor.webp)
-
 `cohorts.setDataFolder` (`cohorts/relocate.py`) with `moveExisting: true` moves the data into an **empty** folder; with `false` it points at data already there (how a pre-Ephymeris archive is attached for [adoption](#orphan-adoption)) and writes nothing.
 
 A move carries every stored absolute path with it (records, adoptions, cache rows with their [freshness keys](#caching), and RHX save locations and impedance CSVs inside the folder; all listed in `cohorts/db.py`'s `DATA_PATHS`, which a test keeps complete), journalled in `folder_moves`:
@@ -806,8 +804,6 @@ A rescan skips a file (`_carry_over`) when its adopted row names **the same path
 > [!IMPORTANT]
 > **Only the database changes**; empty folders go by `rmdir`, never `rmtree`. Held, today's `configuring` and unreachable records are left alone.
 
-![The Tidy session records preview: "Remove 1 empty record", naming 2O-Bdisc_rhx-check on 2026-10-01, with the promise "No data file is moved, renamed or deleted" and Cancel and Tidy buttons](images/tidy-records.webp)
-
 ## Analytics views
 
 `/analytics` (`features/analytics/Analytics.tsx`, `features/analytics/`, `src/features/analytics/view.ts`). Selecting a session **narrows** every panel; per-animal colour ties them. Rescan, Recover, Re-derive and Tidy are explicit header actions.
@@ -821,8 +817,6 @@ No task filter: outcome tallies mean the same on every task, so trends pool ever
 
 > [!CAUTION]
 > **The effort total is the trial light (`presented`)**, not odor onset, so an ignored session reads hollow, not short.
-
-![One cohort in Analytics: the header's Data folder, Rescan, Recover, Tidy records and Export cohort PNG; the Sessions rail spaced by date from Sep 4 to Sep 30; the Task strip changing from Shaping - Both Sides to 2-Odor Discrimination; the Accuracy chart with response and rewarded lines and the gap between them; and the Effort and Outcome mix bar charts below](images/analytics-cohort.webp)
 
 ### Session order
 
@@ -838,7 +832,7 @@ One point per run, x and y the accuracy at each well; the anti-diagonal `x + y �
 
 Across sessions the axes are left and right wells (`SIDE_AXES`); within a session, rolling figures on a counted-trial clock computed sidecar-side (`strategy_trail`).
 
-![The cohort's lower panels: the Animals rail with each animal's pooled accuracy sparkline, the Strategy space with one point per animal per session between the corners discriminating, chance, side bias and reversed, its axes labelled right well (up) and left well (right), and Overall accuracy per animal from first session to latest](images/analytics-panels.webp)
+<img src="images/strategy-space.webp" alt="The Strategy space: one point per animal per session between the corners discriminating, chance, side bias and reversed, its axes labelled right well (up) and left well (right)" width="480">
 
 ### Learning curves
 
@@ -846,8 +840,6 @@ Session scope only: rolling P(hit) per counted trial for one condition.
 
 > [!IMPORTANT]
 > **The x axis is trial index, never time**: each animal's `timestamp_ms` starts at its own run.
-
-![One session with remy3 pinned: per-animal cards listing each condition's administered and rewarded counts with outcome bars and trajectories, Strategy within this session as a per-trial trail from chance toward discriminating, and Rolling accuracy per trial with an Odor A → right / Odor B → left picker](images/analytics-session-detail.webp)
 
 ### Colour palette
 

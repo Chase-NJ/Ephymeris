@@ -245,7 +245,7 @@ either scheme), shown in Mission Control as the **sync check**, *matched*, *miss
 wiring check**. `unmatchedStrobes` climbing with `matched` at zero reads "no pulses arriving — check the
 sync line" (`RecordingStatus.tsx`).
 
-![Mission Control during a recording: a REC panel with the recording's file name, OneFilePerSignalType and 30 kS/s, a SYNC CHECK table for boxes 1 to 4 (din, matched, missed, stray), and each box tile showing its port, DIN and channel range](images/mission-control-recording.webp)
+<img src="images/sync-check.webp" alt="The recording panel in Mission Control: REC, the recording's file name, OneFilePerSignalType and 30 kS/s, and the SYNC CHECK table giving each of boxes 1 to 4 its din and its matched, missed and stray counts (box 3 has one stray)" width="420">
 
 The matcher serves the **sync check only**: RHX saves the digital input at full rate and the `.tsv`
 holds the strobes, so offline alignment can rerun it, or better, on complete data.
@@ -268,8 +268,6 @@ screen. Link (left) and Defaults (right) use `SettingRow` at **compact** density
 | Link — Connection | `IntanConnectionPanel`: Connect/Disconnect, `confirmsWrites`, the RHX click as a disclosure, the three TCP ports |
 | Link — Sync inputs | `SyncInputsTable`: box → `DIN n` |
 | Defaults | `settings.recordingDefaults` (`features/intan/defaults.ts`) via `RecordingConfigRows` |
-
-![The Recording tab: a readout strip (not connected, sync 6/6 wired); Link on the left with Connection, its "How to connect" disclosure and the three TCP ports, and Sync inputs mapping boxes 1 to 6 to DIN 1 to 6; Defaults on the right with Saving and Spike thresholds as compact rows](images/recording-tab.webp)
 
 ### Record step
 
@@ -298,8 +296,6 @@ a probe map is entered, so the two can never disagree.
 
 The setup belongs to the mapping confirmed when **Continue** was pressed (`SessionLifecycle.confirmations`):
 confirming the mapping again, even unchanged, makes Start refuse until the Record step runs again.
-
-![The Set Up the Recording step: Readiness 5/5, Saving with a save location ending in /ephys and a warning that the path contains a space, "Using your defaults" with Edit for this session, and the first box's Record or Behavior only choice with its port, channels 0 to 15 and probe map](images/record-step.webp)
 
 **Wideband defaults on**: everything else RHX saves derives from it, and a bad threshold cannot be
 re-picked without it. **A spike snapshot defaults to 1 ms before and 1 ms after the crossing** (30
@@ -517,8 +513,6 @@ A box refused after step 5 leaves RHX recording, so a retry starts its boxes ins
 > **Behavior-only sessions keep their 100 ms.** `SessionRunner.end_all` waits `graceful_timeout_s`
 > (0.1 s) and cuts the trial in flight. A recording waits longer because electrophysiology with no
 > behavioral outcome to align to is the expensive half of the experiment without the cheap half.
-
-![Mission Control ending a recording: an ENDING panel reading "Finishing the trials in flight" and "Waiting for box 1, 4, 5 to finish its trial…" with an End now button above the sync check, while boxes 2 and 3 already read IDLE, "Finished — BF_END_SESSION received"](images/mission-control-ending.webp)
 
 ### When RHX goes away
 

@@ -135,10 +135,13 @@ set (never installed), else `dist/` from `app://ephymeris/`, because `fetch` ref
 
 A draft is invisible to the feed: publishing is shipping. **The crossover**: the `updates` branch also holds
 `latest.json`, the Tauri shell's feed, frozen at `v2.0.0-beta`, whose Electron installer was signed with the
-Tauri key. A copy still on Tauri takes that as an ordinary update
-([README](../README.md#moving-a-lab-pc-to-the-electron-shell)), `installer.nsh` silently uninstalls the Tauri
-copy, keeping app data, and the Electron copy then updates itself from `latest.yml`. Never delete
-`latest.json` or the `v2.0.0-beta` release.
+Tauri key. A copy still on Tauri (in `%LOCALAPPDATA%\Ephymeris`) takes that as an ordinary update,
+`installer.nsh` silently uninstalls the Tauri copy and takes over its shortcuts, keeping app data, and the
+Electron copy then updates itself from `latest.yml`. Never delete `latest.json` or the `v2.0.0-beta` release.
+
+**Moving a lab PC across**: do it once per PC, with someone there, then check that settings and cohorts
+are as they were; the wiring is in force with no RIG108 hold; a session runs on a real box; **Settings →
+Updates** reports the version current; and **Apps → Installed apps** lists one Ephymeris.
 
 Before installing, the shell closes the sidecar's stdin and waits up to 12 s so it stops the `arduino-cli`
 daemon, which would otherwise lock `arduino-cli.exe`. Install is offered only with no session, no recording
@@ -387,8 +390,6 @@ a per-port ring buffer (`RING_CAPACITY`), batched per tick, and force-flushed pa
 ([TASKS.md](TASKS.md#the-box-utility)), so the app can light a box or prime a line without a flash.
 Rebuilding the utility forgets what every box carries and restores the idle, unpinned ones.
 
-![The Rig tab: a Boxes table binding boxes 1 to 6 to boards DEMO-BOX-1 to 6 with a Test button each, and below it the Utility baseline section naming BOX_Utility, a Reflash boxes button and a Ready chip for every box](images/rig.webp)
-
 ### When a restore happens
 
 **A box becoming free, never a clock**: startup, a board appearing, a port falling to `IDLE`, a session
@@ -447,8 +448,6 @@ waits for the sketch's telemetry line, which catches a wrong baud.
 `MetricSet`** and feeds Mission Control's own panels; never write a second scorer. **End** sends `STOP`. A
 Debug run records nothing. Send START waits for the sketch's Task Profile, without which `taskDefaults`
 can't be merged. **Prime** opens fluid lines with the utility's own commands.
-
-![Debug Mode for box 3 running 2-Odor Discrimination: Send START, End and Return to baseline in the Sketch tile, the console streaming strobe lines, and a LIVE tile reading "Scored as a session would be. Nothing here is recorded." above two P(well) metrics, a P(right | odor) chart and an outcome mix](images/debug-run.webp)
 
 ## Session lifecycle
 
@@ -531,8 +530,6 @@ The sidecar never ends a session or starts a round on its own. `sessions.resume`
 sessions the same way, **same day only**.
 
 ### Running boxes
-
-![Mission Control for session 2O-Bdisc_15 with a round running: the clock and elapsed time, the journey rail at Run, Run more animals and End Session, the session's 3D sky, and a tile per box reading IN_SESSION with its run clock, Start, Stop and Reset, and two live metrics with sparklines](images/mission-control.webp)
 
 **Start All** and **Start** (`sessions.startAll`, `port.startSession`) refuse first if any box doesn't
 [carry its sketch](#what-a-board-carries); a recording starts RHX first
@@ -656,8 +653,6 @@ never reflowing; it shares only its look with the 3D sky.
 
 There is **one app-wide WebGL canvas** (`constellation3d/SharedCanvas.tsx`) that views adopt in turn, and
 **one camera** (`CameraRig`) that views steer by publishing a subject (`sceneIntent.ts`).
-
-![The Dashboard over the rig's 3D sky: six box stars labelled with their box number and bench name (1 Left bench to 6 Back wall), with the launch column on the left and the Boxes list and Observatory on the right](images/dashboard.webp)
 
 > [!CAUTION]
 > **Every route mounts a constellation** (`SkyBackdrop`, covered by an opaque layer and `paused` if need be);

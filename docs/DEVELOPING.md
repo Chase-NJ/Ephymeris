@@ -179,9 +179,9 @@ Frontend packages are bundled at build time; `@react-pdf/renderer` still loads o
   with a saved wiring document have no sync channel until one is added.
 - **PWM, tone and pulse trains** measured on a real box
   ([TASKS.md](TASKS.md#driven-outputs)).
-- **The task simulator on Windows**: its build with MinGW and its run from an installed copy have
-  not been tried, and a simulated seed's trial order has not been compared with a board's
-  ([TASKS.md](TASKS.md#simulating-a-task)).
+- **The task simulator from an installed copy.** CI builds it with MinGW and runs it on Windows, but
+  the installer's staging step and a run from an installed copy have not been tried, and a simulated
+  seed's trial order has not been compared with a board's ([TASKS.md](TASKS.md#simulating-a-task)).
 
 ### Known bugs
 

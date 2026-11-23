@@ -50,6 +50,7 @@ from .sessions.lifecycle import (
 from .sessions.models import PrefixNameTaken, SessionNotFound
 from .rig.transfer import ChannelSetImportConflict, ChannelSetInvalid
 from .strobes.store import StrobeRefused
+from .simulation import SimulationError, SimulatorUnavailable
 from .taskdef.model import TaskDefinitionError
 from .taskdef.transfer import TaskImportConflict, TaskImportReplaces, TaskTransferInvalid
 from .tasks.profile import TaskProfileError
@@ -228,6 +229,8 @@ ERRORS: ErrorTable = [
         ErrCode.CHANNEL_SET_IMPORT_CONFLICT, str(e), {"conflicts": e.conflicts}
     )),
     (TaskDefinitionError, _fixed(ErrCode.TASK_INVALID)),
+    (SimulationError, _fixed(ErrCode.SIMULATION_REFUSED)),
+    (SimulatorUnavailable, _fixed(ErrCode.SIMULATOR_UNAVAILABLE)),
     # --- moving a task between machines (TASKS.md#moving-a-task-between-machines) ---
     (TaskTransferInvalid, _fixed(ErrCode.TASK_TRANSFER_INVALID)),
     (TaskImportConflict, lambda e, _a: CommandError(

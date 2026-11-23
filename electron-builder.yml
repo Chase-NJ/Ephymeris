@@ -29,6 +29,8 @@ extraResources:
     to: arduino
   - from: build/resources/sketches
     to: sketches
+  - from: build/resources/tasksim
+    to: tasksim
 
 win:
   target:

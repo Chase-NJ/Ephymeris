@@ -1,4 +1,4 @@
-import { CMD } from "@/lib/ws/protocol";
+import { CMD, type SimulatedAnimal } from "@/lib/ws/protocol";
 import type { SidecarPort } from "@/lib/ws/port";
 
 import type { TaskDefinition } from "./types";
@@ -27,6 +27,26 @@ export async function getTask(client: SidecarPort, taskId: string) {
 
 export async function previewTask(client: SidecarPort, definition: TaskDefinition) {
   return client.call(CMD.TASKS_PREVIEW, { definition });
+}
+
+/** One simulated session of `definition` against `animal` (`TASKS.md#simulating-a-task`). */
+export async function simulateTask(
+  client: SidecarPort,
+  definition: TaskDefinition,
+  animal: SimulatedAnimal,
+  options: { seed?: number; limitMs?: number } = {},
+) {
+  return client.call(CMD.TASKS_SIMULATE, { definition, animal, ...options });
+}
+
+/** Several animals over the same sessions of `definition` (`TASKS.md#the-stress-test`). */
+export async function stressTestTask(
+  client: SidecarPort,
+  definition: TaskDefinition,
+  animals: ReadonlyArray<{ label: string; animal: SimulatedAnimal }>,
+  options: { sessions?: number; seed?: number; limitMs?: number } = {},
+) {
+  return client.call(CMD.TASKS_STRESS_TEST, { definition, animals: [...animals], ...options });
 }
 
 export async function saveTask(client: SidecarPort, definition: TaskDefinition) {

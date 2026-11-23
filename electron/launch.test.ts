@@ -57,9 +57,11 @@ describe("bundledEnv", () => {
   it("exports only the resources that exist", () => {
     const cli = join(RES, "arduino", "arduino-cli.exe");
     const sketches = join(RES, "sketches");
-    expect(bundledEnv(context([cli, sketches]))).toEqual({
+    const tasksim = join(RES, "tasksim");
+    expect(bundledEnv(context([cli, sketches, tasksim]))).toEqual({
       EPHYMERIS_BUNDLED_ARDUINO_CLI: cli,
       EPHYMERIS_BUNDLED_SKETCHES: sketches,
+      EPHYMERIS_BUNDLED_TASK_SIM: tasksim,
     });
     expect(bundledEnv(context([]))).toEqual({});
   });

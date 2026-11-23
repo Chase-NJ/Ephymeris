@@ -15,6 +15,7 @@ How a task gets from firmware that emits strobes to the app's trial-flow diagram
 - [Profile and params hashes](#profile-and-params-hashes)
 - [Derived state machine](#derived-state-machine)
 - [The Task tab](#the-task-tab)
+- [Simulating a task](#simulating-a-task)
 - [Writing a new sketch](#writing-a-new-sketch)
 
 ## Overview
@@ -505,6 +506,30 @@ Shows the ramp and only the parameters the task **exposes**; the Start dialog of
 
 > [!IMPORTANT]
 > **Exposure and grouping are presentation**: hidden parameters are still sent at their defaults, and neither changes `profile_hash`.
+
+## Simulating a task
+
+**Simulate**, beside **Design** in the editor's header, runs the working definition off the rig (`tasks.simulate`, `simulation/`). Nothing is flashed, recorded or written, and it is refused while a box runs.
+
+> [!IMPORTANT]
+> **The firmware runs the task, not a model of it** ([decision 0012](adr/DECISIONS.md#0012-the-firmware-itself-simulates-a-task)). `simulation/host/tasksim.cpp` is `GRGL.ino` and `BehaviorBox.h` compiled for this computer, one executable per [selection mode](#selection-modes), with the board's random generator. The sidecar starts it as it starts a board: the task's `SET` lines, the `PARAMS` check, `START SEED=<n>`, and `STOP` at the time limit.
+
+Its clock moves only when the firmware waits, so a session takes milliseconds. Its strobes go through the run's own scorer ([ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#start-here)).
+
+> [!CAUTION]
+> **Timestamps are ideal**: no serial or sync-pulse time is spent. Anti-bias draws compare floats, which the host rounds as an AVR may not; neither has been compared with a board.
+
+### The simulated animal
+
+It senses only the trial light, the odor and water, and answers only by breaking beams (`simulation/animal.py`). It reads no strobe and no parameter, so a hold longer than it manages fails as it would in a box. Its randomness is its own, seeded by the trial seed: one seed repeats a session, and the board's draws never depend on the animal.
+
+### Playing a simulation back
+
+A simulation arrives whole and the view cuts it at a playhead (`src/features/simulation/playback.ts`): the [live token](#live-token), the live metrics a running box would have reported at that strobe, the share of trials through each node, and a timeline of one tick per trial with a mark where each ramp row took over.
+
+### The stress test
+
+`tasks.stressTest` runs each preset animal over the same seeds. An animal that ignores the odor yet earns half a trained one's rewards is flagged.
 
 ## Writing a new sketch
 

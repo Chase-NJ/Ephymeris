@@ -1,7 +1,7 @@
 import { motion } from "framer-motion";
 import { ArrowLeft, CircleAlert, FolderTree, TriangleAlert } from "lucide-react";
 
-import { Button } from "@/components/common/controls";
+import { Button, Segmented } from "@/components/common/controls";
 import { TaskDetailsBody, detailsSummary } from "@/components/task/TaskDetails";
 import { TaskGlyph } from "@/components/task/TaskGlyph";
 import type { TaskDiagnostic, TaskDefinition } from "@/lib/taskdef/types";
@@ -60,6 +60,13 @@ export function homeOf(diagnostic: TaskDiagnostic): ProblemHome {
   return { kind: "task" };
 }
 
+export type EditorView = "design" | "simulate";
+
+const EDITOR_VIEWS: ReadonlyArray<{ value: EditorView; label: string }> = [
+  { value: "design", label: "Design" },
+  { value: "simulate", label: "Simulate" },
+];
+
 /**
  * The editor's header: the way back, the task's mark and name, and the three
  * things that are about the whole task — its problems, its `START` line, its
@@ -77,7 +84,12 @@ export function EditorHeader({
   onJump,
   onBack,
   onSave,
+  view,
+  onView,
 }: {
+  /** Which of the task's two pages is up: its design, or it running off the rig. */
+  view: EditorView;
+  onView: (view: EditorView) => void;
   session: ReturnType<typeof useTask>;
   /** Whether this task exists on disk — the readout says "unsaved" if not. */
   saved: boolean;
@@ -127,6 +139,7 @@ export function EditorHeader({
       </div>
 
       <div className="flex shrink-0 items-center gap-2">
+        <Segmented label="Design or simulate this task" value={view} options={EDITOR_VIEWS} onChange={onView} />
         {problems > 0 && (
           <Popover
             open={problemsOpen}

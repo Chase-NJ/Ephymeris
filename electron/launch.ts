@@ -69,10 +69,11 @@ export function resolveLaunch(ctx: LaunchContext): Launch {
 }
 
 /**
- * The bundled arduino-cli, its data seed and the sketch library, exported to
- * the sidecar as environment variables. Present only when the resources exist
- * (an installed build), so a dev sidecar keeps resolving `arduino-cli` from
- * PATH and reads `<repo>/firmware` in place (`discovery.library_root()`).
+ * The bundled arduino-cli, its data seed, the sketch library and the task
+ * simulator, exported to the sidecar as environment variables. Present only
+ * when the resources exist (an installed build), so a dev sidecar keeps
+ * resolving `arduino-cli` from PATH, reads `<repo>/firmware` in place
+ * (`discovery.library_root()`) and compiles its own simulator.
  */
 export function bundledEnv(ctx: LaunchContext): Record<string, string> {
   const env: Record<string, string> = {};
@@ -83,5 +84,7 @@ export function bundledEnv(ctx: LaunchContext): Record<string, string> {
   if (ctx.isFile(cli)) env["EPHYMERIS_BUNDLED_ARDUINO_CLI"] = cli;
   if (ctx.isDirectory(seed)) env["EPHYMERIS_BUNDLED_ARDUINO_DATA_SEED"] = seed;
   if (ctx.isDirectory(sketches)) env["EPHYMERIS_BUNDLED_SKETCHES"] = sketches;
+  const tasksim = join(ctx.resourcesPath, "tasksim");
+  if (ctx.isDirectory(tasksim)) env["EPHYMERIS_BUNDLED_TASK_SIM"] = tasksim;
   return env;
 }

@@ -100,6 +100,8 @@ class Cmd:
     TASKS_LIST: Final = "tasks.list"
     TASKS_GET: Final = "tasks.get"
     TASKS_PREVIEW: Final = "tasks.preview"
+    TASKS_SIMULATE: Final = "tasks.simulate"
+    TASKS_STRESS_TEST: Final = "tasks.stressTest"
     TASKS_SAVE: Final = "tasks.save"
     TASKS_DELETE: Final = "tasks.delete"
     TASKS_EXPORT: Final = "tasks.export"
@@ -226,6 +228,8 @@ class ErrCode:
     STROBE_IMPORT_CONFLICT: Final = "STROBE_IMPORT_CONFLICT"
     STROBE_VOCABULARY_UNREADABLE: Final = "STROBE_VOCABULARY_UNREADABLE"
     STROBE_SESSION_RUNNING: Final = "STROBE_SESSION_RUNNING"
+    SIMULATION_REFUSED: Final = "SIMULATION_REFUSED"
+    SIMULATOR_UNAVAILABLE: Final = "SIMULATOR_UNAVAILABLE"
     TASK_NOT_FOUND: Final = "TASK_NOT_FOUND"
     TASK_TRANSFER_INVALID: Final = "TASK_TRANSFER_INVALID"
     TASK_IMPORT_CONFLICT: Final = "TASK_IMPORT_CONFLICT"
@@ -378,6 +382,14 @@ SHAPES: Final[dict[str, Any]] = {
     "TaskEntry": ('obj', (('id', 'str', False), ('name', 'str', False), ('unreadable', ('union', ('str', 'null')), False), ('category', 'str', False), ('path', 'str', False), ('label', 'str', False), ('editedAt', ('union', ('str', 'null')), False), ('problems', 'int', False), ('trials', 'int', False), ('stages', 'int', False), ('selectionMode', ('lit', ('antibias', 'pool', 'weighted')), False))),
     "TaskSaved": ('obj', (('entry', ('ref', 'TaskEntry'), False), ('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False), ('sketchPath', ('union', ('str', 'null')), False))),
     "TaskPreview": ('obj', (('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False), ('profile', ('ref', 'TaskProfile'), False), ('catalogueDefaults', ('map', 'any'), False))),
+    "SimulatedAnimal": ('obj', (('followsOdor', 'float', True), ('followsOdorEnd', 'float', True), ('learningTrials', 'int', True), ('fallback', ('lit', ('side', 'winStay', 'alternate', 'repeat')), True), ('sideBias', 'float', True), ('initiates', 'float', True), ('satiatesAfter', 'int', True), ('answers', 'float', True), ('leavesEarly', 'float', True), ('dropsHold', 'float', True), ('holdMs', 'int', True), ('reactionMs', 'int', True))),
+    "SimulationTelemetry": ('obj', (('strobe', 'int', False), ('metrics', ('list', ('ref', 'TelemetryMetric')), False))),
+    "SimulationSummary": ('obj', (('status', ('ref', 'RunStatus'), False), ('metrics', ('list', ('ref', 'MetricSummary')), False), ('overall', ('union', (('ref', 'MetricSummary'), 'null')), False), ('outcomes', ('union', (('ref', 'TrialOutcomes'), 'null')), False), ('conditions', ('list', ('ref', 'ConditionOutcomes')), False), ('engagement', ('union', (('ref', 'TrialEngagement'), 'null')), False), ('totalEvents', 'int', False), ('durationMs', ('union', ('float', 'null')), False), ('stopReason', ('union', ('str', 'null')), False), ('clean', 'bool', False), ('seed', ('union', ('int', 'null')), False), ('detail', ('union', ('str', 'null')), False), ('excludedByDefault', 'bool', False))),
+    "SimulatedWater": ('obj', (('rewards', 'int', False), ('ms', 'int', False))),
+    "TaskSimulation": ('obj', (('seed', 'int', False), ('limitMs', 'int', False), ('endedBy', ('lit', ('trials', 'timeLimit', 'cutOff')), False), ('durationMs', 'int', False), ('animal', ('ref', 'SimulatedAnimal'), False), ('strobes', ('list', ('list', 'int')), False), ('telemetry', ('list', ('ref', 'SimulationTelemetry')), False), ('summary', ('ref', 'SimulationSummary'), False), ('trialTable', ('union', (('ref', 'TrialTable'), 'null')), False), ('water', ('ref', 'SimulatedWater'), False))),
+    "StressSession": ('obj', (('seed', 'int', False), ('endedBy', ('lit', ('trials', 'timeLimit', 'cutOff')), False), ('durationMs', 'int', False), ('presented', 'int', False), ('scored', 'int', False), ('correct', 'int', False), ('rewards', 'int', False), ('waterMs', 'int', False), ('accuracy', ('union', ('float', 'null')), False))),
+    "StressAnimal": ('obj', (('label', 'str', False), ('animal', ('ref', 'SimulatedAnimal'), False), ('sessions', ('list', ('ref', 'StressSession')), False), ('meanAccuracy', ('union', ('float', 'null')), False), ('meanRewards', ('union', ('float', 'null')), False), ('meanWaterMs', ('union', ('float', 'null')), False), ('meanPresented', ('union', ('float', 'null')), False), ('meanDurationMs', ('union', ('float', 'null')), False), ('rewardsPerHour', ('union', ('float', 'null')), False))),
+    "TaskStressTest": ('obj', (('seeds', ('list', 'int'), False), ('limitMs', 'int', False), ('animals', ('list', ('ref', 'StressAnimal')), False))),
     "TasksUpdatedData": ('obj', (('tasks', ('list', ('ref', 'TaskEntry')), False),)),
     "StrobeCode": ('obj', (('name', 'str', False), ('code', 'int', False), ('origin', 'str', False), ('emittedOn', 'str', True), ('rationale', 'str', True), ('portSlot', 'int', True))),
     "RetiredStrobe": ('obj', (('name', 'str', False), ('code', 'int', False), ('rationale', 'str', True), ('seenIn', 'str', True), ('retiredAt', 'str', True))),
@@ -478,6 +490,8 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "tasks.list": ('obj', ()),
     "tasks.get": ('obj', (('taskId', 'str', False),)),
     "tasks.preview": ('obj', (('definition', 'any', False),)),
+    "tasks.simulate": ('obj', (('definition', 'any', False), ('animal', ('ref', 'SimulatedAnimal'), False), ('seed', 'int', True), ('limitMs', 'int', True))),
+    "tasks.stressTest": ('obj', (('definition', 'any', False), ('animals', ('list', ('obj', (('label', 'str', False), ('animal', ('ref', 'SimulatedAnimal'), False)))), False), ('sessions', 'int', True), ('seed', 'int', True), ('limitMs', 'int', True))),
     "tasks.save": ('obj', (('definition', 'any', False),)),
     "tasks.delete": ('obj', (('taskId', 'str', False),)),
     "tasks.export": ('obj', (('taskId', 'str', False),)),
@@ -574,6 +588,8 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "tasks.list": ('obj', (('tasks', ('list', ('ref', 'TaskEntry')), False),)),
     "tasks.get": ('obj', (('definition', 'any', False), ('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False))),
     "tasks.preview": ('ref', 'TaskPreview'),
+    "tasks.simulate": ('ref', 'TaskSimulation'),
+    "tasks.stressTest": ('ref', 'TaskStressTest'),
     "tasks.save": ('ref', 'TaskSaved'),
     "tasks.delete": ('obj', (('deleted', 'bool', False),)),
     "tasks.export": ('obj', (('document', 'any', False), ('filename', 'str', False))),

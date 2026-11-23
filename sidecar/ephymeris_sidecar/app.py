@@ -54,6 +54,8 @@ from .taskdef.model import TaskDefinition, folder_key
 from .taskdef.validate import validate as validate_task
 from .tasks import profile as task_profile
 from .tasks.start_command import build_start_command
+from .tasks.seed import new_trial_seed
+from . import simulation
 from .debug_run import DebugRuns
 from .ports.flashing import FlashJob, FlashQueue, Origin
 from .ports.handler import DEFAULT_LINE_ENDING, OpenSerial, OutputLine
@@ -160,6 +162,7 @@ class Application:
         #: task profile. Correctness needs no lock -- a hypothetical is
         #: context-local (`TASKS.md#the-rig-definition`).
         self._preview_gate = asyncio.Semaphore(1)
+        self._simulation_gate = asyncio.Lock()
         #: The rig's own wiring, if it has one. Pointed at the registries by
         #: the rig definition rather than read by them, so `rig` never learns
         #: about data_dir.
@@ -243,6 +246,8 @@ class Application:
         self.server.register(Cmd.TASKS_LIST, self._tasks_list)
         self.server.register(Cmd.TASKS_GET, self._tasks_get)
         self.server.register(Cmd.TASKS_PREVIEW, self._tasks_preview)
+        self.server.register(Cmd.TASKS_SIMULATE, self._tasks_simulate)
+        self.server.register(Cmd.TASKS_STRESS_TEST, self._tasks_stress_test)
         self.server.register(Cmd.TASKS_SAVE, self._tasks_save)
         self.server.register(Cmd.TASKS_DELETE, self._tasks_delete)
         self.server.register(Cmd.TASKS_EXPORT, self._tasks_export)
@@ -1062,6 +1067,43 @@ class Application:
             "profile": profile.to_json(),
             "catalogueDefaults": {f.metadata_key: f.default for f in bare.config},
         }
+
+    async def _tasks_simulate(self, args: Args) -> dict[str, Any]:
+        definition = self._definition_arg(args)
+        animal = simulation.Animal.from_json(args["animal"])
+        seed = args.get("seed") or new_trial_seed()
+        limit_ms = args.get("limitMs") or simulation.DEFAULT_LIMIT_MS
+        self._simulation_allowed()
+        async with self._simulation_gate:
+            return await asyncio.to_thread(
+                simulation.payload, definition, animal, seed, limit_ms=limit_ms
+            )
+
+    async def _tasks_stress_test(self, args: Args) -> dict[str, Any]:
+        definition = self._definition_arg(args)
+        animals = [
+            (str(entry["label"]), simulation.Animal.from_json(entry["animal"]))
+            for entry in args["animals"]
+        ]
+        seeds = simulation.stress_seeds(
+            args.get("seed") or new_trial_seed(), args.get("sessions") or simulation.DEFAULT_SESSIONS
+        )
+        simulation.check_stress(len(animals), len(seeds))
+        limit_ms = args.get("limitMs") or simulation.DEFAULT_LIMIT_MS
+        self._simulation_allowed()
+        async with self._simulation_gate:
+            return await asyncio.to_thread(
+                simulation.stress_payload, definition, animals, seeds, limit_ms=limit_ms
+            )
+
+    def _simulation_allowed(self) -> None:
+        """A simulation is computation on this process's threads, which a
+        running box's strobe writes must never wait behind (`LESSONS.md`)."""
+        if self.lifecycle is not None and self.lifecycle.writing:
+            raise simulation.SimulationError(
+                "A box is running. Simulate once its run has finished: the simulation "
+                "would compete with the session being recorded."
+            )
 
     async def _tasks_save(self, args: Args) -> dict[str, Any]:
         definition = self._definition_arg(args)

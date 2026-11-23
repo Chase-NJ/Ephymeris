@@ -6,7 +6,7 @@ only what the code does now and link here.
 
 **How to keep it.**
 
-- **Number entries in sequence and never reuse a number.** The next is **0012**. Code and docs cite an
+- **Number entries in sequence and never reuse a number.** The next is **0013**. Code and docs cite an
   entry as `DECISIONS.md#<heading-slug>`; `test_doc_links.py` checks every citation.
 - **A proposal gets its own file** in this folder (`NNNN-slug.md`, `status: proposed`) while it is
   argued and built. When it is accepted and done, fold it in here as an entry and delete the file.
@@ -384,3 +384,37 @@ is a session like any other on both machines.
   of a recording, which stays with the run records of the machine that recorded it.
 - **Every session folder gains a file**, written at the session's end and at a rescan, and backed up
   with the rest.
+
+## 0012: The firmware itself simulates a task
+
+The editor could show what a task *is* and nothing of how it *runs*: whether anti-bias really starves
+a side-biased animal, or a ramp asks for a hold no animal gives, was found on a box. **We run a task
+off the rig by compiling the real sketch and trial runner for the host**
+(`simulation/host/tasksim.cpp`, on the host tests' shim) **and starting it as a board is started**,
+with a simulated animal breaking its beams ([TASKS.md](../TASKS.md#simulating-a-task)). The whole
+session is computed in its own time and the webview plays it back.
+
+**Rejected.**
+
+- **A Python port of the trial runner**, held to the firmware by a differential test. Nothing new to
+  ship, but two implementations of the code the lab's data depends on, and a simulation that could
+  be plausibly wrong where the test did not look. The phase spine ([0003](#0003-a-task-is-a-phase-spine-lowered-and-replayed))
+  went this way and carried a thousand-line replay.
+- **An animal inside the simulator.** It would have been faster, and it would have put the part that
+  changes most in C++. The simulator reports outputs and takes beam windows; the animal is Python
+  and sees only light, odor and water.
+- **Ticking the session live in the sidecar.** A playhead over a finished session gives pause, step
+  and scrub for nothing, costs no wire events, and takes no sidecar time while it plays.
+- **One simulator per task, compiled on demand.** The lab PCs have no host compiler. One build per
+  selection mode serves every task: its counts are ceilings and its codes arrive at start.
+
+**Costs.**
+
+- **A native build in the installer**: three executables, compiled by `package-resources.mjs` with
+  MinGW's `g++` on Windows and run through a trial before they are staged.
+- **The simulator's `TaskPins.h` is a second place the runner's code names are listed**;
+  `test_simulation.py` holds it to the firmware.
+- **It is the host's arithmetic, not the AVR's**: 32-bit `int`, and floats rounded as the host
+  rounds them. The trial order for a seed has not been compared with a board.
+- **Refused while a box runs.** It is computation on the sidecar's threads
+  ([LESSONS.md](../LESSONS.md#serial-ports-and-flashing)).

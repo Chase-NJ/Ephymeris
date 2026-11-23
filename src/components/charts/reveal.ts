@@ -1,7 +1,7 @@
 import { useInView } from "framer-motion";
 import { useRef } from "react";
 
-import { useIsReport } from "@/components/analytics/report/context";
+import { useIsReport } from "@/features/analytics/report/context";
 
 /**
  * Arms a panel's draw-on reveal by visibility (`DATA.md#drawing-lines`).

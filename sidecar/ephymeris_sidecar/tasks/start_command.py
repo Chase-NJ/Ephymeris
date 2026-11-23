@@ -33,7 +33,7 @@ SEED_WIRE_KEY = "SEED"
 
 #: The firmware's `SET` line buffer, mirroring `SET_LINE_MAX` in
 #: `libraries/BehaviorBox/BehaviorBox.h`. Two files, one value:
-#: `tests/test_start_command.py` reads the header and fails when they disagree.
+#: `tasks/tests/test_start_command.py` reads the header and fails when they disagree.
 #:
 #: It is a buffer size, terminator included, so a line must be shorter than it
 #: (`TASKS.md#the-length-cap`).

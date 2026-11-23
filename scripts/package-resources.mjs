@@ -119,7 +119,10 @@ run(python, [
   "-m", "PyInstaller",
   "--noconfirm", "--clean", "--onedir", "--console",
   "--name", "ephymeris-sidecar",
-  "--collect-submodules", "ephymeris_sidecar",
+  // Every submodule of the sidecar but its tests, which live inside each
+  // feature's package (`packaging/hooks/hook-ephymeris_sidecar.py`). Absolute,
+  // for the reason `rpcData` gives.
+  "--additional-hooks-dir", join(sidecarDir, "packaging", "hooks"),
   // rig/schema and rig/hardware — package data the import analysis never sees,
   // and without which the sidecar starts and then cannot name a single pin or
   // strobe. `_log_rig_wiring()` prints the composed wiring at startup, which is

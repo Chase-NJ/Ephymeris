@@ -1,0 +1,729 @@
+"""Task Profiles — `TASKS.md#task-profile`."""
+
+from __future__ import annotations
+
+import copy
+import json
+from pathlib import Path
+
+import pytest
+
+from ephymeris_sidecar.rig.registry import Vocabulary, default_vocabulary_document
+from ephymeris_sidecar.analytics.stream.legacy import MetricSet, compute_series
+from ephymeris_sidecar.tasks.profile import (
+    TaskProfileError,
+    build_legacy_name_index,
+    load_profile,
+    params_hash,
+    parse_profile,
+    profile_hash,
+)
+from ephymeris_sidecar.tasks.start_command import build_start_command
+
+# The exact task.json the user supplied for GRGL_2-Odor.
+GRGL = {
+    "taskName": "GRGL 2-Odor Discrimination",
+    "config": [
+        {"metadataKey": "correction_left", "wireKey": "CL", "label": "Left correction budget", "type": "int", "default": 0},
+        {"metadataKey": "correction_right", "wireKey": "CR", "label": "Right correction budget", "type": "int", "default": 0},
+        {"metadataKey": "lazy_escalation", "wireKey": "LAZY", "label": "Escalating lazy penalty", "type": "bool", "default": True},
+    ],
+    "strobes": {"101": "ODOR_1_ON", "103": "ODOR_3_ON", "248": "WATER_POKE_L", "249": "WATER_POKE_R", "246": "END_SESSION"},
+    "liveMetrics": [
+        {"id": "p_r_odor1", "label": "P(R | Odor 1)", "triggerCode": 101, "successCode": 249, "alternateCode": 248, "windowSize": 20},
+        {"id": "p_l_odor3", "label": "P(L | Odor 3)", "triggerCode": 103, "successCode": 248, "alternateCode": 249, "windowSize": 20},
+    ],
+}
+
+
+# --- discovery (`TASKS.md#task-profile`) ----------------------------------
+
+
+def test_a_sketch_without_a_task_json_is_profile_less(tmp_path: Path) -> None:
+    """`TASKS.md#task-profile` — fully supported, not an error."""
+    (tmp_path / "clean_flush.ino").write_text("void setup(){}", encoding="utf-8")
+    assert load_profile(tmp_path) is None
+
+
+def test_a_sketch_with_a_task_json_loads_it(tmp_path: Path) -> None:
+    (tmp_path / "GRGL_2-Odor.ino").write_text("void setup(){}", encoding="utf-8")
+    (tmp_path / "task.json").write_text(json.dumps(GRGL), encoding="utf-8")
+    profile = load_profile(tmp_path)
+    assert profile is not None
+    assert profile.task_name == "GRGL 2-Odor Discrimination"
+    assert len(profile.config) == 3
+    assert len(profile.live_metrics) == 2
+
+
+def test_a_malformed_task_json_raises_rather_than_silently_dropping(tmp_path: Path) -> None:
+    (tmp_path / "task.json").write_text("{ not valid json", encoding="utf-8")
+    with pytest.raises(TaskProfileError):
+        load_profile(tmp_path)
+
+
+# --- parsing (`TASKS.md#task-profile`) ------------------------------------
+
+
+def test_the_supplied_grgl_profile_round_trips_to_json() -> None:
+    profile = parse_profile(GRGL)
+    out = profile.to_json()
+    assert out["taskName"] == GRGL["taskName"]
+    assert out["config"] == GRGL["config"]
+    # Strobe keys stay strings on the wire, matching the authored file.
+    assert out["strobes"]["101"] == "ODOR_1_ON"
+
+
+def test_every_shipped_profile_keeps_its_hash_through_a_round_trip() -> None:
+    """THE IDENTITY A COPIED SESSION FILE DEPENDS ON (`DATA.md#the-embedded-task-profile`).
+
+    A run's file carries its profile as JSON; the machine that reads it parses
+    that back and re-serializes to hash it. If the pair is not exactly
+    reversible, a copied run lands under a different `profile_hash` than the
+    run it came from — a separate profile group, a separate comparability set,
+    and no error anywhere. Anything added to `TaskProfile` has to keep this
+    true.
+    """
+    from ephymeris_sidecar.taskdef import generate
+    from ephymeris_sidecar.tasks.profile import profile_hash
+    from tests.fixtures import task_definitions as presets
+
+    for preset in presets.PRESETS:
+        definition = presets.instantiate(preset["id"], preset["id"])
+        original = generate.build_profile(definition)
+        # Through the wire form and back, exactly as a session file does it.
+        copied = parse_profile(json.loads(json.dumps(original.to_json())))
+        assert profile_hash(copied) == profile_hash(original), preset["id"]
+        assert copied.to_json() == original.to_json(), preset["id"]
+
+
+def test_a_runs_params_hash_is_the_documented_digest_of_its_values() -> None:
+    """`TASKS.md#profile-and-params-hashes` — a stored hash cannot be recomputed.
+
+    The literal was taken with `shasum -a 256` over the canonical JSON the doc
+    defines (sorted keys, compact separators, first 16 hex characters), not
+    from this code. If it moves, every run already stored lands in a new
+    comparability set in Analytics.
+    """
+    config = {"odor_poke_hold": 500, "reward_ul": 2.5, "lazy_escalation": True, "iti": 4000}
+    assert params_hash(config) == "c1ed040d2226df5c"
+
+
+def test_a_profiles_hash_is_the_documented_digest_of_its_declaration() -> None:
+    """`TASKS.md#profile-and-params-hashes` — the serialized profile, less `strobes`.
+
+    The literal was taken with `shasum -a 256` over this profile's canonical
+    JSON written out by hand, so it checks what the doc says goes in: every
+    declared section, the defaults `to_json` fills in, and no strobe map.
+    """
+    profile = parse_profile({
+        "taskName": "Box check",
+        "kind": "utility",
+        "controls": [
+            {"id": "gear", "label": "Fluid set", "type": "select", "options": [
+                {"label": "Set 1", "command": "SET GEAR=1"},
+                {"label": "Set 2", "command": "SET GEAR=2"},
+            ]},
+            {"id": "alloff", "label": "All off", "type": "button", "command": "ALLOFF"},
+        ],
+        "telemetry": {"match": "STATUS", "fields": [{"key": "gear", "label": "Fluid set"}]},
+        "identify": {"on": "ON trial_light", "off": "OFF trial_light"},
+    })
+    assert profile_hash(profile) == "3c3e841ffd2225ea"
+
+
+def test_grgls_declaration_keeps_the_hash_its_runs_are_stored_under() -> None:
+    """`TASKS.md#profile-and-params-hashes` — old hashes cannot be recomputed.
+
+    `fixtures/grgl_task.json` is a frozen copy of GRGL's `task.json`; never
+    regenerate it. Only parsing, serializing or hashing can move this literal,
+    and any of them moving it files every GRGL run under a new profile in
+    Analytics. A change that means to do so updates the literal, with a
+    migration that re-keys stored hashes (`DATA.md#changing-the-schema`).
+    """
+    raw = json.loads((Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "grgl_task.json").read_text("utf-8"))
+    profile = parse_profile(raw, vocabulary=Vocabulary(default_vocabulary_document()))
+    assert profile_hash(profile) == "1d186cc5768ee663"
+
+
+def test_a_document_that_carries_no_snapshot_yields_none() -> None:
+    """`embedded_profile` is a reader of untrusted files: a profile-less
+    sketch, an archive predating the field, and a damaged snapshot all mean
+    "no declaration here" rather than an exception — the strobes below it are
+    still real data."""
+    from ephymeris_sidecar.tasks.profile import SNAPSHOT_KEY, embedded_profile
+
+    assert embedded_profile({}) is None
+    assert embedded_profile({SNAPSHOT_KEY: "GRGL"}) is None
+    assert embedded_profile({SNAPSHOT_KEY: {"config": []}}) is None  # no taskName
+    assert embedded_profile({SNAPSHOT_KEY: GRGL}) is not None
+
+
+def test_recorded_config_is_the_declared_fields_and_nothing_else() -> None:
+    """Which of a document's flat fields are PARAMETERS is a question only the
+    profile answers. `trial_seed` and `host_seed` sit right beside them and are
+    deliberately not declared fields — they describe the run, not its tuning,
+    and the recording side never hashed them either."""
+    from ephymeris_sidecar.tasks.profile import recorded_config
+
+    profile = parse_profile(GRGL)
+    keys = {field.metadata_key for field in profile.config}
+    assert keys, "the fixture needs at least one declared field to test with"
+    document = {
+        "rat": "remy1",
+        "trial_seed": 288577176,
+        "host_seed": 288577176,
+        **{key: 7 for key in keys},
+    }
+    assert recorded_config(document, profile) == {key: 7 for key in keys}
+    # No profile means no way to tell a parameter from a core field.
+    assert recorded_config(document, None) is None
+
+
+def test_missing_task_name_is_rejected() -> None:
+    with pytest.raises(TaskProfileError):
+        parse_profile({"config": []})
+
+
+def test_unknown_config_type_is_rejected() -> None:
+    with pytest.raises(TaskProfileError):
+        parse_profile({"taskName": "X", "config": [{"metadataKey": "k", "wireKey": "W", "type": "colour"}]})
+
+
+def test_empty_sections_default_cleanly() -> None:
+    profile = parse_profile({"taskName": "Utility"})
+    assert profile.config == []
+    assert profile.live_metrics == []
+    assert profile.strobes == {}
+
+
+# --- utility profiles: kind + controls + telemetry (`TASKS.md#utility-controls-and-telemetry`) ---
+
+# The exact task.json the user supplied for PRIME_Lines.
+PRIME_LINES = {
+    "taskName": "Prime Lines (latch)",
+    "kind": "utility",
+    "controls": [
+        {"id": "gear", "label": "Fluid set", "type": "select", "options": [
+            {"label": "Set 1", "command": "SET GEAR=1"},
+            {"label": "Set 2", "command": "SET GEAR=2"},
+        ]},
+        {"id": "toggle_l", "label": "Toggle L", "type": "button", "command": "TOGGLE L"},
+        {"id": "alloff", "label": "All off", "type": "button", "command": "ALLOFF"},
+    ],
+    "telemetry": {
+        "match": "STATUS",
+        "fields": [
+            {"key": "gear", "label": "Fluid set"},
+            {"key": "left", "label": "Left line"},
+            {"key": "right", "label": "Right line"},
+        ],
+    },
+}
+
+
+def test_kind_defaults_to_behavior_when_absent() -> None:
+    assert parse_profile({"taskName": "X"}).kind == "behavior"
+
+
+def test_unknown_kind_is_rejected() -> None:
+    with pytest.raises(TaskProfileError):
+        parse_profile({"taskName": "X", "kind": "gadget"})
+
+
+def test_a_behavior_profile_has_no_controls_or_telemetry() -> None:
+    profile = parse_profile(GRGL)
+    assert profile.kind == "behavior"
+    assert profile.controls == []
+    assert profile.telemetry is None
+    # to_json still carries an (empty) controls list and omits telemetry.
+    out = profile.to_json()
+    assert out["kind"] == "behavior"
+    assert out["controls"] == []
+    assert "telemetry" not in out
+
+
+def test_a_utility_profile_round_trips_to_json() -> None:
+    profile = parse_profile(PRIME_LINES)
+    assert profile.kind == "utility"
+    out = profile.to_json()
+    assert out["kind"] == "utility"
+    # A select control keeps its options; a button keeps its command.
+    gear, toggle_l, alloff = out["controls"]
+    assert gear["type"] == "select"
+    assert gear["options"][0] == {"label": "Set 1", "command": "SET GEAR=1"}
+    assert toggle_l == {"id": "toggle_l", "label": "Toggle L", "type": "button", "command": "TOGGLE L"}
+    assert alloff["command"] == "ALLOFF"
+    assert out["telemetry"]["match"] == "STATUS"
+    assert {f["key"] for f in out["telemetry"]["fields"]} == {"gear", "left", "right"}
+
+
+def test_button_control_requires_a_command() -> None:
+    with pytest.raises(TaskProfileError):
+        parse_profile({"taskName": "X", "kind": "utility",
+                       "controls": [{"id": "go", "type": "button"}]})
+
+
+def test_select_control_requires_non_empty_options() -> None:
+    with pytest.raises(TaskProfileError):
+        parse_profile({"taskName": "X", "kind": "utility",
+                       "controls": [{"id": "g", "type": "select", "options": []}]})
+
+
+# --- grid controls (`TASKS.md#utility-controls-and-telemetry`) -------------
+
+GRID_PROFILE = {
+    "taskName": "Box Utility",
+    "kind": "utility",
+    "controls": [
+        {
+            "id": "fluids",
+            "label": "Fluid lines",
+            "type": "grid",
+            "channels": [
+                {"label": "Left 1", "state": "f1", "toggle": "TOGGLE F1", "pulse": "PULSE F1"},
+                {"label": "Right 1", "state": "f3", "toggle": "TOGGLE F3"},
+            ],
+        }
+    ],
+}
+
+
+def test_grid_control_round_trips_to_json() -> None:
+    profile = parse_profile(GRID_PROFILE)
+    control = profile.controls[0]
+    assert control.type == "grid"
+    assert [c.label for c in control.channels] == ["Left 1", "Right 1"]
+    assert control.channels[0].pulse == "PULSE F1"
+    # A channel that declares no pulse omits the key rather than sending null.
+    out = profile.to_json()["controls"][0]
+    assert out["channels"][0] == {
+        "label": "Left 1",
+        "state": "f1",
+        "toggle": "TOGGLE F1",
+        "pulse": "PULSE F1",
+    }
+    assert "pulse" not in out["channels"][1]
+    # Re-parsing the emitted JSON reproduces it exactly — the shape the sidecar
+    # snapshots for a run is the shape it can decode again years later.
+    assert parse_profile(profile.to_json()).to_json() == profile.to_json()
+
+
+SETTING = {"label": "Duty", "state": "house.duty",
+           "options": [{"label": "50%", "value": "128", "command": "DUTY house 128"}]}
+
+
+def test_a_grid_row_carries_its_setting() -> None:
+    """A driven output's one setting (`TASKS.md#utility-controls-and-telemetry`),
+    kept exactly through a parse and back."""
+    raw = copy.deepcopy(GRID_PROFILE)
+    raw["controls"][0]["channels"][0]["setting"] = SETTING
+    profile = parse_profile(raw)
+    assert profile.to_json()["controls"][0]["channels"][0]["setting"] == SETTING
+    assert "setting" not in profile.to_json()["controls"][0]["channels"][1]
+    assert parse_profile(profile.to_json()).to_json() == profile.to_json()
+
+
+@pytest.mark.parametrize("broken", [
+    {**SETTING, "options": []},
+    {**SETTING, "state": ""},
+    {**SETTING, "options": [{"label": "50%", "command": "DUTY house 128"}]},
+    "DUTY house 128",
+])
+def test_a_setting_needs_a_state_and_options_with_values(broken) -> None:
+    raw = copy.deepcopy(GRID_PROFILE)
+    raw["controls"][0]["channels"][0]["setting"] = broken
+    with pytest.raises(TaskProfileError, match="Left 1"):
+        parse_profile(raw)
+
+
+def test_grid_control_requires_channels() -> None:
+    with pytest.raises(TaskProfileError):
+        parse_profile({"taskName": "X", "kind": "utility",
+                       "controls": [{"id": "g", "type": "grid", "channels": []}]})
+
+
+def test_a_grid_channel_needs_something_to_do() -> None:
+    """A row with neither command is inert decoration — a profile bug worth
+    naming rather than silently rendering."""
+    with pytest.raises(TaskProfileError) as exc:
+        parse_profile({"taskName": "X", "kind": "utility",
+                       "controls": [{"id": "g", "type": "grid",
+                                     "channels": [{"label": "Left 1", "state": "f1"}]}]})
+    assert "Left 1" in str(exc.value)
+
+
+def test_a_grid_channel_needs_a_label() -> None:
+    with pytest.raises(TaskProfileError):
+        parse_profile({"taskName": "X", "kind": "utility",
+                       "controls": [{"id": "g", "type": "grid",
+                                     "channels": [{"toggle": "TOGGLE F1"}]}]})
+
+
+def test_unknown_control_type_is_rejected() -> None:
+    with pytest.raises(TaskProfileError):
+        parse_profile({"taskName": "X", "kind": "utility",
+                       "controls": [{"id": "g", "type": "slider", "command": "X"}]})
+
+
+def test_telemetry_match_defaults_to_STATUS() -> None:
+    profile = parse_profile({"taskName": "X", "kind": "utility", "telemetry": {"fields": []}})
+    assert profile.telemetry is not None
+    assert profile.telemetry.match == "STATUS"
+
+
+def test_a_utility_profile_gets_a_bare_set_command() -> None:
+    # Utility sketches aren't scored tasks; the builder still yields an empty
+    # block (one bare SET) if one is ever sent (they're driven via passthrough,
+    # not startSession).
+    assert build_start_command(parse_profile(PRIME_LINES), {}).set_lines == ("SET",)
+
+
+# --- START command builder (`TASKS.md#building-the-line`) ----------------
+
+
+def test_start_command_uses_wire_keys_and_defaults() -> None:
+    profile = parse_profile(GRGL)
+    # No overrides → every field falls back to its declared default.
+    cmd = build_start_command(profile, {})
+    assert cmd.set_lines == ("SET CL=0 CR=0 LAZY=1",)
+
+
+def test_start_command_applies_overrides_by_metadata_key() -> None:
+    profile = parse_profile(GRGL)
+    cmd = build_start_command(profile, {"correction_left": 5, "lazy_escalation": False})
+    assert cmd.set_lines == ("SET CL=5 CR=0 LAZY=0",)
+
+
+def test_bools_render_as_one_and_zero_not_true_false() -> None:
+    profile = parse_profile(GRGL)
+    assert "LAZY=1" in build_start_command(profile, {"lazy_escalation": True}).tokens
+    assert "LAZY=0" in build_start_command(profile, {"lazy_escalation": False}).tokens
+
+
+def test_unknown_config_keys_are_ignored() -> None:
+    """`TASKS.md#building-the-line` — stale UI state can't leak unknown tokens onto the wire."""
+    profile = parse_profile(GRGL)
+    cmd = build_start_command(profile, {"correction_left": 3, "not_a_field": 99})
+    assert cmd.tokens == ("CL=3", "CR=0", "LAZY=1")
+
+
+def test_a_profile_less_sketch_gets_a_bare_set() -> None:
+    assert build_start_command(None, {}).set_lines == ("SET",)
+    assert build_start_command(parse_profile({"taskName": "Utility"}), {}).set_lines == ("SET",)
+
+
+# --- live metric computation, the scientific output (`ANALYTICS.md#trials-hits-misses-and-exclusions`) ---
+
+# GRGL codes: 101 = Odor 1 on, 103 = Odor 3 on, 249 = water poke R, 248 = water poke L.
+# Metric p_r_odor1: trigger 101, success 249 (went right), alternate 248 (went left).
+
+
+def metric(profile_json=GRGL, index=0):
+    return parse_profile(profile_json).live_metrics[index]
+
+
+def test_a_hit_is_a_response_at_the_success_well() -> None:
+    m = metric()
+    # 101 → 249: went right after odor 1 → hit → P = 1.0
+    assert compute_series(m, [101, 249]) == [1.0]
+
+
+def test_a_miss_is_a_response_at_the_other_well() -> None:
+    m = metric()
+    # 101 → 248: went left after odor 1 → miss → P = 0.0, still counted
+    assert compute_series(m, [101, 248]) == [0.0]
+
+
+# A no-go metric: trigger, success (withheld), and a miss at EITHER port. Codes
+# come from the default vocabulary by name, never as numbers.
+_SEED = Vocabulary(default_vocabulary_document())
+_ODOR_5, _NONE = _SEED.code_of("ODOR_5_ON"), _SEED.code_of("WATER_POKE_NONE")
+_POKE_L, _POKE_R = _SEED.code_of("WATER_POKE_L"), _SEED.code_of("WATER_POKE_R")
+NO_GO = {
+    **GRGL,
+    "strobes": {**GRGL["strobes"], str(_ODOR_5): "ODOR_5_ON", str(_NONE): "WATER_POKE_NONE"},
+    "liveMetrics": [{
+        "id": "p_withhold_1", "label": "P(withhold | Odor 5)",
+        "triggerCode": _ODOR_5, "successCode": _NONE, "alternateCodes": [_POKE_L, _POKE_R],
+        "windowSize": 20,
+    }],
+}
+
+
+def test_a_poke_at_any_alternate_is_a_miss() -> None:
+    m = metric(NO_GO)
+    # withheld (hit), left (miss), right (miss): every answered trial counts.
+    assert compute_series(
+        m, [_ODOR_5, _NONE, _ODOR_5, _POKE_L, _ODOR_5, _POKE_R]
+    ) == [1.0, 0.5, 1 / 3]
+
+
+def test_a_metric_names_its_alternates_in_every_spelling() -> None:
+    """A list of names, a list of numbers, the single name and the single number
+    every recorded snapshot carries all read to the same metric."""
+    vocabulary = Vocabulary(default_vocabulary_document())
+    entry = {"id": "m", "label": "m", "windowSize": 20}
+    named_many = parse_profile({
+        "taskName": "T", "liveMetrics": [{
+            **entry, "trigger": "ODOR_5_ON", "success": "WATER_POKE_NONE",
+            "alternate": ["WATER_POKE_L", "WATER_POKE_R"]}],
+    }, vocabulary)
+    numbered_many = parse_profile(NO_GO)
+    assert named_many.live_metrics[0].alternate_codes == (_POKE_L, _POKE_R)
+    assert numbered_many.live_metrics[0].alternate_codes == (_POKE_L, _POKE_R)
+    assert named_many.live_metrics[0].to_json() == {
+        "id": "m", "label": "m", "triggerCode": _ODOR_5, "successCode": _NONE,
+        "alternateCode": _POKE_L, "alternateCodes": [_POKE_L, _POKE_R], "windowSize": 20,
+    }
+
+    named_one = parse_profile({
+        "taskName": "T", "liveMetrics": [{
+            **entry, "trigger": "ODOR_1_ON", "success": "WATER_POKE_R", "alternate": "WATER_POKE_L"}],
+    }, vocabulary)
+    assert named_one.live_metrics[0].alternate_codes == (_POKE_L,)
+
+
+def test_a_single_alternate_serializes_exactly_as_it_always_did() -> None:
+    """Every recorded snapshot and stored hash carries `alternateCode` alone."""
+    out = parse_profile(GRGL).live_metrics[0].to_json()
+    assert out == {
+        "id": "p_r_odor1", "label": "P(R | Odor 1)", "triggerCode": 101,
+        "successCode": 249, "alternateCode": 248, "windowSize": 20,
+    }
+
+
+def test_several_alternates_survive_a_round_trip_and_still_show_the_first() -> None:
+    profile = parse_profile(NO_GO)
+    out = profile.live_metrics[0].to_json()
+    assert out["alternateCodes"] == [_POKE_L, _POKE_R]
+    assert out["alternateCode"] == _POKE_L  # a reader that knows only the old key
+    assert parse_profile(json.loads(json.dumps(profile.to_json()))).to_json() == profile.to_json()
+
+
+def test_a_metric_with_no_alternate_is_refused() -> None:
+    with pytest.raises(TaskProfileError):
+        parse_profile({**NO_GO, "liveMetrics": [{**NO_GO["liveMetrics"][0], "alternateCodes": []}]})
+
+
+def test_a_no_response_trial_is_excluded_entirely() -> None:
+    m = metric()
+    # 101 → odor off, stream ends with no water poke → excluded, no data point.
+    # (The odor-3-boundary variant is covered separately below, since a single
+    # metric in isolation only knows its own trigger as a boundary — the union
+    # of triggers is what MetricSet supplies live.)
+    assert compute_series(m, [101, 247]) == []
+
+
+def test_intervening_non_response_codes_do_not_end_the_trial() -> None:
+    m = metric()
+    # 101 … 247 (odor off) … 224 (odor poke) … 249: still a hit, unrelated codes ignored
+    assert compute_series(m, [101, 247, 224, 249]) == [1.0]
+
+
+def test_rolling_probability_tracks_the_window() -> None:
+    m = metric()
+    # hit, hit, miss, hit → 1.0, 1.0, 0.667, 0.75
+    series = compute_series(m, [101, 249, 101, 249, 101, 248, 101, 249])
+    assert series[0] == 1.0
+    assert series[1] == 1.0
+    assert round(series[2], 3) == 0.667
+    assert series[3] == 0.75
+
+
+def test_the_window_only_covers_the_last_n_counted_trials() -> None:
+    profile = {**GRGL, "liveMetrics": [{**GRGL["liveMetrics"][0], "windowSize": 2}]}
+    m = metric(profile)
+    # window=2: after miss,hit,hit the window holds the last two (hit,hit) → 1.0
+    series = compute_series(m, [101, 248, 101, 249, 101, 249])
+    assert series[-1] == 1.0
+
+
+def test_two_metrics_score_independently_from_one_stream() -> None:
+    """Interleaved odor-1 and odor-3 trials update their own metrics only."""
+    metric_set = MetricSet(parse_profile(GRGL))
+    # Odor 1 → right (hit for p_r_odor1); Odor 3 → left (hit for p_l_odor3)
+    for code in [101, 249, 103, 248]:
+        values = metric_set.offer(code)
+    by_id = {v.id: v for v in values}
+    assert by_id["p_r_odor1"].value == 1.0
+    assert by_id["p_r_odor1"].n == 1
+    assert by_id["p_l_odor3"].value == 1.0
+    assert by_id["p_l_odor3"].n == 1
+
+
+def test_an_odor3_onset_ends_an_unresolved_odor1_trial() -> None:
+    """The union of trigger codes forms the trial boundary set (`ANALYTICS.md#boundary-codes`)."""
+    m = metric()  # p_r_odor1, boundaries = {101, 103}
+    boundaries = frozenset({101, 103})
+    # 101 (odor1) then 103 (odor3) with no water poke → odor1 trial excluded
+    assert compute_series(m, [101, 103, 248], boundaries) == []
+
+
+def test_a_metric_reports_its_whole_run_totals() -> None:
+    """Offered, answered and correct, for a live view's progress
+    (`ARCHITECTURE.md#live-session-views`): the window forgets, these do not."""
+    metric_set = MetricSet(parse_profile(GRGL))
+    # Odor 1: a hit, a miss, one the next odor ends unanswered, and one still open.
+    for code in [101, 249, 101, 248, 101, 103, 248, 101]:
+        values = metric_set.offer(code)
+    odor1 = next(v for v in values if v.id == "p_r_odor1")
+    assert (odor1.triggered, odor1.counted, odor1.hits) == (4, 2, 1)
+    assert odor1.to_json() == {
+        "id": "p_r_odor1", "value": 0.5, "n": 2, "triggered": 4, "counted": 2, "hits": 1,
+    }
+    odor3 = next(v for v in values if v.id == "p_l_odor3")
+    assert (odor3.triggered, odor3.counted, odor3.hits) == (1, 1, 1)
+
+
+def test_a_profile_less_metric_set_is_empty() -> None:
+    metric_set = MetricSet(None)
+    assert metric_set.empty
+    assert metric_set.offer(101) == []
+
+
+# --- the legacyNames index (`TASKS.md#legacy-names`) ----------------------
+
+
+class _Sketch:
+    """Just the attribute `build_legacy_name_index` reads off a discovered
+    sketch, so the index is testable without a whole Application."""
+
+    def __init__(self, path: str) -> None:
+        self.path = path
+
+
+def test_the_legacy_name_index_reads_each_task_json_once() -> None:
+    """One read per sketch, not one per question. An adopted archive asks the
+    same question for every file it holds."""
+    reads: list[str] = []
+
+    def load(path: str):
+        reads.append(path)
+        return parse_profile({**GRGL, "legacyNames": [f"Shape - {path[-1]}"]})
+
+    index = build_legacy_name_index([_Sketch("a/L"), _Sketch("b/R")], load=load)
+    assert index == {"Shape - L": "a/L", "Shape - R": "b/R"}
+    assert reads == ["a/L", "b/R"]
+
+
+def test_the_first_declaration_wins() -> None:
+    """Same rule as the picker — discovery order decides a collision."""
+
+    def load(path: str):
+        return parse_profile({**GRGL, "legacyNames": ["Shape - L"]})
+
+    index = build_legacy_name_index([_Sketch("first"), _Sketch("second")], load=load)
+    assert index == {"Shape - L": "first"}
+
+
+def test_one_broken_task_json_does_not_hide_the_others() -> None:
+    """A single malformed profile must not cost every other sketch its legacy
+    names — the index is a lookup table, not a validation pass."""
+
+    def load(path: str):
+        if path == "broken":
+            raise TaskProfileError("nope")
+        if path == "profileless":
+            return None
+        return parse_profile({**GRGL, "legacyNames": ["Shape - R"]})
+
+    index = build_legacy_name_index(
+        [_Sketch("broken"), _Sketch("profileless"), _Sketch("good")], load=load
+    )
+    assert index == {"Shape - R": "good"}
+
+
+# --- presentation metadata (`TASKS.md#config-fields`) --------------------
+
+
+def _field(**overrides: object) -> dict:
+    base = {"metadataKey": "odor_poke_hold", "wireKey": "S0P", "label": "Poke hold", "type": "int", "default": 500}
+    base.update(overrides)
+    return base
+
+
+def test_presentation_metadata_round_trips() -> None:
+    """`TASKS.md#config-fields` — group/unit/min/max/step/help/advanced ride through to the wire."""
+    profile = parse_profile({"taskName": "T", "config": [_field(
+        group="Stage 0", unit="ms", min=0, max=5000, step=10,
+        help="Hold required before odor delivery.", advanced=True)]})
+    field = profile.config[0]
+    assert (field.group, field.unit, field.min, field.max, field.step) == ("Stage 0", "ms", 0, 5000, 10)
+    assert field.help == "Hold required before odor delivery."
+    assert field.advanced is True
+    assert profile.to_json()["config"][0]["group"] == "Stage 0"
+
+
+def test_a_profile_declaring_no_metadata_is_unchanged() -> None:
+    """The whole point of making these optional: every profile written before
+    they existed must serialize exactly as it did, with no null-valued keys.
+    The wire declares them *absent*, not nullable, and the validator enforces
+    the difference."""
+    emitted = parse_profile(GRGL).to_json()["config"][0]
+    assert set(emitted) == {"metadataKey", "wireKey", "label", "type", "default"}
+
+
+def test_metadata_is_type_checked() -> None:
+    for bad in ({"group": 7}, {"unit": ""}, {"min": "0"}, {"step": True}, {"help": 3}):
+        with pytest.raises(TaskProfileError):
+            parse_profile({"taskName": "T", "config": [_field(**bad)]})
+
+
+def test_min_above_max_is_rejected() -> None:
+    """A range no value can satisfy would make every entry unclampable."""
+    with pytest.raises(TaskProfileError, match="min is above max"):
+        parse_profile({"taskName": "T", "config": [_field(min=500, max=10)]})
+
+
+# --- the four silent-failure guards (`TASKS.md#what-raises`) --------------
+
+
+def test_a_profile_cannot_claim_the_reserved_seed_key() -> None:
+    """`TASKS.md#seed` — the app appends SEED itself, so a profile claiming it would put
+    two SEED tokens on one line and the firmware would keep whichever parsed
+    last. Nothing downstream would report the lost value."""
+    with pytest.raises(TaskProfileError, match="reserved wire key"):
+        parse_profile({"taskName": "T", "config": [_field(wireKey="SEED")]})
+
+
+def test_duplicate_keys_are_rejected() -> None:
+    """Two entries sharing a key means one silently wins -- on the wire for a
+    duplicate wireKey, in the file for a duplicate metadataKey."""
+    with pytest.raises(TaskProfileError, match="metadataKey"):
+        parse_profile({"taskName": "T", "config": [_field(), _field(wireKey="S1P")]})
+    with pytest.raises(TaskProfileError, match="wireKey"):
+        parse_profile({"taskName": "T", "config": [_field(), _field(metadataKey="other")]})
+
+
+@pytest.mark.parametrize(
+    "typ,default",
+    [("int", "500"), ("int", True), ("bool", 1), ("float", "x"), ("string", 5)],
+)
+def test_a_default_must_match_its_declared_type(typ: str, default: object) -> None:
+    """`true` for an int used to be accepted -- bool is an int subclass in
+    Python, so an unguarded isinstance let it through and the START builder
+    then rendered it as `1`."""
+    with pytest.raises(TaskProfileError, match="is not a"):
+        parse_profile({"taskName": "T", "config": [_field(type=typ, default=default)]})
+
+
+def test_a_whole_number_is_a_valid_float_default() -> None:
+    """0 is a legal float default and must not be caught by the check above."""
+    profile = parse_profile({"taskName": "T", "config": [_field(type="float", default=0)]})
+    assert profile.config[0].default == 0
+
+
+def test_a_string_default_cannot_contain_whitespace() -> None:
+    """The START grammar is space-separated, so this would split into two
+    tokens and the firmware would drop the tail as a bare word."""
+    with pytest.raises(TaskProfileError, match="whitespace"):
+        parse_profile({"taskName": "T", "config": [_field(type="string", default="two words")]})
+
+
+def test_a_value_with_whitespace_is_refused_naming_its_field() -> None:
+    """A string value the operator typed a space into can't ride the wire, and is
+    not swapped for the default: the board would run a setting nobody chose."""
+    profile = parse_profile({"taskName": "T", "config": [
+        {"metadataKey": "mode", "wireKey": "MD", "label": "Mode", "type": "string", "default": "fast"}]})
+    with pytest.raises(TaskProfileError, match="Mode"):
+        build_start_command(profile, {"mode": "not fast"})

@@ -1,7 +1,7 @@
 import { Dices } from "lucide-react";
 
 import { Button, NumberInput, Segmented } from "@/components/common/controls";
-import { Panel } from "@/components/task/editor/Panel";
+import { Panel } from "@/features/tasks/editor/Panel";
 import {
   ANIMAL_FIELDS,
   FALLBACKS,

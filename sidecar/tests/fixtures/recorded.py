@@ -15,8 +15,8 @@ import pytest
 from ephymeris_sidecar.analytics import scoring
 from ephymeris_sidecar.cohorts.db import Database
 from ephymeris_sidecar.tasks import profile as task_profile
-from tests.test_analytics_service import Rig
-from tests.test_grammar2 import EVERY, document, generated_profile
+from ephymeris_sidecar.analytics.tests.test_analytics_service import Rig
+from ephymeris_sidecar.analytics.tests.test_grammar2 import EVERY, document, generated_profile
 
 
 def recorded_document(*, trials: list[str] | None = None, seed: int = 99) -> dict:

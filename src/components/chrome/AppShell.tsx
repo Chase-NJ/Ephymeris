@@ -21,9 +21,9 @@ import { Sidebar } from "./Sidebar";
 import { Starfield } from "./Starfield";
 import { SvgDefs } from "./SvgDefs";
 import { Titlebar } from "./Titlebar";
-import { ConstellationStageProvider } from "@/components/constellation3d/SharedCanvas";
+import { ConstellationStageProvider } from "@/features/sky/SharedCanvas";
 import { springSnappy } from "@/lib/motion";
-import { useUpdateChecks } from "@/lib/updates/store";
+import { useUpdateChecks } from "@/features/updates/store";
 import { useReduceMotion } from "@/lib/useReduceMotion";
 
 /**

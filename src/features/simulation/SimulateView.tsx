@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Segmented, Toggle } from "@/components/common/controls";
-import { Panel } from "@/components/task/editor/Panel";
-import { LiveStateMachine } from "@/components/task/SketchStateMachine";
+import { Panel } from "@/features/tasks/editor/Panel";
+import { LiveStateMachine } from "@/features/tasks/SketchStateMachine";
 import { type Animal } from "./animals";
 import {
   flowOf,
@@ -16,11 +16,11 @@ import {
   waterBy,
 } from "./playback";
 import { usePlayback } from "./usePlayback";
-import { advance, EMPTY_LIVE_TRIALS, vocabFrom, type LiveTrials } from "@/lib/sessions/liveTrials";
-import type { StrobeEvent } from "@/lib/sessions/store";
-import { simulateTask } from "@/lib/taskdef/commands";
-import type { TaskDefinition } from "@/lib/taskdef/types";
-import type { TaskGraphModel } from "@/lib/tasks/topology";
+import { advance, EMPTY_LIVE_TRIALS, vocabFrom, type LiveTrials } from "@/features/sessions/liveTrials";
+import type { StrobeEvent } from "@/features/sessions/store";
+import { simulateTask } from "@/features/tasks/commands";
+import type { TaskDefinition } from "@/features/tasks/types";
+import type { TaskGraphModel } from "@/features/tasks/topology";
 import { useSidecar } from "@/lib/ws/context";
 import type { TaskProfile, TaskSimulation } from "@/lib/ws/protocol";
 

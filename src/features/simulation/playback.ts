@@ -13,7 +13,7 @@ import {
   nodeIndexByName,
   type LiveCondition,
   type TaskGraphModel,
-} from "@/lib/tasks/topology";
+} from "@/features/tasks/topology";
 import type { SimulationTelemetry, TelemetryMetric, TrialTable } from "@/lib/ws/protocol";
 
 /** One strobe of a simulated session: this machine's code, and ms since `START_SESSION`. */

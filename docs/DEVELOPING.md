@@ -71,7 +71,7 @@ Stores are tested through `FakeSidecar` (`lib/ws/fakeSidecar.ts`); `ws/port.cont
 the real client's rules. `lib/shell/boundary.test.ts` keeps the shell inside `lib/shell`. There is no
 linter; `tsc` is the type check.
 
-**Sidecar: pytest in `sidecar/tests/`.** `conftest.py` sets `EPHYMERIS_WIRE_VALIDATE=1`, so every reply
+**Sidecar: pytest, a feature's tests in its own `tests/` folder and the suite's in `sidecar/tests/`** ([ARCHITECTURE.md](ARCHITECTURE.md#one-folder-per-feature)). `sidecar/conftest.py` sets `EPHYMERIS_WIRE_VALIDATE=1`, so every reply
 and event is checked against `protocol/schema.py`. Tests run in parallel and share nothing: no fixed
 port, no path outside `tmp_path`, no unrestored module state. Test a command through the `sidecar`
 fixture (`tests/live_sidecar.py`, the real server over a WebSocket with only the board tool and serial

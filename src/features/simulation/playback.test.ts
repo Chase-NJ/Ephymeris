@@ -7,8 +7,8 @@
 
 import { describe, expect, it } from "vitest";
 
-import { code, STROBES } from "@/lib/tasks/__fixtures__/vocabulary";
-import { taskGraph } from "@/lib/tasks/topology";
+import { code, STROBES } from "@/features/tasks/__fixtures__/vocabulary";
+import { taskGraph } from "@/features/tasks/topology";
 import type { SimulationTelemetry, TaskProfile, TrialTable } from "@/lib/ws/protocol";
 
 import { PRESETS, presetOf, TRAINED, TRAINED_PRESET, withSetting } from "./animals";

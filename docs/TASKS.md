@@ -53,7 +53,7 @@ Firmware lives only in `firmware/` ([its README](../firmware/README.md)). `libra
 
 ### Selection modes
 
-`BOX_SELECTION_MODE` is compiled in and mirrored by hand in `src/lib/taskdef/selection.ts`. `BOX_SELECT_ANTIBIAS` draws a side against the animal's recent bias, then a type uniformly; `BOX_SELECT_WEIGHTED` draws the side alike, then a type by `PW<n>`. Both apply correction budgets and abstention escalation, and never present no-go types. `BOX_SELECT_POOL` deals a block-shuffled sequence in exact `PW<n>` proportions per block of `BS`, presents no-go types, and has no side balancing, corrections or escalation.
+`BOX_SELECTION_MODE` is compiled in and mirrored by hand in `src/features/tasks/selection.ts`. `BOX_SELECT_ANTIBIAS` draws a side against the animal's recent bias, then a type uniformly; `BOX_SELECT_WEIGHTED` draws the side alike, then a type by `PW<n>`. Both apply correction budgets and abstention escalation, and never present no-go types. `BOX_SELECT_POOL` deals a block-shuffled sequence in exact `PW<n>` proportions per block of `BS`, presents no-go types, and has no side balancing, corrections or escalation.
 
 ### Stream grammar
 
@@ -64,7 +64,7 @@ The trial runner frames every trial the same way, so a reader splits rather than
 - **one outcome**: `CORRECT`, `WATER_POKE_ERROR_*`, `WATER_UNPOKE_EARLY_*`, `RESP_OMIT`, `WATER_POKE_NONE` (a withheld no-go), or an abort: `LAZY_RAT`, `ODOR_UNPOKE_EARLY` or `ODOR_UNPOKE_EARLY_SAMPLING`;
 - **footer**: `INVALID_TRIAL` if the trial will be re-presented, then `END_TRIAL`.
 
-`test_trial_stream.cpp` and `tests/test_grammar2.py` hold the reference sequences. A row past the vocabulary's `TRIAL_TYPE_<n>` codes is `TSK115`. A grammar-2 profile on a board announcing no `STREAM` scores no live P(correct) until reflashed.
+`test_trial_stream.cpp` and `analytics/tests/test_grammar2.py` hold the reference sequences. A row past the vocabulary's `TRIAL_TYPE_<n>` codes is `TSK115`. A grammar-2 profile on a board announcing no `STREAM` scores no live P(correct) until reflashed.
 
 ### Compiling and the host tests
 
@@ -292,7 +292,7 @@ flowchart TD
 
 ### The wiring page
 
-`/config/wiring` (`routes/RigWiring.tsx`) edits the wiring. `hardware.preview` returns the codes a save would issue and the saved tasks it would newly break; saving a break needs `confirm`.
+`/config/wiring` (`features/hardware/RigWiring.tsx`) edits the wiring. `hardware.preview` returns the codes a save would issue and the saved tasks it would newly break; saving a break needs `confirm`.
 
 ![The Wiring page: a kind summary (1 engagement, 2 response, 12 emitter, 4 reward, 1 cue, 1 vacuum, 1 sync), the Mega's pin map with each channel labelled on its pin (odor_port, right_well and left_well on 2 to 4, odor lines on 22 to 33, trial_light, vacuum, fluid_0 to fluid_3, sync_out on 49), an Inspector, Reset, Revert and Save, and the Configured pins table below](images/rig-wiring.webp)
 
@@ -356,7 +356,7 @@ A profile default (`task.json`) yields to the rig default (`settings.taskDefault
 
 ```mermaid
 flowchart LR
-    profileDefault["Profile default<br/>task.json"] --> merge["defaultConfig<br/>src/lib/sessions/types.ts"]
+    profileDefault["Profile default<br/>task.json"] --> merge["defaultConfig<br/>src/features/sessions/types.ts"]
     rigDefault["Rig default<br/>settings.taskDefaults"] --> merge
     override["Per-box override<br/>mapping step"] --> merge
     merge -->|"sessions.confirmMapping"| build["build_start_command<br/>SET lines, each under SET_LINE_MAX"]
@@ -401,7 +401,7 @@ The host sends each `SET` line alone (the Mega's buffer is 64 bytes). `PARAMS <n
 ### The length cap
 
 > [!CAUTION]
-> **`SET_LINE_MAX` lives in both `tasks/start_command.py` and `BehaviorBox.h`**; `tests/test_start_command.py` fails if they differ, since the board truncates silently.
+> **`SET_LINE_MAX` lives in both `tasks/start_command.py` and `BehaviorBox.h`**; `tasks/tests/test_start_command.py` fails if they differ, since the board truncates silently.
 
 Only a single token too long for a line refuses the mapping (`TASK_PROFILE_INVALID`).
 
@@ -420,7 +420,7 @@ Both are truncated SHA-256 over canonical JSON (`tasks/profile.py`). `profile_ha
 
 ## Derived state machine
 
-The Task tab and Mission Control draw a task's state machine **derived from its profile** (`src/lib/tasks/topology.ts`; [ARCHITECTURE.md](ARCHITECTURE.md#live-session-views)). Every sketch shares `runTrial()`, so only which branches exist differs, and the declared names say which.
+The Task tab and Mission Control draw a task's state machine **derived from its profile** (`src/features/tasks/topology.ts`; [ARCHITECTURE.md](ARCHITECTURE.md#live-session-views)). Every sketch shares `runTrial()`, so only which branches exist differs, and the declared names say which.
 
 > [!IMPORTANT]
 > **A declared code is not a presented condition.** Conditions and the Withheld outcome are drawn only when a `liveMetrics` entry **scores** them.

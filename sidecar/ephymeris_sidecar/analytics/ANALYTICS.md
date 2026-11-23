@@ -211,7 +211,7 @@ declared trial light.
 uncached. It is the classification the tallies sum (a test pins tape ≡ `outcomes_of` and, by `triggerCode`,
 `conditions_of`). `outcome` is hyphenated (`hold-failed`, `no-response`). `atMs` counts from the **earliest**
 timestamp; `latencyMs` is open → settling code, `null` for `no-response`/`aborted`, never negative. Empty when
-the profile has no outcomes. Session-log notes are drawn on it (`lib/logbook/tapeMarkers.ts`) before the first
+the profile has no outcomes. Session-log notes are drawn on it (`features/logbook/tapeMarkers.ts`) before the first
 trial after them, approximately ([session clock](../../../docs/DATA.md#the-session-clock)).
 
 ### Run-level scalars
@@ -370,7 +370,7 @@ climbs no rung: it is never decoded by today's `task.json` or by inference.
 registry](../../../docs/TASKS.md#strobe-vocabulary): `ODOR_n_ON` onsets show the conditions, and `FLUID_x` /
 `WATER_UNPOKE_EARLY_x` occur only at the correct well, `WATER_POKE_ERROR_x` only at the wrong one, so the
 majority names each side. It uses the same scorer, pinned against declared GRGL by
-`tests/test_analytics_infer.py`. It cannot know unpresented conditions, labels or the window
+`analytics/tests/test_analytics_infer.py`. It cannot know unpresented conditions, labels or the window
 (`INFERRED_WINDOW`), so a declaration always wins. A never-answered condition keeps its trial boundary, or the others would be mis-scored.
 
 `sketchName` is what the file recorded and what labels print; `sketchPath` is where this install found a
@@ -483,6 +483,6 @@ print(summary.to_json())
   new canary ([caching](../../../docs/DATA.md#caching)).
 - **The legacy decoder is frozen**: `test_legacy_pin.py` must pass unchanged, and its fixtures are never
   regenerated from the code under test.
-- **Science tests** in `sidecar/tests/`: `test_analytics_derive.py`, `test_analytics_infer.py`,
+- **Science tests** in `analytics/tests/`, `tasks/tests/` and `sidecar/tests/`: `test_analytics_derive.py`, `test_analytics_infer.py`,
   `test_task_profiles.py`, `test_false_starts.py`, `test_grammar2.py`, `test_legacy_trial_table.py`,
   `test_legacy_pin.py`, `test_legacy_corpus.py`.

@@ -3,8 +3,8 @@ import { useState } from "react";
 import { Button, Segmented } from "@/components/common/controls";
 import { PRESETS, TRAINED_PRESET } from "./animals";
 import { clockLabel } from "./playback";
-import { stressTestTask } from "@/lib/taskdef/commands";
-import type { TaskDefinition } from "@/lib/taskdef/types";
+import { stressTestTask } from "@/features/tasks/commands";
+import type { TaskDefinition } from "@/features/tasks/types";
 import { useSidecar } from "@/lib/ws/context";
 import type { StressAnimal, TaskStressTest } from "@/lib/ws/protocol";
 

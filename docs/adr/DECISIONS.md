@@ -6,7 +6,7 @@ only what the code does now and link here.
 
 **How to keep it.**
 
-- **Number entries in sequence and never reuse a number.** The next is **0013**. Code and docs cite an
+- **Number entries in sequence and never reuse a number.** The next is **0014**. Code and docs cite an
   entry as `DECISIONS.md#<heading-slug>`; `test_doc_links.py` checks every citation.
 - **A proposal gets its own file** in this folder (`NNNN-slug.md`, `status: proposed`) while it is
   argued and built. When it is accepted and done, fold it in here as an entry and delete the file.
@@ -418,3 +418,35 @@ session is computed in its own time and the webview plays it back.
   rounds them. The trial order for a seed has not been compared with a board.
 - **Refused while a box runs.** It is computation on the sidecar's threads
   ([LESSONS.md](../LESSONS.md#serial-ports-and-flashing)).
+
+## 0013: One folder per feature, on each side of the wire
+
+The repo was laid out by kind: `src/lib/<domain>`, `src/components/<domain>`, `src/routes/`, and every
+sidecar test in one `sidecar/tests/`. A feature was four or five folders, and finding it took a map:
+the docs and the agent instructions spent their words on where things are. **We laid it out by feature
+instead**: one folder per feature in the sidecar and one in the webview, under the same name, each
+holding the feature's code and its tests
+([ARCHITECTURE.md](../ARCHITECTURE.md#one-folder-per-feature)). The directory tree is context a reader
+or an agent gets for nothing, so it should carry the answer.
+
+**Rejected.**
+
+- **One folder for both sides** (`features/<name>/` with Python, TypeScript and tests inside). It is the
+  literal reading, but the two programs have separate toolchains: the Python package layout, the
+  PyInstaller freeze, `tsconfig`, Vite and Vitest would each be re-rooted, and the frozen Windows
+  sidecar is the one build that cannot be tried off the lab PCs.
+- **Feature folders for new work only**, with the old layout left under a ceiling that shrinks. Two
+  layouts at once is the map problem again, for as long as the migration takes.
+- **Renaming sidecar packages to merge them** (`taskdef` with `tasks`, `rig` with `hardware`). Their
+  names are in imports, docs and recorded decisions; the webview takes the sidecar's names instead.
+
+**Costs.**
+
+- **Tests sit inside the package the freezer collects.** A hook
+  (`sidecar/packaging/hooks/hook-ephymeris_sidecar.py`) leaves them out, and the checks that scan the
+  package for a rule skip `tests/`.
+- **Four tests stay in `sidecar/tests/` though they belong to a feature**: the agents' stop gate names
+  them by path.
+- **A shared helper has no feature.** `src/lib/` and `src/components/` remain, for what several
+  features use, and `sidecar/tests/` for the suite's own support.
+- **History follows a file only through a rename**: `git log --follow`.

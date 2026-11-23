@@ -166,7 +166,10 @@ def test_the_walk_sees_each_way_of_reading_a_key() -> None:
 
 
 #: `protocol.py` is generated, and its keys are the wire's, not a document's.
-MODULES = sorted(p for p in PACKAGE.rglob("*.py") if p != ACCESSOR and p.name != "protocol.py")
+MODULES = sorted(
+    p for p in PACKAGE.rglob("*.py")
+    if p != ACCESSOR and p.name != "protocol.py" and "tests" not in p.relative_to(PACKAGE).parts
+)
 
 
 @pytest.mark.parametrize("path", MODULES, ids=lambda p: p.relative_to(PACKAGE).as_posix())

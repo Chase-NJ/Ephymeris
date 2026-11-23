@@ -1,24 +1,24 @@
 import { Navigate, Route, Routes } from "react-router";
 
 import { AppShell } from "./components/chrome/AppShell";
-import { Analytics } from "./routes/Analytics";
-import { Config } from "./routes/Config";
-import { CohortEditor } from "./routes/CohortEditor";
-import { Cohorts } from "./routes/Cohorts";
-import { Dashboard } from "./routes/Dashboard";
-import { DebugMode } from "./routes/DebugMode";
-import { DebugAll } from "./routes/DebugAll";
-import { Log } from "./routes/Log";
-import { MissionControl } from "./routes/MissionControl";
-import { Recording } from "./routes/Recording";
-import { RigWiring } from "./routes/RigWiring";
-import { SessionConfig } from "./routes/SessionConfig";
-import { SessionMapping } from "./routes/SessionMapping";
-import { SessionRecording } from "./routes/SessionRecording";
-import { Settings } from "./routes/Settings";
-import { Task } from "./routes/Task";
-import { TaskEditor } from "./routes/TaskEditor";
-import { TaskStrobes } from "./routes/TaskStrobes";
+import { Analytics } from "@/features/analytics/Analytics";
+import { Config } from "@/features/hardware/Config";
+import { CohortEditor } from "@/features/cohorts/CohortEditor";
+import { Cohorts } from "@/features/cohorts/Cohorts";
+import { Dashboard } from "@/features/dashboard/Dashboard";
+import { DebugMode } from "@/features/debug/DebugMode";
+import { DebugAll } from "@/features/debug/DebugAll";
+import { Log } from "@/features/logbook/Log";
+import { MissionControl } from "@/features/sessions/MissionControl";
+import { Recording } from "@/features/intan/Recording";
+import { RigWiring } from "@/features/hardware/RigWiring";
+import { SessionConfig } from "@/features/sessions/SessionConfig";
+import { SessionMapping } from "@/features/sessions/SessionMapping";
+import { SessionRecording } from "@/features/intan/SessionRecording";
+import { Settings } from "@/features/settings/Settings";
+import { Task } from "@/features/tasks/Task";
+import { TaskEditor } from "@/features/tasks/TaskEditor";
+import { TaskStrobes } from "@/features/strobes/TaskStrobes";
 
 export default function App() {
   return (
@@ -62,7 +62,7 @@ export default function App() {
             name is the user's word for the screen; the path is an internal
             address that every doc, and this app's own history, already spells
             this way — renaming it would churn both to no one's benefit, since a
-            desktop app never shows its URL. `routes/Config.tsx` likewise. */}
+            desktop app never shows its URL. `features/hardware/Config.tsx` likewise. */}
         <Route path="/config" element={<Config />} />
         <Route path="/config/wiring" element={<RigWiring />} />
         {/* Recording: the link to Intan RHX, the box->digital-input bindings

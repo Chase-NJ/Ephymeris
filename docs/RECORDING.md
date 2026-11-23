@@ -257,7 +257,7 @@ surface owns.
 
 ### Recording tab
 
-`/recording` (`routes/Recording.tsx`), a [telemetry display](ARCHITECTURE.md#telemetry-panels) fitting one
+`/recording` (`features/intan/Recording.tsx`), a [telemetry display](ARCHITECTURE.md#telemetry-panels) fitting one
 screen. Link (left) and Defaults (right) use `SettingRow` at **compact** density
 (`SettingRowDensityContext`); the Record step renders the same rows at full density.
 
@@ -267,14 +267,14 @@ screen. Link (left) and Defaults (right) use `SettingRow` at **compact** density
 | Live (while recording) | `RecordingStatus`, as in Mission Control's rail |
 | Link — Connection | `IntanConnectionPanel`: Connect/Disconnect, `confirmsWrites`, the RHX click as a disclosure, the three TCP ports |
 | Link — Sync inputs | `SyncInputsTable`: box → `DIN n` |
-| Defaults | `settings.recordingDefaults` (`lib/intan/defaults.ts`) via `RecordingConfigRows` |
+| Defaults | `settings.recordingDefaults` (`features/intan/defaults.ts`) via `RecordingConfigRows` |
 
 ![The Recording tab: a readout strip (not connected, sync 6/6 wired); Link on the left with Connection, its "How to connect" disclosure and the three TCP ports, and Sync inputs mapping boxes 1 to 6 to DIN 1 to 6; Defaults on the right with Saving and Spike thresholds as compact rows](images/recording-tab.webp)
 
 ### Record step
 
 Start Recording opens `/session/new?mode=recording`, creating the session with `recording: true`; the flow
-then reads the flag from the session record (`SessionFlow.isRecording`, `lib/sessions/flow.ts`), not the
+then reads the flag from the session record (`SessionFlow.isRecording`, `features/sessions/flow.ts`), not the
 URL, because it is re-entered from the dock, between rounds and after a reload.
 
 ```
@@ -341,7 +341,7 @@ on it.
 > the second column, a renamed channel would be filed under its label.
 
 `intan.impedanceHistory` gives each animal's latest on arrival. The webview judges them
-(`lib/intan/impedance.ts`) with the impedance bounds under **Electrode checks**, a recording default: **open** above 5 MΩ,
+(`features/intan/impedance.ts`) with the impedance bounds under **Electrode checks**, a recording default: **open** above 5 MΩ,
 **short** below 20 kΩ, **changed** by more than 2× either way since the animal's previous measurement.
 Open and short win over changed. Flagged sites are outlined on the probe-map preview.
 
@@ -367,7 +367,7 @@ crossing rate over the run** reaches `activeSiteHz` (0.5 Hz, under **Electrode c
   `SessionLifecycle.animal_ended` after the run's own row. The run carries the animal through cohort
   moves and tidy, and a [prune](DATA.md#pruning) takes the counts with it.
 - **Raw counts only**, with the recording's threshold setup beside them: the webview judges
-  (`lib/intan/yield.ts`), so a new `activeSiteHz` re-judges history, and a run whose spike detection
+  (`features/intan/yield.ts`), so a new `activeSiteHz` re-judges history, and a run whose spike detection
   differs from the latest one is marked, since crossings under two thresholds do not compare.
 
 `intan.yieldHistory` gives each animal's recent runs to the Record step's **Electrodes** tile, oldest to
@@ -408,7 +408,7 @@ snapshots RHX saved. Per site of the animal:
 - **A measurement failure costs only itself**: the `.spikes.mat` is written either way, byte for byte
   what it was. It adds about half a second and 70 MB to a 20 s, 2 GB export.
 
-**Judged in the webview** (`lib/logbook/signal.ts`), so a changed threshold re-reads every recorded run. A
+**Judged in the webview** (`features/logbook/signal.ts`), so a changed threshold re-reads every recorded run. A
 site is **unit-like** when spikes of at least `UNIT_SNR` (6) noise SDs arrive at `UNIT_MIN_HZ` (0.5 Hz)
 or more; **active** when it is not but its spikes, artifacts left out, reach 0.5 Hz; else **quiet**.
 `logbook.cohort`'s `signals` carries each run's sites (`RunSignal`); the Log's **Recording** table draws
@@ -594,7 +594,7 @@ a relocate of that folder.
 - µV is `0.195 × (count − 32768)`. The 30 samples run from 6 before the crossing to 24 after: samples 25:54 of a snapshot with 30 pre-detect samples, counted from the crossing for any other lead-in. Spikes RHX flagged as artifacts (id 128) are kept.
 - Written once RHX has confirmed its stop, in the background, after the run is [aligned](#alignment-at-session-end): it never holds up an end, and a failure costs only the export. The file is written whole or not at all. While RHX's stop is still owed nothing is exported, since `spike.dat` may still be growing.
 - **No file, with the reason logged**, when the recording saved no snapshots, keeps fewer than 6 samples before or 24 after a detection, or the animal's channels never fired.
-- `tests/test_sort_export.py` compares it with the lab's `ExtractIntanSpikes.py`, value for value, on a real recording named by `EPHYMERIS_RHX_SAMPLE` and `EPHYMERIS_LAB_EXPORTS`.
+- `intan/tests/test_sort_export.py` compares it with the lab's `ExtractIntanSpikes.py`, value for value, on a real recording named by `EPHYMERIS_RHX_SAMPLE` and `EPHYMERIS_LAB_EXPORTS`.
 
 The durable record is RHX's files plus the `.tsv`; nothing the sync check or the firing map computes is
 persisted.
@@ -605,12 +605,12 @@ Each recording box's probe, lit as its sites fire, in Mission Control: on its ca
 focused panel (`LiveProbeMap.tsx`). It has to **feel** live: a flash within about 100 ms of the spike, so
 the whole path is built for latency rather than averages.
 
-- **Each site shows two things** (`lib/intan/firing.ts`): a flash on every spike, fading over
+- **Each site shows two things** (`features/intan/firing.ts`): a flash on every spike, fading over
   `FLASH_TAU_MS`, and a dimmer glow for its rate over `RATE_TAU_MS`, on a **fixed log scale**. A scale
   relative to the busiest site re-shades every other site whenever the loudest one changes.
 - **React draws the probe once** (`ProbeMapView`, SVG); one animation-frame loop then sets each site's
   fill by its `data-channel`. Six 64-site probes at about 3,800 spikes a second cost 0.6 ms a frame (p95).
-- **The file's colours are ignored** and **Y is flipped at draw time** (`lib/intan/probeMath.ts`;
+- **The file's colours are ignored** and **Y is flipped at draw time** (`features/intan/probeMath.ts`;
   Intan's y points up).
 
 | Leg | What bounds it |
@@ -624,7 +624,7 @@ to the sidecar reading it, against RHX's clock read once per poll (`get currentt
 `analysis.py`'s `SampleClock`); `sentAt` lets the webview time its own leg on the same machine's clock.
 The USB transfer before RHX has the sample is outside both, as it is for RHX's own displays.
 
-`tests/test_intan_real_rhx.py`'s `probe_how_late_do_spikes_arrive` measures the first leg against a real
+`intan/tests/test_intan_real_rhx.py`'s `probe_how_late_do_spikes_arrive` measures the first leg against a real
 RHX at several batch sizes. RHX 3.5.0, demo mode, 30 kS/s, 16 channels, about 420 spikes a run:
 
 | Blocks per write | p50 | p95 | max |
@@ -679,7 +679,7 @@ stretch of data to distrust.
 
 > [!NOTE]
 > **The thresholds are first guesses**, pinned only against synthetic faults
-> (`tests/test_intan_tether.py`). The first real recordings decide them: a sleeping animal or a long
+> (`intan/tests/test_intan_tether.py`). The first real recordings decide them: a sleeping animal or a long
 > grooming bout should not alarm, and a pulled headstage should.
 
 ## Event PSTH
@@ -752,7 +752,7 @@ Configure, record, the sync line into a real digital input and the graceful end 
 RHX and real boxes; the live firing map's latency against a real RHX in demo mode only. **A full-length recording from a real animal has not.**
 
 The suite runs against `sidecar/tests/fake_rhx.py` (the three servers on real sockets, each failure
-switchable). `sidecar/tests/test_intan_real_rhx.py` probes a real RHX: opt-in (`EPHYMERIS_REAL_RHX=1`),
+switchable). `sidecar/ephymeris_sidecar/intan/tests/test_intan_real_rhx.py` probes a real RHX: opt-in (`EPHYMERIS_REAL_RHX=1`),
 never enters `record`, restores every value it touches, and uses one connection throughout. On RHX 3.5.0
 (`ControllerRecordUSB3`, synthetic) it confirmed the sentinel batching, reported refusals, the space in
 `Filename.Path`, `digital-in-01` input names (`digital_in_name`), the [run-mode](#talking-to-rhx)

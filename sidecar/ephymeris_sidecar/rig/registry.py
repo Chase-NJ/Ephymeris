@@ -100,7 +100,7 @@ STROBE_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
 #: The shape of a stimulus onset code (`ODOR_3_ON`). A SHAPE CHECK ONLY: it
 #: tells an onset from `LIGHTS_ON` in RIG106, and never yields a number -- the
 #: vocabulary is the only place a code is defined. Mirrored by `ONSET_NAME` in
-#: `src/lib/taskdef/lines.ts`, which filters the same picker.
+#: `src/features/tasks/lines.ts`, which filters the same picker.
 ONSET_NAME = re.compile(r"_\d+_ON$")
 
 

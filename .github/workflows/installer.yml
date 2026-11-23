@@ -62,7 +62,9 @@ jobs:
         run: echo "VERSION_CONFIG=-c.extraMetadata.version=$VERSION" >> "$GITHUB_ENV"
 
       # Stages the sidecar, arduino-cli and sketches, builds dist/ and dist-electron/, then
-      # the installer; its feed entry (latest.yml) is written beside it.
+      # the installer; its feed entry (latest.yml) is written beside it. The frozen sidecar
+      # is started and made to write a .mat on the way, here and in the mac job
+      # (docs/DEVELOPING.md#building-the-installer); a sidecar that can't fails the build.
       - shell: bash
         run: npm run package:electron -- $VERSION_CONFIG
 

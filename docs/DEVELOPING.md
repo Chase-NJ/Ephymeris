@@ -136,6 +136,11 @@ here and run once (a C++ compiler on `PATH`: MinGW's `g++` on Windows, which the
 `latest.yml`. The frozen sidecar carries the Python that built it; use 3.13, as CI does (3.12's Windows
 asyncio clock makes short waits end early). The installer is unsigned.
 
+**The frozen sidecar is run before it is bundled.** `sidecar/packaging/check_frozen.py` starts the staged
+copy as the shell does, with stdin held open, has it recover a crashed run over its WebSocket and
+reads the `.mat` back. A freeze that hangs at launch or cannot write a `.mat` stops the packaging, on
+Windows and macOS alike. The sidecar suite runs the same check on the interpreter's own sidecar.
+
 The same command on an Apple silicon Mac writes `release/Ephymeris-<version>-arm64.dmg`, for reading
 data and the logbook away from the rigs. Everything it bundles is the build machine's own
 architecture, so build it on Apple silicon. It differs from the Windows installer in three ways:

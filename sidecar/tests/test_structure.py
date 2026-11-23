@@ -58,7 +58,7 @@ REPO = PACKAGE.parents[1]
 #: What stays in `sidecar/tests/`: the tests of the suite, the docs, the wire and
 #: the process's own modules, which no one feature owns.
 SUITE_TESTS = {
-    "test_bundled_library_covers_archives.py", "test_decode_only.py", "test_discovery.py",
+    "test_bundled_library_covers_archives.py", "test_check_frozen.py", "test_decode_only.py", "test_discovery.py",
     "test_dispatch.py", "test_doc_links.py", "test_golden.py", "test_legacy_corpus.py",
     "test_legacy_pin.py", "test_protocol_contract.py", "test_settings.py", "test_structure.py",
     "test_utility.py", "test_wire_shapes.py",

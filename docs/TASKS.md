@@ -145,8 +145,6 @@ A profile declares no codes: `load_profile` fills `strobes` with the machine's w
 
 A `"kind": "utility"` profile gives a priming, cleaning or self-test sketch Debug Mode controls over `PASSTHROUGH`, adding no wire commands and storing nothing. A control is a `button`, a `select` or a `grid` (a row per channel with a state lamp, `toggle` and `pulse` commands, and an optional `setting`). A lamp with no `state` stays neutral, and a setting shows what the board reports, never the last choice. `telemetry` parses the newest `STATUS` line's `key=value` pairs, so values hold no spaces.
 
-![Debug Mode for box 3 on BOX_Utility: buttons for Full self-test, Stop test and All off, a pulse-width dropdown, a Prime block, and grid rows with a lamp and switch for each fluid line, the vacuum, the trial light (lit, "1 open") and twelve odor lines](images/debug-mode.webp)
-
 <a id="identify"></a>
 **`identify`**, such as `{"on": "ON trial_light", "off": "OFF trial_light"}`, makes a box announce itself for `utility.identify` and the placement walk ([ARCHITECTURE.md](ARCHITECTURE.md#hardware-utility-baseline)). Both halves are required.
 
@@ -294,9 +292,7 @@ flowchart TD
 
 `/config/wiring` (`features/hardware/RigWiring.tsx`) edits the wiring. `hardware.preview` returns the codes a save would issue and the saved tasks it would newly break; saving a break needs `confirm`.
 
-![The Wiring page: a kind summary (1 engagement, 2 response, 12 emitter, 4 reward, 1 cue, 1 vacuum, 1 sync), the Mega's pin map with each channel labelled on its pin (odor_port, right_well and left_well on 2 to 4, odor lines on 22 to 33, trial_light, vacuum, fluid_0 to fluid_3, sync_out on 49), an Inspector, Reset, Revert and Save, and the Configured pins table below](images/rig-wiring.webp)
-
-*Odor pins are not in line order, so the [odor index](#order-is-meaning) comes from declaration order.*
+On the Mega, odor pins are not in line order (lines 1 to 6 on pins 22, 24, …, 32, then 7 to 12 on 23, …, 33), so the [odor index](#order-is-meaning) comes from declaration order.
 
 ### Wiring rules
 
@@ -320,8 +316,6 @@ A channel the file has and this rig lacks needs a pin picked on import, from the
 ## Strobe vocabulary
 
 Each machine's `<data_dir>/strobes/vocabulary.json` is **the only place a strobe code is defined**: `TaskPins.h` defines `BF_<NAME>` for every live code, and the page is `/task/strobes`. The first start seeds it from `rig/schema/strobe_vocab.default.json`; later starts only add codes a newer build declares. There is no reset.
-
-![The Strobe vocabulary page: a code band from 0 to 999 showing the reserved range, the live onset run 101–116 with the retired 110–113 gap, and the live codes from 221 to 369; below it the filtered code table with ODOR_3_ON selected, and a detail panel giving its meaning, the two sketches that name it, the archive check, and Retire and Remove](images/task-strobes.webp)
 
 ### Append only
 
@@ -465,7 +459,7 @@ Congruent conditions draw as one node with `variants`; a go/no-go mix falls back
 
 `liveNodeId` puts the token on the node whose `entryNames` hold the newest strobe, reading abort and footer codes in their trial's context.
 
-![A running box's panel in Mission Control: the Trial flow diagram with the live token on ITI, the collapsed condition node labelled Odor 3 with its tick lit, a status line reading "ITI · Odor 3 → left well", and below it a P(right | odor) chart, an outcome mix, live metrics and recent strobes](images/box-panel.webp)
+![The Trial flow diagram in a running box's panel: Light, Poke, Odor 3, Unpoke, Light off and Answer in a row, branching to Reward, No hold, Wrong well and No answer, with the live token on ITI and a status line reading "ITI · Odor 3 → left well"](images/trial-flow.webp)
 
 ### Layout
 
@@ -480,13 +474,9 @@ The Task tab answers *what the animal does*; the Rig tab, *what this box is*.
 
 `/task` lists saved tasks with open, **Duplicate**, delete and create. Duplicate **drops `legacyNames`**, which must resolve to one sketch.
 
-![The Task tab: a + New task row, then three saved tasks — 4-Odor Discrimination (weighted, 4 conditions, no ramp), Shaping - Both Sides (pool, 5 stages) and 2-Odor Discrimination (anti-bias, 5 stages) — each marked ready, with the Strobes door below](images/task-landing.webp)
-
 ### Editor
 
 `/task/:taskId` shows the derived state machine, trial types, parameters and trial generation in one frame. **Every redraw comes from `tasks.preview`**, since validation needs the wiring.
-
-![The task editor for 4-Odor Discrimination: Details at the top, the state machine across the left, four trial types below it (Sandalwood, Orange, Cedar and Lemon, each with its odor line, well, fluid line, reward and weight), the Parameters dial on Session at the top right, and Trial generation set to Weighted below it](images/task-editor.webp)
 
 ### Trial types
 
@@ -497,8 +487,6 @@ One row per condition: name, odor line (with its onset code), answer port, rewar
 ### Trial generation
 
 Picks the [selection mode](#selection-modes) and shows the session it would deal.
-
-![The Trial generation panel set to Weighted: the mode switch, the hint and its facts, the composition strip split into right and left halves by row weight, Trial pool folded as not used in weighted, and the Correction trials and Anti-bias selection fields](images/task-generation.webp)
 
 ### Parameters
 

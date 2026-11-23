@@ -1,8 +1,8 @@
 # Ephymeris user guide
 
 For the people who run daily behaviour sessions: what to click, what the screen means, and what never to
-do. **Bold** words are on-screen labels; terms are in the [Glossary](#glossary). Screenshots come from a
-demo rig (cohort *Odor Discrimination 2026*, animals `remy1` to `remy12`).
+do. **Bold** words are on-screen labels; terms are in the [Glossary](#glossary). The few screenshots are
+close-ups from a demo rig (animals `remy1` to `remy12`).
 
 ## Contents
 
@@ -41,10 +41,6 @@ right, lists each box's port and resting program; click a row or star to open th
 ([Checking a box](#checking-a-box)), or **Command all boxes** for the whole rig
 ([Commanding every box](#commanding-every-box)). The **Observatory** lists cohorts and recent sessions.
 
-![The Dashboard: Start a Session and Start a Recording ("RHX not connected") with the Rig and Task doors on the left; the rig's six boxes as labelled stars in the 3D sky; the Boxes list on the right with each box's label, port and resting program and Command all boxes at its foot; and the Observatory below it listing four cohorts](images/dashboard.webp)
-
-![The Dashboard during a session: Resume Session at the top, and a dock card for 2O-Bdisc_15 listing each box and animal, with Open Mission Control and End Session buttons](images/dashboard-running.webp)
-
 **Rig.** The **Boxes** table gives each box's bound board, **Handshake** and **Test**. **Constellation**
 sets how boxes are drawn (drag a box to another star). **Utility baseline** shows a **Ready** chip per box.
 
@@ -54,25 +50,17 @@ both computers on the same Ephymeris version, export where the channels changed 
 pick this computer's pin for each channel the other added. Any other disagreement is refused with a list
 of differences to fix.
 
-![The Rig tab: the Boxes table with label, bound board, handshake and Test button for each of six boxes, and below it the Utility baseline section showing BOX_Utility and a Ready chip for every box](images/rig.webp)
-
 **Cohorts.** Cohorts drawn as planets; click one, or **New cohort**. **Search…** and **Show archived** sit
 at the top left.
 
-![The Cohorts screen: three cohorts drawn as planets in a 3D sky, a small disc labelled New cohort, and a search box and Show archived switch at the top left](images/cohorts.webp)
-
 **Task**, **Recording**, **Analytics** and **Log** have their own sections below. **Settings** holds the
 **Data directory**, **Backup directory** (warned while unset), **Reduce motion** and **Updates**.
-
-![The Settings screen: Data directory set to a folder, Backup directory showing Not set with a warning that data is only on one drive, and the Reduce motion switch](images/settings.webp)
 
 ## Editing a task
 
 Usually the lab manager's job. The Task tab lists each saved task and whether it is **ready**; an
 unreadable one is listed in red with the reason. Saving builds the sketch a box runs
 ([TASKS.md](TASKS.md#task-definitions)).
-
-![The Task tab: a + New task row, then three saved tasks — 4-Odor Discrimination (weighted, 4 conditions, no ramp), Shaping - Both Sides (pool, 5 stages) and 2-Odor Discrimination (anti-bias, 5 stages) — each marked ready, with the Strobes door below](images/task-landing.webp)
 
 **To the other computer.** Move the channel set first (Rig → Wiring), then **Export** on the task's row and
 **Import task** there. The import writes nothing if a channel the task uses is missing, different or in
@@ -84,8 +72,6 @@ starts from a copy.
 **The editor**: one row per condition with its **odor line**; **Trial generation**
 is **Anti-bias**, **Weighted** or **Pool** (the only one with no-go trials); **Add parameter** offers a
 setting at session start. It saves even with problems.
-
-![The task editor for 4-Odor Discrimination: Details at the top, the state machine across the left, four trial types below it, and Trial generation set to Weighted (an older dial where Parameters now sits)](images/task-editor.webp)
 
 **Simulate.** **Simulate**, beside **Design** at the top of the editor, runs the task as you have it,
 saved or not, with a simulated animal in the box. Pick an animal (**Trained**, **Naive**, **Side-biased**
@@ -99,8 +85,6 @@ the odor. Nothing is flashed or saved, and it waits while a box is running.
 **Remove** works only for a code no session on this computer contains. **Export**/**Import** copy codes
 to the other computer whenever one is added.
 
-![The Strobe vocabulary page: the code band, the table of codes with ODOR_3_ON selected, and its detail panel with Retire and Remove](images/task-strobes.webp)
-
 ## Setting up a cohort
 
 A **cohort** is a batch of animals trained together.
@@ -111,11 +95,7 @@ A **cohort** is a batch of animals trained together.
    directory** (with none set, the page asks for a **Data folder**).
 2. Add **Animals**: paste names (one per line) or type a pattern like `R- × 8` for `R-1` to `R-8`, then
    **Add**. **Sex**, **Usual box**, **ID number** and **Notes** are optional.
-
-![The cohort editor: the Name field, the Data folder with its Change data folder… button, and the Animals section with the bulk-add box and a table of animals with Sex, ID number and Notes](images/cohort-editor.webp)
-
 3. Optional: under **Cages & spaceships**, drag cagemates onto one spaceship per home cage.
-
 4. Click **Create cohort** (later, **Save changes**). An unfinished cohort can be saved; the ticks at the
    top show what is missing.
 
@@ -231,8 +211,6 @@ When every box has flashed, Mission Control opens (or **Set Up the Recording**,
 On **Mission Control**, click **Start All**, or **Start** on one box. If a box *has not been flashed* or
 *carries* another program, nothing started: **Back to Boxes**, confirm the boxes again, then start.
 
-![Mission Control before starting: the session name 2O-Bdisc_15, the clock, Start All and Discard session on the left, and six box tiles on the right, each IDLE with Start, Stop and Reset buttons](images/mission-control-ready.webp)
-
 ### When a round finishes
 
 When every box has finished, a window asks what happens next.
@@ -274,8 +252,6 @@ cannot be resumed mid-run.
 
 The session keeps running if you leave Mission Control; **Resume Session** brings you back.
 
-![Mission Control while running: the session name, the clock with time elapsed and the session's buttons on the left, the session drawn as a 3D sky, and box tiles on the right, each IN_SESSION with its own clock and two live metrics](images/mission-control.webp)
-
 - **Start** resets the board, waits for it, then sends the task.
 - **Stop** ends the box **at the end of the current trial**. Wait; do not click again or reset.
 - **Reset** restarts a board that is not running, if it will not start.
@@ -305,16 +281,13 @@ Beside each tile, a tab shows how far the run has got. **Hide graphs** in the le
   grey is wrong answers, and a flat stretch is an animal that has stopped working.
 - **The bar** divides the trials offered into correct, wrong and no answer.
 
-Click a tile or star for the box's panel (trial flow, outcome mix, recent strobes); Esc returns.
-
-![A box's full panel for remy1: Back to overview at the top left, Start/Stop/Reset and Rolling accuracy 0.70 at the top right, the Trial flow diagram with the current state lit, the P(right | odor) chart, the Outcome mix, Live metrics and Recent strobes](images/box-panel.webp)
+Click a tile or star for the box's panel: the [trial flow](TASKS.md#live-token) with the current step
+lit, the outcome mix and the recent strobes. Esc returns.
 
 ### When a box shows ERROR or a board disconnects
 
 The box's run stops, its star turns red, and its tile says why. Everything recorded is safe; the other
 boxes keep running.
-
-![Mission Control with box 2 in ERROR: its tile reads "Finished — board disconnected" while boxes 1, 3 and 4 keep running, and box 2's star in the sidebar is red](images/mission-control-error.webp)
 
 <img src="images/box-tile-error.webp" alt="Close-up of the box 2 tile: a red ERROR chip and the line 'Finished — board disconnected'" width="420">
 
@@ -323,8 +296,6 @@ boxes keep running.
 3. On the **Dashboard**, click the box's star, then **Acknowledge** under **Connection**. **Reset** never
    clears an error.
 4. Ask the lab manager before restarting that animal; **Start** begins a new file and keeps the old one.
-
-![Box 2's Debug panel opened from the Dashboard: the header says fault, the Connection section shows error and the message "board disconnected or unreadable" next to an Acknowledge button, and the console lists the board's last events](images/debug-error.webp)
 
 ```mermaid
 flowchart TD
@@ -354,10 +325,6 @@ RHX's defaults (5000–5002) unless changed in RHX; **Sync inputs**, the RHX **D
 sync cable plugs into (the rig's wiring needs a sync channel); and **Defaults** for saving and spike
 thresholds.
 
-![The Recording tab: Connection showing connected to RHX 3.5.0 with a Disconnect button, the TCP ports (5100–5102 on this demo machine), and the Sync inputs table giving each box a digital input DIN 1 to DIN 6](images/recording-tab.webp)
-
-![The Recording defaults: Save location, File format set to Per signal type, switches for Save wideband, Save spikes, Spike snapshots, Save highpass and Save lowpass, and Set thresholds at 5 × RMS, negative](images/recording-defaults.webp)
-
 **Each recording session:**
 
 1. In RHX, open **Network → Remote TCP Control** and press **Connect** on the **Commands** tab.
@@ -373,11 +340,11 @@ thresholds.
    Sites that are open, shorted or changed since that animal's last measurement are listed and outlined
    on its probe map. The bounds are on the Recording tab under **Electrode checks**.
 5. Click **Configure RHX and continue**. Nothing reaches RHX before this, except an impedance measurement.
-
-![Set Up the Recording: Readiness 5/5 ready, Saving with the save location and a space warning, Using your defaults with Edit for this session, and the first box under Boxes set to Record on Port A, channels 0 to 15](images/record-step.webp)
-
 6. **Start All** starts RHX first; if it cannot, no box starts. The **Sync check** counts each box's
    pulses **matched**, **missed** and **stray**; *no pulses arriving* means the sync cable is not reaching RHX.
+
+   <img src="images/sync-check.webp" alt="The Recording panel in Mission Control: REC, the recording's file name and 30 kS/s, and the Sync check table with matched, missed and stray pulse counts for boxes 1 to 4" width="420">
+
 7. Each recorded box's card shows its probe map, every site flashing as it fires, and how many sites
    are active so far; open a box's panel for a larger one. If a box's sites all go silent or all turn
    noisy for 20 seconds, its card shows a **tether alarm**: check that animal's tether, headstage and
@@ -386,10 +353,6 @@ thresholds.
 8. **End Session** and **Run more animals** let each box finish its trial (up to 45 seconds) under **ENDING**;
    **End now** stops RHX without waiting.
 
-![Mission Control during a recording: the Recording panel with REC, the file name, the format and 30 kS/s, and a SYNC CHECK table of matched, missed and stray pulses per box; each box tile shows port A, its DIN and channel range](images/mission-control-recording.webp)
-
-![A recording ending: the panel reads ENDING, "Finishing the trials in flight" and "Waiting for box 1, 4, 5 to finish its trial…", with an End now button; boxes 2 and 3 already show Finished](images/mission-control-ending.webp)
-
 There is one recording per round; the Record step returns for each new round.
 
 ## Checking a box
@@ -397,10 +360,9 @@ There is one recording per round; the Record step returns for each new round.
 Debug Mode tests a box outside a session; **nothing in it is recorded as data**. Click a box's star or
 **Boxes** row on the Dashboard; leave with Esc.
 
-![Debug Mode for box 3 resting on BOX_Utility: board, port and sketch at the top left, Connection with Open and Reset, the Console, and on the right the Sketch section with Flash…, Full self-test, Prime, and switches for the fluid lines, vacuum, trial light and twelve odor lines](images/debug-mode.webp)
-
 - **Connection**: **Open**/**Close** the console, **Reset**, **Acknowledge** an `ERROR`.
-- **Sketch**: **Flash…** puts a program on the box. For a task, **Send START** runs it with live metrics
+- **Sketch**: **Flash…** lists the sketches by group; pick one and click **Flash**, and the upload log
+  ends with *Flashed*. For a task, **Send START** runs it with live metrics
   and **End** stops it; **Return to baseline** restores the utility sketch.
 - **Utility controls** (utility sketch, console open): a switch and pulse per wired channel, **All off**,
   **Full self-test**, and **Prime**, which runs water down the chosen lines for the chosen seconds.
@@ -408,23 +370,13 @@ Debug Mode tests a box outside a session; **nothing in it is recorded as data**.
   (a laser's) switch fires short test pulses, never a steady beam. Sensors read 1 while blocked or pressed.
 - **Console**: everything the board prints; type a command and press Enter.
 
-![The Flash box 3 dialog: sketches grouped under Olfactory behavior, Utility, Discrimination and Shaping, with Refresh and Flash buttons](images/flash-dialog.webp)
-
-![The Flash dialog after flashing: the upload log ending in "avrdude done", and the message "Flashed. The console is open — the sketch's output is in it." with a Close button](images/flash-progress.webp)
-
-![Debug Mode running 2-Odor Discrimination on box 3: Send START, End and Return to baseline, the console streaming events, and a LIVE section with rolling accuracy, two metrics, a P(right | odor) chart and the outcome mix](images/debug-run.webp)
-
 **Which physical box is which:** click **Test** on its **Rig** row; **Handshake** then reads *speaks
 Ephymeris — READY received*.
-
-![The Rig tab after pressing Test on box 1: its Handshake column reads "speaks Ephymeris — READY received" while the other boxes say not tested](images/rig-test.webp)
 
 ### Commanding every box
 
 **Command all boxes**, under the Dashboard's **Boxes** list, is Debug Mode for the whole rig; **nothing
 here is recorded as data**.
-
-![Command all boxes: the sky pulled back to all six stars, each ringed as targeted, above a bottom panel with Targets (a card per box), Connection (baud rate and Open consoles), Controls and the merged Console](images/debug-all.webp)
 
 - **Targets**: commands go to the ringed boxes; click a star or card to toggle one.
 - **Connection**, **Controls** and **Sketch** work as in one box's panel, on every target at once. A
@@ -443,9 +395,6 @@ Each run gives an animal a `.tsv` (written live), a `.json` and a `.mat`, in the
 ### Analytics
 
 1. Open **Analytics** and click a cohort.
-
-![The Analytics landing: "Pick a cohort to study its recorded sessions" above a list of four cohorts, each with its planet, its animals and cages, its session count and when it last ran](images/analytics-landing.webp)
-
 2. The **Sessions** rail is spaced by date. Below it: **Animals**, **Strategy space**, **Accuracy** under a
    **Task** strip, **Effort** and **Outcome mix**. Each chart has a **how to read this** note.
 3. Hover an animal to highlight it everywhere; click to keep it.
@@ -459,13 +408,11 @@ Each run gives an animal a `.tsv` (written live), a `.json` and a `.mat`, in the
    `events` folder for your own analysis.
 5. **All cohorts** goes back.
 
-![Analytics for one cohort: the Data folder, Rescan, Recover, Tidy records and Export cohort PNG buttons at the top, the Sessions rail spaced by date, the Task strip changing from Shaping to 2-Odor Discrimination, and the Accuracy chart with response and rewarded lines](images/analytics-cohort.webp)
+In **Strategy space** each point is one animal in one session, placed by its accuracy at the left well
+(across) and the right well (up): *discriminating* is right at both, *chance* is the middle, and a point
+pulled toward one well alone is a side bias.
 
-![The lower half of the cohort view: Effort and Outcome mix bar charts, the Animals rail with a trend and score for each animal, the Strategy space scatter, and Overall accuracy per animal](images/analytics-panels.webp)
-
-![One session selected: the Session summary for 2O-Bdisc_14 with a row per animal giving start, end, trials sampled and percent rewarded for all trials and for each odor, and the Export session PNG button](images/analytics-session.webp)
-
-![One session with remy3 picked out: per-animal condition cards with outcome bars, the Strategy within this session chart tracing remy3's trials, and Rolling accuracy per trial](images/analytics-session-detail.webp)
+<img src="images/strategy-space.webp" alt="The Strategy space chart: one point per animal per session, most gathered near the corner labelled discriminating, a few near chance, with the corners reversed and side bias empty" width="480">
 
 **Accuracy** is pooled across conditions, so an animal that always picks one side sits at chance (0.5).
 *Rewarded* accuracy (it earned the water) differs from *response* accuracy (it chose the right side).
@@ -490,8 +437,6 @@ At the top of Analytics, all refused while a box is running:
 | **Recover** | The app or computer crashed during a session: rebuilds `.json`/`.mat` from the `.tsv` |
 | **Re-derive** | An update's notes say the trial table changed; strobes are never touched |
 | **Tidy records** | One session became two records, or a record has no data. It previews first and never touches a data file |
-
-![The Tidy session records window: "No data file is moved, renamed or deleted", a preview listing one empty record to remove, and the Cancel and Tidy buttons](images/tidy-records.webp)
 
 ## Keeping the log
 
@@ -604,7 +549,7 @@ usually means no internet; ask the lab manager for the installer.
 | *Waiting for the backend*, *The backend isn't connected*, *sidecar down* | Close Ephymeris and open it again |
 | **backup failing** | Tell the lab manager; the refresh button in Settings copies what is missing once the drive is back |
 | The dock shows **Ended unexpectedly** | **Run more animals** (same day), **View in Analytics** or **Close out**, then **Recover** in Analytics |
-| No box will start, flash or light, and the message is about the rig's wiring | See [below](#when-the-rigs-wiring-does-not-load) |
+| No box will start, flash or light, and the message is about the rig's wiring (RIG108) | See [below](#when-the-rigs-wiring-does-not-load) |
 
 ### When the rig's wiring does not load
 

@@ -1,8 +1,8 @@
-version: 2.0.0-beta.13
+version: 2.0.0-beta.19
 files:
-  - url: https://github.com/Chase-NJ/Ephymeris/releases/download/v2.0.0-beta.13/Ephymeris-2.0.0-beta.13-setup.exe
-    sha512: Kux4G+YePKWrq+wjN44SkHRuyqU7hAhnjSZiGuZPE8bXYBRbz4uxQr4GpjV5eIdskW6Fercfex0nr61TRvOyug==
-    size: 249925723
-path: https://github.com/Chase-NJ/Ephymeris/releases/download/v2.0.0-beta.13/Ephymeris-2.0.0-beta.13-setup.exe
-sha512: Kux4G+YePKWrq+wjN44SkHRuyqU7hAhnjSZiGuZPE8bXYBRbz4uxQr4GpjV5eIdskW6Fercfex0nr61TRvOyug==
-releaseDate: '2026-11-19T20:23:50.806Z'
+  - url: https://github.com/Chase-NJ/Ephymeris/releases/download/v2.0.0-beta.19/Ephymeris-2.0.0-beta.19-setup.exe
+    sha512: uzv06emTgmH/tg6ltI563ARCboiEeF7jPvb6XPb2QUH+Mxit2PEFCgK7Nm0eHd6H0JWChQlEOOhNKIj608WloA==
+    size: 250441178
+path: https://github.com/Chase-NJ/Ephymeris/releases/download/v2.0.0-beta.19/Ephymeris-2.0.0-beta.19-setup.exe
+sha512: uzv06emTgmH/tg6ltI563ARCboiEeF7jPvb6XPb2QUH+Mxit2PEFCgK7Nm0eHd6H0JWChQlEOOhNKIj608WloA==
+releaseDate: '2026-11-23T16:14:09.726Z'

@@ -244,6 +244,45 @@ async def sidecar(tmp_path: Path):
 
 
 @compiled
+def test_a_checkout_s_simulators_are_built_once_under_a_digest_of_their_sources(tmp_path, monkeypatch):
+    monkeypatch.delenv(build.BUNDLED_ENV, raising=False)
+    monkeypatch.setattr(build, "_checkout_dir", lambda: tmp_path)
+    builds = []
+    compile_them = build.build
+    monkeypatch.setattr(build, "build", lambda out, firmware: (builds.append(out), compile_them(out, firmware))[1])
+
+    found = build.locate("antibias")
+    assert found.parent.parent == tmp_path and found.parent.name == build._digest(FIRMWARE)
+    assert {build.locate(mode).parent for mode in build.MODES} == {found.parent}
+    assert len(builds) == 1
+    assert [p.name for p in tmp_path.iterdir()] == [found.parent.name]
+
+
+@compiled
+def test_a_build_that_loses_the_race_uses_the_winner_s_simulators(tmp_path, monkeypatch):
+    """Two processes compile at once (the suite's workers did, on Windows, and
+    one ran an executable the other was still writing): the later rename finds
+    the folder taken, and must leave it alone."""
+    monkeypatch.delenv(build.BUNDLED_ENV, raising=False)
+    monkeypatch.setattr(build, "_checkout_dir", lambda: tmp_path)
+    winner = tmp_path / build._digest(FIRMWARE)
+    compile_them = build.build
+
+    def another_process_finishes_first(out, firmware):
+        compile_them(out, firmware)
+        shutil.copytree(out, winner, ignore=shutil.ignore_patterns("src"))
+        marks.update({path.name: path.stat().st_mtime_ns for path in winner.iterdir()})
+
+    marks: dict[str, int] = {}
+    monkeypatch.setattr(build, "build", another_process_finishes_first)
+
+    assert build.locate("pool") == build.executable(winner, "pool")
+    assert {path.name: path.stat().st_mtime_ns for path in winner.iterdir()} == marks
+    assert [p.name for p in tmp_path.iterdir()] == [winner.name]
+    assert simulate(a_task(), Animal(), 7).ended_by == ENDED_BY_TRIALS
+
+
+@compiled
 async def test_simulate_and_stress_test_answer_over_the_wire(sidecar: LiveSidecar) -> None:
     task = a_task().to_json()
     one = await sidecar.call("tasks.simulate", definition=task, animal={}, seed=17)

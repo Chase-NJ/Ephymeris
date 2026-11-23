@@ -6,8 +6,9 @@ executable per selection mode because the sketch picks its selector with `#if`.
 
 An installed app ships them (`scripts/package-resources.mjs` runs this module)
 and the shell names their folder in `EPHYMERIS_BUNDLED_TASK_SIM`. A source
-checkout compiles them on first use into `sidecar/build/tasksim`, and again
-whenever a source is newer than the executables.
+checkout compiles them on first use into `sidecar/build/tasksim/<digest of the
+sources>`, so a changed source builds a new folder and a built one is never
+rewritten.
 
     python -m ephymeris_sidecar.simulation --out DIR
 
@@ -20,10 +21,12 @@ for it to find.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 from pathlib import Path
 
@@ -163,12 +166,37 @@ def _checkout_dir() -> Path:
     return Path(__file__).resolve().parents[2] / "build" / "tasksim"
 
 
-def _stale(directory: Path, firmware: Path) -> bool:
-    built = [executable(directory, mode) for mode in MODES]
-    if not all(path.is_file() for path in built):
-        return True
-    oldest = min(path.stat().st_mtime for path in built)
-    return any(path.stat().st_mtime > oldest for path in sources(firmware) if path.is_file())
+def _digest(firmware: Path) -> str:
+    """What a checkout's simulators are filed under: a digest of everything they
+    are compiled from, so a changed source is a new folder, never a rewrite."""
+    seen = hashlib.sha256()
+    for path in sources(firmware):
+        seen.update(path.name.encode("utf-8"))
+        seen.update(path.read_bytes() if path.is_file() else b"")
+    return seen.hexdigest()[:16]
+
+
+def _complete(directory: Path) -> bool:
+    return all(executable(directory, mode).is_file() for mode in MODES)
+
+
+def _build_once(directory: Path, firmware: Path) -> None:
+    """Compile into a folder of this build's own, then put it in place in one
+    rename. Several processes may want the simulators at once (the test suite's
+    workers do): each compiles privately, one rename wins, and no executable is
+    ever written where another process could be running it."""
+    directory.parent.mkdir(parents=True, exist_ok=True)
+    private = Path(tempfile.mkdtemp(dir=directory.parent, prefix=f"{directory.name}.building."))
+    try:
+        build(private, firmware)
+        shutil.rmtree(private / "src", ignore_errors=True)
+        try:
+            os.rename(private, directory)
+        except OSError:
+            if not _complete(directory):
+                raise
+    finally:
+        shutil.rmtree(private, ignore_errors=True)
 
 
 def locate(mode: str) -> Path:
@@ -187,10 +215,10 @@ def locate(mode: str) -> Path:
     firmware, _ = discovery.library_root()
     if firmware is None:
         raise SimulatorUnavailable("No firmware folder to compile the task simulator from.")
-    directory = _checkout_dir()
+    directory = _checkout_dir() / _digest(firmware)
     with _building:
-        if _stale(directory, firmware):
-            build(directory, firmware)
+        if not _complete(directory):
+            _build_once(directory, firmware)
     return executable(directory, mode)
 
 

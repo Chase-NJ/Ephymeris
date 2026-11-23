@@ -164,6 +164,10 @@ tests could not see them.
 - **Two `os.replace` calls onto one name must take turns.** Windows refuses the second (WinError
   32/5/13), so `write_atomic` holds a per-target lock.
 - **Don't fsync a directory on Windows**; it can't.
+- **Never write a file another process may be running or reading: build it elsewhere and rename it into
+  place.** The task simulator's checkout build wrote its executables where the suite's four workers each
+  compiled and ran them, and Windows refused the launch of one still being written (WinError 32). A lock
+  in one process says nothing to the next.
 - **Kill test processes with `Popen.kill()`, not `os.kill(SIGKILL)`.** SIGKILL doesn't exist on
   Windows, so a test using it never ran there.
 - **Stamp test file times in whole seconds.** NTFS keeps 100 ns, exFAT 10 ms and FAT32 1 s; finer stamps

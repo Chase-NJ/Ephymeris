@@ -1,0 +1,30 @@
+{
+ "cumulative": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+ "dialect": "legacy",
+ "document_digest": "e3f3deff27b59e7419343098831cf8d576ba0d942af23e40937c267bae14c57b",
+ "header": [],
+ "header_digest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+ "rolling": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+ "source": "unavailable",
+ "stop_reason": null,
+ "strobe_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+ "strobes": 0,
+ "summary": {
+  "clean": false,
+  "conditions": [],
+  "detail": null,
+  "durationMs": null,
+  "engagement": null,
+  "excludedByDefault": false,
+  "metrics": [],
+  "outcomes": null,
+  "overall": null,
+  "seed": null,
+  "status": "no-metrics",
+  "stopReason": "recovered from a legacy log",
+  "totalEvents": 0
+ },
+ "tape": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+ "trail": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+ "trials": 0
+}

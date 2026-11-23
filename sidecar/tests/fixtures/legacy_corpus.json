@@ -1,6 +1,6 @@
 {
  "": {
-  "digest": "4b1ece0404b229d74981c4d95d12056278403ac5c06f8a8bfe500cb720c12691",
+  "digest": "73fedb728db7a0f16919dadb675e944b56e5d0d4c0cdffbae354111ba2f1c85e",
   "runs": 3,
   "totals": {
    "engagement.odorDelivered": 6,
@@ -21,7 +21,7 @@
   }
  },
  "GRGL 2-Odor": {
-  "digest": "d0c17ef98cefe5ee93152c7c3d367388a08d0bf16938b6b564b784618015f80b",
+  "digest": "fb4468b74efb3258ed5f560824ef0847fc787a9a6147f5787594649aeaa0de5b",
   "runs": 14,
   "totals": {
    "engagement.odorDelivered": 2500,
@@ -42,7 +42,7 @@
   }
  },
  "GRGL 2-Odor EZ": {
-  "digest": "93acbb9078220a03d2fdfc8ab7ed14bbf76b6678861419500f47ecf8cda18c1a",
+  "digest": "6e6a11f1086ab80650d31a9d15485903c7f1e124f3596d50d2fb430ae0f5ab03",
   "runs": 57,
   "totals": {
    "engagement.odorDelivered": 9709,
@@ -63,7 +63,7 @@
   }
  },
  "GRGL 4-Odor": {
-  "digest": "9fae09d5bc8858e88c3586834cc3d16f284254ed56cb990cc4a25693d92c2760",
+  "digest": "e217638fd39e6744f70767335d2cddfa88dc5e06d2ab24a2db2dc1fa22833072",
   "runs": 40,
   "totals": {
    "engagement.odorDelivered": 8145,
@@ -84,7 +84,7 @@
   }
  },
  "GRGL 4-Odor EZ": {
-  "digest": "4af3d91aa80db7ce58457eb499cc8436e0ab5506a53a0ca6be3d1daa1fda9314",
+  "digest": "dc2c33df18837b45429e12562e27beb9429d22ac7e420346677fed9b85ed0b3d",
   "runs": 52,
   "totals": {
    "engagement.odorDelivered": 10908,
@@ -105,7 +105,7 @@
   }
  },
  "GRGL 6-Odor": {
-  "digest": "99862baa1d052ebb82aea70ae422431f05e995342b7bec95f3ac6eab6535ef72",
+  "digest": "9b850b7e7c617af7552703b3c9e6ab8f52b9715f8c86f08c871027c4420d73e9",
   "runs": 73,
   "totals": {
    "engagement.odorDelivered": 12263,
@@ -126,7 +126,7 @@
   }
  },
  "GRGL 6-Odor EZ": {
-  "digest": "bf631db8da9607d35f6458afbae56ac396d393671222a3a0782746e2fdb4c298",
+  "digest": "2fbff14cb6b4cb6e6d2596c6d6007611ff82f72fb99dc3ac67254667cddcf037",
   "runs": 73,
   "totals": {
    "engagement.odorDelivered": 13183,
@@ -147,7 +147,7 @@
   }
  },
  "GRGL 8-Odor EZ": {
-  "digest": "a2c7e4c41b0e78b29d8f50aba5fa0699f86fe176dd44420e54d864c98e6591d4",
+  "digest": "53712bd0ed0e4fe9aef297dd696bcc8707522f8c17bbbbd1146eee5c8a4819aa",
   "runs": 52,
   "totals": {
    "engagement.odorDelivered": 7972,
@@ -168,7 +168,7 @@
   }
  },
  "GRGL 8-Odor remy3": {
-  "digest": "42282b91e4efb3548f0c08944aa701636d0309952e8a0c37888e5c9878587ccc",
+  "digest": "b47c9dc00d8647052ddd3589b53aad31e341b6dc1f9f65842d5c2034fc069495",
   "runs": 2,
   "totals": {
    "engagement.odorDelivered": 345,
@@ -189,7 +189,7 @@
   }
  },
  "GRGL_2-Odor": {
-  "digest": "fc83c2e58da69bb456e1a2d2722d8cc4e490bf9dc3f85eb4243f4d0b72c74666",
+  "digest": "637234a4ab5a79dd5067c57c1c0dd17065cdf9661fbd55bb12010598fd126be6",
   "runs": 225,
   "totals": {
    "engagement.odorDelivered": 33430,
@@ -210,7 +210,7 @@
   }
  },
  "GRGL_2-Odor_EZ": {
-  "digest": "056947dca05a39c4d8ee60808be16eadb0ba8699a939cf85ab190be172fce40c",
+  "digest": "fb328f3cf55d01693dadf4fc8a28c39198f3e0b339b02587b749bd80af698f13",
   "runs": 67,
   "totals": {
    "engagement.odorDelivered": 8988,
@@ -231,7 +231,7 @@
   }
  },
  "Shape - L": {
-  "digest": "a8f119ed653b5a2808774f4bff621fb81d7035ae1e9f0fd1bf952ce0ea3bdeac",
+  "digest": "ac8835f7571c5edebab25c177c6479325f50a38934bbf3ba482033098d6900ed",
   "runs": 36,
   "totals": {
    "engagement.odorDelivered": 5426,
@@ -252,7 +252,7 @@
   }
  },
  "Shape - R": {
-  "digest": "29a1b6634a523c8461353d472ffccdc4bba69fa76a626a6663e082317e1de741",
+  "digest": "c5d2d3620cb24a820bebb9e79410ea674261e0f442a0cae9f14bffa731407466",
   "runs": 38,
   "totals": {
    "engagement.odorDelivered": 2389,

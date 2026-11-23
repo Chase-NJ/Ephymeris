@@ -56,7 +56,7 @@ from .tasks import profile as task_profile
 from .tasks.start_command import build_start_command
 from .debug_run import DebugRuns
 from .ports.flashing import FlashJob, FlashQueue, Origin
-from .ports.handler import DEFAULT_LINE_ENDING, OutputLine
+from .ports.handler import DEFAULT_LINE_ENDING, OpenSerial, OutputLine
 from .ports.manager import PortManager
 from .ports.states import PortState
 from .protocol import Cmd, ErrCode, Evt, event
@@ -95,9 +95,11 @@ class _LifecycleRig:
 
 class Application:
     def __init__(
-        self, server: SidecarServer, data_dir: Path, *, tool: BoardTool | None = None
+        self, server: SidecarServer, data_dir: Path, *, tool: BoardTool | None = None,
+        open_serial: OpenSerial | None = None,
     ) -> None:
         self.server = server
+        self._open_serial = open_serial
         self.settings = SidecarSettings()
         #: When this process started, as far as `sweep_parts` is concerned: no
         #: part written since then can be an earlier run's.
@@ -411,6 +413,7 @@ class Application:
             on_state_change=self._handle_state_change,
             on_output=self._handle_output,
             on_presence=self._handle_presence,
+            open_serial=self._open_serial,
         )
         self.ports.start()
         self.flashes = FlashQueue(

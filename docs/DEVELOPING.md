@@ -52,6 +52,7 @@ run reads the sketch library from `firmware/` in place ([its README](../firmware
 |---|---|
 | `npm start` / `npm run electron:dev` | The full app: regenerates the protocol, compiles `electron/`, starts Vite on 1420, opens the window. Arguments after `--` go to Electron |
 | `npm run dev` | Vite alone on port 1420, for a plain-browser preview |
+| `cd sidecar && .venv/bin/python -m tests.sim --data-dir ../.sim` | The real sidecar on a simulated rig (six boards, instant flashes, a GRGL session on `START`), for running the app with no hardware. It prints the two `localStorage` lines that point a browser preview at it. The boards ignore parameter values and nothing is compiled |
 | `npm run build` / `npm run build:electron` | `tsc` and a production Vite build into `dist/`; compile `electron/` into `dist-electron/` |
 | `npm run check` | Protocol mirrors current, both typechecks, unit tests; all run even after a failure |
 | `npm run test` / `test:watch` | Vitest over `src/lib/**` and `electron/**` |
@@ -82,6 +83,8 @@ faked), and set up the database through its repositories, not raw SQL. The guard
 | `test_migrations.py` | Old schemas, pinned as literals, upgrade |
 | `test_analytics_*.py` | Inference matches the declared profile; metric definitions; `analytics/stream/` stays pure; the score cache version moves with every input |
 | `test_legacy_pin.py`, `test_legacy_corpus.py` | The legacy adapter on a pinned corpus and, with `EPHYMERIS_CORPUS`, a real archive. Never regenerate their fixtures from the code under test |
+| `test_golden.py` | Real run files in `tests/golden/runs/`, one per sketch and per way a run ends, still read and score as captured. Recapture (`python -m tests.golden capture`) only from a commit whose output you trust |
+| `test_structure.py` | One module opens SQLite; a port moves only behind `assert_transition`; the count of `#` comments only goes down |
 | `test_taskdef.py`, `test_strobes.py` | The strobe vocabulary against the firmware's names; vocabulary edits |
 | `test_flash_queue.py`, `test_debug_flash.py` | One compile at a time; restores upload one at a time; Debug flashes survive the baseline |
 | `test_writer.py` | Kills a child mid-write to prove the `.tsv` crash guarantee |

@@ -1,0 +1,25 @@
+{
+ "cumulative": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+ "document_digest": "d4bad4eafef12e651841ad5e3b86e13b9eee2a90828c5ecf0515ef0930fbc1af",
+ "rolling": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+ "source": "unavailable",
+ "status": "ok",
+ "summary": {
+  "clean": false,
+  "conditions": [],
+  "detail": null,
+  "durationMs": 6187552,
+  "engagement": null,
+  "excludedByDefault": false,
+  "metrics": [],
+  "outcomes": null,
+  "overall": null,
+  "seed": null,
+  "status": "no-metrics",
+  "stopReason": "STOP ALL pressed",
+  "totalEvents": 1431
+ },
+ "tape": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+ "trail": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+ "trials": 0
+}

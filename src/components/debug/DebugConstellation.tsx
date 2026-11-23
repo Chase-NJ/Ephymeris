@@ -64,6 +64,7 @@ export function DebugConstellation({
   onHover,
   ringed,
   frameAll = false,
+  paused = false,
 }: {
   selected: number | null;
   onSelect: (box: number | null) => void;
@@ -98,6 +99,8 @@ export function DebugConstellation({
   ringed?: ReadonlySet<number>;
   /** The whole constellation is the subject (`SceneIntent.frameAll`). */
   frameAll?: boolean;
+  /** Covered by the route's own opaque layer: draw nothing (`SharedCanvas`). */
+  paused?: boolean;
 }) {
   const { settings } = useSettings();
   const bound = useBoundBoxes();
@@ -211,6 +214,7 @@ export function DebugConstellation({
       onHover={onHover ? (id) => onHover(id === null ? null : Number(id)) : undefined}
       ringIds={ringed ? new Set([...ringed].map(String)) : undefined}
       frameAll={frameAll}
+      paused={paused}
     />
   );
 }

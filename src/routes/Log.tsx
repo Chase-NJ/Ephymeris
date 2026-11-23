@@ -58,7 +58,7 @@ const RIFFLE_MS = 130;
  * one way to choose a cohort across the app.
  *
  * **Three layers, each with its own way in and out.** The sky holds still and
- * is only ever covered, never turned off. The desk is an opaque layer over it, so it fades: an
+ * is only ever covered, then paused. The desk is an opaque layer over it, so it fades: an
  * opaque layer with no exit sits over the next screen for the whole of the
  * transition and then vanishes (`AppShell`'s rule that every route owns its
  * exit). What lies on the desk, the cohort list or a notebook, crossfades
@@ -328,12 +328,16 @@ export function Log() {
   );
   const selected = byId.get(currentId) ?? null;
 
+  // The sky draws while the desk comes up over it, then stops: under an
+  // opaque desk it is only work. Paused, never turned to zero opacity: the
+  // next route would pay to show it again (`SkyBackdrop`).
+  const [covered, setCovered] = useState(false);
+
   return (
     <div className="relative h-full">
       {/* Every route mounts a constellation (`ARCHITECTURE.md#one-sky`), and
-          never inside anything that fades. Covered by the desk, never turned
-          to zero: the next route would pay to show it again. */}
-      <SkyBackdrop opacity={DENSE_SKY_OPACITY} />
+          never inside anything that fades. */}
+      <SkyBackdrop opacity={DENSE_SKY_OPACITY} paused={covered} />
       <motion.div
         aria-hidden
         className="desk absolute inset-y-0 right-0 -left-sidebar"
@@ -341,6 +345,12 @@ export function Log() {
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         transition={springPanel}
+        onAnimationStart={() => setCovered(false)}
+        onAnimationComplete={(target) => {
+          if (typeof target === "object" && "opacity" in target && target.opacity === 1) {
+            setCovered(true);
+          }
+        }}
       />
       <motion.div
         initial={{ opacity: 0, y: 8 }}

@@ -1,4 +1,5 @@
 import { Canvas } from "@react-three/fiber";
+import { useIsPresent } from "framer-motion";
 import {
   createContext,
   useContext,
@@ -69,6 +70,20 @@ import { ProgramWarmth } from "./ProgramWarmth";
  *
  *    The canvas is still created lazily on first use, so the app never builds a
  *    GL context it hasn't needed yet.
+ *  - **A view that comes back takes the stage back.** Routes are keyed by
+ *    path, so leaving a page and returning before its exit has finished
+ *    brings back the same, still-mounted view rather than a new one: its
+ *    container never changes, and the acquire that follows a container would
+ *    never run. Meanwhile the page it left for has stolen the stage, and that
+ *    page's unmount was a genuine release, the expensive kind below, leaving
+ *    the returned view with no canvas at all. So a view re-acquires when its
+ *    presence turns back on (Dashboard → Log → Dashboard inside half a second).
+ *  - **The owner can pause it.** A view whose sky is covered by an opaque layer
+ *    of its own (the Log's desk) parks the frameloop without letting go of the
+ *    stage: nothing is unmounted, nothing leaves the document, and the canvas
+ *    keeps its last frame. A pause belongs to the owner's token, so the next
+ *    view's `acquire` always runs, and a late pause from a view already
+ *    leaving cannot freeze the sky of the one that replaced it.
  */
 
 /** What a view holds while it owns the stage. Opaque outside this module. */
@@ -83,6 +98,8 @@ interface StageSnapshot {
   attached: boolean;
   /** Once true, the canvas exists forever; false means never yet needed. */
   everAttached: boolean;
+  /** The owner has parked the frameloop while it keeps the stage. */
+  paused: boolean;
 }
 
 export class ConstellationStage {
@@ -95,6 +112,7 @@ export class ConstellationStage {
     content: null,
     attached: false,
     everAttached: false,
+    paused: false,
   };
   private listeners = new Set<() => void>();
 
@@ -119,12 +137,18 @@ export class ConstellationStage {
    * Passing the content here collapses that to a single update, so the first
    * frame the canvas draws after re-attaching is already this view's.
    */
-  acquire(container: HTMLElement, content: ReactNode): StageToken {
+  acquire(container: HTMLElement, content: ReactNode, paused = false): StageToken {
     const token: StageToken = { id: this.nextId++ };
     this.current = token;
     container.appendChild(this.host);
-    this.update({ attached: true, everAttached: true, content });
+    this.update({ attached: true, everAttached: true, content, paused });
     return token;
+  }
+
+  /** Park or resume the frameloop — only honoured for the owner. */
+  setPaused(token: StageToken, paused: boolean): void {
+    if (this.current !== token || this.snapshot.paused === paused) return;
+    this.update({ paused });
   }
 
   /** Render `content` inside the canvas — only honoured for the owner. */
@@ -138,7 +162,7 @@ export class ConstellationStage {
     if (this.current !== token) return;
     this.current = null;
     this.host.remove();
-    this.update({ content: null, attached: false });
+    this.update({ content: null, attached: false, paused: false });
   }
 
   subscribe = (listener: () => void): (() => void) => {
@@ -170,10 +194,12 @@ export function useConstellationStage(): ConstellationStage {
  * A view's half of the handoff. Returns a ref callback for the tracking
  * element; while that element is mounted, the stage lives inside it and
  * renders `content`. Attach/steal/release are layout effects, so the canvas
- * has moved before the frame paints.
+ * has moved before the frame paints. `paused` parks the frameloop while this
+ * view still owns the stage.
  */
 export function useConstellationView(
   content: ReactNode,
+  paused = false,
 ): (el: HTMLDivElement | null) => void {
   const stage = useConstellationStage();
   const [container, setContainer] = useState<HTMLDivElement | null>(null);
@@ -185,15 +211,27 @@ export function useConstellationView(
   // stage from itself.
   const contentRef = useRef(content);
   contentRef.current = content;
+  const pausedRef = useRef(paused);
+  pausedRef.current = paused;
 
   useLayoutEffect(() => {
     if (!container) return;
-    token.current = stage.acquire(container, contentRef.current);
+    token.current = stage.acquire(container, contentRef.current, pausedRef.current);
     return () => {
       if (token.current) stage.release(token.current);
       token.current = null;
     };
   }, [stage, container]);
+
+  const isPresent = useIsPresent();
+  const wasPresent = useRef(isPresent);
+  useLayoutEffect(() => {
+    const returned = isPresent && !wasPresent.current;
+    wasPresent.current = isPresent;
+    if (returned && container) {
+      token.current = stage.acquire(container, contentRef.current, pausedRef.current);
+    }
+  }, [stage, container, isPresent]);
 
   // Every render, after the acquire above on the first one: the content
   // closes over the view's live props (nodes, focus callbacks), so it must be
@@ -201,6 +239,10 @@ export function useConstellationView(
   useLayoutEffect(() => {
     if (token.current) stage.setContent(token.current, content);
   });
+
+  useLayoutEffect(() => {
+    if (token.current) stage.setPaused(token.current, paused);
+  }, [stage, paused]);
 
   return setContainer;
 }
@@ -246,9 +288,9 @@ function StageCanvas({ stage }: { stage: ConstellationStage }) {
       // mount (Scene.tsx), so only the lens is configured here.
       camera={{ fov: 45 }}
       dpr={[1, 2]}
-      // Parked, not unmounted, while no view owns the stage: the context and
-      // every compiled program stay warm for the next attach.
-      frameloop={snapshot.attached ? "always" : "never"}
+      // Parked, not unmounted, while no view owns the stage or its owner has
+      // paused it: the context and every compiled program stay warm.
+      frameloop={snapshot.attached && !snapshot.paused ? "always" : "never"}
       // Transparent, deliberately: the scene composites over the app's own
       // Void background and drifting 2D starfield, so the browser reads as a
       // window onto the app's sky rather than a separate framed tile. The

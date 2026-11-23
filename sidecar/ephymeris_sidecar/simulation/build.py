@@ -125,8 +125,13 @@ def check(directory: Path) -> None:
     table += [row, "STOP_AT 1", "LIMIT 600000", "END", "START SEED=1"]
     for mode in MODES:
         path = executable(directory, mode)
-        process = subprocess.Popen([str(path)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                   text=True, encoding="utf-8")
+        try:
+            process = subprocess.Popen([str(path)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                       text=True, encoding="utf-8")
+        except OSError as error:
+            raise SimulatorUnavailable(
+                f"The task simulator at {path} did not run a trial: it would not start ({error})."
+            ) from error
         overdue = threading.Timer(30.0, process.kill)
         overdue.start()
         heard: list[str] = []

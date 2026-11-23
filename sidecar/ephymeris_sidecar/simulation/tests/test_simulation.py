@@ -7,6 +7,7 @@ simulator's headers to the firmware run everywhere.
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 from collections import Counter
@@ -214,13 +215,24 @@ def test_a_staged_simulator_is_built_run_through_a_trial_and_found_by_its_folder
     assert simulate(a_task(), Animal(), 7).ended_by == ENDED_BY_TRIALS
 
 
-@compiled
-def test_a_simulator_that_does_not_run_fails_the_check(tmp_path):
+def test_a_simulator_that_will_not_start_fails_the_check(tmp_path):
+    """What a Windows runner made of a file that is no program: the launch
+    itself raises, before there is a process to listen to."""
+    for mode in build.MODES:
+        fake = build.executable(tmp_path, mode)
+        fake.write_bytes(b"not a program\x00\x01\x02")
+        fake.chmod(0o755)
+    with pytest.raises(simulation.SimulatorUnavailable, match="did not run a trial: it would not start"):
+        build.check(tmp_path)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the stand-in simulator is a shell script")
+def test_a_simulator_that_starts_and_runs_no_trial_fails_the_check(tmp_path):
     for mode in build.MODES:
         fake = build.executable(tmp_path, mode)
         fake.write_text("#!/bin/sh\necho READY\n", encoding="utf-8")
         fake.chmod(0o755)
-    with pytest.raises(simulation.SimulatorUnavailable, match="did not run a trial"):
+    with pytest.raises(simulation.SimulatorUnavailable, match="did not run a trial: READY"):
         build.check(tmp_path)
 
 

@@ -1,0 +1,171 @@
+# rat: remy1
+# serial_port: COM5
+# session_id: fl_hold-remedial_02
+# sketch: GRGL 6-Odor
+# num_trials: 1000
+# error_delay: 20000
+# standard_iti: 4000
+# no_poke_hold_timeout: 8000
+# nogo_well_poll: 2000
+# priming_delay: 1000
+# polling_rate: 5
+# correction_left: 0
+# correction_right: 0
+# lazy_rat_delay: 6000
+# lazy_escalation: false
+# lazy_escalate_step: 6000
+# lazy_delay_max: 30000
+# lazy_escalation_stage: 0
+# bias_window: 20
+# max_consecutive_side: 10
+# debias_strength: 0.5
+# p_side_min: 0.02
+# p_side_max: 0.98
+# block_size: 30
+# reward_time_1: 100
+# reward_time_2: 100
+# reward_time_3: 100
+# reward_time_4: 100
+# reward_time_5: 150
+# reward_time_6: 150
+# pool_weight_1: 1
+# pool_weight_2: 1
+# pool_weight_3: 1
+# pool_weight_4: 1
+# pool_weight_5: 1
+# pool_weight_6: 1
+# odor_poke_hold: 500
+# fluid_well_hold: 400
+# fluid_well_poll: 2000
+# odor_port_timeout: 4000
+# trial_seed: 660719466
+# host_seed: 660719466
+# task_profile: {"config":[{"default":1000,"group":"Session","help":"The session ends after this many completed trials.","label":"Session trial cap","max":1000,"metadataKey":"num_trials","min":1,"step":10,"type":"int","unit":"trials","wireKey":"NT"},{"default":20000,"group":"Trial timing","help":"Timeout served after a wrong well or no response.","label":"Error timeout","max":120000,"metadataKey":"error_delay","min":0,"step":500,"type":"int","unit":"ms","wireKey":"ERR"},{"default":4000,"group":"Trial timing","help":"Intertrial interval after a correct response.","label":"Correct-trial ITI","max":120000,"metadataKey":"standard_iti","min":0,"step":500,"type":"int","unit":"ms","wireKey":"ITI"},{"default":8000,"group":"Trial timing","help":"Timeout served when the rat pokes but fails to hold.","label":"Hold-failure timeout","max":120000,"metadataKey":"no_poke_hold_timeout","min":0,"step":500,"type":"int","unit":"ms","wireKey":"NPH"},{"default":2000,"group":"Trial timing","help":"How long a response must be withheld on a no-go trial.","label":"No-go withhold window","max":60000,"metadataKey":"nogo_well_poll","min":0,"step":250,"type":"int","unit":"ms","wireKey":"NWP"},{"default":1000,"group":"Trial timing","help":"Odor is primed this long before the trial light comes on.","label":"Odor priming delay","max":10000,"metadataKey":"priming_delay","min":0,"step":100,"type":"int","unit":"ms","wireKey":"PRM"},{"advanced":true,"default":5,"group":"Trial timing","help":"How often the beam sensors are read. Lower is finer-grained and busier.","label":"IR polling interval","max":50,"metadataKey":"polling_rate","min":1,"step":1,"type":"int","unit":"ms","wireKey":"POL"},{"default":0,"group":"Correction trials","help":"Leading correction trials on LEFT-correct trials: an error repeats the same side until the budget is spent.","label":"Left correction budget","max":500,"metadataKey":"correction_left","min":0,"step":1,"type":"int","unit":"trials","wireKey":"CL"},{"default":0,"group":"Correction trials","help":"Leading correction trials on RIGHT-correct trials: an error repeats the same side until the budget is spent.","label":"Right correction budget","max":500,"metadataKey":"correction_right","min":0,"step":1,"type":"int","unit":"trials","wireKey":"CR"},{"default":6000,"group":"Abstention penalty","help":"Base timeout when the rat never pokes within the odor-port window.","label":"Failure-to-initiate penalty","max":120000,"metadataKey":"lazy_rat_delay","min":0,"step":500,"type":"int","unit":"ms","wireKey":"LZD"},{"default":false,"group":"Abstention penalty","help":"Grow the penalty with each consecutive abstention.","label":"Escalating lazy penalty","metadataKey":"lazy_escalation","type":"bool","wireKey":"LAZY"},{"advanced":true,"default":6000,"group":"Abstention penalty","help":"Added per consecutive abstention while escalation is on.","label":"Escalation step","max":60000,"metadataKey":"lazy_escalate_step","min":0,"step":500,"type":"int","unit":"ms","wireKey":"LZS"},{"advanced":true,"default":30000,"group":"Abstention penalty","help":"Upper bound on the escalated penalty.","label":"Escalation ceiling","max":300000,"metadataKey":"lazy_delay_max","min":0,"step":1000,"type":"int","unit":"ms","wireKey":"LZM"},{"default":0,"group":"Abstention penalty","help":"Escalation stays off until this stage is reached, so an animal still being eased in is never escalated against.","label":"Escalation starts at stage","max":0,"metadataKey":"lazy_escalation_stage","min":0,"step":1,"type":"int","wireKey":"LZG"},{"default":20,"group":"Anti-bias selection","help":"Sliding window of recent expressed choices the estimate is drawn from.","label":"Bias window","max":32,"metadataKey":"bias_window","min":1,"step":1,"type":"int","unit":"trials","wireKey":"BW"},{"default":10,"group":"Anti-bias selection","help":"Hard cap on consecutive identical correct sides.","label":"Max same-side run","max":50,"metadataKey":"max_consecutive_side","min":1,"step":1,"type":"int","unit":"trials","wireKey":"MCS"},{"advanced":true,"default":0.5,"group":"Anti-bias selection","help":"How hard selection pushes against the rat's recent bias.","label":"Debias strength","max":1.0,"metadataKey":"debias_strength","min":0.0,"step":0.05,"type":"float","wireKey":"DBS"},{"advanced":true,"default":0.02,"group":"Anti-bias selection","help":"Selection never goes fully deterministic, which would itself be a cue.","label":"P(side) floor","max":0.5,"metadataKey":"p_side_min","min":0.0,"step":0.01,"type":"float","wireKey":"PMN"},{"advanced":true,"default":0.98,"group":"Anti-bias selection","help":"Selection never goes fully deterministic, which would itself be a cue.","label":"P(side) ceiling","max":1.0,"metadataKey":"p_side_max","min":0.5,"step":0.01,"type":"float","wireKey":"PMX"},{"advanced":true,"default":30,"group":"Trial pool","help":"Weights are enforced exactly within each block, then the block is shuffled. Ignored while anti-bias selection is on.","label":"Pool block size","max":200,"metadataKey":"block_size","min":1,"step":5,"type":"int","unit":"trials","wireKey":"BS"},{"default":100,"group":"Reward volume","help":"Solenoid open time when this condition is answered correctly \u2014 its reward volume. Overrides the trial-table row for this run.","label":"Reward \u2014 GR-Sandalwood","max":5000,"metadataKey":"reward_time_1","min":0,"step":10,"type":"int","unit":"ms","wireKey":"RW1"},{"default":100,"group":"Reward volume","help":"Solenoid open time when this condition is answered correctly \u2014 its reward volume. Overrides the trial-table row for this run.","label":"Reward \u2014 GL-Orange","max":5000,"metadataKey":"reward_time_2","min":0,"step":10,"type":"int","unit":"ms","wireKey":"RW2"},{"default":100,"group":"Reward volume","help":"Solenoid open time when this condition is answered correctly \u2014 its reward volume. Overrides the trial-table row for this run.","label":"Reward \u2014 GR-Vanilla","max":5000,"metadataKey":"reward_time_3","min":0,"step":10,"type":"int","unit":"ms","wireKey":"RW3"},{"default":100,"group":"Reward volume","help":"Solenoid open time when this condition is answered correctly \u2014 its reward volume. Overrides the trial-table row for this run.","label":"Reward \u2014 GL-Patch Ouli","max":5000,"metadataKey":"reward_time_4","min":0,"step":10,"type":"int","unit":"ms","wireKey":"RW4"},{"default":150,"group":"Reward volume","help":"Solenoid open time when this condition is answered correctly \u2014 its reward volume. Overrides the trial-table row for this run.","label":"Reward \u2014 GR-Pine Needle","max":5000,"metadataKey":"reward_time_5","min":0,"step":10,"type":"int","unit":"ms","wireKey":"RW5"},{"default":150,"group":"Reward volume","help":"Solenoid open time when this condition is answered correctly \u2014 its reward volume. Overrides the trial-table row for this run.","label":"Reward \u2014 GL-Green Apple","max":5000,"metadataKey":"reward_time_6","min":0,"step":10,"type":"int","unit":"ms","wireKey":"RW6"},{"advanced":true,"default":1,"group":"Trial pool","help":"Relative share of trials presenting this type. Ignored while anti-bias selection is on.","label":"Weight \u2014 GR-Sandalwood","max":100,"metadataKey":"pool_weight_1","min":0,"step":1,"type":"int","wireKey":"PW1"},{"advanced":true,"default":1,"group":"Trial pool","help":"Relative share of trials presenting this type. Ignored while anti-bias selection is on.","label":"Weight \u2014 GL-Orange","max":100,"metadataKey":"pool_weight_2","min":0,"step":1,"type":"int","wireKey":"PW2"},{"advanced":true,"default":1,"group":"Trial pool","help":"Relative share of trials presenting this type. Ignored while anti-bias selection is on.","label":"Weight \u2014 GR-Vanilla","max":100,"metadataKey":"pool_weight_3","min":0,"step":1,"type":"int","wireKey":"PW3"},{"advanced":true,"default":1,"group":"Trial pool","help":"Relative share of trials presenting this type. Ignored while anti-bias selection is on.","label":"Weight \u2014 GL-Patch Ouli","max":100,"metadataKey":"pool_weight_4","min":0,"step":1,"type":"int","wireKey":"PW4"},{"advanced":true,"default":1,"group":"Trial pool","help":"Relative share of trials presenting this type. Ignored while anti-bias selection is on.","label":"Weight \u2014 GR-Pine Needle","max":100,"metadataKey":"pool_weight_5","min":0,"step":1,"type":"int","wireKey":"PW5"},{"advanced":true,"default":1,"group":"Trial pool","help":"Relative share of trials presenting this type. Ignored while anti-bias selection is on.","label":"Weight \u2014 GL-Green Apple","max":100,"metadataKey":"pool_weight_6","min":0,"step":1,"type":"int","wireKey":"PW6"},{"default":500,"group":"Holds & windows","help":"Hold required before odor delivery, and again while sampling.","label":"Odor poke hold","max":5000,"metadataKey":"odor_poke_hold","min":0,"step":10,"type":"int","unit":"ms","wireKey":"S0P"},{"default":400,"group":"Holds & windows","help":"Hold required at the correct well before reward.","label":"Fluid well hold","max":5000,"metadataKey":"fluid_well_hold","min":0,"step":10,"type":"int","unit":"ms","wireKey":"S0H"},{"default":2000,"group":"Holds & windows","help":"Window to respond after successful odor sampling.","label":"Response window","max":60000,"metadataKey":"fluid_well_poll","min":0,"step":250,"type":"int","unit":"ms","wireKey":"S0W"},{"default":4000,"group":"Holds & windows","help":"Window to poke the odor port after the trial light comes on.","label":"Odor port window","max":60000,"metadataKey":"odor_port_timeout","min":0,"step":250,"type":"int","unit":"ms","wireKey":"S0O"}],"controls":[],"kind":"behavior","legacyNames":[],"liveMetrics":[{"alternateCode":248,"id":"p_correct_1","label":"P(right well | GR-Sandalwood)","successCode":249,"triggerCode":101,"windowSize":20},{"alternateCode":249,"id":"p_correct_2","label":"P(left well | GL-Orange)","successCode":248,"triggerCode":103,"windowSize":20},{"alternateCode":248,"id":"p_correct_3","label":"P(right well | GR-Vanilla)","successCode":249,"triggerCode":102,"windowSize":20},{"alternateCode":249,"id":"p_correct_4","label":"P(left well | GL-Patch Ouli)","successCode":248,"triggerCode":104,"windowSize":20},{"alternateCode":248,"id":"p_correct_5","label":"P(right well | GR-Pine Needle)","successCode":249,"triggerCode":105,"windowSize":20},{"alternateCode":249,"id":"p_correct_6","label":"P(left well | GL-Green Apple)","successCode":248,"triggerCode":106,"windowSize":20}],"strobes":{"101":"ODOR_1_ON","102":"ODOR_2_ON","103":"ODOR_3_ON","104":"ODOR_4_ON","105":"ODOR_5_ON","106":"ODOR_6_ON","107":"ODOR_7_ON","108":"ODOR_8_ON","109":"ODOR_9_ON","110":"DUMMY_SOLENOID_CLICK_1","111":"DUMMY_SOLENOID_CLICK_2","112":"DUMMY_SOLENOID_CLICK_3","113":"DUMMY_SOLENOID_CLICK_4","114":"ODOR_10_ON","115":"ODOR_11_ON","116":"ODOR_12_ON","221":"START_SESSION","222":"LIGHTS_ON","223":"LAZY_RAT","224":"ODOR_POKE","225":"ODOR_UNPOKE_EARLY","226":"ODOR_UNPOKE","233":"LIGHTS_OFF","234":"INVALID_TRIAL","242":"END_CORRECT_ITI","243":"END_INCORRECT_ITI","246":"END_SESSION","247":"ODOR_OFF","248":"WATER_POKE_L","249":"WATER_POKE_R","250":"WATER_UNPOKE_EARLY_L","251":"WATER_UNPOKE_EARLY_R","252":"FLUID_L","253":"FLUID_R","254":"WATER_UNPOKE_L","255":"WATER_UNPOKE_R","256":"WATER_POKE_NONE","257":"WATER_POKE_ERROR_L","258":"WATER_POKE_ERROR_R","262":"RESP_OMIT","357":"STOP_FLUID_G_R","369":"STOP_FLUID_G_L"},"taskName":"GRGL 6-Odor"}
+221	0
+222	1001
+223	5006
+233	5007
+234	11007
+222	12008
+223	16013
+233	16014
+234	22014
+222	23015
+garbage
+12	
+1234	5
+7 99
+223	27020
+233	27021
+234	33021
+222	34022
+223	38027
+233	38028
+234	44028
+222	45029
+223	49034
+233	49035
+234	55035
+222	56036
+223	60041
+233	60042
+234	66042
+222	67043
+223	71048
+233	71049
+234	77049
+222	78050
+223	82055
+233	82056
+234	88056
+222	89057
+223	93062
+233	93063
+234	99063
+222	100064
+223	104069
+233	104070
+234	110070
+222	111071
+223	115076
+233	115077
+234	121077
+222	122078
+223	126082
+233	126084
+234	132084
+222	133085
+224	134475
+103	134977
+247	135480
+226	135641
+233	135642
+248	135933
+252	136336
+369	136436
+254	140253
+242	144253
+#no-space: x
+
+5	-3
+9	10	extra
+222	145254
+223	149255
+233	149255
+234	155255
+222	156256
+224	157712
+225	157798
+233	157799
+234	165799
+222	166800
+223	170805
+233	170806
+234	176806
+222	177807
+223	181807
+233	181808
+234	187808
+222	188809
+223	192814
+233	192815
+234	198815
+222	199816
+223	203820
+233	203822
+234	209822
+222	210823
+223	214827
+233	214828
+234	220829
+222	221830
+223	225834
+233	225835
+234	231836
+222	232837
+223	236841
+233	236842
+234	242843
+222	243844
+223	247848
+233	247849
+234	253850
+222	254850
+223	258855
+233	258856
+234	264857
+222	265857
+223	269862
+233	269863
+234	275864
+222	276864
+223	280869
+233	280870
+234	286871
+222	287871
+223	291876
+233	291877
+234	297878
+222	298878
+223	302883
+233	302884

@@ -82,7 +82,8 @@ sequenceDiagram
 ```
 
 With no shell (a browser dev preview), `src/lib/ws/client.ts` reads the endpoint from `localStorage` key
-`ephymeris:endpoint`, for a sidecar run with `--token` and `--no-parent-watch`.
+`ephymeris:endpoint`, for a sidecar run with `--token` and `--no-parent-watch`. There the settings are kept in
+`localStorage` key `ephymeris:settings` (`src/lib/shell/none.ts`), since no shell holds `settings.json`.
 
 > [!IMPORTANT]
 > **Orphan protection is load-bearing.** The shell holds the sidecar's stdin open, the sidecar exits on EOF,

@@ -1,0 +1,101 @@
+{
+ "cumulative": "3a51850103891b7981e6d74d7a0229dde1eecfd9fdf4ad552fb764b38c396734",
+ "document_digest": "77b72a515cdf11dc2398935f59bd64644f94f8695c9dd8c217ced0f9fc149db2",
+ "rolling": "a7b0d628aa2f882233f9b5be6570db20613840d7ab2cd4ec76cdbc09352f4898",
+ "source": "inferred",
+ "status": "ok",
+ "summary": {
+  "clean": false,
+  "conditions": [
+   {
+    "answerSide": null,
+    "label": "P(right well | odor 1)",
+    "metricId": "inferred_101",
+    "outcomes": {
+     "aborted": 1,
+     "administered": 0,
+     "falseAlarm": 0,
+     "holdFailed": 0,
+     "noResponse": 0,
+     "pResponse": null,
+     "pRewarded": null,
+     "pSide": null,
+     "responded": 0,
+     "responseHigh": null,
+     "responseLow": null,
+     "rewarded": 0,
+     "rewardedHigh": null,
+     "rewardedLow": null,
+     "sideHigh": null,
+     "sideLow": null,
+     "trials": 1,
+     "unpaid": 0,
+     "withheld": 0,
+     "wrongWell": 0
+    },
+    "triggerCode": 101
+   }
+  ],
+  "detail": null,
+  "durationMs": 106721,
+  "engagement": {
+   "engagedHigh": 0.35388,
+   "engagedLow": 0.014865,
+   "noPoke": 11,
+   "odorDelivered": 1,
+   "pDelivered": 0.083333,
+   "pEngaged": 0.083333,
+   "pokeAborted": 0,
+   "poked": 1,
+   "presented": 12
+  },
+  "excludedByDefault": false,
+  "metrics": [
+   {
+    "answerSide": "right",
+    "counted": 0,
+    "excluded": 1,
+    "hits": 0,
+    "id": "inferred_101",
+    "label": "P(right well | odor 1)",
+    "lowConfidence": true,
+    "pSession": null,
+    "pWindow": null,
+    "triggered": 1,
+    "wilsonHigh": null,
+    "wilsonLow": null,
+    "windowSize": 20
+   }
+  ],
+  "outcomes": {
+   "aborted": 1,
+   "administered": 0,
+   "falseAlarm": 0,
+   "holdFailed": 0,
+   "noResponse": 0,
+   "pResponse": null,
+   "pRewarded": null,
+   "pSide": null,
+   "responded": 0,
+   "responseHigh": null,
+   "responseLow": null,
+   "rewarded": 0,
+   "rewardedHigh": null,
+   "rewardedLow": null,
+   "sideHigh": null,
+   "sideLow": null,
+   "trials": 1,
+   "unpaid": 0,
+   "withheld": 0,
+   "wrongWell": 0
+  },
+  "overall": null,
+  "seed": null,
+  "status": "ok",
+  "stopReason": "recovered from a legacy log",
+  "totalEvents": 40
+ },
+ "tape": "f8b57b9c1e5bf8210bb07b979abb9d7aaaaf603b308cb98d01b276ddbdc0c798",
+ "trail": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+ "trials": 1
+}

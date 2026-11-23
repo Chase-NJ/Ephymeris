@@ -85,7 +85,7 @@ def change_lines(changes: Iterable[dict[str, Any]], names: dict[str, str]) -> li
             )
         if change.get("boxChange"):
             parts.append(f"box {change['boxChange']['from']} → {change['boxChange']['to']}")
-        # As on screen (`lib/logbook/changes.ts`): changed values in full, a
+        # As on screen (`features/logbook/changes.ts`): changed values in full, a
         # setting only one side has counted — across a task change most are.
         params = change.get("params", [])
         added = [p["key"] for p in params if p["from"] is None and p["to"] is not None]

@@ -326,7 +326,7 @@ int main() {
   //     (docs/TASKS.md#the-length-cap). The CRC is the standard CRC-32 -- the
   //     one Python's zlib.crc32 computes -- over the accepted tokens exactly as
   //     received, joined by single spaces. The literals below come from zlib,
-  //     not from this code; sidecar/tests/test_start_command.py pins the same ones.
+  //     not from this code; sidecar/ephymeris_sidecar/tasks/tests/test_start_command.py pins the same ones.
   { ParamAudit a; crc32Feed(a, "123456789", 9);
     assert(a.finalCrc() == 0xCBF43926UL); }                           // the CRC-32 check value
   { ParamAudit a;

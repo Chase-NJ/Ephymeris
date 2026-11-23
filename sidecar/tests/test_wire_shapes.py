@@ -226,7 +226,7 @@ async def test_flash_queue_status_matches_schema() -> None:
 
     from ephymeris_sidecar.boards.tool import FlashFailed
 
-    from .test_flash_queue import Rig, run_a_session
+    from ephymeris_sidecar.ports.tests.test_flash_queue import Rig, run_a_session
 
     rig = Rig()
     await rig.ports.poll_once()

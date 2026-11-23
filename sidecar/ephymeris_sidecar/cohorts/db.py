@@ -14,7 +14,7 @@ does not work that way: the same statement leaves an existing table untouched,
 so the column would appear only on databases created after the change. That is
 what `MIGRATIONS` is for, and why `connect` reads `PRAGMA user_version` before
 it writes it. Bump `SCHEMA_VERSION`, update `SCHEMA`, add the migration, and
-extend `tests/test_migrations.py`.
+extend `cohorts/tests/test_migrations.py`.
 
 Indexes live in their own `INDEXES` block, applied *after* migrations rather
 than alongside the tables. An index on a column a migration is about to add

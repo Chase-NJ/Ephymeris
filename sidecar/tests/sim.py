@@ -29,9 +29,9 @@ from ephymeris_sidecar.app import Application
 from ephymeris_sidecar.boards.tool import BoardTool, DetectedBoard
 from ephymeris_sidecar.server import SidecarServer
 
-from . import test_grammar2 as grammar
-from .live_sidecar import LiveSidecar, animal, settings
-from .scripted_board import ScriptedBoard
+from ephymeris_sidecar.analytics.tests import test_grammar2 as grammar
+from tests.live_sidecar import LiveSidecar, animal, settings
+from tests.scripted_board import ScriptedBoard
 
 BOXES = range(1, 7)
 ANNOUNCE = "INTERP=1\r\nSTREAM=2\r\nREADY\r\n"

@@ -1,0 +1,475 @@
+import { Target } from "lucide-react";
+import { useMemo, type ReactNode } from "react";
+
+import { ChartDots, type Dot } from "@/components/charts/ChartDots";
+import { ChartFrame } from "@/components/charts/ChartFrame";
+import { PanelTitle } from "@/components/charts/PanelTitle";
+import { DrawOn } from "@/components/charts/DrawOn";
+import { HowToRead } from "@/components/charts/HowToRead";
+import { HIGHLIGHT_DRAW, useRevealOnView } from "@/components/charts/reveal";
+import {
+  UnitChart,
+  ribbon,
+  segmentsWithGaps,
+  unitX,
+  unitY,
+  type Point,
+} from "@/components/charts/UnitChart";
+import { useHasHighlight, useIsHighlighted } from "./context";
+import type { AnalyticsSummary } from "./types";
+import {
+  OUTCOME_STYLE,
+  REWARDED_ACCURACY,
+  RESPONSE_ACCURACY,
+  accuracyBand,
+  animalAccuracyLines,
+  describeTaskMix,
+  poolOutcomes,
+  sessionOutcomePoints,
+  sessionSlot,
+  taskChanges,
+  taskLabels,
+  type AnimalAccuracyPoint,
+  type SessionOutcomePoint,
+} from "./view";
+
+/**
+ * Cohort accuracy across sessions — **both strictnesses on one plot**
+ * (`DATA.md#pooling-across-tasks`).
+ *
+ * The two figures are the same question asked of the *choice* and of the
+ * *drop*: response accuracy is legacy P(hit), the correct well answered
+ * first, held or not, over the trials answered at all
+ * (`ANALYTICS.md#rewarded-and-response-accuracy`); rewarded
+ * accuracy counts only the earned drop, over every trial administered. The
+ * response line is always the higher of the pair, and **the shaded gap
+ * between them is what the choice did not turn into fluid**: a broken hold, a
+ * reward drawn against, or a trial not answered. It is filled in the colour
+ * the session cards give a hold failure.
+ *
+ * Line colours come from the summary's own vocabulary, not fresh ones:
+ * rewarded is `OUTCOME_STYLE.rewarded` and response is Starlight — exactly
+ * the pair the session summary header prints those two figures in.
+ *
+ * Pooled across **every task** (`DATA.md#pooling-across-tasks`); the task strip above shares these x
+ * slots and each dashed rule here marks where the dominant task changed.
+ * Hovering an animal fades the cohort figure back and overlays that animal's
+ * own pair of lines.
+ */
+
+/** Below this many trials a point is drawn hollow (`ANALYTICS.md#uncertainty`): answered ones for the
+ *  response line, administered ones for the rewarded line. */
+const THIN = 30;
+
+/** The viewBox's y extent — a coordinate space, not a size. */
+const HEIGHT = 54;
+
+/** Taller than the old stacked pair's individual plots: this is now the
+ *  page's headline figure and it carries two lines and a band. */
+const PLOT_PX = 172;
+
+/** Seconds the pooled figures take to lay their history down. */
+const DRAW = 0.9;
+
+const RESPONSE_COLOR = "var(--color-starlight)";
+const REWARDED_COLOR = OUTCOME_STYLE.rewarded.fill;
+const GAP_COLOR = OUTCOME_STYLE.holdFailed.fill;
+
+export function AccuracyTrend(props: {
+  summary: AnalyticsSummary;
+  colors: Map<string, string>;
+  /** Changes when the data does — remounts the body, so the reveal re-arms
+   *  and again waits to be seen. */
+  revealKey: string;
+}) {
+  return <TrendBody key={props.revealKey} {...props} />;
+}
+
+function TrendBody({
+  summary,
+  colors,
+}: {
+  summary: AnalyticsSummary;
+  colors: Map<string, string>;
+}) {
+  const { ref, seen } = useRevealOnView();
+  const points = useMemo(() => sessionOutcomePoints(summary), [summary]);
+  const labels = useMemo(() => taskLabels(summary), [summary]);
+  const animalLines = useMemo(
+    () => ({
+      response: animalAccuracyLines(summary, points, RESPONSE_ACCURACY, THIN),
+      rewarded: animalAccuracyLines(summary, points, REWARDED_ACCURACY, THIN),
+    }),
+    [summary, points],
+  );
+
+  if (points.length === 0) {
+    return (
+      <Panel>
+        <p className="text-[12px] leading-relaxed text-static">
+          No accuracy data yet. A run only reports it if its task&rsquo;s
+          profile declares the reward vocabulary.
+        </p>
+      </Panel>
+    );
+  }
+
+  const rewardedLine: Array<Point | null> = points.map((point, index) =>
+    point.outcomes.pRewarded === null
+      ? null
+      : { x: sessionSlot(index, points.length), y: point.outcomes.pRewarded },
+  );
+  const responseLine: Array<Point | null> = points.map((point, index) =>
+    point.outcomes.pResponse === null
+      ? null
+      : { x: sessionSlot(index, points.length), y: point.outcomes.pResponse },
+  );
+  const rewardedDots: Dot[] = points.flatMap((point, index) =>
+    point.outcomes.pRewarded === null
+      ? []
+      : [
+          {
+            x: sessionSlot(index, points.length),
+            y: point.outcomes.pRewarded,
+            hollow: point.outcomes.administered < THIN,
+          },
+        ],
+  );
+  const responseDots: Dot[] = points.flatMap((point, index) =>
+    point.outcomes.pResponse === null
+      ? []
+      : [
+          {
+            x: sessionSlot(index, points.length),
+            y: point.outcomes.pResponse,
+            hollow: point.outcomes.responded < THIN,
+          },
+        ],
+  );
+  // The band between the two lines — right answers not paid, and trials not
+  // answered — drawn as area so
+  // it reads as a quantity rather than as a distance to be estimated. Split
+  // wherever either figure is missing, like the lines themselves (`ANALYTICS.md#edge-cases`).
+  const gapBands = holdGapBands(points);
+
+  const overall = poolOutcomes(summary.runs);
+  const changes = taskChanges(points).map((change) => ({
+    from: { x: change.x, y: 0 },
+    to: { x: change.x, y: 1 },
+  }));
+
+  return (
+    <Panel>
+      <div ref={ref}>
+        <ChartFrame
+          icon={Target}
+          title={
+            <PanelTitle
+              name="Accuracy"
+              note="response and rewarded · pooled across the cohort, every task"
+            />
+          }
+          yTop="1.0"
+          yBottom="0.0"
+          xLeft={points[0]!.session.date}
+          xRight={points[points.length - 1]!.session.date}
+        >
+          <div className="relative" style={{ height: PLOT_PX }}>
+            <PooledLayer>
+              <UnitChart
+                height={HEIGHT}
+                className="h-full w-full"
+                references={[{ y: 0.5 }, ...changes]}
+              >
+                <DrawOn viewBox={[0, 0, 100, HEIGHT]} seen={seen} duration={DRAW}>
+                  {/* The hold gap first, then the confidence ribbons, then the
+                      lines — SVG paints in order and the area belongs behind
+                      everything that outlines it. */}
+                  {gapBands.map((band, index) => (
+                    <polygon
+                      key={`gap-${index}`}
+                      points={ribbon(band, HEIGHT)}
+                      fill={GAP_COLOR}
+                      fillOpacity={0.16}
+                      stroke="none"
+                    />
+                  ))}
+                  {accuracyBand(points, RESPONSE_ACCURACY).map((band, index) => (
+                    <polygon
+                      key={`rband-${index}`}
+                      points={ribbon(band, HEIGHT)}
+                      fill={RESPONSE_COLOR}
+                      fillOpacity={0.07}
+                      stroke="none"
+                    />
+                  ))}
+                  {accuracyBand(points, REWARDED_ACCURACY).map((band, index) => (
+                    <polygon
+                      key={`wband-${index}`}
+                      points={ribbon(band, HEIGHT)}
+                      fill={REWARDED_COLOR}
+                      fillOpacity={0.09}
+                      stroke="none"
+                    />
+                  ))}
+                  {segmentsWithGaps(responseLine).map((segment, index) => (
+                    <polyline
+                      key={`resp-${index}`}
+                      points={segment.points
+                        .map((p) => `${unitX(p.x)},${unitY(p.y, HEIGHT)}`)
+                        .join(" ")}
+                      fill="none"
+                      stroke={RESPONSE_COLOR}
+                      strokeWidth={1.4}
+                      strokeLinejoin="round"
+                      strokeDasharray={segment.dashed ? "2 2" : undefined}
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  ))}
+                  {segmentsWithGaps(rewardedLine).map((segment, index) => (
+                    <polyline
+                      key={`rew-${index}`}
+                      points={segment.points
+                        .map((p) => `${unitX(p.x)},${unitY(p.y, HEIGHT)}`)
+                        .join(" ")}
+                      fill="none"
+                      stroke={REWARDED_COLOR}
+                      strokeWidth={1.6}
+                      strokeLinejoin="round"
+                      strokeDasharray={segment.dashed ? "2 2" : undefined}
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  ))}
+                </DrawOn>
+              </UnitChart>
+              <ChartDots dots={responseDots} color={RESPONSE_COLOR} seen={seen} spread={DRAW} />
+              <ChartDots dots={rewardedDots} color={REWARDED_COLOR} seen={seen} spread={DRAW} />
+            </PooledLayer>
+            {animalLines.response.map((entry) => (
+              <AnimalPairLines
+                key={entry.animalId}
+                animalId={entry.animalId}
+                color={colors.get(entry.animalId) ?? "var(--color-series-1)"}
+                response={entry.points}
+                rewarded={
+                  animalLines.rewarded.find((r) => r.animalId === entry.animalId)
+                    ?.points ?? []
+                }
+              />
+            ))}
+            {/* Invisible per-session hit targets, one column each, carrying
+                native titles. */}
+            <svg
+              viewBox={`0 0 100 ${HEIGHT}`}
+              preserveAspectRatio="none"
+              className="absolute inset-0 h-full w-full"
+              aria-hidden
+            >
+              {points.map((point, index) => {
+                const half = points.length > 1 ? 100 / (points.length - 1) / 2 : 50;
+                const centre = sessionSlot(index, points.length) * 100;
+                const left = Math.max(0, centre - half);
+                return (
+                  <rect
+                    key={point.session.id}
+                    x={left}
+                    y={0}
+                    width={Math.min(100, centre + half) - left}
+                    height={HEIGHT}
+                    fill="transparent"
+                  >
+                    <title>{describePoint(point, labels)}</title>
+                  </rect>
+                );
+              })}
+            </svg>
+          </div>
+        </ChartFrame>
+
+        {/* Legend and cohort totals in one row, `OutcomeMix`'s idiom: the
+            swatch that names a colour carries the number it resolves to. */}
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[9px] text-static/70">
+          <span className="flex items-center gap-1">
+            <span className="inline-block h-[3px] w-3 rounded-[1px]" style={{ background: RESPONSE_COLOR }} />
+            response — correct well answered first, of the trials answered
+            {overall.pResponse !== null && (
+              <span className="tabular-nums text-static">{pct(overall.pResponse)}</span>
+            )}
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="inline-block h-[3px] w-3 rounded-[1px]" style={{ background: REWARDED_COLOR }} />
+            rewarded — fluid delivered
+            {overall.pRewarded !== null && (
+              <span className="tabular-nums text-static">{pct(overall.pRewarded)}</span>
+            )}
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="inline-block size-2 rounded-[2px]" style={{ background: GAP_COLOR, opacity: 0.5 }} />
+            gap — answered right but not paid (a broken hold, a reward drawn against), or not answered
+            {overall.pResponse !== null && overall.pRewarded !== null && (
+              <span className="tabular-nums text-static">
+                {pct(overall.pResponse - overall.pRewarded)}
+              </span>
+            )}
+          </span>
+          <span className="ml-auto tabular-nums">
+            {points.length} session{points.length === 1 ? "" : "s"} ·{" "}
+            {overall.administered} administered
+          </span>
+        </div>
+
+        <HowToRead>
+          <p>
+            The response line scores the <em className="not-italic text-static">choice</em>: the
+            correct well answered first, hold or not, out of the trials the animal answered at all — the
+            same figure for the old tasks and the new ones. The rewarded line scores the{" "}
+            <em className="not-italic text-static">drop</em>: fluid actually delivered, out of every trial
+            whose odor was sampled. Response is always the higher of the pair, and the shaded gap between
+            them is what the choice did not turn into fluid: a broken hold, a reward drawn against, or a
+            trial not answered. An animal learning the discrimination while still fumbling the hold shows
+            as the gap widening, not as either line moving alone.
+          </p>
+          <p className="mt-1">
+            Faint ribbons are 95% Wilson intervals; hollow dots mark sessions
+            under {THIN} trials — answered, for the response line; administered, for the rewarded one —
+            read loosely. Dashed vertical
+            rules are where the cohort&rsquo;s dominant task changed (the strip
+            above names them): a cliff at one is a task change, not forgetting.
+          </p>
+        </HowToRead>
+      </div>
+    </Panel>
+  );
+}
+
+/**
+ * The area between the response and rewarded lines, split on missing data.
+ * Built from the same points as the lines so the three can never disagree
+ * about where a session sits or where a gap in the record is.
+ */
+function holdGapBands(
+  points: SessionOutcomePoint[],
+): Array<Array<{ x: number; low: number; high: number }>> {
+  const out: Array<Array<{ x: number; low: number; high: number }>> = [];
+  let current: Array<{ x: number; low: number; high: number }> = [];
+  points.forEach((point, index) => {
+    const low = point.outcomes.pRewarded;
+    const high = point.outcomes.pResponse;
+    if (low === null || high === null) {
+      if (current.length >= 2) out.push(current);
+      current = [];
+      return;
+    }
+    current.push({ x: sessionSlot(index, points.length), low, high });
+  });
+  if (current.length >= 2) out.push(current);
+  return out;
+}
+
+/**
+ * Fades the pooled figure back while any animal is highlighted. A wrapper
+ * component rather than a hook in the panel, so a hover re-renders this
+ * `<div>` and the overlay layers — never the chart or the reveal animation
+ * behind them.
+ */
+function PooledLayer({ children }: { children: ReactNode }) {
+  const dimmed = useHasHighlight();
+  return (
+    <div className="relative h-full" style={{ opacity: dimmed ? 0.25 : 1 }}>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * One animal's own response/rewarded pair, visible only while highlighted.
+ * Both lines wear the animal's identity colour — which line is which stays
+ * readable because response is structurally the upper one — with the rewarded
+ * line thinner, echoing the pooled pair's weighting.
+ */
+function AnimalPairLines({
+  animalId,
+  color,
+  response,
+  rewarded,
+}: {
+  animalId: string;
+  color: string;
+  response: Array<AnimalAccuracyPoint | null>;
+  rewarded: Array<AnimalAccuracyPoint | null>;
+}) {
+  const highlighted = useIsHighlighted(animalId);
+  if (!highlighted) return null;
+
+  const dots: Dot[] = [...response, ...rewarded].flatMap((point) =>
+    point === null ? [] : [{ x: point.x, y: point.y, hollow: point.thin }],
+  );
+  return (
+    <>
+      <svg
+        viewBox={`0 0 100 ${HEIGHT}`}
+        preserveAspectRatio="none"
+        className="pointer-events-none absolute inset-0 h-full w-full"
+        aria-hidden
+      >
+        <DrawOn viewBox={[0, 0, 100, HEIGHT]} duration={HIGHLIGHT_DRAW}>
+          {[
+            { line: response, width: 1.6 },
+            { line: rewarded, width: 1.0 },
+          ].map(({ line, width }, which) =>
+            segmentsWithGaps(line).map((segment, index) =>
+              segment.points.length < 2 ? null : (
+                <polyline
+                  key={`${which}-${index}`}
+                  points={segment.points
+                    .map((p) => `${unitX(p.x)},${unitY(p.y, HEIGHT)}`)
+                    .join(" ")}
+                  fill="none"
+                  stroke={color}
+                  strokeWidth={width}
+                  strokeLinejoin="round"
+                  strokeDasharray={segment.dashed ? "2 2" : undefined}
+                  vectorEffect="non-scaling-stroke"
+                />
+              ),
+            ),
+          )}
+        </DrawOn>
+      </svg>
+      <ChartDots dots={dots} color={color} spread={HIGHLIGHT_DRAW} />
+    </>
+  );
+}
+
+/** The hover title: which session, on what task(s), and both figures with
+ *  the split between them spelled out. */
+function describePoint(
+  point: SessionOutcomePoint,
+  labels: Map<string, string>,
+): string {
+  const { session, outcomes } = point;
+  const head =
+    `${session.prefixName}_${session.sessionNumber} · ${session.date}` +
+    ` · ${describeTaskMix(point.tasks, labels)}`;
+  if (outcomes.pResponse === null || outcomes.pRewarded === null) {
+    return `${head}\nno answered trials — ${outcomes.aborted} aborted`;
+  }
+  const parts = [
+    `${outcomes.administered} administered, ${outcomes.responded} answered`,
+    `${pct(outcomes.pResponse)} chose the correct well`,
+    `${pct(outcomes.pRewarded)} earned fluid`,
+    `${outcomes.holdFailed} lost to the hold`,
+  ];
+  if (outcomes.responded < THIN) {
+    parts.push(`fewer than ${THIN} answered — read loosely`);
+  }
+  return `${head}\n${parts.join(" · ")}`;
+}
+
+function pct(value: number): string {
+  return `${Math.round(value * 100)}%`;
+}
+
+function Panel({ children }: { children: ReactNode }) {
+  return <div className="telemetry p-4">{children}</div>;
+}

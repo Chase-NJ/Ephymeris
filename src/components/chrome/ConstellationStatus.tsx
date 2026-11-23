@@ -11,12 +11,12 @@ import {
   NODE_PRIMARY,
   NODE_RADIUS,
 } from "./constellationStyle";
-import { layoutFor, type ConstellationLayout } from "@/lib/constellations/slots";
-import { zodiacById } from "@/lib/constellations/zodiac";
-import { useAllPortStatuses, useBoardPresence } from "@/lib/hardware/context";
-import { useBoundBoxes, useSettings } from "@/lib/settings/context";
+import { layoutFor, type ConstellationLayout } from "@/features/sky/slots";
+import { zodiacById } from "@/features/sky/zodiac";
+import { useAllPortStatuses, useBoardPresence } from "@/features/hardware/context";
+import { useBoundBoxes, useSettings } from "@/features/settings/context";
 import { useSidecar } from "@/lib/ws/context";
-import { BOX_IDS, type PortStateName } from "@/lib/hardware/store";
+import { BOX_IDS, type PortStateName } from "@/features/hardware/store";
 
 /**
  * The signature element (`ARCHITECTURE.md#status-constellation`).

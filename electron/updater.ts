@@ -9,7 +9,7 @@
  *
  * The webview asks; this does the work, because only the shell can stop the
  * sidecar first. Whether it is safe to install is the webview's call
- * (`lib/updates/blocker.ts`), from what the sidecar reports.
+ * (`features/updates/blocker.ts`), from what the sidecar reports.
  */
 
 import { app } from "electron";

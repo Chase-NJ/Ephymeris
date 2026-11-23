@@ -16,7 +16,7 @@ page. Read it before a change you are unsure of, and before you argue for someth
 
 ## Principles
 
-The design in a dozen lines. Each is a decision the rest of the code leans on.
+The design in a few lines. Each is a decision the rest of the code leans on.
 
 1. **The sidecar owns all state.** It refuses an illegal operation with a typed error code; a disabled
    button is only a courtesy, and the UI never predicts ([ARCHITECTURE.md](ARCHITECTURE.md#overview)).
@@ -49,6 +49,9 @@ The design in a dozen lines. Each is a decision the rest of the code leans on.
 12. **Built to outlive its author.** Prefer what a successor who knows Python, and maybe TypeScript, can
     change: stdlib first, a short [dependency policy](DEVELOPING.md#dependency-policy), and the shell in
     TypeScript ([decision 0006](adr/DECISIONS.md#0006-the-shell-is-electron-not-tauri)).
+13. **One folder per feature, on each side of the wire.** A feature's code and its tests share a folder
+    named for it, so the layout itself says where a thing is
+    ([ARCHITECTURE.md](ARCHITECTURE.md#one-folder-per-feature)).
 
 ## Rules that are easy to break
 

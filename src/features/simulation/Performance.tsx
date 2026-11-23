@@ -1,6 +1,6 @@
-import { LivePanels } from "@/components/sessions/LivePanels";
+import { LivePanels } from "@/features/sessions/LivePanels";
 import { clockLabel, type Water } from "./playback";
-import { rollingAccuracy, type LiveTrials } from "@/lib/sessions/liveTrials";
+import { rollingAccuracy, type LiveTrials } from "@/features/sessions/liveTrials";
 import type { TaskProfile, TaskSimulation, TelemetryMetric } from "@/lib/ws/protocol";
 
 /** As Mission Control's readout: the window rolling accuracy is taken over. */

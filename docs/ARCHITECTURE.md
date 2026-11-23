@@ -142,7 +142,7 @@ copy, keeping app data, and the Electron copy then updates itself from `latest.y
 
 Before installing, the shell closes the sidecar's stdin and waits up to 12 s so it stops the `arduino-cli`
 daemon, which would otherwise lock `arduino-cli.exe`. Install is offered only with no session, no recording
-and every box `IDLE` or `ERROR` (`lib/updates/blocker.ts`; a down sidecar blocks nothing), always on the
+and every box `IDLE` or `ERROR` (`features/updates/blocker.ts`; a down sidecar blocks nothing), always on the
 operator's click. Checks run at launch and every 6 hours, never in dev. No downgrades: fix forward.
 
 ## Wire protocol
@@ -223,7 +223,7 @@ tasks and the vocabulary ([TASKS.md](TASKS.md#the-task-tab)).
 | `recordingDefaults` | Recording, Record step | no |
 | `taskDefaults` | none ([TASKS.md](TASKS.md#the-start-line)) | no |
 
-Defaults are `src/lib/settings/schema.ts`. The sidecar's `settings.py` is lenient: unknown keys are ignored
+Defaults are `src/features/settings/schema.ts`. The sidecar's `settings.py` is lenient: unknown keys are ignored
 and bad values fall back to defaults. A key naming a sketch holds its folder name, never a path.
 
 ## Boxes and boards
@@ -490,10 +490,10 @@ stateDiagram-v2
     completed --> running: sessions.resume, same day only
 ```
 
-Every step reads its session through `useSessionFlow` and the pure `sessionFlow` (`lib/sessions/flow.ts`);
+Every step reads its session through `useSessionFlow` and the pure `sessionFlow` (`features/sessions/flow.ts`);
 routes never derive their own answers. The Record step, for recording sessions only, picks each box's
 headstage port ([RECORDING.md](RECORDING.md#recording-walkthrough)). Any set-up step can be left and resumed
-(`lib/sessions/setupResume.ts`, memory only); a Record draft follows the mapping, so no animal keeps another's
+(`features/sessions/setupResume.ts`, memory only); a Record draft follows the mapping, so no animal keeps another's
 box or probe map. A Boxes draft keeps the operator's overrides, never the merged config
 ([TASKS.md](TASKS.md#three-layer-merge)), so a default changed meanwhile is followed.
 
@@ -510,7 +510,7 @@ sidecar**, from that box's start, by sending `STOP`; a box ending early cancels 
 The Boxes step sets up one [round](../GLOSSARY.md#round): **any animal of the cohort in any box**. It opens on
 the animals that have not run in this session (`sessions.status.ranAnimalIds`), each on its usual box
 (`seedRound`); picking an animal that is in another box swaps the two (`assignBox`). The rules are pure, in
-`lib/sessions/placementWalk.ts`. Choices are session-local and never write the cohort's usual boxes. The
+`features/sessions/placementWalk.ts`. Choices are session-local and never write the cohort's usual boxes. The
 boxes are a list and the selected box's parameters fill one panel beside it (`TaskConfigForm`, pinned), with
 a copy to the other boxes on the same task.
 
@@ -625,14 +625,14 @@ open; treat any other string as a reason, not an error.
 
 ### Routes
 
-All routes are children of `components/chrome/AppShell.tsx` in `src/App.tsx`, files in `src/routes/`: `/`
+All routes are children of `components/chrome/AppShell.tsx` in `src/App.tsx`, each page a file in its [feature's folder](#one-folder-per-feature): `/`
 (Dashboard), `/debug` and `/debug/all`, `/cohorts`, `/task` (with `/task/strobes`), `/analytics`, `/log`,
 `/config` (Rig, with `/config/wiring`), `/recording`, `/settings`, and the
 [session flow](#the-flow) under `/session/`.
 
-Each domain in `src/lib/` has one Provider and store over `SidecarPort` (`lib/ws/port.ts`), whose adapters are
+Each feature with sidecar state has one Provider and store over `SidecarPort` (`lib/ws/port.ts`), whose adapters are
 `SidecarClient` (the socket) and `FakeSidecar` (tests). `HardwareProvider` sits at the root, since the sidebar
-needs box health everywhere. **Unit tests cover `src/lib/**` and a feature folder's pure modules only**, so logic lives there.
+needs box health everywhere. **Unit tests cover the pure modules of `src/features/**` and `src/lib/**` only**, so logic lives in pure modules.
 
 > [!CAUTION]
 > **Every drag-and-drop is HTML5 drag-and-drop, and depends on the shell leaving drops to the page.** A shell
@@ -663,7 +663,7 @@ There is **one app-wide WebGL canvas** (`constellation3d/SharedCanvas.tsx`) that
 > **Every route mounts a constellation** (`SkyBackdrop`, covered by an opaque layer and `paused` if need be);
 > a route with none releases the shared shader programs and blanks the canvas. **Never at `opacity: 0`**: the
 > canvas leaves compositing while it keeps drawing, and the next route blocks for up to half a second showing
-> it again (`lib/sky.test.ts`).
+> it again (`features/sky/sky.test.ts`).
 
 A pause parks the frameloop for the view that owns the stage and no other, so the next view's attach always
 runs. A view whose exit is reversed (its route returned to within half a second) takes the stage back: it is
@@ -687,7 +687,7 @@ cohort.
 
 ### Cohort browser
 
-`components/cohorts/CohortSky.tsx` draws each cohort as a procedural planet on the Cohorts tab; Analytics and
+`features/cohorts/CohortSky.tsx` draws each cohort as a procedural planet on the Cohorts tab; Analytics and
 Log choose from `CohortManifest`, a list sorted by last run. **Search dims in place, never filters**, so
 nothing moves.
 
@@ -715,11 +715,11 @@ Mission Control's star panel and Debug Mode's live tile share `MetricStrip` and 
 
 Beside each box's tile, `BoxInsightTab` shows the run in counts: trials offered, completed and correct, as
 three figures, a cumulative record and an outcome bar. The counts are the sidecar's whole-run totals, summed
-by `lib/sessions/boxProgress.ts` from each `TelemetryMetric` (`triggered`, `counted`, `hits`). The store keeps the totals each time they move, since only the
+by `features/sessions/boxProgress.ts` from each `TelemetryMetric` (`triggered`, `counted`, `hits`). The store keeps the totals each time they move, since only the
 latest is ever sent; a page reloaded mid-run draws from the origin to the first totals it sees.
 
 > [!IMPORTANT]
-> **The live panels read one derived record** (`lib/sessions/liveTrials.ts`), decoded by **strobe name,
+> **The live panels read one derived record** (`features/sessions/liveTrials.ts`), decoded by **strobe name,
 > never code**, from the store's own per-box strobe log, never the capped console ring.
 
 The store forgets a run only when the sidecar reports the next one began, never on a click, so a refused
@@ -761,7 +761,7 @@ corner brackets and a dot reticle, titled by `PanelTitle`.
 
 ### The paper exception
 
-The Log (`routes/Log.tsx`) is the one screen that is not the instrument: a cohort's lab notebook lying open
+The Log (`features/logbook/Log.tsx`) is the one screen that is not the instrument: a cohort's lab notebook lying open
 on a desk, typeset like a LaTeX document and read by turning pages
 ([ADR 0010](adr/DECISIONS.md#0010-the-log-is-a-paper-notebook)). The **desk** (`.desk`) is dark and keeps
 the app's tokens and controls. Everything inside **`.paper`** follows `styles/paper.css` instead:
@@ -780,7 +780,7 @@ the app's tokens and controls. Everything inside **`.paper`** follows `styles/pa
 > `.paper` may use Void, Nebula, Halo, Pulsar, Starlight or Static, or a shared control built from them
 > (`Button`, `Dropdown`, `HudTile`); nothing outside it may use a paper token.
 
-`paper/Notebook.tsx` owns the turn and nothing else. A spread is an id in `lib/logbook/pages.ts`'s order:
+`paper/Notebook.tsx` owns the turn and nothing else. A spread is an id in `features/logbook/pages.ts`'s order:
 the front matter (title page and contents), then one spread per session, **oldest first**. Going forward
 the right page lifts on the spine and lands as the next spread's left; a turn asked for mid-turn finishes
 the one in the air at once. Reduced motion swaps the spread with no leaf.
@@ -791,7 +791,7 @@ the one in the air at once. Reduced motion swaps the spread with no leaf.
 > that runs on mount, and has no entry animation; its scroll offset is kept by `Notebook` and put back.
 > A handle to "the" note box is found in the DOM outside `[inert]`, never held in a ref.
 
-**The route is three layers, each with its own way in and out** (`routes/Log.tsx`). The sky
+**The route is three layers, each with its own way in and out** (`features/logbook/Log.tsx`). The sky
 (`SkyBackdrop`, [One sky](#one-sky)) holds still and is only covered, then paused once the desk is opaque. The desk is opaque, so it fades in and out on its own: an opaque layer with no `exit` sits over
 the next route for the whole transition (`AppShell.tsx`'s `RouteTransition` moves a page and never fades
 it, so every route fades its own). What lies on the desk, the cohort list or
@@ -802,7 +802,7 @@ arrives at its title page and turns to the latest session while still fading in.
 ### Printed documents
 
 The PDF exporter ([DATA.md](DATA.md#exporting-a-log)) prints **Void ink on paper**, each token darkened on its
-own hue for WCAG AA (`components/logbook/pdf/theme.ts`).
+own hue for WCAG AA (`features/logbook/pdf/theme.ts`).
 
 <a id="dependency-policy"></a>
 The dependency policy lives in [DEVELOPING.md](DEVELOPING.md#dependency-policy).
@@ -817,7 +817,18 @@ The dependency policy lives in [DEVELOPING.md](DEVELOPING.md#dependency-policy).
 | `…/cohorts/`, `…/analytics/`, `…/backup/`, `…/logbook/` | [DATA.md](DATA.md#cohorts-and-animals), [ANALYTICS.md](../sidecar/ephymeris_sidecar/analytics/ANALYTICS.md#the-folder-at-a-glance) |
 | `…/tasks/`, `…/taskdef/`, `…/rig/`, `…/strobes/`, `…/hardware/`, `…/simulation/` | [TASKS.md](TASKS.md#the-rig-definition), [simulating a task](TASKS.md#simulating-a-task) |
 | `…/intan/` | [RECORDING.md](RECORDING.md) |
-| `src/lib/`, `src/components/`, `src/routes/` | Pure logic and stores; UI by domain; routes |
-| `src/features/<name>/` | A feature whole: its components, its pure modules and their tests. `simulation/` is the first, beside the sidecar's `…/simulation/`, which holds its own tests and the simulator's C++ |
+| `…/<feature>/tests/` | Each sidecar feature's own tests. `sidecar/tests/` keeps the suite's shared support and the tests of no one feature |
+| `src/features/<feature>/` | A webview feature whole: its page, components, store, pure modules and their tests |
+| `src/lib/`, `src/components/` | What several features share: the wire, the shell boundary, navigation and exports; common controls, charts and the app chrome |
 | `electron/` | The desktop shell |
 | `protocol/`, `scripts/` | Wire schema and generator; npm helpers |
+
+### One folder per feature
+
+A feature's files live together, in one folder on each side of the wire, under one name: `sidecar/ephymeris_sidecar/<feature>/` holds its modules and, in `tests/`, its tests; `src/features/<feature>/` holds its page, components, store and pure modules, with their tests beside them. The folder's name is the thing to search for ([decision 0013](adr/DECISIONS.md#0013-one-folder-per-feature-on-each-side-of-the-wire)).
+
+- **A webview feature takes its sidecar package's name** (`intan`, `hardware`, `logbook`). One with no sidecar package (`dashboard`, `debug`, `settings`, `sky`, `updates`) is listed in `test_structure.py`.
+- **`src/lib/` and `src/components/` hold only what several features share**, and there are no route or component folders by kind.
+- **`sidecar/tests/` holds the suite's support** (`live_sidecar.py`, `fixtures/`) **and the tests of no one feature**: structure, docs, the wire, and the process's own modules.
+
+`sidecar/tests/test_structure.py` fails on a test outside its feature, a new folder by kind, or a webview feature named for nothing.

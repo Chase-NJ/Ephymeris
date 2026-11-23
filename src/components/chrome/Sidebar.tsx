@@ -19,15 +19,15 @@ import { Modal } from "@/components/common/Modal";
 import { springSnappy } from "@/lib/motion";
 import { runDeparture } from "@/lib/nav/departure";
 import { useUnsaved } from "@/lib/nav/unsavedGuard";
-import { useActiveSessions, useRunningSession } from "@/lib/sessions/context";
-import { useUpdate } from "@/lib/updates/store";
+import { useActiveSessions, useRunningSession } from "@/features/sessions/context";
+import { useUpdate } from "@/features/updates/store";
 import {
   noteLocation,
   SETUP_STEP_LABEL,
   useSetupResume,
   type SetupResume,
-} from "@/lib/sessions/setupResume";
-import type { ActiveSessions } from "@/lib/sessions/types";
+} from "@/features/sessions/setupResume";
+import type { ActiveSessions } from "@/features/sessions/types";
 
 /**
  * Persistent sidebar.
@@ -48,7 +48,7 @@ import type { ActiveSessions } from "@/lib/sessions/types";
  * retired: its content docks beside the Dashboard's hero CTA, so the
  * Dashboard row's active state deliberately covers the whole /session/*
  * flow, and a matte status-ok dot marks it while a session is running. **A
- * set-up left for another tab is kept** (`lib/sessions/setupResume.ts`): the
+ * set-up left for another tab is kept** (`features/sessions/setupResume.ts`): the
  * Dashboard row then opens the step it was left on rather than `/`, and says
  * so on a second line — from inside the flow it goes to `/` as ever, which is
  * the way to the Dashboard itself while a set-up is pending. The

@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ChevronRight } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
-import { useIsReport } from "@/components/analytics/report/context";
+import { useIsReport } from "@/features/analytics/report/context";
 import { springSnappy } from "@/lib/motion";
 
 /**

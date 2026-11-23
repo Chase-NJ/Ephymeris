@@ -80,7 +80,7 @@ The usual box is only where session set-up starts: which animals run together, a
 | `boxNumber` | `1`–`6` only. Animals may share a usual box: a clash matters only among the animals of one round, where set-up gives the box to one of them |
 
 > [!IMPORTANT]
-> **The box rule is split on purpose.** The sidecar checks only the range, since two machines with different bindings share one data directory; the editor offers only boxes bound here (`src/lib/cohorts/boxAvailability.ts`). A stored box this machine can't honour is **kept and reported, never rewritten**, and not reported while the sidecar is disconnected.
+> **The box rule is split on purpose.** The sidecar checks only the range, since two machines with different bindings share one data directory; the editor offers only boxes bound here (`src/features/cohorts/boxAvailability.ts`). A stored box this machine can't honour is **kept and reported, never rewritten**, and not reported while the sidecar is disconnected.
 
 ### Former members
 
@@ -217,7 +217,7 @@ A **carry forward** note stays open until resolved and shows in Step 1 and Missi
 
 - **Keyed by the animal's id with no foreign key**, as [implants](#implants) are, because a roster save deletes and re-inserts every `animals` row. It stays with a [former member](#former-members) and follows a [moved](#moving-animals-between-cohorts) animal; [Tidy records](#tidy-records) and [pruning](#pruning) never touch it, since no session owns it.
 - **A weight is 1 to 2000 g.** Writing `null` removes the day's weigh-in, its baseline mark with it. The row stays, marked `removed_at`, as a deleted note's does: a removal has to reach the copies other machines hold ([The log file](#the-log-file)). A removed weigh-in is in no reading and never on the wire.
-- **A percentage is only ever of a marked baseline**: a weigh-in is read against the latest one marked at or before its day (`lib/logbook/health.ts`'s `readWeight`). With none marked the page shows the change since the weigh-in before and no share, since the first weight on record is not assumed to be a free-feeding one. Under 85% of baseline (`LOW_WEIGHT_FRACTION`) the row is marked low: a prompt to look, not a rule the app enforces.
+- **A percentage is only ever of a marked baseline**: a weigh-in is read against the latest one marked at or before its day (`features/logbook/health.ts`'s `readWeight`). With none marked the page shows the change since the weigh-in before and no share, since the first weight on record is not assumed to be a free-feeding one. Under 85% of baseline (`LOW_WEIGHT_FRACTION`) the row is marked low: a prompt to look, not a rule the app enforces.
 - Other health observations are [notes](#notes) tagged `animal-health` about that animal; the weights table starts one.
 
 ### What changed
@@ -264,10 +264,10 @@ Limits: "newer" trusts the two machines' clocks; a reopened flag has no time of 
 
 ### Exporting a log
 
-**Session PDF** and **Logbook PDF** are rendered by `@react-pdf/renderer` (`components/logbook/pdf/`) from strings built in `lib/logbook/document.ts` ([ARCHITECTURE.md](ARCHITECTURE.md#printed-documents)).
+**Session PDF** and **Logbook PDF** are rendered by `@react-pdf/renderer` (`features/logbook/pdf/`) from strings built in `features/logbook/document.ts` ([ARCHITECTURE.md](ARCHITECTURE.md#printed-documents)).
 
 > [!CAUTION]
-> Keep ligatures off (`fontFeatureSettings`; subset fonts throw), unsupported characters mapped (`printable`), fonts as inlined `.woff`, title heights pinned, and the page footer **pinned from the top** (pinned by `bottom` it grows per page until a long export fails; `lib/logbook/pdf.test.ts` renders forty sessions).
+> Keep ligatures off (`fontFeatureSettings`; subset fonts throw), unsupported characters mapped (`printable`), fonts as inlined `.woff`, title heights pinned, and the page footer **pinned from the top** (pinned by `bottom` it grows per page until a long export fails; `features/logbook/pdf.test.ts` renders forty sessions).
 
 ## Per-animal files
 
@@ -320,7 +320,7 @@ A header with no `schema_version` line is from before version 2: each parameter 
 
 ### The mat mirror
 
-`sessions/matwriter.py` writes the same document with `scipy.io.savemat`. `run`, `task`, `params` and `recording` are structs (`S.run.box`, `S.params.reward_time_5`) whose numbers are `double`, bools `logical` and strings `char`; `ts_data` is `N×2` (`0×2` empty), `task_profile` a JSON char array, `odors` a struct array and `trials` a struct. A `null` run fact is `NaN` (`box`, `run_of_day`) or `''`. A version-1 document's fields are top-level variables by the same rules. `tests/test_matwriter.py` pins it.
+`sessions/matwriter.py` writes the same document with `scipy.io.savemat`. `run`, `task`, `params` and `recording` are structs (`S.run.box`, `S.params.reward_time_5`) whose numbers are `double`, bools `logical` and strings `char`; `ts_data` is `N×2` (`0×2` empty), `task_profile` a JSON char array, `odors` a struct array and `trials` a struct. A `null` run fact is `NaN` (`box`, `run_of_day`) or `''`. A version-1 document's fields are top-level variables by the same rules. `sessions/tests/test_matwriter.py` pins it.
 
 > [!CAUTION]
 > **scipy is preloaded on the main thread before any other thread starts** (`matwriter.preload`): importing numpy while a thread blocks on stdin deadlocks the frozen sidecar. **A `.mat` that would be wrong is refused** (non-BMP characters, `_` names) and logged; `.tsv` and `.json` carry the run.
@@ -691,7 +691,7 @@ A finalization records its profile and run in one unit; an indexing pass writes 
 
 1. Make new columns nullable or constant-default; `add_column` is idempotent.
 2. Migrations may re-key or repair a cache, never reinterpret data.
-3. Add the version you are leaving to `tests/fixtures/schemas/` as `vN.sql`, copied from git; `tests/test_migrations.py` upgrades each and compares it with a fresh database.
+3. Add the version you are leaving to `tests/fixtures/schemas/` as `vN.sql`, copied from git; `cohorts/tests/test_migrations.py` upgrades each and compares it with a fresh database.
 
 A database newer than the build still opens, with a loud error, and works as long as every change since was additive. v17 was not (it removed groups), so a build older than it fails on a v17 file's first roster query.
 
@@ -776,7 +776,7 @@ An `adopted_runs` row holds only what a name gives: animal, path, prefix, number
 **Summaries persist** in `run_metrics_cache`; series and trial tables never do. The key (`repository.CacheKey`: path, mtime, size, profile hash, version) needs no file open, so a hit reads nothing. The version (`scoring.current_version`) combines `SCORE_VERSION`, a **canary** hash of the scoring code's answers for fixed runs (`scoring._canary_runs`), and this machine's [strobe vocabulary](TASKS.md#strobe-vocabulary).
 
 > [!CAUTION]
-> **A hit is served verbatim.** If you change scoring and the pinned canary in `tests/test_analytics_scoring.py` does not fail, add a canary case or bump `SCORE_VERSION`. Changes to file reading (`reader.stat_run`, `reader.parse_run`), `missing`/`unreadable` rows or reason texts always need the bump.
+> **A hit is served verbatim.** If you change scoring and the pinned canary in `analytics/tests/test_analytics_scoring.py` does not fail, add a canary case or bump `SCORE_VERSION`. Changes to file reading (`reader.stat_run`, `reader.parse_run`), `missing`/`unreadable` rows or reason texts always need the bump.
 
 > [!CAUTION]
 > **A relocate or move carries a key only if it was fresh for the original** (`cohorts/freshness.py`). A dropped fresh key re-matches adoptions by name (a renamed animal's runs go astray); a carried stale one vouches for content that changed.
@@ -810,7 +810,7 @@ A rescan skips a file (`_carry_over`) when its adopted row names **the same path
 
 ## Analytics views
 
-`/analytics` (`routes/Analytics.tsx`, `components/analytics/`, `src/lib/analytics/view.ts`). Selecting a session **narrows** every panel; per-animal colour ties them. Rescan, Recover, Re-derive and Tidy are explicit header actions.
+`/analytics` (`features/analytics/Analytics.tsx`, `features/analytics/`, `src/features/analytics/view.ts`). Selecting a session **narrows** every panel; per-animal colour ties them. Rescan, Recover, Re-derive and Tidy are explicit header actions.
 
 > [!CAUTION]
 > **The task strip and accuracy trend share x slots** (`sessionOutcomePoints`); anything between them misaligns every boundary.
@@ -863,7 +863,7 @@ Animals take `--color-series-1`…`6` by roster position; rates use the divergin
 
 ### Exporting a sheet
 
-**Export PNG** mounts the existing panels (`components/analytics/report/`) off-screen with a masthead and `summary.warnings` ([export card](ARCHITECTURE.md#export-progress)).
+**Export PNG** mounts the existing panels (`features/analytics/report/`) off-screen with a masthead and `summary.warnings` ([export card](ARCHITECTURE.md#export-progress)).
 
 > [!CAUTION]
 > Render off-screen (not hidden), force `useRevealOnView` true, use `MotionConfig skipAnimations`, unpin the pinned animal, rasterize at 1×, and turn scrolling off; each mistake yields a plausible wrong picture.

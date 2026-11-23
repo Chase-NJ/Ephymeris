@@ -240,7 +240,9 @@ def test_no_domain_module_knows_the_wire_error_type() -> None:
     offenders = [
         str(path.relative_to(package))
         for path in package.rglob("*.py")
-        if path.name not in wire_layer and "CommandError" in path.read_text(encoding="utf-8")
+        if path.name not in wire_layer
+        and "tests" not in path.relative_to(package).parts
+        and "CommandError" in path.read_text(encoding="utf-8")
     ]
     assert offenders == []
 

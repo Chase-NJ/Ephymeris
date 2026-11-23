@@ -1,6 +1,6 @@
 import { useReducedMotion } from "framer-motion";
 
-import { useSettings } from "./settings/context";
+import { useSettings } from "@/features/settings/context";
 
 /**
  * Combines the OS `prefers-reduced-motion` signal with the app's own toggle

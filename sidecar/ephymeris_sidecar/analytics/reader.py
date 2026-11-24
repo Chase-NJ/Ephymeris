@@ -57,6 +57,33 @@ MAX_FORMAT_DEPTH = 6
 PRUNED_DIRS = frozenset({"__MACOSX"})
 
 
+def is_set_aside_dir(name: str) -> bool:
+    """A directory the archive walk never enters (`DATA.md#set-aside-folders`).
+
+    Dotted names are the system's; a leading underscore is the operator's way
+    of saying "keep this beside the data, but it isn't a session" — a backup
+    copy taken before a fix (`_backup_<session>_before_…`), an old export. A
+    copy's runs would otherwise be adopted as a session of their own, under a
+    name with no date, and count every run in it twice.
+    """
+    return name.startswith((".", "_")) or name in PRUNED_DIRS
+
+
+def is_set_aside(path: str | Path, cohort_folder: str | Path) -> bool:
+    """Whether `path` sits under a set-aside directory of `cohort_folder`, and
+    so is one the walk would never find. False for a path outside the folder:
+    that is a question for the prune's own "is it gone" check, not this one."""
+    try:
+        relative = (
+            Path(path).expanduser().resolve(strict=False).relative_to(
+                Path(cohort_folder).expanduser().resolve(strict=False)
+            )
+        )
+    except ValueError:
+        return False
+    return any(is_set_aside_dir(part) for part in relative.parts[:-1])
+
+
 @dataclass(frozen=True)
 class ReadResult:
     """A parsed document, or why there isn't one."""
@@ -395,8 +422,8 @@ def _walk_format_dirs(cohort_folder: str | Path):
     The one traversal both walks share — orphan adoption
     (`DATA.md#orphan-adoption`) and the crash-recovery backfill
     (`DATA.md#crash-recovery`). Format folders are matched **by
-    name at any depth**, pruned at the format folder, dotted/`__MACOSX` folders
-    skipped, depth floored at `MAX_FORMAT_DEPTH`. A directory that can't be read
+    name at any depth**, pruned at the format folder, set-aside folders
+    (dotted, `_`-prefixed, `__MACOSX`: `is_set_aside_dir`) skipped, depth floored at `MAX_FORMAT_DEPTH`. A directory that can't be read
     costs a warning and its own contents, never the cohort.
     """
     base = Path(cohort_folder).expanduser()
@@ -422,6 +449,4 @@ def _walk_format_dirs(cohort_folder: str | Path):
             dirnames[:] = []
             continue
 
-        dirnames[:] = sorted(
-            d for d in dirnames if not d.startswith(".") and d not in PRUNED_DIRS
-        )
+        dirnames[:] = sorted(d for d in dirnames if not is_set_aside_dir(d))

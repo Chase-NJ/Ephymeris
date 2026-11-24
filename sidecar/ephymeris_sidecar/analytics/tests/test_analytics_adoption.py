@@ -1607,3 +1607,70 @@ async def test_adopted_runs_serve_series(rig: LegacyRig) -> None:
     assert payload["series"][0]["metrics"][0]["values"]
     assert validate_command_result("analytics.series", payload) == []
     assert result["adopted"] == 1
+
+
+# --- set-aside folders (DATA.md#set-aside-folders) -------------------------
+
+
+def _set_aside_copy(run: Path, name: str) -> Path:
+    """A copy of `run`'s session folder kept beside it under `name`, the way an
+    operator backs one up before a fix."""
+    session = run.parent.parent
+    copy = session.parent / name
+    shutil.copytree(session, copy)
+    return copy / run.parent.name / run.name
+
+
+def test_the_walk_skips_an_underscored_folder(rig: LegacyRig) -> None:
+    run = rig.add_legacy_run("remy1", HIT_1 * 5)
+    _set_aside_copy(run, "_backup_2O-Bdisc_01_before_swap")
+    assert reader.walk_session_files(rig.root) == [run]
+
+
+def test_a_path_under_an_underscored_folder_is_set_aside(rig: LegacyRig) -> None:
+    run = rig.add_legacy_run("remy1", HIT_1 * 5)
+    copy = _set_aside_copy(run, "_backup")
+    assert reader.is_set_aside(copy, rig.root)
+    assert not reader.is_set_aside(run, rig.root)
+    # Only the folders *below* the cohort folder count.
+    assert not reader.is_set_aside(run, rig.root.parent)
+    assert not reader.is_set_aside(Path("/elsewhere/_x/a.json"), rig.root)
+
+
+async def test_a_rescan_prunes_an_adoption_from_a_set_aside_folder(
+    rig: LegacyRig,
+) -> None:
+    """Adopted before the rule existed (or before the folder was renamed): the
+    walk will never see it again, so the prune has to drop it."""
+    run = rig.add_legacy_run("remy1", HIT_1 * 5)
+    copy = _set_aside_copy(run, "_backup_2O-Bdisc_01_before_swap")
+    rig.repo.store_adopted([
+        AdoptedRun(
+            id="stale-backup-adoption", cohort_id=rig.cohort.id, animal_id="a1",
+            file_path=str(copy), prefix_name="_backup_2O-Bdisc_01_before_swap",
+            session_number="", date=None, started_at="", sketch_name=None,
+            sketch_path=None, file_mtime_ns=None, file_size=None,
+        )
+    ])
+
+    result = await rig.archive.rescan(rig.cohort.id)
+
+    assert result["pruned"]["adopted"] == 1
+    held = rig.repo.adopted_for_cohort(rig.cohort.id)
+    assert [Path(entry.file_path) for entry in held] == [run]
+    view = rig.archive.view(rig.cohort.id)
+    assert all(session.date for session in view.sessions)
+
+
+async def test_a_folder_with_no_date_takes_its_files_date(rig: LegacyRig) -> None:
+    """A session folder renamed away from `<prefix>_<number>_<date>` still holds
+    files stamped with their day; the run must not arrive undated."""
+    run = rig.add_legacy_run("remy1", HIT_1 * 5, folder_date="2026-07-22")
+    renamed = run.parent.parent.with_name("2O-Bdisc_01_redo")
+    run.parent.parent.rename(renamed)
+
+    await rig.archive.rescan(rig.cohort.id)
+
+    [entry] = rig.repo.adopted_for_cohort(rig.cohort.id)
+    assert entry.date == "2026-07-22"
+    assert entry.started_at.startswith("2026-07-22T")

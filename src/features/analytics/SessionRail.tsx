@@ -117,7 +117,7 @@ export function SessionRail({
     );
   }
 
-  const { marks, ticks, width, days, showNumbers } = layout;
+  const { marks, ticks, width, axisLeft, days, range, showNumbers } = layout;
   const selectedSession = sessions.find((s) => s.id === selected) ?? null;
 
   return (
@@ -153,7 +153,7 @@ export function SessionRail({
           {/* The axis itself, drawn only across the span the data occupies. */}
             <div
               className="absolute border-t border-static/25"
-              style={{ left: PAD, right: PAD, top: AXIS_Y }}
+              style={{ left: axisLeft, right: PAD, top: AXIS_Y }}
             />
 
           {ticks.map((tick) => (
@@ -208,8 +208,8 @@ export function SessionRail({
         ) : (
           <span>
             {sessions.length} {sessions.length === 1 ? "session" : "sessions"}
-            {days > 0 ? ` · ${days} days` : ""} · {sessions[0]!.date} →{" "}
-            {sessions[sessions.length - 1]!.date}
+            {days > 0 ? ` · ${days} days` : ""}
+            {range ? ` · ${range.from} → ${range.to}` : ""}
           </span>
         )}
       </div>
@@ -346,8 +346,12 @@ function tooltip(session: SessionListItem, stat: Stat): string {
     : `${head}\n${runs} · mean P = ${stat.mean.toFixed(2)}`;
 }
 
+/** The tick key of the undated cluster — not a date, so it can't collide. */
+const UNDATED_KEY = "undated";
+
 /** `2026-07-24` → `Jul 24`, which is what a reader scans an axis for. */
 function shortDate(iso: string): string {
+  if (iso === UNDATED_KEY) return "no date";
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
   if (!match) return iso;
   const months = [
@@ -377,54 +381,84 @@ interface Tick {
  *  `useMemo` runs before its own empty-state return, because hook order can't
  *  be conditional — so this branch is reached on every cohort that has no
  *  sessions yet, which every cohort is on the day it is created. */
-const EMPTY_LAYOUT = { marks: [], ticks: [], width: PAD * 2, days: 0, showNumbers: true };
+const EMPTY_LAYOUT = {
+  marks: [],
+  ticks: [],
+  width: PAD * 2,
+  axisLeft: PAD,
+  days: 0,
+  range: null,
+  showNumbers: true,
+};
+
+/** A date the axis can place. A recovered session whose folder name carries
+ *  no date arrives with `date: ""` — and `""` sorts before every ISO date. */
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}/;
+
+/** Clearance between the undated cluster and the axis it sits beside. */
+const UNDATED_GAP = DATE_LABEL_MIN_GAP;
 
 /**
  * Pixel positions for every mark and date tick, plus the scroll width they
  * need. Sessions arrive oldest-first (`sessions.list` orders by date), which
  * this relies on for both grouping order and label thinning.
+ *
+ * A session with no usable date can't be placed by date, so it is not put on
+ * the axis at all: undated sessions get a cluster of their own left of the
+ * axis, under a "no date" label. Measuring the span from `sessions[0]` instead
+ * let one undated session (sorted first) zero `days` and stack every mark in
+ * the archive on a single point.
  */
-function layOut(sessions: SessionListItem[]): {
+export function layOut(sessions: SessionListItem[]): {
   marks: Mark[];
   ticks: Tick[];
   width: number;
+  /** Where the date axis starts; the undated cluster, if any, sits left of it. */
+  axisLeft: number;
   days: number;
+  /** First and last *dated* session's date, or null if none has one. */
+  range: { from: string; to: string } | null;
   showNumbers: boolean;
 } {
   if (sessions.length === 0) return EMPTY_LAYOUT;
 
-  const first = sessions[0]!;
-  const last = sessions[sessions.length - 1]!;
-  const days = Math.max(0, daysBetween(first.date, last.date));
+  const dated = sessions.filter((s) => ISO_DATE.test(s.date));
+  const undated = sessions.filter((s) => !ISO_DATE.test(s.date));
+  const first = dated[0];
+  const last = dated[dated.length - 1];
+  const days = first && last ? Math.max(0, daysBetween(first.date, last.date)) : 0;
 
   const byDate = new Map<string, SessionListItem[]>();
-  for (const session of sessions) {
+  for (const session of dated) {
     const bucket = byDate.get(session.date);
     if (bucket) bucket.push(session);
     else byDate.set(session.date, [session]);
   }
 
+  // The undated cluster, laid out like a same-day one, ahead of the axis.
+  const undatedColumns = Math.ceil(undated.length / 2);
+  const undatedSpan = Math.max(0, undatedColumns - 1) * MARK_GAP;
+  const axisLeft = undated.length > 0 ? PAD + undatedSpan + UNDATED_GAP : PAD;
+
   // Same-day marks zigzag over two rows, so a cluster's horizontal span is
   // set by ceil(n/2) columns — one dense rerun day used to widen every day.
-  const widest = Math.max(...[...byDate.values()].map((group) => group.length));
-  const clusterSpan = (Math.ceil(widest / 2) - 1) * MARK_GAP;
+  const widest = Math.max(0, ...[...byDate.values()].map((group) => group.length));
+  const clusterSpan = Math.max(0, Math.ceil(widest / 2) - 1) * MARK_GAP;
   // A day has to be at least as wide as the widest same-day cluster plus a
   // gap, or two dates' clusters overlap and the axis understates a real break.
   const pxPerDay = Math.max(MIN_PX_PER_DAY, clusterSpan + MARK_GAP);
   const usable = days > 0 ? Math.max(MIN_SPAN_WIDTH, days * pxPerDay) : 0;
-  const width = usable + clusterSpan + PAD * 2;
-  const originX = PAD + clusterSpan / 2;
+  const width = dated.length > 0 ? axisLeft + usable + clusterSpan + PAD : axisLeft;
+  const originX = axisLeft + clusterSpan / 2;
 
   const marks: Mark[] = [];
   const ticks: Tick[] = [];
   let lastLabelX = -Infinity;
 
-  for (const [date, group] of byDate) {
-    const x =
-      days > 0 ? originX + (daysBetween(first.date, date) / days) * usable : width / 2;
+  const place = (key: string, x: number, group: SessionListItem[]) => {
     const labelled = x - lastLabelX >= DATE_LABEL_MIN_GAP;
     if (labelled) lastLabelX = x;
-    ticks.push({ date, x, labelled });
+    ticks.push({ date: key, x, labelled });
     const columns = Math.ceil(group.length / 2);
     group.forEach((session, index) => {
       marks.push({
@@ -434,6 +468,15 @@ function layOut(sessions: SessionListItem[]): {
         clustered: group.length > 1,
       });
     });
+  };
+
+  if (undated.length > 0) place(UNDATED_KEY, PAD + undatedSpan / 2, undated);
+  for (const [date, group] of byDate) {
+    place(
+      date,
+      days > 0 ? originX + (daysBetween(first!.date, date) / days) * usable : originX,
+      group,
+    );
   }
 
   // Per-mark numbers only when the tightest pair of *label positions* can
@@ -445,7 +488,8 @@ function layOut(sessions: SessionListItem[]): {
   const gaps = xs.slice(1).map((x, i) => x - xs[i]!);
   const showNumbers = gaps.length === 0 || Math.min(...gaps) >= LABEL_MIN_GAP;
 
-  return { marks, ticks, width, days, showNumbers };
+  const range = first && last ? { from: first.date, to: last.date } : null;
+  return { marks, ticks, width, axisLeft, days, range, showNumbers };
 }
 
 interface Stat {

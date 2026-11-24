@@ -765,9 +765,14 @@ An `adopted_runs` row holds only what a name gives: animal, path, prefix, number
 - **Animal:** the document's `rat`, else the file stem's animal token if the stem has exactly the [Names](#names) shape, else a `removed` [former member](#former-members) of that name.
 - **Duplicates are one run** by case-folded stem (`reader.run_identity`); the kept copy is chosen by content (`_prefer`).
 - **A missing data folder is reported** (`folderMissing`), never read as empty.
+- **Date:** the session folder's, else the file stem's, so a renamed folder's runs still land on the date axis.
 
 > [!WARNING]
 > **The adopted run id is keyed on cohort and run identity, never path** (`_orphan_run_id`), and a stored run keeps its id, since rulings and the cache use it.
+
+### Set-aside folders
+
+A folder whose name starts with `_` or `.` (or is `__MACOSX`) is **never walked** (`reader.is_set_aside_dir`): not by adoption, crash recovery or the recent-sessions list. Prefix a folder with `_` to keep it beside the data without it being read, such as a backup copied before a fix (`_backup_8O-Bdisc_23_before_…`). Read as an orphan, such a copy became a session with no date, counting each of its runs a second time. A Rescan also **prunes** adoptions already taken from a set-aside folder (`reader.is_set_aside`).
 
 ### Caching
 

@@ -532,7 +532,7 @@ class CohortArchive:
             # and a run whose file *moved* is re-adopted in the same pass
             # rather than pruned on one scan and re-found on the next.
             pruned, dropped = (
-                await asyncio.to_thread(self._prune, cohort_id)
+                await asyncio.to_thread(self._prune, cohort_id, cohort.data_folder)
                 if adopt_orphans and folder_exists
                 else ({"runs": 0, "sessions": 0, "adopted": 0}, {})
             )
@@ -664,8 +664,12 @@ class CohortArchive:
 
     # --- pruning (DATA.md#pruning) -----------------------------------------
 
-    def _prune(self, cohort_id: str) -> tuple[dict[str, int], dict[str, str]]:
-        """Drop records for files the disk demonstrably no longer has.
+    def _prune(
+        self, cohort_id: str, data_folder: str | None = None
+    ) -> tuple[dict[str, int], dict[str, str]]:
+        """Drop records for files the disk demonstrably no longer has, and
+        adoptions from a folder under `data_folder` the walk sets aside
+        (`DATA.md#set-aside-folders`), which no later walk would revisit.
 
         Returns the counts, and the id of each adoption it dropped by run
         identity: a run whose file only moved is adopted again by the same
@@ -703,7 +707,9 @@ class CohortArchive:
         removed = [
             entry
             for entry in self._repo.adopted_for_cohort(cohort_id)
-            if _is_gone(entry.file_path) or _normalize(entry.file_path) in claimed
+            if _is_gone(entry.file_path)
+            or _normalize(entry.file_path) in claimed
+            or (data_folder is not None and reader.is_set_aside(entry.file_path, data_folder))
         ]
         removed_adopted = [entry.id for entry in removed]
         dropped = {reader.run_identity(Path(entry.file_path)): entry.id for entry in removed}
@@ -941,7 +947,8 @@ class CohortArchive:
             return entry, None
 
         parsed = parse_session_folder(session_folder.name)
-        date_iso = parsed.date.isoformat() if parsed.date is not None else None
+        found_date = parsed.date or parse_name_date(path.name)
+        date_iso = found_date.isoformat() if found_date is not None else None
         time = parse_name_time(path.name)
         if date_iso and time:
             started_at = f"{date_iso}T{time}"
